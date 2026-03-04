@@ -40,4 +40,10 @@ export const api = {
 	getJobs: () => request('/jobs'),
 	getActiveJobs: () => request('/jobs/active'),
 	getJob: (id) => request(`/jobs/${id}`),
+
+	// Discovery / Similar
+	getSimilarTracks: (artist, track, limit = 20) =>
+		request(`/discovery/similar-by-track?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}&limit=${limit}`),
+	echoMatch: (trackId, limit = 20) =>
+		request('/analysis/echo-match', { method: 'POST', body: JSON.stringify({ track_id: trackId, limit }) }),
 };

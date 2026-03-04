@@ -168,6 +168,31 @@ async def track_info(artist: str, track: str):
     return info
 
 
+@router.get("/similar-by-track")
+async def similar_by_track(
+    artist: str,
+    track: str,
+    limit: int = Query(20, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get tracks similar to a specific track via Last.fm, annotated with library status."""
+    similar = await lastfm.get_similar_tracks(artist, track, limit=limit)
+
+    for t in similar:
+        existing = await db.execute(
+            select(Track).where(Track.title.ilike(f"%{t['name']}%")).limit(1)
+        )
+        existing_track = existing.scalar_one_or_none()
+        t["in_library"] = existing_track is not None
+        t["track_id"] = existing_track.id if existing_track else None
+
+    return {
+        "tracks": similar[:limit],
+        "source_artist": artist,
+        "source_track": track,
+    }
+
+
 @router.get("/artist-info")
 async def artist_info(artist: str):
     """Get detailed artist info from Last.fm."""

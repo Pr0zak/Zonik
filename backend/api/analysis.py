@@ -185,6 +185,43 @@ async def start_enrichment(background_tasks: BackgroundTasks):
     return {"job_id": job_id}
 
 
+class EchoMatchRequest(BaseModel):
+    track_id: str
+    limit: int = 20
+
+
+@router.post("/echo-match")
+async def echo_match_endpoint(req: EchoMatchRequest, db: AsyncSession = Depends(get_db)):
+    """Find tracks with similar vibes using CLAP embeddings."""
+    from backend.services.similarity import echo_match
+
+    results = await echo_match(db, req.track_id, limit=req.limit)
+    if not results:
+        return {"tracks": []}
+
+    # Resolve track details
+    track_ids = [r["track_id"] for r in results]
+    tracks_result = await db.execute(
+        select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+        .where(Track.id.in_(track_ids))
+    )
+    track_map = {t.id: t for t in tracks_result.scalars().all()}
+
+    tracks_out = []
+    for r in results:
+        t = track_map.get(r["track_id"])
+        if t:
+            tracks_out.append({
+                "id": t.id,
+                "title": t.title,
+                "artist": t.artist.name if t.artist else None,
+                "album": t.album.title if t.album else None,
+                "similarity": r.get("similarity", 0),
+            })
+
+    return {"tracks": tracks_out}
+
+
 class VibeSearchRequest(BaseModel):
     query: str | None = None
     track_id: str | None = None
