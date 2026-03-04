@@ -164,14 +164,10 @@ fi
 
 # ─── API Keys ────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}── API Keys ${DIM}(leave blank to set later)${NC}"
-ask "slskd URL" "" SLSKD_URL
-ask "slskd API key" "" SLSKD_KEY
+echo -e "${BOLD}── API Keys ${DIM}(leave blank to set later via web UI)${NC}"
 ask "Last.fm API key" "" LASTFM_KEY
 ask "Last.fm write API key" "" LASTFM_WRITE_KEY
 ask "Last.fm write API secret" "" LASTFM_WRITE_SECRET
-ask "Lidarr URL" "" LIDARR_URL
-ask "Lidarr API key" "" LIDARR_KEY
 
 # ─── Confirm ─────────────────────────────────────────────────────
 echo ""
@@ -182,9 +178,8 @@ echo -e "  Storage:   ${BOLD}$STORAGE${NC}"
 echo -e "  Network:   ${BOLD}$BRIDGE${NC} (${IP})"
 echo -e "  Music:     ${BOLD}$MUSIC_HOST_PATH${NC}"
 echo -e "  GPU:       ${BOLD}$ENABLE_GPU${NC}"
-[ -n "$SLSKD_KEY" ] && echo -e "  slskd:     ${GREEN}configured${NC}" || echo -e "  slskd:     ${DIM}not set${NC}"
 [ -n "$LASTFM_KEY" ] && echo -e "  Last.fm:   ${GREEN}configured${NC}" || echo -e "  Last.fm:   ${DIM}not set${NC}"
-[ -n "$LIDARR_KEY" ] && echo -e "  Lidarr:    ${GREEN}configured${NC}" || echo -e "  Lidarr:    ${DIM}not set${NC}"
+echo -e "  ${DIM}slskd/Lidarr: configure in web UI after install${NC}"
 echo -e "${CYAN}════════════════════════════════════════${NC}"
 echo ""
 
@@ -362,16 +357,16 @@ path = \"/opt/zonik/data/zonik.db\"
 url = \"redis://localhost:6379/0\"
 
 [soulseek]
-slskd_url = \"${SLSKD_URL}\"
-slskd_api_key = \"${SLSKD_KEY}\"
+slskd_url = \"\"
+slskd_api_key = \"\"
 download_dir = \"/music/Downloads\"
 preferred_formats = [\"flac\", \"wav\", \"mp3\"]
 min_file_size_mb = 3
 max_workers = 4
 
 [lidarr]
-url = \"${LIDARR_URL}\"
-api_key = \"${LIDARR_KEY}\"
+url = \"\"
+api_key = \"\"
 root_folder = \"/music\"
 
 [lastfm]

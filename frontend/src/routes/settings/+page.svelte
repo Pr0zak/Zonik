@@ -4,14 +4,58 @@
 
 	let stats = $state(null);
 	let testResults = $state({});
+	let services = $state({
+		slskd_url: '',
+		slskd_api_key: '',
+		lidarr_url: '',
+		lidarr_api_key: '',
+		lastfm_api_key: '',
+		lastfm_write_api_key: '',
+		lastfm_write_api_secret: '',
+	});
+	let saving = $state(false);
+	let dirty = $state(false);
 
 	onMount(async () => {
 		try {
-			stats = await fetch('/api/library/stats').then(r => r.json());
+			const [statsData, svcData] = await Promise.all([
+				fetch('/api/library/stats').then(r => r.json()),
+				fetch('/api/config/services').then(r => r.json()),
+			]);
+			stats = statsData;
+			services = svcData;
 		} catch (e) {
 			console.error(e);
 		}
 	});
+
+	function markDirty() {
+		dirty = true;
+	}
+
+	async function saveServices() {
+		saving = true;
+		try {
+			const resp = await fetch('/api/config/services', {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(services),
+			});
+			if (resp.ok) {
+				addToast('Settings saved', 'success');
+				dirty = false;
+				// Reload to get masked keys
+				const svcData = await fetch('/api/config/services').then(r => r.json());
+				services = svcData;
+			} else {
+				addToast('Failed to save settings', 'error');
+			}
+		} catch (e) {
+			addToast('Failed to save: ' + e.message, 'error');
+		} finally {
+			saving = false;
+		}
+	}
 
 	async function testConnection(service) {
 		testResults[service] = 'testing...';
@@ -38,6 +82,7 @@
 	<h1 class="text-2xl font-bold mb-6">Settings</h1>
 
 	<div class="space-y-6">
+		<!-- Library -->
 		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
 			<h2 class="text-lg font-semibold mb-4">Library</h2>
 			<div class="space-y-3 text-sm">
@@ -62,37 +107,111 @@
 			</div>
 		</div>
 
+		<!-- Service Connections (editable) -->
 		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
-			<h2 class="text-lg font-semibold mb-4">Connections</h2>
-			<div class="space-y-4">
-				{#each [
-					{ key: 'subsonic', label: 'Subsonic API', desc: '/rest/* endpoints' },
-					{ key: 'soulseek', label: 'Soulseek (slskd)', desc: 'P2P music search & download' },
-					{ key: 'lastfm', label: 'Last.fm', desc: 'Discovery, scrobbling, metadata' },
-				] as svc}
-					<div class="flex items-center justify-between">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold">Service Connections</h2>
+				<button on:click={saveServices} disabled={saving || !dirty}
+					class="px-4 py-1.5 bg-accent-600 hover:bg-accent-700 disabled:opacity-50
+						rounded text-xs font-medium transition">
+					{saving ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+
+			<div class="space-y-5">
+				<!-- slskd -->
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<h3 class="text-sm font-medium">Soulseek (slskd)</h3>
+						<button on:click={() => testConnection('soulseek')}
+							class="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">
+							{testResults.soulseek || 'Test'}
+						</button>
+					</div>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 						<div>
-							<p class="font-medium text-sm">{svc.label}</p>
-							<p class="text-xs text-gray-500">{svc.desc}</p>
+							<label class="block text-xs text-gray-500 mb-1">URL</label>
+							<input type="text" bind:value={services.slskd_url} on:input={markDirty}
+								placeholder="http://host:5030"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
 						</div>
-						<div class="flex items-center gap-3">
-							{#if testResults[svc.key]}
-								<span class="text-xs {testResults[svc.key].startsWith('Connected') ? 'text-green-400' : 'text-red-400'}">
-									{testResults[svc.key]}
-								</span>
-							{/if}
-							<button on:click={() => testConnection(svc.key)}
-								class="px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">
-								Test
-							</button>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">API Key</label>
+							<input type="password" bind:value={services.slskd_api_key} on:input={markDirty}
+								placeholder="slskd API key"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
 						</div>
 					</div>
-				{/each}
+				</div>
+
+				<!-- Lidarr -->
+				<div>
+					<h3 class="text-sm font-medium mb-2">Lidarr</h3>
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">URL</label>
+							<input type="text" bind:value={services.lidarr_url} on:input={markDirty}
+								placeholder="http://host:8686"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">API Key</label>
+							<input type="password" bind:value={services.lidarr_api_key} on:input={markDirty}
+								placeholder="Lidarr API key"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
+						</div>
+					</div>
+				</div>
+
+				<!-- Last.fm -->
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<h3 class="text-sm font-medium">Last.fm</h3>
+						<button on:click={() => testConnection('lastfm')}
+							class="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">
+							{testResults.lastfm || 'Test'}
+						</button>
+					</div>
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Read API Key</label>
+							<input type="password" bind:value={services.lastfm_api_key} on:input={markDirty}
+								placeholder="Last.fm API key"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Write API Key</label>
+							<input type="password" bind:value={services.lastfm_write_api_key} on:input={markDirty}
+								placeholder="Write API key"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
+						</div>
+						<div>
+							<label class="block text-xs text-gray-500 mb-1">Write API Secret</label>
+							<input type="password" bind:value={services.lastfm_write_api_secret} on:input={markDirty}
+								placeholder="Write API secret"
+								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
+									focus:outline-none focus:border-accent-500" />
+						</div>
+					</div>
+				</div>
 			</div>
 		</div>
 
+		<!-- Subsonic -->
 		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
-			<h2 class="text-lg font-semibold mb-4">Subsonic</h2>
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold">Subsonic</h2>
+				<button on:click={() => testConnection('subsonic')}
+					class="px-2 py-0.5 bg-gray-800 hover:bg-gray-700 rounded text-xs transition">
+					{testResults.subsonic || 'Test'}
+				</button>
+			</div>
 			<div class="space-y-3 text-sm">
 				<div class="flex items-center justify-between">
 					<span class="text-gray-400">Server Name</span>
@@ -113,6 +232,7 @@
 			</div>
 		</div>
 
+		<!-- About -->
 		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
 			<h2 class="text-lg font-semibold mb-4">About</h2>
 			<div class="space-y-2 text-sm text-gray-400">
