@@ -243,3 +243,73 @@ async def get_artist_info2(request: Request, db: AsyncSession = Depends(get_db))
             "largeImageUrl": artist.image_url,
         }
     }, _get_format(request))
+
+
+@router.get("/getSimilarSongs2")
+@router.get("/getSimilarSongs2.view")
+async def get_similar_songs2(request: Request, db: AsyncSession = Depends(get_db)):
+    song_id = request.query_params.get("id")
+    count = min(int(request.query_params.get("count", 50)), 500)
+
+    if not song_id:
+        return error_response(10, "Missing id parameter", _get_format(request))
+
+    # Try vibe similarity first (if embeddings exist)
+    from backend.models.embedding import TrackEmbedding
+    emb_result = await db.execute(select(TrackEmbedding).where(TrackEmbedding.track_id == song_id))
+    seed_emb = emb_result.scalar_one_or_none()
+
+    if seed_emb:
+        from backend.services.similarity import echo_match
+        similar = await echo_match(db, song_id, limit=count)
+        track_ids = [s["track_id"] for s in similar]
+        if track_ids:
+            result = await db.execute(
+                select(Track).options(
+                    selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis)
+                ).where(Track.id.in_(track_ids))
+            )
+            tracks = {t.id: t for t in result.scalars().all()}
+            songs = [format_track(tracks[tid]) for tid in track_ids if tid in tracks]
+            return subsonic_response({"similarSongs2": {"song": songs}}, _get_format(request))
+
+    # Fallback: random songs from same artist/genre
+    result = await db.execute(select(Track).where(Track.id == song_id))
+    seed_track = result.scalar_one_or_none()
+    if not seed_track:
+        return subsonic_response({"similarSongs2": {"song": []}}, _get_format(request))
+
+    query = select(Track).options(
+        selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis)
+    ).where(Track.id != song_id)
+
+    if seed_track.artist_id:
+        query = query.where(Track.artist_id == seed_track.artist_id)
+    elif seed_track.genre:
+        query = query.where(Track.genre == seed_track.genre)
+
+    query = query.order_by(func.random()).limit(count)
+    result = await db.execute(query)
+    songs = [format_track(t) for t in result.scalars().all()]
+
+    return subsonic_response({"similarSongs2": {"song": songs}}, _get_format(request))
+
+
+@router.get("/getTopSongs")
+@router.get("/getTopSongs.view")
+async def get_top_songs(request: Request, db: AsyncSession = Depends(get_db)):
+    artist_name = request.query_params.get("artist")
+    count = min(int(request.query_params.get("count", 50)), 500)
+
+    if not artist_name:
+        return error_response(10, "Missing artist parameter", _get_format(request))
+
+    result = await db.execute(
+        select(Track).options(
+            selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis)
+        ).join(Artist).where(Artist.name.ilike(f"%{artist_name}%"))
+        .order_by(Track.play_count.desc()).limit(count)
+    )
+    songs = [format_track(t) for t in result.scalars().all()]
+
+    return subsonic_response({"topSongs": {"song": songs}}, _get_format(request))
