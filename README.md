@@ -52,8 +52,8 @@ uv run arq backend.workers.WorkerSettings
 ### Production (Proxmox LXC)
 
 ```bash
-# On a fresh Debian 12 container:
-curl -sL https://raw.githubusercontent.com/Pr0zak/Zonik/main/install.sh | bash
+# Run on your Proxmox host — creates the CT, installs everything, starts services:
+bash <(curl -sL https://raw.githubusercontent.com/Pr0zak/Zonik/main/create-ct.sh)
 ```
 
 See [Installation Guide](docs/installation.md) for details.

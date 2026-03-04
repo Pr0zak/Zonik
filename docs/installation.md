@@ -2,15 +2,23 @@
 
 ## Proxmox LXC (Recommended)
 
-### Automated Install
+### One-Line Install
 
-On a fresh Debian 12 (Bookworm) LXC container:
+Run on your **Proxmox host** — it creates the CT, installs everything, and starts services:
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/Pr0zak/Zonik/main/create-ct.sh)
+```
+
+The interactive installer will prompt for CT resources, network, music path, GPU passthrough, and API keys.
+
+### Inside an Existing CT
+
+If you already have a Debian 12 container:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/Pr0zak/Zonik/main/install.sh | bash
 ```
-
-This installs all dependencies, builds the frontend, initializes the database, and sets up systemd services.
 
 ### Manual Install
 
