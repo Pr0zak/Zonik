@@ -24,7 +24,7 @@ path = "/opt/zonik/data/zonik.db"       # SQLite database path
 url = "redis://localhost:6379/0"        # Redis URL for ARQ worker
 
 [soulseek]
-slskd_url = "http://10.0.0.116:5030"   # slskd API URL
+slskd_url = ""                           # slskd API URL (e.g. http://host:5030)
 slskd_api_key = ""                       # slskd API key
 download_dir = "/music/Downloads"        # Where downloads are saved
 preferred_formats = ["flac", "wav", "mp3"]  # Format preference order
@@ -32,7 +32,7 @@ min_file_size_mb = 3                     # Skip files smaller than this
 max_workers = 4                          # Parallel download workers
 
 [lidarr]
-url = "http://10.0.0.179:8686"          # Lidarr API URL
+url = ""                                 # Lidarr API URL (e.g. http://host:8686)
 api_key = ""                             # Lidarr API key
 root_folder = "/music"                   # Lidarr root folder
 

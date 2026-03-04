@@ -135,7 +135,7 @@ if ask_yn "Use DHCP?" "Y"; then
     GATEWAY=""
 else
     ask "IP address (e.g. 10.0.0.225/24)" "" IP
-    ask "Gateway" "10.0.0.1" GATEWAY
+    ask "Gateway" "" GATEWAY
 fi
 
 # ─── Music library ───────────────────────────────────────────────
@@ -165,12 +165,12 @@ fi
 # ─── API Keys ────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}── API Keys ${DIM}(leave blank to set later)${NC}"
-ask "slskd URL" "http://10.0.0.116:5030" SLSKD_URL
+ask "slskd URL" "" SLSKD_URL
 ask "slskd API key" "" SLSKD_KEY
 ask "Last.fm API key" "" LASTFM_KEY
 ask "Last.fm write API key" "" LASTFM_WRITE_KEY
 ask "Last.fm write API secret" "" LASTFM_WRITE_SECRET
-ask "Lidarr URL" "http://10.0.0.179:8686" LIDARR_URL
+ask "Lidarr URL" "" LIDARR_URL
 ask "Lidarr API key" "" LIDARR_KEY
 
 # ─── Confirm ─────────────────────────────────────────────────────

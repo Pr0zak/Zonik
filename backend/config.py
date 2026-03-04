@@ -27,7 +27,7 @@ class RedisConfig(BaseModel):
 
 
 class SoulseekConfig(BaseModel):
-    slskd_url: str = "http://10.0.0.116:5030"
+    slskd_url: str = ""
     slskd_api_key: str = ""
     download_dir: str = "/music/Downloads"
     preferred_formats: list[str] = ["flac", "wav", "mp3"]
@@ -36,7 +36,7 @@ class SoulseekConfig(BaseModel):
 
 
 class LidarrConfig(BaseModel):
-    url: str = "http://10.0.0.179:8686"
+    url: str = ""
     api_key: str = ""
     root_folder: str = "/music"
 

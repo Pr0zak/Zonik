@@ -14,7 +14,7 @@ path = "/opt/zonik/data/zonik.db"
 url = "redis://localhost:6379/0"
 
 [soulseek]
-slskd_url = "http://10.0.0.116:5030"
+slskd_url = ""
 slskd_api_key = ""
 download_dir = "/music/Downloads"
 preferred_formats = ["flac", "wav", "mp3"]
@@ -22,7 +22,7 @@ min_file_size_mb = 3
 max_workers = 4
 
 [lidarr]
-url = "http://10.0.0.179:8686"
+url = ""
 api_key = ""
 root_folder = "/music"
 

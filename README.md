@@ -67,7 +67,7 @@ Edit `zonik.toml` (or `/etc/zonik/zonik.toml` in production):
 music_dir = "/music"
 
 [soulseek]
-slskd_url = "http://10.0.0.116:5030"
+slskd_url = "http://your-slskd-host:5030"
 slskd_api_key = "your-key"
 
 [lastfm]
