@@ -10,6 +10,7 @@
 		{ href: '/playlists', label: 'Playlists', icon: '≡' },
 		{ href: '/favorites', label: 'Favorites', icon: '★' },
 		{ href: '/analysis', label: 'Analysis', icon: '~' },
+		{ href: '/stats', label: 'Stats', icon: '◩' },
 		{ href: '/schedule', label: 'Schedule', icon: '⏱' },
 		{ href: '/logs', label: 'Logs', icon: '▤' },
 		{ href: '/settings', label: 'Settings', icon: '⚙' },

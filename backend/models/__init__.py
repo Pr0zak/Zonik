@@ -10,9 +10,10 @@ from backend.models.user import User
 from backend.models.play_queue import PlayQueue
 from backend.models.bookmark import Bookmark
 from backend.models.schedule import ScheduleTask
+from backend.models.blacklist import DownloadBlacklist
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
     "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User",
-    "PlayQueue", "Bookmark", "ScheduleTask",
+    "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
 ]

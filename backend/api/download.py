@@ -7,15 +7,30 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session
 from backend.models.job import Job
+from backend.models.blacklist import DownloadBlacklist
 from backend.services.soulseek import (
-    search_multi_strategy, get_slskd_client, pick_best_results,
+    search_multi_strategy, get_slskd_client, pick_best_results, normalize_text,
 )
 
 router = APIRouter()
+
+
+async def is_blacklisted(db: AsyncSession, artist: str, track: str) -> str | None:
+    """Check if artist/track is blacklisted. Returns reason or None."""
+    artist_norm = normalize_text(artist)
+    result = await db.execute(select(DownloadBlacklist))
+    for entry in result.scalars().all():
+        if normalize_text(entry.artist) == artist_norm:
+            if entry.track is None:
+                return entry.reason or "Artist blacklisted"
+            if normalize_text(entry.track) == normalize_text(track):
+                return entry.reason or "Track blacklisted"
+    return None
 
 
 class SearchRequest(BaseModel):
@@ -35,8 +50,12 @@ class BulkDownloadRequest(BaseModel):
 
 
 @router.post("/search")
-async def search_soulseek(req: SearchRequest):
+async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)):
     """Search Soulseek for a track using multi-strategy search."""
+    reason = await is_blacklisted(db, req.artist, req.track)
+    if reason:
+        return {"results": [], "count": 0, "blacklisted": True, "reason": reason}
+
     candidates = await search_multi_strategy(req.artist, req.track)
     return {
         "results": [
@@ -54,8 +73,12 @@ async def search_soulseek(req: SearchRequest):
 
 
 @router.post("/trigger")
-async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTasks):
+async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Download a specific file or auto-search and download best result."""
+    reason = await is_blacklisted(db, req.artist, req.track)
+    if reason:
+        return {"error": "blacklisted", "reason": reason}
+
     job_id = str(uuid.uuid4())
 
     async def do_download():
@@ -127,9 +150,14 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             async def download_one(idx: int, t: dict):
                 async with semaphore:
                     try:
-                        result = await search_and_download(t.get("artist", ""), t.get("track", ""))
-                        ok = result.get("ok") or result.get("status") == "downloading"
-                        track_statuses[idx]["status"] = "downloaded" if ok else "failed"
+                        reason = await is_blacklisted(db, t.get("artist", ""), t.get("track", ""))
+                        if reason:
+                            track_statuses[idx]["status"] = "skipped"
+                            track_statuses[idx]["reason"] = reason
+                        else:
+                            result = await search_and_download(t.get("artist", ""), t.get("track", ""))
+                            ok = result.get("ok") or result.get("status") == "downloading"
+                            track_statuses[idx]["status"] = "downloaded" if ok else "failed"
                     except Exception as e:
                         track_statuses[idx]["status"] = "failed"
 
@@ -157,3 +185,56 @@ async def download_status():
     client = get_slskd_client()
     downloads = await client.get_all_downloads()
     return {"downloads": downloads}
+
+
+# --- Blacklist CRUD ---
+
+class BlacklistEntry(BaseModel):
+    artist: str
+    track: str | None = None
+    reason: str | None = None
+
+
+@router.get("/blacklist")
+async def list_blacklist(db: AsyncSession = Depends(get_db)):
+    """Get all blacklist entries."""
+    result = await db.execute(
+        select(DownloadBlacklist).order_by(DownloadBlacklist.artist, DownloadBlacklist.track)
+    )
+    entries = result.scalars().all()
+    return [
+        {
+            "id": e.id,
+            "artist": e.artist,
+            "track": e.track,
+            "reason": e.reason,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in entries
+    ]
+
+
+@router.post("/blacklist")
+async def add_to_blacklist(entry: BlacklistEntry, db: AsyncSession = Depends(get_db)):
+    """Add an artist or track to the download blacklist."""
+    bl = DownloadBlacklist(
+        id=str(uuid.uuid4()),
+        artist=entry.artist.strip(),
+        track=entry.track.strip() if entry.track else None,
+        reason=entry.reason,
+    )
+    db.add(bl)
+    await db.commit()
+    return {"id": bl.id, "artist": bl.artist, "track": bl.track}
+
+
+@router.delete("/blacklist/{entry_id}")
+async def remove_from_blacklist(entry_id: str, db: AsyncSession = Depends(get_db)):
+    """Remove a blacklist entry."""
+    result = await db.execute(select(DownloadBlacklist).where(DownloadBlacklist.id == entry_id))
+    entry = result.scalar_one_or_none()
+    if not entry:
+        return {"error": "Not found"}
+    await db.delete(entry)
+    await db.commit()
+    return {"ok": True}
