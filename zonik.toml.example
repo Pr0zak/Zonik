@@ -1,0 +1,42 @@
+[server]
+host = "0.0.0.0"
+port = 3000
+secret_key = "change-me-to-a-random-string"
+
+[library]
+music_dir = "/music"
+cover_cache_dir = "/opt/zonik/cache/covers"
+
+[database]
+path = "/opt/zonik/data/zonik.db"
+
+[redis]
+url = "redis://localhost:6379/0"
+
+[soulseek]
+slskd_url = "http://10.0.0.116:5030"
+slskd_api_key = ""
+download_dir = "/music/Downloads"
+preferred_formats = ["flac", "wav", "mp3"]
+min_file_size_mb = 3
+max_workers = 4
+
+[lidarr]
+url = "http://10.0.0.179:8686"
+api_key = ""
+root_folder = "/music"
+
+[lastfm]
+api_key = ""
+write_api_key = ""
+write_api_secret = ""
+
+[analysis]
+enable_essentia = true
+enable_clap = true
+use_gpu = false
+clap_model = "HTSAT-base"
+max_analysis_workers = 2
+
+[subsonic]
+server_name = "Zonik"

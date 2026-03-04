@@ -1,0 +1,13 @@
+[Unit]
+Description=Zonik Background Worker
+After=network.target redis-server.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/zonik
+ExecStart=/opt/zonik/venv/bin/arq backend.workers.WorkerSettings
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
