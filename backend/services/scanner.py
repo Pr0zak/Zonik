@@ -321,6 +321,13 @@ async def scan_library(db: AsyncSession) -> dict:
             db.add(track)
             stats["added"] += 1
 
+        # Update FTS index
+        from backend.database import update_fts_index
+        await update_fts_index(
+            db, track_id, parsed["title"],
+            parsed["artist_name"], parsed["album_title"],
+        )
+
         # Flush periodically
         if stats["scanned"] % 100 == 0:
             await db.flush()

@@ -1,11 +1,14 @@
-"""Discovery API routes - Last.fm top tracks, similar artists/tracks."""
+"""Discovery API routes - Last.fm top tracks, similar artists/tracks, auth."""
 from __future__ import annotations
+
+import hashlib
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.config import get_settings
 from backend.database import get_db
 from backend.models.track import Track
 from backend.models.artist import Artist
@@ -172,3 +175,48 @@ async def artist_info(artist: str):
     if not info:
         return {"error": "Artist not found on Last.fm"}
     return info
+
+
+# --- Last.fm Authentication ---
+
+@router.get("/lastfm/auth-url")
+async def lastfm_auth_url():
+    """Get the Last.fm auth URL for the user to visit."""
+    settings = get_settings()
+    api_key = settings.lastfm.write_api_key
+    if not api_key:
+        return {"error": "Last.fm write API key not configured"}
+    return {"url": f"https://www.last.fm/api/auth/?api_key={api_key}"}
+
+
+@router.get("/lastfm/callback")
+async def lastfm_callback(token: str):
+    """Exchange a Last.fm auth token for a session key."""
+    settings = get_settings()
+    api_key = settings.lastfm.write_api_key
+    secret = settings.lastfm.write_api_secret
+
+    if not api_key or not secret:
+        return {"error": "Last.fm write credentials not configured"}
+
+    params = {
+        "method": "auth.getSession",
+        "api_key": api_key,
+        "token": token,
+    }
+    sig_string = "".join(f"{k}{v}" for k, v in sorted(params.items())) + secret
+    params["api_sig"] = hashlib.md5(sig_string.encode()).hexdigest()
+    params["format"] = "json"
+
+    import httpx
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get("https://ws.audioscrobbler.com/2.0/", params=params)
+        data = resp.json()
+
+    session = data.get("session", {})
+    if session.get("key"):
+        return {
+            "session_key": session["key"],
+            "username": session.get("name", ""),
+        }
+    return {"error": data.get("message", "Authentication failed")}
