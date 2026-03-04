@@ -13,7 +13,7 @@ from sqlalchemy import select
 from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis
 from backend.subsonic import router as subsonic_router
 
 
@@ -55,6 +55,7 @@ app.include_router(playlists.router, prefix="/api/playlists", tags=["playlists"]
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(download.router, prefix="/api/download", tags=["download"])
 app.include_router(discovery.router, prefix="/api/discovery", tags=["discovery"])
+app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 
 # Subsonic API
 app.include_router(subsonic_router, prefix="/rest")
