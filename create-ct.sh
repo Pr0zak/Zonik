@@ -162,13 +162,6 @@ else
     echo -e "  ${DIM}No /dev/dri found, skipping${NC}"
 fi
 
-# ─── API Keys ────────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}── API Keys ${DIM}(leave blank to set later via web UI)${NC}"
-ask "Last.fm API key" "" LASTFM_KEY
-ask "Last.fm write API key" "" LASTFM_WRITE_KEY
-ask "Last.fm write API secret" "" LASTFM_WRITE_SECRET
-
 # ─── Confirm ─────────────────────────────────────────────────────
 echo ""
 echo -e "${CYAN}════════════════════════════════════════${NC}"
@@ -178,8 +171,7 @@ echo -e "  Storage:   ${BOLD}$STORAGE${NC}"
 echo -e "  Network:   ${BOLD}$BRIDGE${NC} (${IP})"
 echo -e "  Music:     ${BOLD}$MUSIC_HOST_PATH${NC}"
 echo -e "  GPU:       ${BOLD}$ENABLE_GPU${NC}"
-[ -n "$LASTFM_KEY" ] && echo -e "  Last.fm:   ${GREEN}configured${NC}" || echo -e "  Last.fm:   ${DIM}not set${NC}"
-echo -e "  ${DIM}slskd/Lidarr: configure in web UI after install${NC}"
+echo -e "  ${DIM}API keys: configure in web UI after install${NC}"
 echo -e "${CYAN}════════════════════════════════════════${NC}"
 echo ""
 
@@ -337,7 +329,7 @@ echo "       Installation complete inside CT."
 '
 
 # ─── Write config ────────────────────────────────────────────────
-msg "Writing configuration with API keys..."
+msg "Writing configuration..."
 SECRET=$(pct exec "$CTID" -- python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 
 pct exec "$CTID" -- bash -c "cat > /etc/zonik/zonik.toml << 'CFGEOF'
@@ -370,9 +362,9 @@ api_key = \"\"
 root_folder = \"/music\"
 
 [lastfm]
-api_key = \"${LASTFM_KEY}\"
-write_api_key = \"${LASTFM_WRITE_KEY}\"
-write_api_secret = \"${LASTFM_WRITE_SECRET}\"
+api_key = \"\"
+write_api_key = \"\"
+write_api_secret = \"\"
 
 [analysis]
 enable_essentia = true
