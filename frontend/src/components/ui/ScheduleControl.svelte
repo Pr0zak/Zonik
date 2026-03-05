@@ -51,12 +51,11 @@
 		<span class="text-xs text-[var(--text-secondary)] font-medium min-w-0 truncate">{label}</span>
 	{/if}
 	{#if lastRunAt}
-		<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0" title="Last ran: {new Date(lastRunAt).toLocaleString()}">
-			ran {(() => {
-				const d = new Date(lastRunAt);
-				const now = new Date();
-				const diff = now - d;
+		<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0" title="{new Date(lastRunAt).toLocaleString()}">
+			{(() => {
+				const diff = Math.max(0, Date.now() - new Date(lastRunAt));
 				const mins = Math.floor(diff / 60000);
+				if (mins < 1) return 'just now';
 				if (mins < 60) return `${mins}m ago`;
 				const hrs = Math.floor(mins / 60);
 				if (hrs < 24) return `${hrs}h ago`;
