@@ -1,4 +1,4 @@
-import { activeJobs } from './stores.js';
+import { activeJobs, activeTransfers } from './stores.js';
 
 let ws = null;
 
@@ -11,7 +11,9 @@ export function connectWebSocket() {
 	ws.onmessage = (event) => {
 		try {
 			const data = JSON.parse(event.data);
-			if (data.type === 'job_update') {
+			if (data.type === 'transfer_progress') {
+				activeTransfers.set(data.transfers || []);
+			} else if (data.type === 'job_update') {
 				activeJobs.update(jobs => {
 					const idx = jobs.findIndex(j => j.id === data.job.id);
 					if (idx >= 0) {

@@ -40,6 +40,18 @@ async def broadcast_log(log_data: dict):
     _clients.difference_update(disconnected)
 
 
+async def broadcast_transfer_progress(transfers: list[dict]):
+    """Broadcast transfer progress to all connected WebSocket clients."""
+    message = json.dumps({"type": "transfer_progress", "transfers": transfers})
+    disconnected = set()
+    for ws in _clients:
+        try:
+            await ws.send_text(message)
+        except Exception:
+            disconnected.add(ws)
+    _clients.difference_update(disconnected)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -62,6 +74,20 @@ async def websocket_endpoint(websocket: WebSocket):
                         "total": job.total,
                     }
                 }))
+
+        # Send current transfers on connect
+        try:
+            from backend.soulseek import get_client
+            client = get_client()
+            if client:
+                transfers = client.transfers.get_all_transfers()
+                if transfers:
+                    await websocket.send_text(json.dumps({
+                        "type": "transfer_progress",
+                        "transfers": transfers,
+                    }))
+        except Exception:
+            pass
 
         # Keep connection alive
         while True:

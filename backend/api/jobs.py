@@ -43,10 +43,14 @@ def _job_description(j: Job) -> str:
 
 
 @router.get("")
-async def list_jobs(limit: int = 50, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(Job).order_by(Job.started_at.desc()).limit(limit)
-    )
+async def list_jobs(limit: int = 50, offset: int = 0, type: str | None = None, db: AsyncSession = Depends(get_db)):
+    query = select(Job)
+    if type:
+        type_list = [t.strip() for t in type.split(",") if t.strip()]
+        if type_list:
+            query = query.where(Job.type.in_(type_list))
+    query = query.order_by(Job.started_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
     jobs = result.scalars().all()
     return [
         {

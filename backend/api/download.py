@@ -250,6 +250,29 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
     return {"job_id": job_id, "total": len(req.tracks)}
 
 
+class CancelTransferRequest(BaseModel):
+    username: str
+    filename: str
+
+
+@router.post("/cancel-transfer")
+async def cancel_transfer(req: CancelTransferRequest):
+    """Cancel an active transfer in the native Soulseek client."""
+    from backend.soulseek import get_client
+    from backend.soulseek.protocol.types import TransferState
+    client = get_client()
+    if not client:
+        return {"error": "Native client not available"}
+    transfer = client.transfers.get_transfer(req.username, req.filename)
+    if not transfer:
+        return {"error": "Transfer not found"}
+    client.transfers.update_state(transfer, TransferState.FAILED, error="Cancelled by user")
+    client.transfers.remove_transfer(req.username, req.filename)
+    from backend.api.websocket import broadcast_transfer_progress
+    await broadcast_transfer_progress(client.transfers.get_all_transfers())
+    return {"ok": True}
+
+
 @router.get("/status")
 async def download_status():
     """Get current download status from native Soulseek client."""

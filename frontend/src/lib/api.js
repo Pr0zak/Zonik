@@ -55,7 +55,11 @@ export const api = {
 	deletePlaylist: (id) => request(`/playlists/${id}`, { method: 'DELETE' }),
 
 	// Jobs
-	getJobs: () => request('/jobs'),
+	getJobs: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/jobs?${qs}`);
+	},
 	getActiveJobs: () => request('/jobs/active'),
 	getJob: (id) => request(`/jobs/${id}`),
 	retryJob: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
@@ -66,6 +70,12 @@ export const api = {
 		request(`/discovery/similar-by-track?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}&limit=${limit}`),
 	echoMatch: (trackId, limit = 20) =>
 		request('/analysis/echo-match', { method: 'POST', body: JSON.stringify({ track_id: trackId, limit }) }),
+
+	// Transfers
+	cancelTransfer: (username, filename) =>
+		request('/download/cancel-transfer', { method: 'POST', body: JSON.stringify({ username, filename }) }),
+	getDownloadHistory: (offset = 0, limit = 20) =>
+		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`),
 
 	// Blacklist
 	addToBlacklist: (artist, track = null, reason = null) =>

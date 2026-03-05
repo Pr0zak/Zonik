@@ -1,20 +1,22 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { addToast, activeJobs } from '$lib/stores.js';
-	import { formatSize } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, ListOrdered, ArrowDownToLine, RefreshCw, XCircle } from 'lucide-svelte';
+	import { addToast, activeTransfers } from '$lib/stores.js';
+	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
+	import { Download, Search, Zap, ShieldBan, Trash2, ArrowDownToLine, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 
+	// Search state
 	let artist = $state('');
 	let track = $state('');
 	let results = $state([]);
 	let searching = $state(false);
 	let downloading = $state({});
 
+	// Blacklist state
 	let blacklist = $state([]);
 	let blArtist = $state('');
 	let blTrack = $state('');
@@ -32,6 +34,58 @@
 			: blacklist
 	);
 
+	// History state
+	let history = $state([]);
+	let historyOffset = $state(0);
+	let historyLoading = $state(false);
+	let expandedJob = $state(null);
+	let jobDetails = $state({});
+	const HISTORY_LIMIT = 20;
+
+	function transferStateBadge(state) {
+		if (state === 'completed') return 'success';
+		if (state === 'transferring' || state === 'connected') return 'info';
+		if (state === 'requested' || state === 'queued') return 'default';
+		return 'error';
+	}
+
+	async function loadHistory() {
+		historyLoading = true;
+		try {
+			history = await api.getDownloadHistory(historyOffset, HISTORY_LIMIT);
+		} catch (e) { console.error(e); }
+		finally { historyLoading = false; }
+	}
+
+	async function toggleJobDetail(jobId) {
+		if (expandedJob === jobId) { expandedJob = null; return; }
+		expandedJob = jobId;
+		if (!jobDetails[jobId]) {
+			try {
+				const detail = await api.getJob(jobId);
+				if (detail?.tracks) {
+					jobDetails[jobId] = JSON.parse(detail.tracks);
+				}
+			} catch {}
+		}
+	}
+
+	async function retryJob(jobId) {
+		try {
+			await api.retryJob(jobId);
+			addToast('Retry started', 'success');
+			await loadHistory();
+		} catch { addToast('Retry failed', 'error'); }
+	}
+
+	async function cancelTransfer(username, filename) {
+		try {
+			await api.cancelTransfer(username, filename);
+			addToast('Transfer cancelled', 'success');
+		} catch { addToast('Cancel failed', 'error'); }
+	}
+
+	// Blacklist
 	async function searchLibraryForBlacklist() {
 		if (!blSearch.trim()) return;
 		blSearching = true;
@@ -42,74 +96,6 @@
 			if (!artists.length) addToast('No matching artists found', 'warning');
 		} catch (e) { addToast('Search failed', 'error'); }
 		finally { blSearching = false; }
-	}
-
-	let recentDlJobs = $state([]);
-	let activeDlJobs = $derived($activeJobs.filter(j => j.type === 'download' || j.type === 'bulk_download'));
-	let completedDlJobs = $derived(recentDlJobs.filter(j => j.status !== 'running'));
-	let showQueue = $derived(activeDlJobs.length > 0 || completedDlJobs.length > 0);
-
-	// slskd transfer queue
-	let slskdTransfers = $state([]);
-	let transfersLoading = $state(false);
-	let transferPollTimer = $state(null);
-
-	async function loadTransfers() {
-		transfersLoading = true;
-		try {
-			const data = await fetch('/api/download/status').then(r => r.json());
-			// Flatten: each user has files array
-			const flat = [];
-			for (const user of (data.downloads || [])) {
-				for (const file of (user.files || [])) {
-					flat.push({
-						username: user.username,
-						filename: file.filename?.split(/[/\\]/).pop() || file.filename,
-						state: file.state,
-						bytesTransferred: file.bytesTransferred || 0,
-						size: file.size || 0,
-						averageSpeed: file.averageSpeed || 0,
-					});
-				}
-			}
-			slskdTransfers = flat;
-		} catch { slskdTransfers = []; }
-		finally { transfersLoading = false; }
-	}
-
-	let jobPollTimer = $state(null);
-
-	onMount(() => {
-		loadBlacklist();
-		loadRecentJobs();
-		loadTransfers();
-		// Poll transfers and jobs every 5s
-		transferPollTimer = setInterval(loadTransfers, 5000);
-		jobPollTimer = setInterval(loadRecentJobs, 5000);
-		return () => {
-			if (transferPollTimer) clearInterval(transferPollTimer);
-			if (jobPollTimer) clearInterval(jobPollTimer);
-		};
-	});
-
-	let jobDetails = $state({});
-
-	async function loadRecentJobs() {
-		try {
-			const jobs = await fetch('/api/jobs?limit=10').then(r => r.json());
-			recentDlJobs = (jobs || []).filter(j => j.type === 'download' || j.type === 'bulk_download').slice(0, 5);
-			// Fetch details for active jobs to get track-level info
-			for (const j of recentDlJobs) {
-				if (j.status === 'running' || !jobDetails[j.id]) {
-					try {
-						const detail = await api.getJob(j.id);
-						if (detail && detail.tracks) {
-							jobDetails[j.id] = JSON.parse(detail.tracks);
-						}
-					} catch {}
-				}
-			}
-		} catch (e) { console.error(e); }
 	}
 
 	async function loadBlacklist() {
@@ -143,6 +129,7 @@
 		} catch (e) { addToast('Failed to remove', 'error'); }
 	}
 
+	// Soulseek Search
 	async function searchSoulseek() {
 		if (!artist.trim() || !track.trim()) return;
 		searching = true;
@@ -200,132 +187,65 @@
 	function handleKeydown(e) {
 		if (e.key === 'Enter') searchSoulseek();
 	}
+
+	onMount(() => {
+		loadBlacklist();
+		loadHistory();
+		// Seed transfers from REST on mount (WebSocket takes over after)
+		fetch('/api/download/status').then(r => r.json()).then(data => {
+			if (data.downloads?.length) activeTransfers.set(data.downloads);
+		}).catch(() => {});
+	});
 </script>
 
 <div class="max-w-6xl">
 	<PageHeader title="Downloads" color="var(--color-downloads)" />
 
-	<!-- Download Queue -->
-	{#if showQueue}
+	<!-- Active Transfers (WebSocket-driven) -->
+	{#if $activeTransfers.length > 0}
 		<Card padding="p-6" class="mb-6">
 			<div class="flex items-center gap-2 mb-4">
-				<ListOrdered class="w-4 h-4 text-[var(--color-downloads)]" />
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download Queue</h2>
+				<ArrowDownToLine class="w-4 h-4 text-[var(--color-downloads)]" />
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Active Transfers</h2>
+				<Badge>{$activeTransfers.length}</Badge>
 			</div>
-
-			<div class="space-y-3">
-				{#each [...activeDlJobs, ...completedDlJobs] as job (job.id)}
-					{@const tracks = jobDetails[job.id] || []}
+			<div class="space-y-2">
+				{#each $activeTransfers.slice(0, 10) as t}
+					{@const shortName = t.filename?.split(/[/\\]/).pop() || t.filename}
 					<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden animate-fade-slide-in">
-						<!-- Job header -->
-						<div class="flex items-center gap-3 px-4 py-3">
-							<Badge variant={job.status === 'running' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
-								{job.type === 'bulk_download' ? 'bulk' : 'download'}
-							</Badge>
+						<div class="flex items-center gap-3 px-4 py-2.5">
 							<div class="flex-1 min-w-0">
-								<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
-								{#if job.total}
-									<p class="text-xs text-[var(--text-muted)]">{job.progress || 0} of {job.total} tracks</p>
-								{/if}
+								<p class="text-sm text-[var(--text-primary)] font-medium truncate" title={t.filename}>{shortName}</p>
+								<p class="text-xs text-[var(--text-muted)] truncate">from {t.username}</p>
 							</div>
-							{#if job.status === 'running'}
-								<button onclick={async () => { await api.cancelJob(job.id); await loadRecentJobs(); }}
-									class="text-[var(--text-muted)] hover:text-red-400 transition-colors" title="Cancel">
-									<XCircle class="w-4 h-4" />
+							{#if t.speed > 0}
+								<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0">{formatSpeed(t.speed)}</span>
+							{/if}
+							{#if t.eta_seconds != null && t.eta_seconds > 0}
+								<span class="text-xs text-[var(--text-disabled)] font-mono flex-shrink-0">{formatETA(t.eta_seconds)}</span>
+							{/if}
+							{#if t.total_bytes > 0}
+								<span class="text-xs text-[var(--text-disabled)] font-mono flex-shrink-0 hidden sm:inline">
+									{formatSize(t.received_bytes)} / {formatSize(t.total_bytes)}
+								</span>
+							{/if}
+							<Badge variant={transferStateBadge(t.state)}>{t.state}</Badge>
+							{#if t.state !== 'completed' && t.state !== 'failed' && t.state !== 'denied'}
+								<button onclick={() => cancelTransfer(t.username, t.filename)}
+									class="text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
+									<X class="w-3.5 h-3.5" />
 								</button>
 							{/if}
-							<Badge variant={job.status === 'running' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
-								{#if job.status === 'running'}
-									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
-								{/if}
-								{job.status}
-							</Badge>
 						</div>
-						<!-- Progress bar -->
-						{#if job.status === 'running' && job.total}
+						{#if t.total_bytes > 0 && t.state === 'transferring'}
 							<div class="h-1 bg-[var(--border-interactive)]">
-								<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
-									style="width: {((job.progress || 0) / job.total) * 100}%"></div>
-							</div>
-						{/if}
-						<!-- Per-track details -->
-						{#if tracks.length}
-							<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)]">
-								{#each tracks as t, i}
-									<div class="flex items-center gap-2 text-xs py-1">
-										<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
-										<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
-											{t.artist} — {t.track}
-										</span>
-										{#if t.filename}
-											<span class="text-[var(--text-muted)] truncate max-w-[200px] hidden sm:inline" title={t.filename}>{t.filename}</span>
-										{/if}
-										{#if t.username}
-											<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
-										{/if}
-										{#if t.size}
-											<span class="text-[var(--text-disabled)] font-mono hidden lg:inline">{formatSize(t.size)}</span>
-										{/if}
-										<Badge variant={
-											t.status === 'downloaded' ? 'success' :
-											t.status === 'downloading' || t.status === 'transferring' ? 'info' :
-											t.status === 'pending' ? 'default' :
-											t.status === 'skipped' ? 'warning' : 'error'
-										}>{t.status}</Badge>
-									</div>
-								{/each}
+								<div class="h-full bg-[var(--color-downloads)] transition-all duration-300"
+									style="width: {t.progress}%"></div>
 							</div>
 						{/if}
 					</div>
 				{/each}
 			</div>
-		</Card>
-	{/if}
-
-	<!-- slskd Active Transfers -->
-	{#if slskdTransfers.length > 0 || transfersLoading}
-		<Card padding="p-6" class="mb-6">
-			<div class="flex items-center justify-between mb-4">
-				<div class="flex items-center gap-2">
-					<ArrowDownToLine class="w-4 h-4 text-[var(--color-downloads)]" />
-					<h2 class="text-base font-semibold text-[var(--text-primary)]">Active Transfers</h2>
-					<Badge>{slskdTransfers.length}</Badge>
-				</div>
-				<button onclick={loadTransfers} class="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
-					<RefreshCw class="w-3.5 h-3.5 {transfersLoading ? 'animate-spin' : ''}" />
-				</button>
-			</div>
-			{#if slskdTransfers.length}
-				<div class="space-y-2">
-					{#each slskdTransfers as t}
-						<div class="flex items-center gap-3 px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm">
-							<div class="flex-1 min-w-0">
-								<p class="text-[var(--text-primary)] truncate font-medium">{t.filename}</p>
-								<p class="text-xs text-[var(--text-muted)] truncate">from {t.username}</p>
-							</div>
-							{#if t.size > 0}
-								<div class="w-24 flex-shrink-0">
-									<div class="h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
-										<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all"
-											style="width: {Math.min(100, (t.bytesTransferred / t.size) * 100)}%"></div>
-									</div>
-									<p class="text-[10px] text-[var(--text-muted)] mt-0.5 text-right">{Math.round((t.bytesTransferred / t.size) * 100)}%</p>
-								</div>
-							{/if}
-							{#if t.averageSpeed > 0}
-								<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0">{formatSize(t.averageSpeed)}/s</span>
-							{/if}
-							<Badge variant={
-								t.state === 'Completed' || t.state === 'Succeeded' ? 'success' :
-								t.state === 'InProgress' || t.state === 'Downloading' ? 'info' :
-								t.state === 'Queued' || t.state === 'Requested' ? 'default' : 'error'
-							}>{t.state}</Badge>
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-sm text-[var(--text-muted)] text-center py-4">No active transfers</p>
-			{/if}
 		</Card>
 	{/if}
 
@@ -407,6 +327,113 @@
 					</tbody>
 				</table>
 			</div>
+		{/if}
+	</Card>
+
+	<!-- Download History -->
+	<Card padding="p-6" class="mb-6">
+		<div class="flex items-center gap-2 mb-4">
+			<Download class="w-4 h-4 text-[var(--color-downloads)]" />
+			<h2 class="text-base font-semibold text-[var(--text-primary)]">Download History</h2>
+		</div>
+
+		{#if historyLoading && !history.length}
+			<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
+		{:else if history.length}
+			<div class="space-y-2">
+				{#each history as job (job.id)}
+					<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden">
+						<!-- Job header -->
+						<button onclick={() => toggleJobDetail(job.id)}
+							class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors text-left">
+							<Badge variant={job.status === 'running' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
+								{job.type === 'bulk_download' ? 'bulk' : 'download'}
+							</Badge>
+							<div class="flex-1 min-w-0">
+								<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
+								<p class="text-xs text-[var(--text-muted)]">
+									{#if job.total}{job.progress || 0}/{job.total} tracks &middot; {/if}
+									{job.started_at ? new Date(job.started_at).toLocaleString() : ''}
+								</p>
+							</div>
+							{#if job.status === 'failed'}
+								<button onclick={(e) => { e.stopPropagation(); retryJob(job.id); }}
+									class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Retry failed tracks">
+									<RotateCcw class="w-3.5 h-3.5" />
+								</button>
+							{/if}
+							{#if job.status === 'running' && job.total}
+								<span class="text-xs text-[var(--text-muted)] font-mono">{Math.round(((job.progress || 0) / job.total) * 100)}%</span>
+							{/if}
+							<Badge variant={job.status === 'running' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
+								{#if job.status === 'running'}
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+								{/if}
+								{job.status}
+							</Badge>
+							{#if expandedJob === job.id}
+								<ChevronUp class="w-3.5 h-3.5 text-[var(--text-muted)]" />
+							{:else}
+								<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)]" />
+							{/if}
+						</button>
+						<!-- Progress bar for running jobs -->
+						{#if job.status === 'running' && job.total}
+							<div class="h-1 bg-[var(--border-interactive)]">
+								<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
+									style="width: {((job.progress || 0) / job.total) * 100}%"></div>
+							</div>
+						{/if}
+						<!-- Expanded track details -->
+						{#if expandedJob === job.id && jobDetails[job.id]}
+							<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
+								{#each jobDetails[job.id] as t, i}
+									<div class="flex items-center gap-2 text-xs py-1">
+										<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
+										<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
+											{t.artist} — {t.track}
+										</span>
+										{#if t.filename}
+											<span class="text-[var(--text-muted)] truncate max-w-[200px] hidden sm:inline" title={t.filename}>{t.filename}</span>
+										{/if}
+										{#if t.username}
+											<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
+										{/if}
+										{#if t.size}
+											<span class="text-[var(--text-disabled)] font-mono hidden lg:inline">{formatSize(t.size)}</span>
+										{/if}
+										<Badge variant={
+											t.status === 'downloaded' ? 'success' :
+											t.status === 'downloading' || t.status === 'transferring' ? 'info' :
+											t.status === 'pending' ? 'default' :
+											t.status === 'skipped' ? 'warning' : 'error'
+										}>{t.status}</Badge>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+
+			<!-- Pagination -->
+			<div class="flex items-center justify-between mt-4">
+				<Button variant="ghost" size="sm" disabled={historyOffset === 0}
+					onclick={() => { historyOffset = Math.max(0, historyOffset - HISTORY_LIMIT); loadHistory(); }}>
+					<ChevronLeft class="w-3.5 h-3.5" />
+					Prev
+				</Button>
+				<span class="text-xs text-[var(--text-muted)]">
+					{historyOffset + 1}–{historyOffset + history.length}
+				</span>
+				<Button variant="ghost" size="sm" disabled={history.length < HISTORY_LIMIT}
+					onclick={() => { historyOffset += HISTORY_LIMIT; loadHistory(); }}>
+					Next
+					<ChevronRight class="w-3.5 h-3.5" />
+				</Button>
+			</div>
+		{:else}
+			<p class="text-sm text-[var(--text-muted)] text-center py-6">No download history yet.</p>
 		{/if}
 	</Card>
 

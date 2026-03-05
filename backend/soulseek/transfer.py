@@ -38,6 +38,24 @@ class Transfer:
             return 0.0
         return self.received_bytes / self.total_bytes
 
+    @property
+    def speed(self) -> float:
+        """Bytes per second."""
+        elapsed = time.time() - self.started_at
+        if elapsed <= 0:
+            return 0.0
+        return self.received_bytes / elapsed
+
+    @property
+    def eta_seconds(self) -> float | None:
+        """Estimated seconds remaining."""
+        if self.speed <= 0 or self.total_bytes <= 0:
+            return None
+        remaining = self.total_bytes - self.received_bytes
+        if remaining <= 0:
+            return 0.0
+        return remaining / self.speed
+
     def to_dict(self) -> dict:
         return {
             "username": self.username,
@@ -46,6 +64,8 @@ class Transfer:
             "total_bytes": self.total_bytes,
             "received_bytes": self.received_bytes,
             "progress": round(self.progress * 100, 1),
+            "speed": round(self.speed),
+            "eta_seconds": round(self.eta_seconds) if self.eta_seconds is not None else None,
             "save_path": self.save_path,
             "error": self.error,
         }

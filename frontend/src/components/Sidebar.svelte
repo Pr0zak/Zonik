@@ -1,12 +1,14 @@
 <script>
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { sidebarOpen, updateAvailable, activeJobs } from '$lib/stores.js';
+	import { sidebarOpen, updateAvailable, activeJobs, activeTransfers } from '$lib/stores.js';
 	import { Loader2 } from 'lucide-svelte';
 	import {
 		LayoutDashboard, Library, Compass, Download, ListMusic,
 		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings, Github
 	} from 'lucide-svelte';
+
+	let currentTransfer = $derived($activeTransfers.find(t => t.state === 'transferring') || null);
 
 	const nav = [
 		{ href: '/', label: 'Dashboard', icon: LayoutDashboard, color: 'var(--color-dashboard)' },
@@ -87,6 +89,22 @@
 
 	<!-- Footer -->
 	<div class="px-5 py-4 border-t border-[var(--border-subtle)]">
+		{#if currentTransfer}
+			<a href="/downloads" class="block mb-2 -mx-2 px-2 py-1.5 hover:bg-white/5 rounded transition-colors"
+				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>
+				<div class="flex items-center gap-2 mb-1">
+					<Download class="w-3 h-3 text-[var(--color-downloads)] flex-shrink-0" />
+					<span class="text-[10px] text-[var(--text-primary)] truncate flex-1">
+						{currentTransfer.filename?.split(/[/\\]/).pop() || 'Downloading...'}
+					</span>
+					<span class="text-[10px] text-[var(--color-downloads)] font-mono flex-shrink-0">{currentTransfer.progress || 0}%</span>
+				</div>
+				<div class="h-0.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+					<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
+						style="width: {currentTransfer.progress || 0}%"></div>
+				</div>
+			</a>
+		{/if}
 		{#if $activeJobs.length > 0}
 			<a href="/logs" class="flex items-center gap-2 mb-2 hover:bg-white/5 -mx-2 px-2 py-1 rounded transition-colors"
 				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>

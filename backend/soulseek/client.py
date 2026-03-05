@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 from backend.soulseek.server_conn import ServerConnection
 from backend.soulseek.listener import PeerListener
@@ -56,6 +57,7 @@ class SoulseekClient:
         self._search_results: dict[bytes, list[SearchResult]] = {}
         self._search_events: dict[bytes, asyncio.Event] = {}
         self._peer_address_futures: dict[str, asyncio.Future] = {}
+        self._last_broadcast: float = 0
 
     @property
     def logged_in(self) -> bool:
@@ -337,12 +339,25 @@ class SoulseekClient:
     # --- Transfer callbacks ---
 
     async def _on_transfer_progress(self, transfer: Transfer) -> None:
-        """Called during file download for progress updates."""
-        pass  # Will be wired to WebSocket broadcast in integration
+        """Called during file download for progress updates (throttled to 500ms)."""
+        now = time.monotonic()
+        if now - self._last_broadcast < 0.5:
+            return
+        self._last_broadcast = now
+        try:
+            from backend.api.websocket import broadcast_transfer_progress
+            await broadcast_transfer_progress(self.transfers.get_all_transfers())
+        except Exception:
+            pass
 
     async def _on_transfer_complete(self, transfer: Transfer) -> None:
         """Called when download completes."""
         await self.reputation.record_success(transfer.username)
+        try:
+            from backend.api.websocket import broadcast_transfer_progress
+            await broadcast_transfer_progress(self.transfers.get_all_transfers())
+        except Exception:
+            pass
 
     def destroy(self) -> None:
         """Tear down all connections."""

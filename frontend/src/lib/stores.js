@@ -7,6 +7,7 @@ export const activeJobs = writable([]);
 export const toasts = writable([]);
 export const updateAvailable = writable(false);
 export const showShortcuts = writable(false);
+export const activeTransfers = writable([]);
 
 let toastId = 0;
 export function addToast(message, type = 'info', duration = 5000) {
