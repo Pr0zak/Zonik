@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { currentTrack, addToast } from '$lib/stores.js';
+	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, inputClass } from '$lib/utils.js';
 	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -96,7 +96,8 @@
 	}
 
 	function playTrack(track) {
-		$currentTrack = { id: track.id, title: track.title, artist: track.artist };
+		const queue = (playlistDetail || []).map(t => ({ id: t.id, title: t.title, artist: t.artist }));
+		storePlayTrack({ id: track.id, title: track.title, artist: track.artist }, queue);
 	}
 
 	async function deletePlaylist(id) {

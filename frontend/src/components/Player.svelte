@@ -1,8 +1,11 @@
 <script>
-	import { currentTrack, isPlaying, addToast } from '$lib/stores.js';
+	import { currentTrack, isPlaying, addToast, playNext, playPrev, trackQueue, queueIndex } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 	import { formatDuration } from '$lib/utils.js';
-	import { Play, Pause, Music, Heart, Pencil } from 'lucide-svelte';
+	import { Play, Pause, Music, Heart, Pencil, SkipBack, SkipForward } from 'lucide-svelte';
+
+	let hasPrev = $derived($trackQueue.length > 0 && $queueIndex > 0);
+	let hasNext = $derived($trackQueue.length > 0 && $queueIndex < $trackQueue.length - 1);
 
 	let isFav = $state(false);
 	let favIds = $state(new Set());
@@ -141,7 +144,11 @@
 		</div>
 
 		<div class="flex-1 flex flex-col items-center gap-1">
-			<div class="flex items-center gap-4">
+			<div class="flex items-center gap-3">
+				<button onclick={playPrev} disabled={!hasPrev}
+					class="p-1 text-[var(--text-secondary)] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default">
+					<SkipBack class="w-4 h-4" />
+				</button>
 				<button onclick={togglePlay}
 					class="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
 					{#if $isPlaying}
@@ -149,6 +156,10 @@
 					{:else}
 						<Play class="w-4 h-4 ml-0.5" />
 					{/if}
+				</button>
+				<button onclick={playNext} disabled={!hasNext}
+					class="p-1 text-[var(--text-secondary)] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default">
+					<SkipForward class="w-4 h-4" />
 				</button>
 			</div>
 			<div class="w-full max-w-md flex items-center gap-2 text-xs text-[var(--text-muted)]">
@@ -232,7 +243,7 @@
 	ontimeupdate={() => { currentTime = audio.currentTime; }}
 	onloadedmetadata={() => { duration = audio.duration; }}
 	ondurationchange={() => { duration = audio.duration; }}
-	onended={() => { $isPlaying = false; currentTime = 0; }}
+	onended={() => { if (hasNext) { playNext(); } else { $isPlaying = false; currentTime = 0; } }}
 	onpause={() => { $isPlaying = false; }}
 	onplay={() => { $isPlaying = true; }}>
 </audio>

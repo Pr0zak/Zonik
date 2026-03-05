@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
-	import { currentTrack, addToast, activeJobs } from '$lib/stores.js';
+	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
@@ -449,7 +449,7 @@
 	}
 
 	function playTrack(track) {
-		$currentTrack = track;
+		storePlayTrack(track, tracks);
 	}
 
 	function toggleSort(col) {

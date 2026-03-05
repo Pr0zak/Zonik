@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { currentTrack, addToast } from '$lib/stores.js';
+	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration } from '$lib/utils.js';
 	import { Heart, Music, Play, Upload, ChevronLeft, ChevronRight } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -67,7 +67,8 @@
 
 	function playTrack(fav) {
 		if (fav.track_id) {
-			$currentTrack = { id: fav.track_id, title: fav.title, artist: fav.artist };
+			const queue = favorites.filter(f => f.track_id).map(f => ({ id: f.track_id, title: f.title, artist: f.artist }));
+			storePlayTrack({ id: fav.track_id, title: fav.title, artist: fav.artist }, queue);
 		}
 	}
 

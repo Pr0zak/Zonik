@@ -8,7 +8,7 @@
 	import { connectWebSocket, disconnectWebSocket } from '$lib/websocket.js';
 	import { goto } from '$app/navigation';
 	import { Menu } from 'lucide-svelte';
-	import { sidebarOpen, isPlaying, showShortcuts } from '$lib/stores.js';
+	import { sidebarOpen, isPlaying, showShortcuts, playNext, playPrev } from '$lib/stores.js';
 
 	let { children } = $props();
 
@@ -76,6 +76,10 @@
 		if (key === '9') { goto('/schedule'); return; }
 		if (key === '0') { goto('/logs'); return; }
 		if (key === 's' && !ctrl) { goto('/settings'); return; }
+
+		// n = next track, p = prev track
+		if (key === 'n' && !ctrl) { playNext(); return; }
+		if (key === 'p' && !ctrl) { playPrev(); return; }
 	}
 </script>
 
@@ -99,6 +103,8 @@
 						{#each [
 							['?', 'Show shortcuts'],
 							['Space', 'Play / Pause'],
+							['N', 'Next track'],
+							['P', 'Previous track'],
 							['B', 'Toggle sidebar'],
 							['Esc', 'Close dialog'],
 						] as [key, desc]}
