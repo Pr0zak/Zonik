@@ -4,7 +4,7 @@
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, ArrowDownToLine, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -35,27 +35,78 @@
 			: blacklist
 	);
 
-	// History state
-	let history = $state([]);
-	let historyOffset = $state(0);
-	let historyLoading = $state(false);
+	// Downloads state
+	let jobs = $state([]);
+	let jobsOffset = $state(0);
+	let jobsLoading = $state(false);
 	let expandedJob = $state(null);
 	let jobDetails = $state({});
-	const HISTORY_LIMIT = 20;
+	const PAGE_LIMIT = 20;
+	const AUTO_HIDE_MS = 5 * 60 * 1000; // 5 minutes
 
-	function transferStateBadge(state) {
-		if (state === 'completed') return 'success';
-		if (state === 'transferring' || state === 'connected') return 'info';
-		if (state === 'requested' || state === 'queued') return 'default';
-		return 'error';
+	// Filter out completed jobs older than 5 minutes
+	let visibleJobs = $derived(
+		jobs.filter(j => {
+			if (j.status === 'completed' && j.finished_at) {
+				const age = Date.now() - new Date(j.finished_at).getTime();
+				return age < AUTO_HIDE_MS;
+			}
+			return true;
+		})
+	);
+
+	let hasCleanable = $derived(jobs.some(j => j.status === 'completed' || j.status === 'failed'));
+
+	// Find matching transfer for a running job
+	function getTransferForJob(job) {
+		if (job.status !== 'running') return null;
+		// Match by username+filename from job tracks
+		let tracks;
+		try { tracks = jobDetails[job.id]; } catch { return null; }
+		if (!tracks?.length) return null;
+		const t = tracks.find(t => t.username && t.filename);
+		if (!t) return null;
+		return $activeTransfers.find(tr =>
+			tr.username === t.username &&
+			(tr.filename?.endsWith(t.filename) || tr.filename?.split(/[/\\]/).pop() === t.filename)
+		);
 	}
 
-	async function loadHistory() {
-		historyLoading = true;
+	// Friendly state label
+	function friendlyStatus(job, transfer) {
+		if (job.status === 'completed') return 'completed';
+		if (job.status === 'failed') return 'failed';
+		if (job.status === 'pending') return 'queued';
+		if (!transfer) return 'searching';
+		const s = transfer.state;
+		if (s === 'transferring') return 'downloading';
+		if (s === 'connected') return 'connecting';
+		if (s === 'queued' || s === 'requested') return 'queued';
+		return s;
+	}
+
+	function statusVariant(status) {
+		if (status === 'completed') return 'success';
+		if (status === 'failed') return 'error';
+		if (status === 'downloading' || status === 'connecting') return 'info';
+		return 'default';
+	}
+
+	async function loadJobs() {
+		jobsLoading = true;
 		try {
-			history = await api.getDownloadHistory(historyOffset, HISTORY_LIMIT);
+			jobs = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
+			// Pre-fetch track details for running jobs
+			for (const j of jobs) {
+				if ((j.status === 'running' || !jobDetails[j.id])) {
+					try {
+						const detail = await api.getJob(j.id);
+						if (detail?.tracks) jobDetails[j.id] = JSON.parse(detail.tracks);
+					} catch {}
+				}
+			}
 		} catch (e) { console.error(e); }
-		finally { historyLoading = false; }
+		finally { jobsLoading = false; }
 	}
 
 	async function toggleJobDetail(jobId) {
@@ -64,9 +115,7 @@
 		if (!jobDetails[jobId]) {
 			try {
 				const detail = await api.getJob(jobId);
-				if (detail?.tracks) {
-					jobDetails[jobId] = JSON.parse(detail.tracks);
-				}
+				if (detail?.tracks) jobDetails[jobId] = JSON.parse(detail.tracks);
 			} catch {}
 		}
 	}
@@ -75,14 +124,15 @@
 		try {
 			await api.retryJob(jobId);
 			addToast('Retry started', 'success');
-			await loadHistory();
+			await loadJobs();
 		} catch { addToast('Retry failed', 'error'); }
 	}
 
-	async function cancelTransfer(username, filename) {
+	async function cancelJob(jobId) {
 		try {
-			await api.cancelTransfer(username, filename);
-			addToast('Transfer cancelled', 'success');
+			await api.cancelJob(jobId);
+			addToast('Download cancelled', 'success');
+			await loadJobs();
 		} catch { addToast('Cancel failed', 'error'); }
 	}
 
@@ -190,10 +240,11 @@
 	}
 
 	let unsubJobUpdate;
+	let autoHideTimer;
 
 	onMount(() => {
 		loadBlacklist();
-		loadHistory();
+		loadJobs();
 		// Seed transfers from REST on mount (WebSocket takes over after)
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
@@ -201,66 +252,21 @@
 		// Auto-refresh when any download job updates
 		unsubJobUpdate = onJobUpdate((job) => {
 			if (job.type === 'download' || job.type === 'bulk_download') {
-				loadHistory();
+				loadJobs();
 			}
 		});
+		// Periodically re-evaluate auto-hide for completed jobs
+		autoHideTimer = setInterval(() => { jobs = [...jobs]; }, 30000);
 	});
 
 	onDestroy(() => {
 		if (unsubJobUpdate) unsubJobUpdate();
+		if (autoHideTimer) clearInterval(autoHideTimer);
 	});
 </script>
 
 <div class="max-w-6xl">
 	<PageHeader title="Downloads" color="var(--color-downloads)" />
-
-	<!-- Active Transfers (WebSocket-driven) -->
-	{#if $activeTransfers.length > 0}
-		<Card padding="p-6" class="mb-6">
-			<div class="flex items-center gap-2 mb-4">
-				<ArrowDownToLine class="w-4 h-4 text-[var(--color-downloads)]" />
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Active Transfers</h2>
-				<Badge>{$activeTransfers.length}</Badge>
-			</div>
-			<div class="space-y-2">
-				{#each $activeTransfers.slice(0, 10) as t}
-					{@const shortName = t.filename?.split(/[/\\]/).pop() || t.filename}
-					<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden animate-fade-slide-in">
-						<div class="flex items-center gap-3 px-4 py-2.5">
-							<div class="flex-1 min-w-0">
-								<p class="text-sm text-[var(--text-primary)] font-medium truncate" title={t.filename}>{shortName}</p>
-								<p class="text-xs text-[var(--text-muted)] truncate">from {t.username}</p>
-							</div>
-							{#if t.speed > 0}
-								<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0">{formatSpeed(t.speed)}</span>
-							{/if}
-							{#if t.eta_seconds != null && t.eta_seconds > 0}
-								<span class="text-xs text-[var(--text-disabled)] font-mono flex-shrink-0">{formatETA(t.eta_seconds)}</span>
-							{/if}
-							{#if t.total_bytes > 0}
-								<span class="text-xs text-[var(--text-disabled)] font-mono flex-shrink-0 hidden sm:inline">
-									{formatSize(t.received_bytes)} / {formatSize(t.total_bytes)}
-								</span>
-							{/if}
-							<Badge variant={transferStateBadge(t.state)}>{t.state}</Badge>
-							{#if t.state !== 'completed' && t.state !== 'failed' && t.state !== 'denied'}
-								<button onclick={() => cancelTransfer(t.username, t.filename)}
-									class="text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
-									<X class="w-3.5 h-3.5" />
-								</button>
-							{/if}
-						</div>
-						{#if t.total_bytes > 0 && t.state === 'transferring'}
-							<div class="h-1 bg-[var(--border-interactive)]">
-								<div class="h-full bg-[var(--color-downloads)] transition-all duration-300"
-									style="width: {t.progress}%"></div>
-							</div>
-						{/if}
-					</div>
-				{/each}
-			</div>
-		</Card>
-	{/if}
 
 	<!-- Soulseek Search -->
 	<Card padding="p-6" class="mb-6">
@@ -343,124 +349,153 @@
 		{/if}
 	</Card>
 
-	<!-- Download Jobs -->
-	<Card padding="p-6" class="mb-6">
-		<div class="flex items-center justify-between mb-4">
-			<div class="flex items-center gap-2">
-				<Download class="w-4 h-4 text-[var(--color-downloads)]" />
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download Jobs</h2>
+	<!-- Downloads (unified: active + history) -->
+	{#if visibleJobs.length || jobsLoading}
+		<Card padding="p-6" class="mb-6">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-2">
+					<Download class="w-4 h-4 text-[var(--color-downloads)]" />
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Downloads</h2>
+				</div>
+				{#if hasCleanable}
+					<button onclick={async () => {
+						if (!window.confirm('Clear completed/failed downloads?')) return;
+						try {
+							await api.clearDownloadHistory();
+							await loadJobs();
+							jobDetails = {};
+							expandedJob = null;
+							addToast('Cleared', 'success');
+						} catch { addToast('Failed to clear', 'error'); }
+					}} class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors">
+						<Eraser class="w-3.5 h-3.5" />
+						Clear
+					</button>
+				{/if}
 			</div>
-			{#if history.some(j => j.status === 'completed' || j.status === 'failed')}
-				<button onclick={async () => {
-					if (!window.confirm('Clear completed/failed downloads?')) return;
-					try {
-						await api.clearDownloadHistory();
-						history = [];
-						historyOffset = 0;
-						jobDetails = {};
-						expandedJob = null;
-						addToast('History cleared', 'success');
-					} catch { addToast('Failed to clear history', 'error'); }
-				}} class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors">
-					<Eraser class="w-3.5 h-3.5" />
-					Clear
-				</button>
-			{/if}
-		</div>
 
-		{#if historyLoading && !history.length}
-			<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
-		{:else if history.length}
-			<div class="space-y-2">
-				{#each history as job (job.id)}
-					<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden">
-						<!-- Job header -->
-						<button onclick={() => toggleJobDetail(job.id)}
-							class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors text-left">
-							<div class="flex-1 min-w-0">
-								<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
-								<p class="text-xs text-[var(--text-muted)]">
-									{#if job.total}{job.progress || 0}/{job.total} tracks &middot; {/if}
-									{job.started_at ? new Date(job.started_at).toLocaleString() : ''}
-								</p>
-							</div>
-							{#if job.status === 'failed'}
-								<button onclick={(e) => { e.stopPropagation(); retryJob(job.id); }}
-									class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Retry failed tracks">
-									<RotateCcw class="w-3.5 h-3.5" />
-								</button>
-							{/if}
-							<Badge variant={job.status === 'running' || job.status === 'pending' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
-								{#if job.status === 'running'}
-									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
-								{/if}
-								{job.status}
-							</Badge>
-							{#if expandedJob === job.id}
-								<ChevronUp class="w-3.5 h-3.5 text-[var(--text-muted)]" />
-							{:else}
-								<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)]" />
-							{/if}
-						</button>
-						<!-- Progress bar for running jobs -->
-						{#if job.status === 'running' && job.total}
-							<div class="h-1 bg-[var(--border-interactive)]">
-								<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
-									style="width: {((job.progress || 0) / job.total) * 100}%"></div>
-							</div>
-						{/if}
-						<!-- Expanded track details -->
-						{#if expandedJob === job.id && jobDetails[job.id]}
-							<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
-								{#each jobDetails[job.id] as t, i}
-									<div class="flex items-center gap-2 text-xs py-1">
-										<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
-										<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
-											{t.artist} — {t.track}
-										</span>
-										{#if t.filename}
-											<span class="text-[var(--text-muted)] truncate max-w-[200px] hidden sm:inline" title={t.filename}>{t.filename}</span>
+			{#if jobsLoading && !jobs.length}
+				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
+			{:else}
+				<div class="space-y-2">
+					{#each visibleJobs as job (job.id)}
+						{@const transfer = getTransferForJob(job)}
+						{@const status = friendlyStatus(job, transfer)}
+						<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden">
+							<div class="flex items-center gap-3 px-4 py-3">
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
+									<div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+										{#if transfer?.username}
+											<span>from {transfer.username}</span>
+											<span class="text-[var(--text-disabled)]">&middot;</span>
 										{/if}
-										{#if t.username}
-											<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
+										{#if transfer && transfer.speed > 0}
+											<span class="font-mono">{formatSpeed(transfer.speed)}</span>
+											<span class="text-[var(--text-disabled)]">&middot;</span>
 										{/if}
-										{#if t.size}
-											<span class="text-[var(--text-disabled)] font-mono hidden lg:inline">{formatSize(t.size)}</span>
+										{#if transfer?.eta_seconds > 0}
+											<span class="font-mono">{formatETA(transfer.eta_seconds)}</span>
+											<span class="text-[var(--text-disabled)]">&middot;</span>
 										{/if}
-										<Badge variant={
-											t.status === 'downloaded' ? 'success' :
-											t.status === 'downloading' || t.status === 'transferring' ? 'info' :
-											t.status === 'pending' ? 'default' :
-											t.status === 'skipped' ? 'warning' : 'error'
-										}>{t.status}</Badge>
+										{#if transfer && transfer.total_bytes > 0}
+											<span class="font-mono hidden sm:inline">{formatSize(transfer.received_bytes)} / {formatSize(transfer.total_bytes)}</span>
+										{:else if job.total > 1}
+											<span>{job.progress || 0}/{job.total} tracks</span>
+										{/if}
+										{#if job.status !== 'running'}
+											<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : job.started_at ? new Date(job.started_at).toLocaleString() : ''}</span>
+										{/if}
 									</div>
-								{/each}
+								</div>
+								{#if job.status === 'running'}
+									<button onclick={() => cancelJob(job.id)}
+										class="p-1.5 text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
+										<X class="w-3.5 h-3.5" />
+									</button>
+								{/if}
+								{#if job.status === 'failed'}
+									<button onclick={() => retryJob(job.id)}
+										class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry">
+										<RotateCcw class="w-3.5 h-3.5" />
+									</button>
+								{/if}
+								<Badge variant={statusVariant(status)}>
+									{#if status === 'searching' || status === 'downloading'}
+										<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+									{/if}
+									{status}
+								</Badge>
+								{#if job.total > 1}
+									<button onclick={() => toggleJobDetail(job.id)}
+										class="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0">
+										{#if expandedJob === job.id}
+											<ChevronUp class="w-3.5 h-3.5" />
+										{:else}
+											<ChevronDown class="w-3.5 h-3.5" />
+										{/if}
+									</button>
+								{/if}
 							</div>
-						{/if}
-					</div>
-				{/each}
-			</div>
+							<!-- Progress bar -->
+							{#if transfer && transfer.total_bytes > 0 && status === 'downloading'}
+								<div class="h-1 bg-[var(--border-interactive)]">
+									<div class="h-full bg-[var(--color-downloads)] transition-all duration-300"
+										style="width: {transfer.progress}%"></div>
+								</div>
+							{:else if job.status === 'running' && job.total > 1}
+								<div class="h-1 bg-[var(--border-interactive)]">
+									<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
+										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
+								</div>
+							{/if}
+							<!-- Expanded bulk track details -->
+							{#if expandedJob === job.id && jobDetails[job.id]}
+								<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
+									{#each jobDetails[job.id] as t, i}
+										<div class="flex items-center gap-2 text-xs py-1">
+											<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
+											<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
+												{t.artist} — {t.track}
+											</span>
+											{#if t.username}
+												<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
+											{/if}
+											<Badge variant={
+												t.status === 'downloaded' ? 'success' :
+												t.status === 'downloading' || t.status === 'transferring' ? 'info' :
+												t.status === 'pending' ? 'default' :
+												t.status === 'skipped' ? 'warning' : 'error'
+											}>{t.status}</Badge>
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
 
-			<!-- Pagination -->
-			<div class="flex items-center justify-between mt-4">
-				<Button variant="ghost" size="sm" disabled={historyOffset === 0}
-					onclick={() => { historyOffset = Math.max(0, historyOffset - HISTORY_LIMIT); loadHistory(); }}>
-					<ChevronLeft class="w-3.5 h-3.5" />
-					Prev
-				</Button>
-				<span class="text-xs text-[var(--text-muted)]">
-					{historyOffset + 1}–{historyOffset + history.length}
-				</span>
-				<Button variant="ghost" size="sm" disabled={history.length < HISTORY_LIMIT}
-					onclick={() => { historyOffset += HISTORY_LIMIT; loadHistory(); }}>
-					Next
-					<ChevronRight class="w-3.5 h-3.5" />
-				</Button>
-			</div>
-		{:else}
-			<p class="text-sm text-[var(--text-muted)] text-center py-6">No downloads yet.</p>
-		{/if}
-	</Card>
+				<!-- Pagination -->
+				{#if jobs.length >= PAGE_LIMIT || jobsOffset > 0}
+					<div class="flex items-center justify-between mt-4">
+						<Button variant="ghost" size="sm" disabled={jobsOffset === 0}
+							onclick={() => { jobsOffset = Math.max(0, jobsOffset - PAGE_LIMIT); loadJobs(); }}>
+							<ChevronLeft class="w-3.5 h-3.5" />
+							Prev
+						</Button>
+						<span class="text-xs text-[var(--text-muted)]">
+							{jobsOffset + 1}–{jobsOffset + jobs.length}
+						</span>
+						<Button variant="ghost" size="sm" disabled={jobs.length < PAGE_LIMIT}
+							onclick={() => { jobsOffset += PAGE_LIMIT; loadJobs(); }}>
+							Next
+							<ChevronRight class="w-3.5 h-3.5" />
+						</Button>
+					</div>
+				{/if}
+			{/if}
+		</Card>
+	{/if}
 
 	<!-- Blacklist -->
 	<Card padding="p-6">
