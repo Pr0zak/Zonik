@@ -65,4 +65,8 @@ export const api = {
 		request(`/discovery/similar-by-track?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}&limit=${limit}`),
 	echoMatch: (trackId, limit = 20) =>
 		request('/analysis/echo-match', { method: 'POST', body: JSON.stringify({ track_id: trackId, limit }) }),
+
+	// Blacklist
+	addToBlacklist: (artist, track = null, reason = null) =>
+		request('/download/blacklist', { method: 'POST', body: JSON.stringify({ artist, track, reason }) }),
 };

@@ -255,7 +255,7 @@ class SlskdClient:
 def get_slskd_client() -> SlskdClient:
     settings = get_settings()
     return SlskdClient(
-        base_url=settings.soulseek.slskd_url,
+        base_url=settings.soulseek.slskd_url.rstrip("/"),
         api_key=settings.soulseek.slskd_api_key,
     )
 

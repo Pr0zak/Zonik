@@ -6,7 +6,7 @@
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
-		MoreVertical, Pencil, AudioWaveform
+		MoreVertical, Pencil, AudioWaveform, ShieldBan
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -124,6 +124,16 @@
 			addToast(`Deleted: ${track.title}`, 'success');
 			await loadData();
 		} catch (e) { addToast('Delete failed: ' + e.message, 'error'); }
+	}
+
+	async function blacklistArtist(track) {
+		closeMenu();
+		const artist = track.artist_name || 'Unknown';
+		if (!window.confirm(`Blacklist artist "${artist}"? Future downloads for this artist will be blocked.`)) return;
+		try {
+			await api.addToBlacklist(artist);
+			addToast(`Blacklisted: ${artist}`, 'success');
+		} catch (e) { addToast('Blacklist failed: ' + e.message, 'error'); }
 	}
 
 	// Edit track modal
@@ -842,6 +852,10 @@
 			<Heart class="w-3.5 h-3.5 {favTrackIds.has(menuTrack.id) ? 'text-red-400' : ''}"
 				fill={favTrackIds.has(menuTrack.id) ? 'currentColor' : 'none'} />
 			{favTrackIds.has(menuTrack.id) ? 'Unfavorite' : 'Favorite'}
+		</button>
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => blacklistArtist(menuTrack)}>
+			<ShieldBan class="w-3.5 h-3.5 text-orange-400" /> Blacklist Artist
 		</button>
 		<div class="border-t border-[var(--border-subtle)] my-1"></div>
 		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[var(--bg-hover)] transition-colors text-left"
