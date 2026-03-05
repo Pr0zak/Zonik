@@ -75,8 +75,8 @@
 	}
 
 	let audio;
-	let currentTime = 0;
-	let duration = 0;
+	let currentTime = $state(0);
+	let duration = $state(0);
 
 	function togglePlay() {
 		if (!audio) return;
@@ -119,13 +119,24 @@
 
 <div class="h-16 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 gap-4 shrink-0">
 	{#if $currentTrack}
-		<div class="flex items-center gap-3 w-64 min-w-0">
-			<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
-				<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+		<div class="flex items-center gap-3 w-72 min-w-0">
+			<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex-shrink-0 overflow-hidden">
+				{#if $currentTrack.id}
+					<img src="/rest/getCoverArt?id={$currentTrack.id}&size=80&u=admin&p=admin&v=1.16.1&c=zonik-web"
+						alt="" class="w-full h-full object-cover"
+						onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+					<div class="w-full h-full items-center justify-center hidden">
+						<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+					</div>
+				{:else}
+					<div class="w-full h-full flex items-center justify-center">
+						<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+					</div>
+				{/if}
 			</div>
 			<div class="min-w-0">
 				<p class="text-sm font-medium text-[var(--text-primary)] truncate">{$currentTrack.title}</p>
-				<p class="text-xs text-[var(--text-secondary)] truncate">{$currentTrack.artist || 'Unknown'}</p>
+				<p class="text-xs text-[var(--text-secondary)] truncate">{$currentTrack.artist || 'Unknown'}{#if $currentTrack.album} — {$currentTrack.album}{/if}</p>
 			</div>
 		</div>
 
@@ -218,9 +229,10 @@
 {/if}
 
 <audio bind:this={audio}
-	bind:currentTime
-	bind:duration
-	onended={() => { $isPlaying = false; }}
+	ontimeupdate={() => { currentTime = audio.currentTime; }}
+	onloadedmetadata={() => { duration = audio.duration; }}
+	ondurationchange={() => { duration = audio.duration; }}
+	onended={() => { $isPlaying = false; currentTime = 0; }}
 	onpause={() => { $isPlaying = false; }}
 	onplay={() => { $isPlaying = true; }}>
 </audio>
