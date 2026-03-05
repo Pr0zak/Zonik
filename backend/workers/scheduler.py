@@ -21,6 +21,12 @@ log = logging.getLogger(__name__)
 
 async def run_task(task_name: str, db: AsyncSession):
     """Execute a scheduled task by name."""
+    # Load task config for count
+    task_row = (await db.execute(
+        select(ScheduleTask).where(ScheduleTask.task_name == task_name)
+    )).scalar_one_or_none()
+    count = task_row.count if task_row and task_row.count else None
+
     job_id = str(uuid.uuid4())
     job = Job(
         id=job_id, type=task_name, card="sched", status="running",
@@ -40,25 +46,25 @@ async def run_task(task_name: str, db: AsyncSession):
             tracks = (await db.execute(
                 select(Track.id)
                 .where((Track.genre.is_(None)) | (Track.cover_art_path.is_(None)))
-                .limit(100)
+                .limit(count or 100)
             )).scalars().all()
             result = await enrich_batch(db, tracks)
             job.result = json.dumps(result)
 
         elif task_name == "lastfm_top_tracks":
-            await _run_lastfm_top_tracks(db, job)
+            await _run_lastfm_top_tracks(db, job, count=count or 50)
 
         elif task_name == "discover_similar":
-            await _run_discover_similar(db, job)
+            await _run_discover_similar(db, job, count=count or 10)
 
         elif task_name == "lastfm_sync":
             job.result = json.dumps({"status": "sync_placeholder"})
 
         elif task_name == "playlist_weekly_top":
-            await _run_auto_playlist(db, "Weekly Top Tracks", "lastfm_top")
+            await _run_auto_playlist(db, "Weekly Top Tracks", "lastfm_top", count=count or 50)
 
         elif task_name == "playlist_weekly_discover":
-            await _run_auto_playlist(db, "Weekly Discover", "discover")
+            await _run_auto_playlist(db, "Weekly Discover", "discover", count=count or 30)
 
         elif task_name == "playlist_favorites":
             await _run_favorites_playlist(db)
@@ -68,7 +74,7 @@ async def run_task(task_name: str, db: AsyncSession):
             from backend.models.analysis import TrackAnalysis
             analyzed_ids = (await db.execute(select(TrackAnalysis.track_id))).scalars().all()
             tracks = (await db.execute(
-                select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids)).limit(50)
+                select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids)).limit(count or 50)
             )).all()
             for track_id, file_path in tracks:
                 analysis = await analyze_track_async(file_path)
@@ -101,10 +107,10 @@ async def run_task(task_name: str, db: AsyncSession):
         await db.commit()
 
 
-async def _run_lastfm_top_tracks(db: AsyncSession, job: Job):
+async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
     """Download missing Last.fm top tracks."""
     from backend.services.lastfm import get_top_tracks
-    chart = await get_top_tracks(limit=50)
+    chart = await get_top_tracks(limit=count)
     missing = []
     for t in chart:
         result = await db.execute(
@@ -117,13 +123,13 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job):
     job.result = json.dumps({"total_chart": len(chart), "missing": len(missing)})
 
 
-async def _run_discover_similar(db: AsyncSession, job: Job):
+async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
     """Find similar tracks from favorites."""
     from backend.services.lastfm import get_similar_tracks
     favorites = (await db.execute(
         select(Favorite).options(
             selectinload(Favorite.track).selectinload(Track.artist)
-        ).where(Favorite.track_id.isnot(None)).limit(10)
+        ).where(Favorite.track_id.isnot(None)).limit(count)
     )).scalars().all()
 
     found = 0
@@ -136,7 +142,7 @@ async def _run_discover_similar(db: AsyncSession, job: Job):
     job.result = json.dumps({"favorites_checked": len(favorites), "similar_found": found})
 
 
-async def _run_auto_playlist(db: AsyncSession, name: str, source: str):
+async def _run_auto_playlist(db: AsyncSession, name: str, source: str, count: int = 50):
     """Create/replace an auto-generated playlist."""
     # Delete existing playlist with same name
     from sqlalchemy import delete
@@ -149,7 +155,7 @@ async def _run_auto_playlist(db: AsyncSession, name: str, source: str):
     track_ids = []
     if source == "lastfm_top":
         from backend.services.lastfm import get_top_tracks
-        chart = await get_top_tracks(limit=50)
+        chart = await get_top_tracks(limit=count)
         for t in chart:
             result = await db.execute(
                 select(Track.id).where(Track.title.ilike(f"%{t['name']}%")).limit(1)
@@ -160,7 +166,7 @@ async def _run_auto_playlist(db: AsyncSession, name: str, source: str):
     elif source == "discover":
         # Use random selection of library tracks for now
         from sqlalchemy import func
-        result = await db.execute(select(Track.id).order_by(func.random()).limit(30))
+        result = await db.execute(select(Track.id).order_by(func.random()).limit(count))
         track_ids = result.scalars().all()
 
     if not track_ids:

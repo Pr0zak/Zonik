@@ -16,5 +16,6 @@ class ScheduleTask(Base):
     interval_hours: Mapped[int] = mapped_column(Integer, default=24)
     run_at: Mapped[str | None] = mapped_column(String)  # HH:MM
     day_of_week: Mapped[int | None] = mapped_column(Integer)  # 0=Mon, 6=Sun
+    count: Mapped[int | None] = mapped_column(Integer)  # items per run
     config: Mapped[str | None] = mapped_column(Text)  # JSON
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime)

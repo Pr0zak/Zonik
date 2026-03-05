@@ -17,15 +17,15 @@ router = APIRouter()
 # Default task definitions
 DEFAULT_TASKS = [
     {"task_name": "library_scan", "interval_hours": 24, "run_at": "03:00"},
-    {"task_name": "enrichment", "interval_hours": 24, "run_at": "03:30"},
-    {"task_name": "lastfm_top_tracks", "interval_hours": 24, "run_at": "04:00"},
-    {"task_name": "discover_similar", "interval_hours": 48, "run_at": "04:30"},
-    {"task_name": "discover_artists", "interval_hours": 48, "run_at": "05:00"},
+    {"task_name": "enrichment", "interval_hours": 24, "run_at": "03:30", "count": 100},
+    {"task_name": "lastfm_top_tracks", "interval_hours": 24, "run_at": "04:00", "count": 50},
+    {"task_name": "discover_similar", "interval_hours": 48, "run_at": "04:30", "count": 10},
+    {"task_name": "discover_artists", "interval_hours": 48, "run_at": "05:00", "count": 10},
     {"task_name": "lastfm_sync", "interval_hours": 24, "run_at": "02:00"},
-    {"task_name": "playlist_weekly_top", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0},
-    {"task_name": "playlist_weekly_discover", "interval_hours": 168, "run_at": "06:30", "day_of_week": 0},
+    {"task_name": "playlist_weekly_top", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0, "count": 50},
+    {"task_name": "playlist_weekly_discover", "interval_hours": 168, "run_at": "06:30", "day_of_week": 0, "count": 30},
     {"task_name": "playlist_favorites", "interval_hours": 24, "run_at": "01:00"},
-    {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
+    {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30", "count": 50},
     {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
     {"task_name": "kimahub_favorites_sync", "interval_hours": 6, "run_at": "00:00"},
 ]
@@ -85,6 +85,7 @@ async def list_schedule(db: AsyncSession = Depends(get_db)):
             "interval_hours": t.interval_hours,
             "run_at": t.run_at,
             "day_of_week": t.day_of_week,
+            "count": t.count,
             "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
         }
         for t in tasks
@@ -96,6 +97,7 @@ class TaskUpdateRequest(BaseModel):
     interval_hours: int | None = None
     run_at: str | None = None
     day_of_week: int | None = None
+    count: int | None = None
 
 
 @router.put("/{task_name}")
@@ -114,6 +116,8 @@ async def update_task(task_name: str, req: TaskUpdateRequest, db: AsyncSession =
         task.run_at = req.run_at
     if req.day_of_week is not None:
         task.day_of_week = req.day_of_week
+    if req.count is not None:
+        task.count = req.count
 
     await db.commit()
     return {"ok": True}

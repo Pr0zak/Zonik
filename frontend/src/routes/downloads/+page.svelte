@@ -77,10 +77,18 @@
 		if (job.status === 'completed') return 'completed';
 		if (job.status === 'failed') return 'failed';
 		if (job.status === 'pending') return 'queued';
-		if (!transfer) return 'searching';
+		if (!transfer) {
+			// No active transfer yet — check job track status
+			const tracks = jobDetails[job.id];
+			if (tracks?.length) {
+				const t = tracks[0];
+				if (t.status === 'transferring') return 'downloading';
+				if (t.status === 'pending') return 'searching';
+			}
+			return 'searching';
+		}
 		const s = transfer.state;
-		if (s === 'transferring') return 'downloading';
-		if (s === 'connected') return 'connecting';
+		if (s === 'transferring' || s === 'connected') return 'downloading';
 		if (s === 'queued' || s === 'requested') return 'queued';
 		return s;
 	}
@@ -88,7 +96,7 @@
 	function statusVariant(status) {
 		if (status === 'completed') return 'success';
 		if (status === 'failed') return 'error';
-		if (status === 'downloading' || status === 'connecting') return 'info';
+		if (status === 'downloading') return 'info';
 		return 'default';
 	}
 
@@ -438,7 +446,7 @@
 								{/if}
 							</div>
 							<!-- Progress bar -->
-							{#if transfer && transfer.total_bytes > 0 && status === 'downloading'}
+							{#if transfer && status === 'downloading'}
 								<div class="h-1 bg-[var(--border-interactive)]">
 									<div class="h-full bg-[var(--color-downloads)] transition-all duration-300"
 										style="width: {transfer.progress}%"></div>

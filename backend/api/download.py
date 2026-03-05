@@ -149,7 +149,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
                     attempt_label = f"attempt {i+1}/{len(candidates)}"
                     job.tracks = json.dumps([{
-                        "artist": req.artist, "track": req.track, "status": "transferring",
+                        "artist": req.artist, "track": req.track, "status": "downloading",
                         "username": dl_username, "filename": short_name,
                     }])
                     await db.merge(job)

@@ -69,6 +69,20 @@
 		}
 	}
 
+	async function updateCount(task, count) {
+		const val = parseInt(count);
+		if (isNaN(val) || val < 1) return;
+		try {
+			await fetch(`/api/schedule/${task.task_name}`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ count: val }),
+			});
+		} catch (e) {
+			addToast('Failed to update count', 'error');
+		}
+	}
+
 	async function runNow(task) {
 		running[task.task_name] = true;
 		try {
@@ -130,6 +144,13 @@
 						<input type="time" value={task.run_at || ''}
 							onchange={(e) => updateRunAt(task, e.target.value)}
 							class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] w-24 focus:outline-none focus:border-[var(--color-accent)]/50" />
+
+						{#if task.count != null}
+							<input type="number" value={task.count} min="1" max="1000"
+								onchange={(e) => updateCount(task, e.target.value)}
+								class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] w-20 focus:outline-none focus:border-[var(--color-accent)]/50"
+								title="Items per run" />
+						{/if}
 
 						<Button variant="primary" size="sm"
 							loading={running[task.task_name]}
