@@ -354,10 +354,8 @@ class SoulseekClient:
         else:
             await self.reputation.record_failure(transfer.username)
         await self._broadcast_transfers()
-        # Remove terminal transfers after broadcasting so UI sees final state
-        if transfer.state in (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED):
-            self.transfers.remove_transfer(transfer.username, transfer.filename)
-            await self._broadcast_transfers()
+        # Don't remove immediately — let poll_transfer see the final state.
+        # The cleanup loop will remove terminal transfers after 60s.
 
     async def _broadcast_transfers(self) -> None:
         """Broadcast current transfers to all WebSocket clients."""
