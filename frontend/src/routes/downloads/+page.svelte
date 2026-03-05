@@ -177,6 +177,9 @@
 						<div class="flex items-center gap-3 px-3 py-2.5 bg-[var(--bg-tertiary)] rounded-md animate-fade-slide-in">
 							<Badge variant="info">{job.type === 'bulk_download' ? 'bulk' : 'download'}</Badge>
 							<div class="flex-1 min-w-0">
+								{#if job.description}
+									<p class="text-xs text-[var(--text-primary)] font-medium truncate mb-1">{job.description}</p>
+								{/if}
 								{#if job.total}
 									<div class="flex items-center justify-between mb-1">
 										<span class="text-xs text-[var(--text-secondary)]">{job.progress || 0} of {job.total} tracks</span>

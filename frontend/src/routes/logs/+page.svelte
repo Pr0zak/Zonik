@@ -144,14 +144,19 @@
 					{#each jobs as job}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" onclick={() => toggleExpand(job)}>
-							<td class="px-4 py-3 font-medium text-[var(--text-body)]">
+							<td class="px-4 py-3">
 								<div class="flex items-center gap-2">
 									{#if expandedJob === job.id}
-										<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)]" />
+										<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
 									{:else}
-										<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)]" />
+										<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
 									{/if}
-									{job.type}
+									<div class="min-w-0">
+										<p class="font-medium text-[var(--text-body)]">{job.type}</p>
+										{#if job.description}
+											<p class="text-xs text-[var(--text-muted)] truncate max-w-xs">{job.description}</p>
+										{/if}
+									</div>
 								</div>
 							</td>
 							<td class="px-4 py-3">

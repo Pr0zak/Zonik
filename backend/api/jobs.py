@@ -15,6 +15,33 @@ from backend.api.websocket import broadcast_job_update
 router = APIRouter()
 
 
+def _job_description(j: Job) -> str:
+    """Generate a human-readable description for a job."""
+    # Try to extract track names from tracks JSON
+    if j.tracks:
+        try:
+            tracks = json.loads(j.tracks)
+            if isinstance(tracks, list) and tracks:
+                names = [f"{t.get('artist', '')} — {t.get('track', '')}" for t in tracks[:3] if t.get('track')]
+                if names:
+                    suffix = f" (+{len(tracks) - 3} more)" if len(tracks) > 3 else ""
+                    return ", ".join(names) + suffix
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # Try to extract from result JSON
+    if j.result:
+        try:
+            result = json.loads(j.result)
+            if isinstance(result, dict):
+                if result.get("message"):
+                    return result["message"]
+                if result.get("error"):
+                    return result["error"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return ""
+
+
 @router.get("")
 async def list_jobs(limit: int = 50, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -29,6 +56,7 @@ async def list_jobs(limit: int = 50, db: AsyncSession = Depends(get_db)):
             "status": j.status,
             "progress": j.progress,
             "total": j.total,
+            "description": _job_description(j),
             "started_at": j.started_at.isoformat() if j.started_at else None,
             "finished_at": j.finished_at.isoformat() if j.finished_at else None,
         }
@@ -50,6 +78,7 @@ async def active_jobs(db: AsyncSession = Depends(get_db)):
             "status": j.status,
             "progress": j.progress,
             "total": j.total,
+            "description": _job_description(j),
         }
         for j in jobs
     ]

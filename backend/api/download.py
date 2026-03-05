@@ -91,7 +91,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             )
             db.add(job)
             await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1})
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{req.artist} — {req.track}"})
 
             try:
                 client = get_slskd_client()
@@ -116,7 +116,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 job.finished_at = datetime.utcnow()
                 await db.merge(job)
                 await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1})
+                await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": f"{req.artist} — {req.track}"})
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
