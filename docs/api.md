@@ -108,7 +108,7 @@ Base URL: `/api`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/tracks?offset=&limit=&sort=&order=&search=&genre=&artist_id=&album_id=` | GET | List tracks with pagination, filtering |
+| `/api/tracks?offset=&limit=&sort=&order=&search=&genre=&artist_id=&album_id=` | GET | List tracks with pagination, filtering. Search uses FTS5 (title, artist, album) with ILIKE fallback |
 | `/api/tracks/{id}` | GET | Track details with analysis |
 | `/api/tracks/{id}` | PUT | Update track metadata `{title?, genre?, year?, track_number?}` (also writes file tags) |
 | `/api/tracks/{id}` | DELETE | Delete track and file |
@@ -137,6 +137,7 @@ Base URL: `/api`
 | `/api/discovery/top-albums?artist=` | GET | Artist top albums |
 | `/api/discovery/track-info?artist=&track=` | GET | Last.fm track info |
 | `/api/discovery/artist-info?artist=` | GET | Last.fm artist info |
+| `/api/discovery/similar-by-track?artist=&track=&limit=` | GET | Similar tracks to a specific track via Last.fm (with library status) |
 | `/api/discovery/lastfm/auth-url` | GET | Last.fm OAuth URL |
 | `/api/discovery/lastfm/callback?token=` | GET | Exchange token for session |
 
@@ -202,11 +203,26 @@ Base URL: `/api`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/schedule/` | GET | List scheduled tasks |
-| `/api/schedule/{name}` | PUT | Update task config |
+| `/api/schedule/` | GET | List scheduled tasks (includes label, description, config, last_run_at) |
+| `/api/schedule/{name}` | PUT | Update task config `{enabled?, interval_hours?, run_at?, day_of_week?}` |
 | `/api/schedule/{name}/run` | POST | Run task immediately |
 
-Available scheduled tasks: `library_scan`, `enrichment`, `audio_analysis`, `lastfm_top_tracks`, `discover_similar`, `lastfm_sync`, `playlist_weekly_top`, `playlist_weekly_discover`, `playlist_favorites`, `kimahub_favorites_sync`, `library_cleanup`.
+Available scheduled tasks:
+
+| Task Name | Description |
+|-----------|-------------|
+| `library_scan` | Scan the music directory for new, changed, or removed files |
+| `enrichment` | Fetch missing genre tags and cover art from MusicBrainz, Deezer, etc. |
+| `audio_analysis` | Run Essentia audio analysis (BPM, key, energy, danceability) on unanalyzed tracks |
+| `lastfm_top_tracks` | Pull Last.fm top chart and flag tracks not in library |
+| `discover_similar` | Find tracks similar to favorites using Last.fm |
+| `discover_artists` | Discover new artists related to those in your library |
+| `lastfm_sync` | Sync loved tracks and scrobble history with Last.fm |
+| `playlist_weekly_top` | Auto-generate playlist of chart tracks found in library |
+| `playlist_weekly_discover` | Auto-generate discovery playlist with random library mix |
+| `playlist_favorites` | Rebuild Favorites playlist from all starred tracks |
+| `kimahub_favorites_sync` | Import liked tracks from KimaHub PostgreSQL into favorites |
+| `library_cleanup` | Remove orphaned database entries for deleted files |
 
 ### Jobs
 

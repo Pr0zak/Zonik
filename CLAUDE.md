@@ -29,13 +29,13 @@ backend/
   models/              # 14 SQLAlchemy models (Track, Artist, Album, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
-    jobs.py            # Job listing, details, retry failed downloads
+    jobs.py            # Job listing, details (result/tracks/log), retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums list endpoints
     download.py        # Soulseek search/trigger/bulk + blacklist
     discovery.py       # Last.fm charts, similar tracks/artists
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
-    schedule.py        # Cron scheduler management
+    schedule.py        # Cron scheduler management (task labels + descriptions)
     websocket.py       # Real-time job progress
     favorites.py       # Star/unstar + favorite IDs lookup + bulk import from external sources
     playlists.py       # Playlist CRUD + smart playlist generation
@@ -54,10 +54,10 @@ frontend/
     favorites/         # Starred items
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics
-    schedule/          # Cron job scheduler
-    logs/              # Job history
+    schedule/          # Cron job scheduler with task descriptions
+    logs/              # Job history with expandable detail (result, tracks with status badges)
     settings/          # Service config, subsonic info, updates/upgrade
-  src/components/      # Sidebar (with update indicator), Player, Toast
+  src/components/      # Sidebar (update indicator, GitHub link, active jobs), Player, Toast
     ui/                # 8 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader
   src/lib/             # api.js, stores.js, utils.js, websocket.js
 deploy/                # Systemd service files
@@ -104,6 +104,11 @@ docs/                  # Installation, configuration, API reference, development
 - Downloads page: "Active Transfers" panel polls slskd /api/v0/transfers/downloads every 5s, shows per-file progress
 - Enrichment: processes all tracks missing genre/cover (no limit), 1.5s rate limit between tracks, per-track error recovery with rollback
 - Enrichment progress: updates DB every 5 tracks (separate session) so Logs page shows progress, not just WebSocket
+- Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
+- Schedule page: each task shows a description explaining what it does
+- Logs page: expanded job detail shows job ID, progress, timestamps; download tracks rendered with colored status badges per track
+- Sidebar footer: GitHub icon links to github.com/Pr0zak/Zonik
+- Upgrade restarts kill background tasks (enrichment, analysis); stuck "running" jobs must be manually set to "failed" in DB
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
