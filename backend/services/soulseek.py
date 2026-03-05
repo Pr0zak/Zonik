@@ -168,7 +168,7 @@ class SlskdClient:
                 headers=self._headers(),
                 json={"searchText": query},
             )
-            if resp.status_code != 201:
+            if resp.status_code not in (200, 201):
                 log.warning(f"slskd search failed: {resp.status_code} {resp.text[:200]}")
                 return []
 
@@ -177,8 +177,7 @@ class SlskdClient:
             if not search_id:
                 return []
 
-            # Poll for results
-            all_files = []
+            # Poll for completion
             for _ in range(timeout // 2):
                 await asyncio.sleep(2)
                 resp = await client.get(
@@ -189,16 +188,23 @@ class SlskdClient:
                     continue
 
                 data = resp.json()
-                responses = data.get("responses", [])
+                state = data.get("state", "")
+                if "Completed" in state or "TimedOut" in state:
+                    break
+
+            # Fetch results from responses sub-endpoint
+            all_files = []
+            resp = await client.get(
+                f"{self.base_url}/api/v0/searches/{search_id}/responses",
+                headers=self._headers(),
+            )
+            if resp.status_code == 200:
+                responses = resp.json()
                 for response in responses:
                     username = response.get("username", "")
                     for file in response.get("files", []):
                         file["username"] = username
                         all_files.append(file)
-
-                state = data.get("state", "")
-                if state in ("Completed", "TimedOut"):
-                    break
 
             # Clean up search
             try:
