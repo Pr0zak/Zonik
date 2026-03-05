@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zonik Logo Options</title>
+<style>
+  body { background: #0a0a0a; color: #e5e5e5; font-family: Inter, system-ui, sans-serif; margin: 0; padding: 40px; }
+  h1 { font-size: 24px; margin-bottom: 32px; color: #fff; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; }
+  .card {
+    background: #141414; border: 1px solid #1c1c1c; border-radius: 12px; padding: 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 16px;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: #6366f1; }
+  .card img { width: 96px; height: 96px; border-radius: 14px; }
+  .card .small { display: flex; gap: 12px; align-items: center; }
+  .card .small img { width: 32px; height: 32px; border-radius: 7px; }
+  .card .small span { font-size: 12px; color: #737373; }
+  h2 { font-size: 14px; font-weight: 600; margin: 0; }
+  p { font-size: 12px; color: #737373; margin: 4px 0 0; text-align: center; }
+  .current { border-color: #22c55e; }
+  .current::after { content: 'CURRENT'; font-size: 10px; background: #22c55e; color: #000; padding: 2px 8px; border-radius: 4px; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>Zonik Logo Options</h1>
+<div class="grid">
+  <div class="card current">
+    <img src="/logo-waveform-z.svg" alt="Waveform Z">
+    <h2>1. Waveform Z</h2>
+    <p>Audio bars arranged in Z shape</p>
+    <div class="small"><img src="/logo-waveform-z.svg"><span>32px</span></div>
+  </div>
+  <div class="card">
+    <img src="/logo-vinyl-z.svg" alt="Vinyl Z">
+    <h2>2. Vinyl Z</h2>
+    <p>Bold Z over vinyl record rings</p>
+    <div class="small"><img src="/logo-vinyl-z.svg"><span>32px</span></div>
+  </div>
+  <div class="card">
+    <img src="/logo-soundwave.svg" alt="Soundwave">
+    <h2>3. Soundwave</h2>
+    <p>Sine waves forming Z silhouette</p>
+    <div class="small"><img src="/logo-soundwave.svg"><span>32px</span></div>
+  </div>
+  <div class="card">
+    <img src="/logo-minimal-z.svg" alt="Minimal Z">
+    <h2>4. Minimal Z</h2>
+    <p>Clean geometric Z + music note</p>
+    <div class="small"><img src="/logo-minimal-z.svg"><span>32px</span></div>
+  </div>
+  <div class="card">
+    <img src="/logo-equalizer.svg" alt="Equalizer">
+    <h2>5. Equalizer</h2>
+    <p>EQ bars forming Z diagonal</p>
+    <div class="small"><img src="/logo-equalizer.svg"><span>32px</span></div>
+  </div>
+</div>
+</body>
+</html>
