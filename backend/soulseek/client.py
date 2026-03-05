@@ -58,6 +58,7 @@ class SoulseekClient:
         self._search_events: dict[bytes, asyncio.Event] = {}
         self._peer_address_futures: dict[str, asyncio.Future] = {}
         self._last_broadcast: float = 0
+        self._peer_cleanup_task: asyncio.Task | None = None
 
     @property
     def logged_in(self) -> bool:
@@ -71,6 +72,7 @@ class SoulseekClient:
         """Connect to server, start listener, login."""
         await self.listener.start()
         self.transfers.start()
+        self._peer_cleanup_task = asyncio.create_task(self._peer_cleanup_loop())
         await self.server.connect_and_login(username, password)
 
     async def search(
@@ -365,8 +367,27 @@ class SoulseekClient:
         except Exception:
             pass
 
+    async def _peer_cleanup_loop(self) -> None:
+        """Close idle peer connections to prevent fd leaks."""
+        try:
+            while True:
+                await asyncio.sleep(120)
+                # Find peers with no active transfers
+                active_users = {t.username for t in self.transfers.transfers.values()}
+                idle = [u for u in list(self.peers) if u not in active_users]
+                for username in idle:
+                    peer = self.peers.pop(username, None)
+                    if peer:
+                        peer.destroy()
+                if idle:
+                    log.debug(f"[client] Cleaned up {len(idle)} idle peer connections")
+        except asyncio.CancelledError:
+            return
+
     def destroy(self) -> None:
         """Tear down all connections."""
+        if self._peer_cleanup_task and not self._peer_cleanup_task.done():
+            self._peer_cleanup_task.cancel()
         self.server.destroy()
         self.listener.destroy()
         self.transfers.destroy()
