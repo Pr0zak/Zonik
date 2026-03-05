@@ -97,8 +97,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             desc = f"{req.artist} — {req.track}"
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
-            async def poll_transfer(client, username, filename, timeout_polls=150):
+            async def poll_transfer(client, username, filename, timeout_polls=150, stall_timeout=60):
                 """Poll transfer until terminal state. Returns (status, save_path, error)."""
+                last_bytes = 0
+                stall_start = None
                 for _ in range(timeout_polls):
                     await asyncio.sleep(2)
                     await db.refresh(job)
@@ -106,12 +108,23 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         return "cancelled", None, "Cancelled by user"
                     transfer = client.transfers.get_transfer(username, filename)
                     if not transfer:
-                        # Transfer was cleaned up (failed/denied already processed)
                         return "failed", None, "Transfer removed"
                     if transfer.state == TransferState.COMPLETED:
                         return "completed", transfer.save_path, None
                     elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
                         return "failed", None, transfer.error or transfer.state
+                    # Detect stalled transfers (no progress for stall_timeout seconds)
+                    if transfer.received_bytes > last_bytes:
+                        last_bytes = transfer.received_bytes
+                        stall_start = None
+                    else:
+                        import time
+                        if stall_start is None:
+                            stall_start = time.monotonic()
+                        elif time.monotonic() - stall_start > stall_timeout:
+                            client.transfers.update_state(transfer, TransferState.FAILED, error="Stalled (no data)")
+                            client.transfers.remove_transfer(username, filename)
+                            return "failed", None, "Transfer stalled — no data received"
                 return "timeout", None, "Transfer monitoring timed out"
 
             try:
