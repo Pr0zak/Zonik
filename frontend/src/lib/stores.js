@@ -5,6 +5,7 @@ export const currentTrack = writable(null);
 export const isPlaying = writable(false);
 export const activeJobs = writable([]);
 export const toasts = writable([]);
+export const updateAvailable = writable(false);
 
 let toastId = 0;
 export function addToast(message, type = 'info', duration = 5000) {

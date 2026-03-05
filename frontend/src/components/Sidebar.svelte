@@ -1,6 +1,7 @@
 <script>
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { sidebarOpen } from '$lib/stores.js';
+	import { sidebarOpen, updateAvailable } from '$lib/stores.js';
 
 	const nav = [
 		{ href: '/', label: 'Dashboard', icon: '⌂' },
@@ -15,6 +16,15 @@
 		{ href: '/logs', label: 'Logs', icon: '▤' },
 		{ href: '/settings', label: 'Settings', icon: '⚙' },
 	];
+
+	onMount(async () => {
+		try {
+			const data = await fetch('/api/config/updates').then(r => r.json());
+			$updateAvailable = data.update_available || false;
+		} catch {
+			// ignore
+		}
+	});
 </script>
 
 <aside class="w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-full shrink-0"
@@ -30,7 +40,10 @@
 						? 'bg-accent-700/20 text-accent-400'
 						: 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}">
 				<span class="text-base w-5 text-center">{item.icon}</span>
-				<span>{item.label}</span>
+				<span class="flex-1">{item.label}</span>
+				{#if item.href === '/settings' && $updateAvailable}
+					<span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" title="Update available"></span>
+				{/if}
 			</a>
 		{/each}
 	</nav>
