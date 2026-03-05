@@ -28,11 +28,12 @@ async def top_tracks(
     """Get Last.fm top tracks chart, annotated with library presence."""
     chart = await lastfm.get_top_tracks(limit=limit, page=page)
 
-    # Check which tracks are already in library
+    # Check which tracks are already in library (match both artist + title)
     for t in chart:
         result = await db.execute(
-            select(Track).where(
-                Track.title.ilike(f"%{t['name']}%"),
+            select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                Track.title.ilike(t["name"]),
+                Artist.name.ilike(t["artist"]),
             ).limit(1)
         )
         existing = result.scalar_one_or_none()
@@ -78,9 +79,12 @@ async def similar_tracks(
                 continue
             seen.add(key)
 
-            # Check if in library
+            # Check if in library (match both artist + title)
             existing = await db.execute(
-                select(Track).where(Track.title.ilike(f"%{t['name']}%")).limit(1)
+                select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                    Track.title.ilike(t["name"]),
+                    Artist.name.ilike(t["artist"]),
+                ).limit(1)
             )
             existing_track = existing.scalar_one_or_none()
             t["in_library"] = existing_track is not None
@@ -180,7 +184,10 @@ async def similar_by_track(
 
     for t in similar:
         existing = await db.execute(
-            select(Track).where(Track.title.ilike(f"%{t['name']}%")).limit(1)
+            select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                Track.title.ilike(t["name"]),
+                Artist.name.ilike(t["artist"]),
+            ).limit(1)
         )
         existing_track = existing.scalar_one_or_none()
         t["in_library"] = existing_track is not None
