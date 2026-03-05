@@ -76,6 +76,8 @@ export const api = {
 		request('/download/cancel-transfer', { method: 'POST', body: JSON.stringify({ username, filename }) }),
 	getDownloadHistory: (offset = 0, limit = 20) =>
 		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`),
+	clearDownloadHistory: () =>
+		request('/jobs/clear?type=download,bulk_download', { method: 'DELETE' }),
 
 	// Blacklist
 	addToBlacklist: (artist, track = null, reason = null) =>

@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, ArrowDownToLine, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, ArrowDownToLine, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -332,9 +332,27 @@
 
 	<!-- Download History -->
 	<Card padding="p-6" class="mb-6">
-		<div class="flex items-center gap-2 mb-4">
-			<Download class="w-4 h-4 text-[var(--color-downloads)]" />
-			<h2 class="text-base font-semibold text-[var(--text-primary)]">Download History</h2>
+		<div class="flex items-center justify-between mb-4">
+			<div class="flex items-center gap-2">
+				<Download class="w-4 h-4 text-[var(--color-downloads)]" />
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download History</h2>
+			</div>
+			{#if history.length}
+				<button onclick={async () => {
+					if (!window.confirm('Clear all completed/failed download history?')) return;
+					try {
+						await api.clearDownloadHistory();
+						history = [];
+						historyOffset = 0;
+						jobDetails = {};
+						expandedJob = null;
+						addToast('History cleared', 'success');
+					} catch { addToast('Failed to clear history', 'error'); }
+				}} class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors">
+					<Eraser class="w-3.5 h-3.5" />
+					Clear
+				</button>
+			{/if}
 		</div>
 
 		{#if historyLoading && !history.length}

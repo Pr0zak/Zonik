@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session
@@ -107,6 +107,19 @@ async def recent_job_updates(limit: int = 20, db: AsyncSession = Depends(get_db)
         }
         for j in jobs
     ]
+
+
+@router.delete("/clear")
+async def clear_jobs(type: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Delete completed/failed jobs. Optionally filter by type (comma-separated)."""
+    query = delete(Job).where(Job.status.in_(["completed", "failed"]))
+    if type:
+        type_list = [t.strip() for t in type.split(",") if t.strip()]
+        if type_list:
+            query = query.where(Job.type.in_(type_list))
+    result = await db.execute(query)
+    await db.commit()
+    return {"deleted": result.rowcount}
 
 
 @router.post("/{job_id}/cancel")
