@@ -8,7 +8,7 @@
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
-		MoreVertical, Pencil, AudioWaveform, ShieldBan
+		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -17,6 +17,7 @@
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import Modal from '../../components/ui/Modal.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 
 	const tabs = [
 		{ id: 'tracks', label: 'Tracks', icon: Music },
@@ -58,6 +59,30 @@
 		}
 		prevScanning = scanning;
 	});
+
+	// Schedule state
+	let schedTasks = $state({});
+	let schedRunning = $state({});
+
+	async function toggleSched(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newEnabled = !t.enabled;
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
+		schedTasks[name] = { ...t, enabled: newEnabled };
+	}
+	async function updateSched(name, updates) {
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+		schedTasks[name] = { ...schedTasks[name], ...updates };
+	}
+	async function runSched(name) {
+		schedRunning[name] = true;
+		try {
+			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
+			addToast('Task started', 'success');
+		} catch { addToast('Failed to run task', 'error'); }
+		finally { schedRunning[name] = false; }
+	}
 
 	// Select mode (tracks only)
 	let selectMode = $state(false);
@@ -221,6 +246,10 @@
 		try {
 			const active = await api.getActiveJobs();
 			if (active.some(j => j.type === 'library_scan')) scanTriggered = true;
+		} catch {}
+		try {
+			const tasks = await fetch('/api/schedule').then(r => r.json());
+			for (const t of tasks) schedTasks[t.task_name] = t;
 		} catch {}
 	});
 
@@ -830,6 +859,22 @@
 				{#snippet icon()}<Disc3 class="w-10 h-10" />{/snippet}
 			</EmptyState>
 		{/if}
+	{/if}
+
+	<!-- Schedule -->
+	{#if schedTasks.library_scan || schedTasks.library_cleanup}
+		<Card padding="p-4" class="mt-6">
+			<div class="flex items-center gap-2 mb-2">
+				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
+				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
+			</div>
+			{#if schedTasks.library_scan}
+				<ScheduleControl taskName="library_scan" label="Library Scan" enabled={schedTasks.library_scan.enabled} intervalHours={schedTasks.library_scan.interval_hours} runAt={schedTasks.library_scan.run_at} lastRunAt={schedTasks.library_scan.last_run_at} running={schedRunning.library_scan} onToggle={() => toggleSched('library_scan')} onUpdate={(u) => updateSched('library_scan', u)} onRun={() => runSched('library_scan')} />
+			{/if}
+			{#if schedTasks.library_cleanup}
+				<ScheduleControl taskName="library_cleanup" label="Library Cleanup" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
+			{/if}
+		</Card>
 	{/if}
 
 	<!-- Pagination -->

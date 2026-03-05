@@ -1,13 +1,14 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 
 	let activeTab = $state('top');
 
@@ -30,6 +31,8 @@
 	// Shared
 	let bulkDownloading = $state(false);
 	let trackStatus = $state({});
+	let schedTasks = $state({});
+	let schedRunning = $state({});
 
 	const tabs = [
 		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
@@ -229,14 +232,34 @@
 		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
 	}
 
+	// --- Schedule helpers ---
+	async function toggleSched(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newEnabled = !t.enabled;
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
+		schedTasks[name] = { ...t, enabled: newEnabled };
+	}
+	async function updateSched(name, updates) {
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+		schedTasks[name] = { ...schedTasks[name], ...updates };
+	}
+	async function runSched(name) {
+		schedRunning[name] = true;
+		try {
+			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
+			addToast('Task started', 'success');
+		} catch { addToast('Failed to run task', 'error'); }
+		finally { schedRunning[name] = false; }
+	}
+
 	onMount(async () => {
-		// Load scheduled task configs for limits
+		// Load scheduled task configs
 		try {
 			const tasks = await fetch('/api/schedule').then(r => r.json());
-			const topTask = tasks.find(t => t.task_name === 'lastfm_top_tracks');
-			if (topTask?.count) topLimit = topTask.count;
-			const simTask = tasks.find(t => t.task_name === 'discover_similar');
-			if (simTask?.count) similarLimit = simTask.count;
+			for (const t of tasks) schedTasks[t.task_name] = t;
+			if (schedTasks.lastfm_top_tracks?.count) topLimit = schedTasks.lastfm_top_tracks.count;
+			if (schedTasks.discover_similar?.count) similarLimit = schedTasks.discover_similar.count;
 		} catch {}
 
 		// Try loading cached results first, fall back to live scan
@@ -495,4 +518,23 @@
 			{/if}
 		{/if}
 	</div>
+
+	<!-- Schedule -->
+	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar}
+		<Card padding="p-4" class="mt-6">
+			<div class="flex items-center gap-2 mb-2">
+				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
+				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
+			</div>
+			{#if schedTasks.lastfm_top_tracks}
+				<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} />
+			{/if}
+			{#if schedTasks.discover_similar}
+				<ScheduleControl taskName="discover_similar" label="Similar Tracks Scan" enabled={schedTasks.discover_similar.enabled} intervalHours={schedTasks.discover_similar.interval_hours} runAt={schedTasks.discover_similar.run_at} count={schedTasks.discover_similar.count} lastRunAt={schedTasks.discover_similar.last_run_at} running={schedRunning.discover_similar} onToggle={() => toggleSched('discover_similar')} onUpdate={(u) => updateSched('discover_similar', u)} onRun={() => runSched('discover_similar')} />
+			{/if}
+			{#if schedTasks.discover_artists}
+				<ScheduleControl taskName="discover_artists" label="Similar Artists Scan" enabled={schedTasks.discover_artists.enabled} intervalHours={schedTasks.discover_artists.interval_hours} runAt={schedTasks.discover_artists.run_at} count={schedTasks.discover_artists.count} lastRunAt={schedTasks.discover_artists.last_run_at} running={schedRunning.discover_artists} onToggle={() => toggleSched('discover_artists')} onUpdate={(u) => updateSched('discover_artists', u)} onRun={() => runSched('discover_artists')} />
+			{/if}
+		</Card>
+	{/if}
 </div>

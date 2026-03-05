@@ -2,9 +2,10 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
-	import { ListMusic, Wand2, Plus } from 'lucide-svelte';
+	import { ListMusic, Wand2, Plus, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
+	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
@@ -12,6 +13,8 @@
 
 	let playlists = $state([]);
 	let loading = $state(true);
+	let schedTasks = $state({});
+	let schedRunning = $state({});
 
 	let showGenerator = $state(false);
 	let genName = $state('');
@@ -59,6 +62,26 @@
 		}
 	}
 
+	async function toggleSched(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newEnabled = !t.enabled;
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
+		schedTasks[name] = { ...t, enabled: newEnabled };
+	}
+	async function updateSched(name, updates) {
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+		schedTasks[name] = { ...schedTasks[name], ...updates };
+	}
+	async function runSched(name) {
+		schedRunning[name] = true;
+		try {
+			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
+			addToast('Task started', 'success');
+		} catch { addToast('Failed to run task', 'error'); }
+		finally { schedRunning[name] = false; }
+	}
+
 	onMount(async () => {
 		try {
 			playlists = await api.getPlaylists();
@@ -67,6 +90,10 @@
 		} finally {
 			loading = false;
 		}
+		try {
+			const tasks = await fetch('/api/schedule').then(r => r.json());
+			for (const t of tasks) schedTasks[t.task_name] = t;
+		} catch {}
 	});
 </script>
 
@@ -181,6 +208,25 @@
 			>
 				{#snippet icon()}<ListMusic class="w-10 h-10" />{/snippet}
 			</EmptyState>
+		</Card>
+	{/if}
+
+	<!-- Schedule -->
+	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites}
+		<Card padding="p-4" class="mt-6">
+			<div class="flex items-center gap-2 mb-2">
+				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
+				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-generate Schedule</span>
+			</div>
+			{#if schedTasks.playlist_weekly_top}
+				<ScheduleControl taskName="playlist_weekly_top" label="Weekly Top" enabled={schedTasks.playlist_weekly_top.enabled} intervalHours={schedTasks.playlist_weekly_top.interval_hours} runAt={schedTasks.playlist_weekly_top.run_at} dayOfWeek={schedTasks.playlist_weekly_top.day_of_week} count={schedTasks.playlist_weekly_top.count} lastRunAt={schedTasks.playlist_weekly_top.last_run_at} running={schedRunning.playlist_weekly_top} onToggle={() => toggleSched('playlist_weekly_top')} onUpdate={(u) => updateSched('playlist_weekly_top', u)} onRun={() => runSched('playlist_weekly_top')} />
+			{/if}
+			{#if schedTasks.playlist_weekly_discover}
+				<ScheduleControl taskName="playlist_weekly_discover" label="Weekly Discover" enabled={schedTasks.playlist_weekly_discover.enabled} intervalHours={schedTasks.playlist_weekly_discover.interval_hours} runAt={schedTasks.playlist_weekly_discover.run_at} dayOfWeek={schedTasks.playlist_weekly_discover.day_of_week} count={schedTasks.playlist_weekly_discover.count} lastRunAt={schedTasks.playlist_weekly_discover.last_run_at} running={schedRunning.playlist_weekly_discover} onToggle={() => toggleSched('playlist_weekly_discover')} onUpdate={(u) => updateSched('playlist_weekly_discover', u)} onRun={() => runSched('playlist_weekly_discover')} />
+			{/if}
+			{#if schedTasks.playlist_favorites}
+				<ScheduleControl taskName="playlist_favorites" label="Favorites Playlist" enabled={schedTasks.playlist_favorites.enabled} intervalHours={schedTasks.playlist_favorites.interval_hours} runAt={schedTasks.playlist_favorites.run_at} lastRunAt={schedTasks.playlist_favorites.last_run_at} running={schedRunning.playlist_favorites} onToggle={() => toggleSched('playlist_favorites')} onUpdate={(u) => updateSched('playlist_favorites', u)} onRun={() => runSched('playlist_favorites')} />
+			{/if}
 		</Card>
 	{/if}
 </div>

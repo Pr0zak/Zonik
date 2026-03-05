@@ -1,11 +1,12 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
+	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 
 	let stats = $state(null);
 	let testResults = $state({});
@@ -33,6 +34,8 @@
 	let upgradeJob = $state(null);
 	let upgrading = $state(false);
 
+	let schedTasks = $state({});
+	let schedRunning = $state({});
 	let backups = $state([]);
 	let creatingBackup = $state(false);
 
@@ -58,6 +61,10 @@
 		} catch (e) {
 			console.error(e);
 		}
+		try {
+			const tasks = await fetch('/api/schedule').then(r => r.json());
+			for (const t of tasks) schedTasks[t.task_name] = t;
+		} catch {}
 	});
 
 	async function checkForUpdates() {
@@ -275,6 +282,26 @@
 			if (data.error) { addToast(data.error, 'error'); return; }
 			addToast(data.message, 'success');
 		} catch (e) { addToast('Restore failed', 'error'); }
+	}
+
+	async function toggleSched(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newEnabled = !t.enabled;
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
+		schedTasks[name] = { ...t, enabled: newEnabled };
+	}
+	async function updateSched(name, updates) {
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+		schedTasks[name] = { ...schedTasks[name], ...updates };
+	}
+	async function runSched(name) {
+		schedRunning[name] = true;
+		try {
+			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
+			addToast('Task started', 'success');
+		} catch { addToast('Failed to run task', 'error'); }
+		finally { schedRunning[name] = false; }
 	}
 
 	const inputClass = 'w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20';
@@ -528,6 +555,22 @@
 				</div>
 			</div>
 		</Card>
+
+		<!-- Sync Schedules -->
+		{#if schedTasks.lastfm_sync || schedTasks.kimahub_favorites_sync}
+			<Card padding="p-4">
+				<div class="flex items-center gap-2 mb-2">
+					<Clock class="w-4 h-4 text-[var(--text-muted)]" />
+					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Sync Schedule</span>
+				</div>
+				{#if schedTasks.lastfm_sync}
+					<ScheduleControl taskName="lastfm_sync" label="Last.fm Scrobble Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
+				{/if}
+				{#if schedTasks.kimahub_favorites_sync}
+					<ScheduleControl taskName="kimahub_favorites_sync" label="KimaHub Favorites" enabled={schedTasks.kimahub_favorites_sync.enabled} intervalHours={schedTasks.kimahub_favorites_sync.interval_hours} runAt={schedTasks.kimahub_favorites_sync.run_at} lastRunAt={schedTasks.kimahub_favorites_sync.last_run_at} running={schedRunning.kimahub_favorites_sync} onToggle={() => toggleSched('kimahub_favorites_sync')} onUpdate={(u) => updateSched('kimahub_favorites_sync', u)} onRun={() => runSched('kimahub_favorites_sync')} />
+				{/if}
+			</Card>
+		{/if}
 
 		<!-- Subsonic -->
 		<Card padding="p-6">

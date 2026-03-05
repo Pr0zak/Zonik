@@ -1,18 +1,21 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
-	import { AudioWaveform, Sparkles, Database, Search } from 'lucide-svelte';
+	import { AudioWaveform, Sparkles, Database, Search, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
+	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 
 	let stats = $state(null);
 	let loading = $state(true);
 	let vibeQuery = $state('');
 	let vibeResults = $state([]);
 	let searching = $state(false);
+	let schedTasks = $state({});
+	let schedRunning = $state({});
 
 	// Derive running state from activeJobs store
 	let analysisJob = $derived($activeJobs.find(j => j.type === 'audio_analysis'));
@@ -49,6 +52,10 @@
 		} finally {
 			loading = false;
 		}
+		try {
+			const tasks = await fetch('/api/schedule').then(r => r.json());
+			for (const t of tasks) schedTasks[t.task_name] = t;
+		} catch {}
 	});
 
 	async function startAnalysis() {
@@ -94,6 +101,26 @@
 		} finally {
 			searching = false;
 		}
+	}
+
+	async function toggleSched(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newEnabled = !t.enabled;
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
+		schedTasks[name] = { ...t, enabled: newEnabled };
+	}
+	async function updateSched(name, updates) {
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
+		schedTasks[name] = { ...schedTasks[name], ...updates };
+	}
+	async function runSched(name) {
+		schedRunning[name] = true;
+		try {
+			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
+			addToast('Task started', 'success');
+		} catch { addToast('Failed to run task', 'error'); }
+		finally { schedRunning[name] = false; }
 	}
 
 	function progressPct(job) {
@@ -227,6 +254,41 @@
 					</div>
 				{/each}
 			</div>
+		{/if}
+	</Card>
+
+	<Card padding="p-4" class="mb-6">
+		<div class="flex items-center gap-2 mb-2">
+			<Clock class="w-4 h-4 text-[var(--text-muted)]" />
+			<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
+		</div>
+		{#if schedTasks.audio_analysis}
+			<ScheduleControl
+				taskName="audio_analysis"
+				label="Audio Analysis"
+				enabled={schedTasks.audio_analysis.enabled}
+				intervalHours={schedTasks.audio_analysis.interval_hours}
+				runAt={schedTasks.audio_analysis.run_at}
+				lastRunAt={schedTasks.audio_analysis.last_run_at}
+				running={schedRunning.audio_analysis}
+				onToggle={() => toggleSched('audio_analysis')}
+				onUpdate={(u) => updateSched('audio_analysis', u)}
+				onRun={() => runSched('audio_analysis')}
+			/>
+		{/if}
+		{#if schedTasks.enrichment}
+			<ScheduleControl
+				taskName="enrichment"
+				label="Enrichment"
+				enabled={schedTasks.enrichment.enabled}
+				intervalHours={schedTasks.enrichment.interval_hours}
+				runAt={schedTasks.enrichment.run_at}
+				lastRunAt={schedTasks.enrichment.last_run_at}
+				running={schedRunning.enrichment}
+				onToggle={() => toggleSched('enrichment')}
+				onUpdate={(u) => updateSched('enrichment', u)}
+				onRun={() => runSched('enrichment')}
+			/>
 		{/if}
 	</Card>
 
