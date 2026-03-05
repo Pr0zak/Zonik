@@ -269,10 +269,7 @@ def get_slskd_client() -> SlskdClient:
 # --- Multi-strategy search ---
 
 def _use_native() -> bool:
-    """Check if native Soulseek client is enabled and running."""
-    settings = get_settings()
-    if not settings.soulseek.use_native:
-        return False
+    """Check if native Soulseek client is running."""
     from backend.soulseek import get_client
     client = get_client()
     return client is not None and client.logged_in

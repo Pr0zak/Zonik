@@ -244,24 +244,15 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
 
 @router.get("/status")
 async def download_status():
-    """Get current download status (native or slskd)."""
-    from backend.config import get_settings
-    settings = get_settings()
-
-    if settings.soulseek.use_native:
-        from backend.soulseek import get_client
-        client = get_client()
-        if client:
-            return {
-                "downloads": client.transfers.get_all_transfers(),
-                "native": True,
-                "logged_in": client.logged_in,
-            }
-        return {"downloads": [], "native": True, "logged_in": False}
-
-    client = get_slskd_client()
-    downloads = await client.get_all_downloads()
-    return {"downloads": downloads}
+    """Get current download status from native Soulseek client."""
+    from backend.soulseek import get_client
+    client = get_client()
+    if client:
+        return {
+            "downloads": client.transfers.get_all_transfers(),
+            "logged_in": client.logged_in,
+        }
+    return {"downloads": [], "logged_in": False}
 
 
 # --- Blacklist CRUD ---

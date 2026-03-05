@@ -43,6 +43,7 @@ class SoulseekConfig(BaseModel):
 
 
 class LidarrConfig(BaseModel):
+    enabled: bool = False
     url: str = ""
     api_key: str = ""
     root_folder: str = "/music"

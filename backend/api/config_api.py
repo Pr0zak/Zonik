@@ -71,20 +71,20 @@ def _write_config(data: dict) -> None:
 
 
 class ServiceConfig(BaseModel):
-    slskd_url: str = ""
-    slskd_api_key: str = ""
     download_dir: str = ""
-    lidarr_url: str = ""
-    lidarr_api_key: str = ""
-    lastfm_api_key: str = ""
-    lastfm_write_api_key: str = ""
-    lastfm_write_api_secret: str = ""
     cover_cache_dir: str = ""
-    # Native Soulseek settings
+    # Soulseek (native only)
     slsk_username: str = ""
     slsk_password: str = ""
     slsk_listen_port: int = 2234
-    slsk_use_native: bool = False
+    # Lidarr
+    lidarr_enabled: bool = False
+    lidarr_url: str = ""
+    lidarr_api_key: str = ""
+    # Last.fm
+    lastfm_api_key: str = ""
+    lastfm_write_api_key: str = ""
+    lastfm_write_api_secret: str = ""
 
 
 @router.get("/services")
@@ -92,19 +92,17 @@ async def get_service_config():
     """Get current service connection settings."""
     settings = get_settings()
     return {
-        "slskd_url": settings.soulseek.slskd_url,
-        "slskd_api_key": settings.soulseek.slskd_api_key,
         "download_dir": settings.soulseek.download_dir,
+        "cover_cache_dir": settings.library.cover_cache_dir,
+        "slsk_username": settings.soulseek.username,
+        "slsk_password": settings.soulseek.password,
+        "slsk_listen_port": settings.soulseek.listen_port,
+        "lidarr_enabled": settings.lidarr.enabled,
         "lidarr_url": settings.lidarr.url,
         "lidarr_api_key": settings.lidarr.api_key,
         "lastfm_api_key": settings.lastfm.api_key,
         "lastfm_write_api_key": settings.lastfm.write_api_key,
         "lastfm_write_api_secret": settings.lastfm.write_api_secret,
-        "cover_cache_dir": settings.library.cover_cache_dir,
-        "slsk_username": settings.soulseek.username,
-        "slsk_password": settings.soulseek.password,
-        "slsk_listen_port": settings.soulseek.listen_port,
-        "slsk_use_native": settings.soulseek.use_native,
     }
 
 
@@ -116,21 +114,19 @@ async def update_service_config(req: ServiceConfig):
 
     # Update fields — full keys are sent from frontend, just save them
     soulseek = raw.get("soulseek", {})
-    soulseek["slskd_url"] = req.slskd_url
-    if req.slskd_api_key:
-        soulseek["slskd_api_key"] = req.slskd_api_key
     if req.download_dir:
         soulseek["download_dir"] = req.download_dir
-    # Native Soulseek settings
+    # Native Soulseek settings (always native now)
     if req.slsk_username:
         soulseek["username"] = req.slsk_username
     if req.slsk_password:
         soulseek["password"] = req.slsk_password
     soulseek["listen_port"] = req.slsk_listen_port
-    soulseek["use_native"] = req.slsk_use_native
+    soulseek["use_native"] = True  # Always native
     raw["soulseek"] = {**settings.soulseek.model_dump(), **soulseek}
 
     lidarr = raw.get("lidarr", {})
+    lidarr["enabled"] = req.lidarr_enabled
     lidarr["url"] = req.lidarr_url
     if req.lidarr_api_key:
         lidarr["api_key"] = req.lidarr_api_key
@@ -186,50 +182,30 @@ async def test_service(service: str):
             return {"status": "error", "message": str(e)}
 
     elif service == "soulseek":
-        if settings.soulseek.use_native:
-            # Test native client
-            username = settings.soulseek.username
-            password = settings.soulseek.password
-            if not username or not password:
-                return {"status": "error", "message": "No username/password configured"}
-            try:
-                from backend.soulseek import get_client
-                client = get_client()
-                if client and client.logged_in:
-                    return {"status": "ok", "message": f"Connected as {client.username}"}
-                # Try a fresh login test
-                from backend.soulseek.server_conn import ServerConnection
-                test_conn = ServerConnection(
-                    host=settings.soulseek.server_host,
-                    port=settings.soulseek.server_port,
-                    listen_port=settings.soulseek.listen_port,
-                )
-                await test_conn.connect()
-                result = await test_conn.login(username, password, timeout=10)
-                test_conn.destroy()
-                if result.get("success"):
-                    return {"status": "ok", "message": f"Login successful as {username}"}
-                return {"status": "error", "message": result.get("reason", "Login failed")}
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
-        else:
-            # Test legacy slskd
-            url = settings.soulseek.slskd_url
-            key = settings.soulseek.slskd_api_key
-            if not url:
-                return {"status": "error", "message": "No slskd URL configured"}
-            import httpx
-            try:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.get(f"{url.rstrip('/')}/api/v0/application", headers={"X-API-Key": key})
-                    if resp.status_code == 200:
-                        return {"status": "ok", "message": "Connected"}
-                    elif resp.status_code == 401:
-                        return {"status": "error", "message": "Invalid API key"}
-                    else:
-                        return {"status": "error", "message": f"HTTP {resp.status_code}"}
-            except Exception as e:
-                return {"status": "error", "message": str(e)}
+        username = settings.soulseek.username
+        password = settings.soulseek.password
+        if not username or not password:
+            return {"status": "error", "message": "No username/password configured"}
+        try:
+            from backend.soulseek import get_client
+            client = get_client()
+            if client and client.logged_in:
+                return {"status": "ok", "message": f"Connected as {client.username}"}
+            # Try a fresh login test
+            from backend.soulseek.server_conn import ServerConnection
+            test_conn = ServerConnection(
+                host=settings.soulseek.server_host,
+                port=settings.soulseek.server_port,
+                listen_port=settings.soulseek.listen_port,
+            )
+            await test_conn.connect()
+            result = await test_conn.login(username, password, timeout=10)
+            test_conn.destroy()
+            if result.get("success"):
+                return {"status": "ok", "message": f"Login successful as {username}"}
+            return {"status": "error", "message": result.get("reason", "Login failed")}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     elif service == "lidarr":
         url = settings.lidarr.url
@@ -533,25 +509,15 @@ async def health_check():
         checks["redis"] = {"status": "error", "message": str(e)}
 
     # Soulseek
-    if settings.soulseek.use_native:
+    if settings.soulseek.username:
         from backend.soulseek import get_client
         slsk = get_client()
         if slsk and slsk.logged_in:
-            checks["soulseek"] = {"status": "ok", "message": f"Native: {slsk.username}"}
+            checks["soulseek"] = {"status": "ok", "message": f"Connected as {slsk.username}"}
         elif slsk:
-            checks["soulseek"] = {"status": "warning", "message": "Native: not logged in"}
+            checks["soulseek"] = {"status": "warning", "message": "Not logged in"}
         else:
-            checks["soulseek"] = {"status": "error", "message": "Native: client not started"}
-    elif settings.soulseek.slskd_url:
-        try:
-            async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(
-                    f"{settings.soulseek.slskd_url.rstrip('/')}/api/v0/application",
-                    headers={"X-API-Key": settings.soulseek.slskd_api_key},
-                )
-                checks["soulseek"] = {"status": "ok" if resp.status_code == 200 else "error", "message": f"HTTP {resp.status_code}"}
-        except Exception as e:
-            checks["soulseek"] = {"status": "error", "message": str(e)}
+            checks["soulseek"] = {"status": "error", "message": "Client not started"}
     else:
         checks["soulseek"] = {"status": "warning", "message": "Not configured"}
 
@@ -574,7 +540,7 @@ async def health_check():
         checks["lastfm"] = {"status": "warning", "message": "Not configured"}
 
     # Lidarr
-    if settings.lidarr.url:
+    if settings.lidarr.enabled and settings.lidarr.url:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(
@@ -584,6 +550,8 @@ async def health_check():
                 checks["lidarr"] = {"status": "ok" if resp.status_code == 200 else "error", "message": f"HTTP {resp.status_code}"}
         except Exception as e:
             checks["lidarr"] = {"status": "error", "message": str(e)}
+    elif not settings.lidarr.enabled:
+        checks["lidarr"] = {"status": "warning", "message": "Disabled"}
     else:
         checks["lidarr"] = {"status": "warning", "message": "Not configured"}
 

@@ -10,19 +10,17 @@
 	let stats = $state(null);
 	let testResults = $state({});
 	let services = $state({
-		slskd_url: '',
-		slskd_api_key: '',
 		download_dir: '',
+		cover_cache_dir: '',
+		slsk_username: '',
+		slsk_password: '',
+		slsk_listen_port: 2234,
+		lidarr_enabled: false,
 		lidarr_url: '',
 		lidarr_api_key: '',
 		lastfm_api_key: '',
 		lastfm_write_api_key: '',
 		lastfm_write_api_secret: '',
-		cover_cache_dir: '',
-		slsk_username: '',
-		slsk_password: '',
-		slsk_listen_port: 2234,
-		slsk_use_native: false,
 	});
 	let saving = $state(false);
 	let dirty = $state(false);
@@ -414,98 +412,25 @@
 				<div>
 					<div class="flex items-center justify-between mb-2">
 						<h3 class="text-sm font-medium text-[var(--text-primary)]">Soulseek</h3>
-						<div class="flex items-center gap-3">
-							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-								<input type="checkbox" bind:checked={services.slsk_use_native} onchange={markDirty} />
-								Native Client
-							</label>
-							<button onclick={() => testConnection('soulseek')}
-								class="transition-colors">
-								<Badge variant={testBadgeVariant('soulseek')}>{testBtnLabel('soulseek', 'Test')}</Badge>
-							</button>
-						</div>
-					</div>
-
-					{#if services.slsk_use_native}
-						<!-- Native Soulseek settings -->
-						<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">Username</label>
-								<input type="text" bind:value={services.slsk_username} oninput={markDirty}
-									placeholder="Soulseek username" class={inputClass} />
-							</div>
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">Password</label>
-								<div class="relative">
-									<input type={showField.slsk_pass ? 'text' : 'password'} bind:value={services.slsk_password} oninput={markDirty}
-										placeholder="Soulseek password" class="{inputClass} pr-8" />
-									<button type="button" onclick={() => toggleField('slsk_pass')}
-										class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
-										{#if showField.slsk_pass}
-											<EyeOff class="w-4 h-4" />
-										{:else}
-											<Eye class="w-4 h-4" />
-										{/if}
-									</button>
-								</div>
-							</div>
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">Listen Port</label>
-								<input type="number" bind:value={services.slsk_listen_port} oninput={markDirty}
-									placeholder="2234" class={inputClass} />
-							</div>
-						</div>
-						<p class="mt-2 text-xs text-[var(--text-disabled)]">Connects directly to Soulseek P2P network. No slskd container needed.</p>
-					{:else}
-						<!-- Legacy slskd settings -->
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">slskd URL</label>
-								<input type="text" bind:value={services.slskd_url} oninput={markDirty}
-									placeholder="http://host:5030" class={inputClass} />
-							</div>
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">slskd API Key</label>
-								<div class="relative">
-									<input type={showField.slskd ? 'text' : 'password'} bind:value={services.slskd_api_key} oninput={markDirty}
-										placeholder="slskd API key" class="{inputClass} pr-8" />
-									<button type="button" onclick={() => toggleField('slskd')}
-										class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
-										{#if showField.slskd}
-											<EyeOff class="w-4 h-4" />
-										{:else}
-											<Eye class="w-4 h-4" />
-										{/if}
-									</button>
-								</div>
-							</div>
-						</div>
-					{/if}
-				</div>
-
-				<!-- Lidarr -->
-				<div>
-					<div class="flex items-center justify-between mb-2">
-						<h3 class="text-sm font-medium text-[var(--text-primary)]">Lidarr</h3>
-						<button onclick={() => testConnection('lidarr')}
+						<button onclick={() => testConnection('soulseek')}
 							class="transition-colors">
-							<Badge variant={testBadgeVariant('lidarr')}>{testBtnLabel('lidarr', 'Test')}</Badge>
+							<Badge variant={testBadgeVariant('soulseek')}>{testBtnLabel('soulseek', 'Test')}</Badge>
 						</button>
 					</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
 						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">URL</label>
-							<input type="text" bind:value={services.lidarr_url} oninput={markDirty}
-								placeholder="http://host:8686" class={inputClass} />
+							<label class="block text-xs text-[var(--text-muted)] mb-1">Username</label>
+							<input type="text" bind:value={services.slsk_username} oninput={markDirty}
+								placeholder="Soulseek username" class={inputClass} />
 						</div>
 						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
+							<label class="block text-xs text-[var(--text-muted)] mb-1">Password</label>
 							<div class="relative">
-								<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} oninput={markDirty}
-									placeholder="Lidarr API key" class="{inputClass} pr-8" />
-								<button type="button" onclick={() => toggleField('lidarr')}
+								<input type={showField.slsk_pass ? 'text' : 'password'} bind:value={services.slsk_password} oninput={markDirty}
+									placeholder="Soulseek password" class="{inputClass} pr-8" />
+								<button type="button" onclick={() => toggleField('slsk_pass')}
 									class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
-									{#if showField.lidarr}
+									{#if showField.slsk_pass}
 										<EyeOff class="w-4 h-4" />
 									{:else}
 										<Eye class="w-4 h-4" />
@@ -513,7 +438,59 @@
 								</button>
 							</div>
 						</div>
+						<div>
+							<label class="block text-xs text-[var(--text-muted)] mb-1">Listen Port</label>
+							<input type="number" bind:value={services.slsk_listen_port} oninput={markDirty}
+								placeholder="2234" class={inputClass} />
+						</div>
 					</div>
+					<p class="mt-2 text-xs text-[var(--text-disabled)]">Connects directly to the Soulseek P2P network.</p>
+				</div>
+
+				<!-- Lidarr -->
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<div class="flex items-center gap-3">
+							<h3 class="text-sm font-medium text-[var(--text-primary)]">Lidarr</h3>
+							<button type="button" onclick={() => { services.lidarr_enabled = !services.lidarr_enabled; markDirty(); }}
+								class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.lidarr_enabled ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
+								role="switch" aria-checked={services.lidarr_enabled}>
+								<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.lidarr_enabled ? 'translate-x-4' : 'translate-x-0.5'}"></span>
+							</button>
+						</div>
+						{#if services.lidarr_enabled}
+							<button onclick={() => testConnection('lidarr')}
+								class="transition-colors">
+								<Badge variant={testBadgeVariant('lidarr')}>{testBtnLabel('lidarr', 'Test')}</Badge>
+							</button>
+						{/if}
+					</div>
+					{#if services.lidarr_enabled}
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+							<div>
+								<label class="block text-xs text-[var(--text-muted)] mb-1">URL</label>
+								<input type="text" bind:value={services.lidarr_url} oninput={markDirty}
+									placeholder="http://host:8686" class={inputClass} />
+							</div>
+							<div>
+								<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
+								<div class="relative">
+									<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} oninput={markDirty}
+										placeholder="Lidarr API key" class="{inputClass} pr-8" />
+									<button type="button" onclick={() => toggleField('lidarr')}
+										class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+										{#if showField.lidarr}
+											<EyeOff class="w-4 h-4" />
+										{:else}
+											<Eye class="w-4 h-4" />
+										{/if}
+									</button>
+								</div>
+							</div>
+						</div>
+					{:else}
+						<p class="text-xs text-[var(--text-disabled)]">Secondary download source. Enable to configure.</p>
+					{/if}
 				</div>
 
 				<!-- Last.fm -->

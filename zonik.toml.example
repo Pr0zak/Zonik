@@ -29,6 +29,7 @@ server_port = 2242
 use_native = false
 
 [lidarr]
+enabled = false
 url = ""
 api_key = ""
 root_folder = "/music"
