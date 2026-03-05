@@ -47,6 +47,12 @@ async def list_tracks(
     count_q = select(func.count(Track.id))
     if search:
         count_q = count_q.where(Track.title.ilike(f"%{search}%"))
+    if genre:
+        count_q = count_q.where(Track.genre == genre)
+    if artist_id:
+        count_q = count_q.where(Track.artist_id == artist_id)
+    if album_id:
+        count_q = count_q.where(Track.album_id == album_id)
     total = (await db.execute(count_q)).scalar() or 0
 
     return {
@@ -66,6 +72,7 @@ async def list_tracks(
                 "year": t.year,
                 "file_size": t.file_size,
                 "play_count": t.play_count,
+                "cover_art": t.album_id or t.id,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
             }
             for t in tracks

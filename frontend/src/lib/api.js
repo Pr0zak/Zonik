@@ -27,6 +27,18 @@ export const api = {
 	bulkDeleteTracks: (ids) => request('/tracks/bulk-delete', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
 	bulkAnalyzeTracks: (ids) => request('/tracks/bulk-analyze', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
 
+	// Artists & Albums
+	getArtists: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/library/artists?${qs}`);
+	},
+	getAlbums: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/library/albums?${qs}`);
+	},
+
 	// Favorites
 	getFavorites: () => request('/favorites'),
 	star: (data) => request('/favorites/star', { method: 'POST', body: JSON.stringify(data) }),

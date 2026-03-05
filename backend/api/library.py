@@ -108,6 +108,97 @@ async def recent_tracks(limit: int = 20, db: AsyncSession = Depends(get_db)):
     ]
 
 
+@router.get("/artists")
+async def list_artists(
+    offset: int = 0,
+    limit: int = 50,
+    search: str | None = None,
+    sort: str = "name",
+    order: str = "asc",
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(Artist)
+    count_q = select(func.count(Artist.id))
+
+    if search:
+        query = query.where(Artist.name.ilike(f"%{search}%"))
+        count_q = count_q.where(Artist.name.ilike(f"%{search}%"))
+
+    sort_col = getattr(Artist, sort, Artist.name)
+    query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+    query = query.offset(offset).limit(limit)
+
+    result = await db.execute(query)
+    artists = result.scalars().all()
+    total = (await db.execute(count_q)).scalar() or 0
+
+    items = []
+    for a in artists:
+        track_count = (await db.execute(
+            select(func.count(Track.id)).where(Track.artist_id == a.id)
+        )).scalar() or 0
+        # Get cover art from first album
+        album_result = await db.execute(
+            select(Album.id, Album.cover_art_path).where(Album.artist_id == a.id).limit(1)
+        )
+        album_row = album_result.first()
+        items.append({
+            "id": a.id,
+            "name": a.name,
+            "image_url": a.image_url,
+            "cover_art": album_row[0] if album_row else None,
+            "track_count": track_count,
+        })
+
+    return {"artists": items, "total": total}
+
+
+@router.get("/albums")
+async def list_albums(
+    offset: int = 0,
+    limit: int = 50,
+    search: str | None = None,
+    sort: str = "title",
+    order: str = "asc",
+    artist_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy.orm import selectinload
+    query = select(Album).options(selectinload(Album.artist))
+    count_q = select(func.count(Album.id))
+
+    if search:
+        query = query.where(Album.title.ilike(f"%{search}%"))
+        count_q = count_q.where(Album.title.ilike(f"%{search}%"))
+    if artist_id:
+        query = query.where(Album.artist_id == artist_id)
+        count_q = count_q.where(Album.artist_id == artist_id)
+
+    sort_col = getattr(Album, sort, Album.title)
+    query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+    query = query.offset(offset).limit(limit)
+
+    result = await db.execute(query)
+    albums = result.scalars().all()
+    total = (await db.execute(count_q)).scalar() or 0
+
+    return {
+        "albums": [
+            {
+                "id": a.id,
+                "title": a.title,
+                "artist": a.artist.name if a.artist else None,
+                "artist_id": a.artist_id,
+                "year": a.year,
+                "cover_art": a.id,
+                "track_count": a.track_count or 0,
+            }
+            for a in albums
+        ],
+        "total": total,
+    }
+
+
 @router.get("/genres")
 async def list_genres(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
