@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def pick_best_results_native(
+async def pick_best_results_native(
     results: list,  # list of SearchResult
     artist: str,
     track: str,
@@ -26,8 +26,17 @@ def pick_best_results_native(
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
+    # Pre-filter: exclude blocked peers
+    blocked_users: set[str] = set()
+    if reputation:
+        for search_result in results:
+            if await reputation.is_blocked(search_result.username):
+                blocked_users.add(search_result.username)
+
     scored = []
     for search_result in results:
+        if search_result.username in blocked_users:
+            continue
         for file_info in search_result.files:
             filename = file_info.filename
             size = file_info.size
@@ -78,11 +87,15 @@ def pick_best_results_native(
             elif bitrate >= 256:
                 score += 3
 
-            # Peer quality
+            # Peer quality (heavily weighted — available peers matter most)
             if search_result.slots_free:
-                score += 3
+                score += 10
+            else:
+                score -= 5  # penalize peers with no free slots
             if search_result.avg_speed > 1000000:  # >1MB/s
-                score += 2
+                score += 8
+            elif search_result.avg_speed > 500000:  # >500KB/s
+                score += 4
 
             if score > 0:
                 scored.append((score, {
@@ -138,7 +151,7 @@ async def search_multi_strategy_native(
         log.info(f"[native] Search strategy: '{q}'")
         results = await client.search(q)
         if results:
-            candidates = pick_best_results_native(results, artist, track)
+            candidates = await pick_best_results_native(results, artist, track, reputation=client.reputation)
             if candidates:
                 return candidates
 
@@ -160,11 +173,6 @@ async def search_and_download_native(
     for i, candidate in enumerate(candidates):
         username = candidate["username"]
         filename = candidate["filename"]
-
-        # Check reputation
-        if await client.reputation.is_blocked(username):
-            log.info(f"[native] Skipping blocked peer: {username}")
-            continue
 
         log.info(f"[native] Download attempt {i+1}/{len(candidates)}: {username} - {filename}")
         try:

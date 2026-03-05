@@ -17,8 +17,8 @@ from backend.soulseek.protocol.types import (
 
 log = logging.getLogger(__name__)
 
-DEFAULT_SEARCH_TIMEOUT = 10
-DEFAULT_PEER_TIMEOUT = 10
+DEFAULT_SEARCH_TIMEOUT = 25
+DEFAULT_PEER_TIMEOUT = 20
 
 
 class SoulseekClient:

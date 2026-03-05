@@ -97,10 +97,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             desc = f"{req.artist} — {req.track}"
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
-            async def poll_transfer(client, username, filename, timeout_polls=60):
+            async def poll_transfer(client, username, filename, timeout_polls=150):
                 """Poll transfer until terminal state. Returns (status, save_path, error)."""
                 for _ in range(timeout_polls):
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(2)
                     await db.refresh(job)
                     if job.status == "failed":
                         return "cancelled", None, "Cancelled by user"

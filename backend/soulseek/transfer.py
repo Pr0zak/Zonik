@@ -145,7 +145,10 @@ class TransferManager:
         try:
             async with aiofiles.open(save_path, "wb") as f:
                 while True:
-                    chunk = await reader.read(65536)
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(65536), timeout=30)
+                    except asyncio.TimeoutError:
+                        raise ConnectionError("Peer stopped sending data (30s timeout)")
                     if not chunk:
                         break
 
