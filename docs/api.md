@@ -110,6 +110,7 @@ Base URL: `/api`
 |----------|--------|-------------|
 | `/api/tracks?offset=&limit=&sort=&order=&search=&genre=&artist_id=&album_id=` | GET | List tracks with pagination, filtering |
 | `/api/tracks/{id}` | GET | Track details with analysis |
+| `/api/tracks/{id}` | PUT | Update track metadata `{title?, genre?, year?, track_number?}` (also writes file tags) |
 | `/api/tracks/{id}` | DELETE | Delete track and file |
 | `/api/tracks/bulk-delete` | POST | Bulk delete `{track_ids: [...]}` |
 | `/api/tracks/bulk-analyze` | POST | Queue bulk analysis `{track_ids: [...]}` |
@@ -143,9 +144,11 @@ Base URL: `/api`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/favorites/` | GET | List favorites |
+| `/api/favorites` | GET | List favorites with track/album/artist details |
+| `/api/favorites/ids` | GET | Favorite IDs for quick lookup `{track_ids, album_ids, artist_ids}` |
 | `/api/favorites/star` | POST | Star item `{track_id?, album_id?, artist_id?}` |
-| `/api/favorites/unstar` | POST | Unstar item |
+| `/api/favorites/unstar` | POST | Unstar item `{track_id?, album_id?, artist_id?}` |
+| `/api/favorites/import` | POST | Bulk import `{tracks: [{title, artist, file_path?}]}` |
 
 ### Playlists
 
@@ -162,10 +165,14 @@ Base URL: `/api`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/analysis/status` | GET | Analysis queue status |
-| `/api/analysis/analyze` | POST | Queue tracks for analysis |
+| `/api/analysis/stats` | GET | Analysis coverage statistics |
+| `/api/analysis/start` | POST | Queue unanalyzed tracks for audio analysis `{force?}` |
+| `/api/analysis/embeddings/start` | POST | Queue tracks for CLAP vibe embeddings `{force?}` |
+| `/api/analysis/enrich` | POST | Run metadata enrichment (genre, cover art) on all tracks missing data |
 | `/api/analysis/echo-match` | POST | Vibe similarity search `{track_id, limit?}` |
-| `/api/analysis/vibe-search` | POST | Text-to-audio search `{query, limit?}` |
+| `/api/analysis/vibe-search` | POST | Text/track vibe search `{query?, track_id?, limit?}` |
+| `/api/analysis/steady-vibes` | POST | Steady Vibes playlist from seed `{seed_track_id, length?}` |
+| `/api/analysis/track/{id}` | GET | Track analysis details (BPM, key, energy, etc.) |
 
 ### Config
 
@@ -198,6 +205,8 @@ Base URL: `/api`
 | `/api/schedule/` | GET | List scheduled tasks |
 | `/api/schedule/{name}` | PUT | Update task config |
 | `/api/schedule/{name}/run` | POST | Run task immediately |
+
+Available scheduled tasks: `library_scan`, `enrichment`, `audio_analysis`, `lastfm_top_tracks`, `discover_similar`, `lastfm_sync`, `playlist_weekly_top`, `playlist_weekly_discover`, `playlist_favorites`, `kimahub_favorites_sync`, `library_cleanup`.
 
 ### Jobs
 

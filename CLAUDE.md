@@ -30,14 +30,14 @@ backend/
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
     jobs.py            # Job listing, details, retry failed downloads
-    tracks.py          # Track CRUD + search + bulk actions
+    tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums list endpoints
     download.py        # Soulseek search/trigger/bulk + blacklist
     discovery.py       # Last.fm charts, similar tracks/artists
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management
     websocket.py       # Real-time job progress
-    favorites.py       # Star/unstar
+    favorites.py       # Star/unstar + favorite IDs lookup + bulk import from external sources
     playlists.py       # Playlist CRUD + smart playlist generation
     users.py           # User management (CRUD, password change)
   subsonic/            # Full OpenSubsonic API (auth, browsing, media, search, etc.)
@@ -47,9 +47,9 @@ backend/
 frontend/
   src/routes/          # SvelteKit pages (12 routes)
     +page.svelte       # Dashboard (stats, last scan, version, health)
-    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks
+    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal
     discover/          # Last.fm charts, similar artists
-    downloads/         # Soulseek download management
+    downloads/         # Soulseek download management + slskd active transfers panel
     playlists/         # Playlist management
     favorites/         # Starred items
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
@@ -95,6 +95,15 @@ docs/                  # Installation, configuration, API reference, development
 - Library page: tabbed Tracks/Artists/Albums with grid (card art) and list view toggle
 - Cover art served via `/rest/getCoverArt?id=<track_or_album_id>` (subsonic endpoint)
 - URLSearchParams pitfall: filter out undefined/null values before passing to URLSearchParams (converts to literal "undefined")
+- Library page: heart buttons on tracks/artists/albums in both grid and list views; 3-dot context menu on tracks (Find Similar, Edit Info, Favorite, Delete)
+- Track edit: PUT /api/tracks/{id} updates DB + writes tags to audio file via mutagen (title, genre, year, track_number)
+- Favorites: /api/favorites/ids returns track_ids/album_ids/artist_ids sets for fast client-side lookup
+- Favorites import: /api/favorites/import accepts [{title, artist, file_path?}] and matches by file_path MD5 or title+artist
+- KimaHub favorites sync: scheduled task (every 6h) syncs LikedTrack from KimaHub PostgreSQL into Zonik favorites via asyncpg
+- KimaHub config: [kimahub] section in zonik.toml with db_url field
+- Downloads page: "Active Transfers" panel polls slskd /api/v0/transfers/downloads every 5s, shows per-file progress
+- Enrichment: processes all tracks missing genre/cover (no limit), 1.5s rate limit between tracks, per-track error recovery with rollback
+- Enrichment progress: updates DB every 5 tracks (separate session) so Logs page shows progress, not just WebSocket
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
@@ -123,7 +132,7 @@ docs/                  # Installation, configuration, API reference, development
 - CT 228 on pve5 (Zonik production)
 - CT 224 on pve5 (slskd — Soulseek client, `10.0.0.116:5030`)
 - CT 210 (Lidarr, `10.0.0.179:8686`)
-- CT 215 on pve4 (Kima-Hub, reference for mount points)
+- CT 215 on pve4 (Kima-Hub, `10.0.0.78`, PostgreSQL `kima` DB for favorites sync)
 - Mount points: `/nfs/MUSIC` → `/music`, `/nfs/DOWNLOADS` → `/downloads`
 
 ## Workflow
@@ -137,4 +146,5 @@ docs/                  # Installation, configuration, API reference, development
 - slskd (Soulseek P2P): API at configured URL (set via web UI)
 - Last.fm: Read API + Write API (scrobble, love) with method signatures (set via web UI)
 - Lidarr: Secondary download source (set via web UI)
-- MusicBrainz: Metadata enrichment
+- MusicBrainz: Metadata enrichment (1 req/sec rate limit)
+- KimaHub: PostgreSQL favorites sync (CT 215, asyncpg)
