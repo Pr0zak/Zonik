@@ -168,7 +168,8 @@ Base URL: `/api`
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/config/services` | GET | Get service connection settings (keys masked) |
-| `/api/config/services` | PUT | Update service connections `{slskd_url, slskd_api_key, lidarr_url, lidarr_api_key, lastfm_api_key, lastfm_write_api_key, lastfm_write_api_secret}` |
+| `/api/config/services` | PUT | Update service connections and directories |
+| `/api/config/test/{service}` | POST | Test service connectivity (`lastfm`, `soulseek`, `lidarr`) |
 
 ### Schedule
 

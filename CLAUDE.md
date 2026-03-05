@@ -27,7 +27,7 @@ backend/
   database.py          # SQLAlchemy engine, FTS5 setup, search helpers
   models/              # 14 SQLAlchemy models (Track, Artist, Album, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
-    config_api.py      # GET/PUT /api/config/services — web-configurable service connections
+    config_api.py      # GET/PUT /api/config/services + POST /api/config/test/{service}
   subsonic/            # Full OpenSubsonic API (auth, browsing, media, search, etc.)
   services/            # Business logic (scanner, soulseek, lastfm, artwork, etc.)
   workers/             # ARQ task functions + cron scheduler
@@ -53,7 +53,10 @@ docs/                  # Installation, configuration, API reference, development
 - Soulseek search: 4-strategy fallback (full → cleaned → track-only → first-word)
 - Config: zonik.toml (gitignored), zonik.toml.example (committed with empty keys)
 - Service connections (slskd, Lidarr, Last.fm) configurable via web UI Settings page
+- Settings page has color-coded test buttons (green/red/yellow) for each service
+- Download dir and cover cache dir also web-configurable
 - Installer (`create-ct.sh`) only asks for infrastructure — no API keys
+- SPA routing: catch-all route serves index.html for client-side SvelteKit routes
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
@@ -66,6 +69,8 @@ docs/                  # Installation, configuration, API reference, development
 - Svelte 5 runes: use `$state`, `$derived` (not `{@const}` outside control blocks)
 - `package.json` requires `"type": "module"` for ESM
 - `@sveltejs/vite-plugin-svelte` v5+ required for vite 6
+- SPA: `adapter-static` with `fallback: 'index.html'`; backend has catch-all route
+- Production URL: `http://10.0.0.205:3000` (CT 228)
 
 ## Infrastructure
 - CT 228 on pve5 (Zonik production)
