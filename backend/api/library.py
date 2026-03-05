@@ -92,8 +92,41 @@ async def scan_library(background_tasks: BackgroundTasks):
                     "progress": progress, "total": total,
                 })
 
+                # Auto-trigger analysis/enrichment on new additions
+                if status == "completed" and stats.get("added", 0) > 0:
+                    await _auto_trigger_post_scan(stats["added"])
+
     background_tasks.add_task(run_scan)
     return {"job_id": job_id}
+
+
+async def _auto_trigger_post_scan(added_count: int):
+    """Check if analysis/enrichment should auto-run after scan."""
+    import json as _json
+    import logging
+    from backend.models.schedule import ScheduleTask
+    from backend.workers.scheduler import run_task
+
+    log = logging.getLogger(__name__)
+    async with async_session() as db:
+        for task_name in ("audio_analysis", "enrichment"):
+            result = await db.execute(
+                select(ScheduleTask).where(ScheduleTask.task_name == task_name)
+            )
+            task = result.scalar_one_or_none()
+            if not task or not task.config:
+                continue
+            try:
+                config = _json.loads(task.config)
+            except (ValueError, TypeError):
+                continue
+            if config.get("auto_after_scan"):
+                log.info(f"Auto-triggering {task_name} after scan ({added_count} new tracks)")
+                try:
+                    async with async_session() as task_db:
+                        await run_task(task_name, task_db)
+                except Exception as e:
+                    log.error(f"Auto-trigger {task_name} failed: {e}")
 
 
 @router.get("/recent")

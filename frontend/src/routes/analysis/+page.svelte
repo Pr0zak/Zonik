@@ -123,6 +123,15 @@
 		finally { schedRunning[name] = false; }
 	}
 
+	async function toggleAutoAfterScan(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const current = t.config?.auto_after_scan || false;
+		const newConfig = { auto_after_scan: !current };
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
+		schedTasks[name] = { ...t, config: { ...t.config, ...newConfig } };
+	}
+
 	function progressPct(job) {
 		if (!job || !job.total) return 0;
 		return Math.round((job.progress / job.total) * 100);
@@ -290,6 +299,36 @@
 				onRun={() => runSched('enrichment')}
 			/>
 		{/if}
+
+		<!-- Auto-run after scan toggles -->
+		<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+			<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-run after Library Scan</span>
+			<div class="mt-2 space-y-2">
+				{#if schedTasks.audio_analysis}
+					<label class="flex items-center gap-2 cursor-pointer">
+						<button onclick={() => toggleAutoAfterScan('audio_analysis')}
+							class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
+								{schedTasks.audio_analysis.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
+							<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
+								{schedTasks.audio_analysis.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
+						</button>
+						<span class="text-xs text-[var(--text-secondary)]">Audio Analysis</span>
+					</label>
+				{/if}
+				{#if schedTasks.enrichment}
+					<label class="flex items-center gap-2 cursor-pointer">
+						<button onclick={() => toggleAutoAfterScan('enrichment')}
+							class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
+								{schedTasks.enrichment.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
+							<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
+								{schedTasks.enrichment.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
+						</button>
+						<span class="text-xs text-[var(--text-secondary)]">Metadata Enrichment</span>
+					</label>
+				{/if}
+			</div>
+			<p class="text-[10px] text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
+		</div>
 	</Card>
 
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-4">

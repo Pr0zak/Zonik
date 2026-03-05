@@ -86,6 +86,7 @@ async def list_schedule(db: AsyncSession = Depends(get_db)):
             "run_at": t.run_at,
             "day_of_week": t.day_of_week,
             "count": t.count,
+            "config": json.loads(t.config) if t.config else {},
             "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
         }
         for t in tasks
@@ -98,6 +99,7 @@ class TaskUpdateRequest(BaseModel):
     run_at: str | None = None
     day_of_week: int | None = None
     count: int | None = None
+    config: dict | None = None
 
 
 @router.put("/{task_name}")
@@ -118,6 +120,10 @@ async def update_task(task_name: str, req: TaskUpdateRequest, db: AsyncSession =
         task.day_of_week = req.day_of_week
     if req.count is not None:
         task.count = req.count
+    if req.config is not None:
+        existing = json.loads(task.config) if task.config else {}
+        existing.update(req.config)
+        task.config = json.dumps(existing)
 
     await db.commit()
     return {"ok": True}
