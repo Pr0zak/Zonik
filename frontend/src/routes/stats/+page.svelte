@@ -31,10 +31,10 @@
 	let maxYear = $derived(data?.years?.length ? Math.max(...data.years.map(y => y.count)) : 1);
 
 	const barColors = {
-		formats: 'bg-[var(--color-accent)]/60 group-hover:bg-[var(--color-accent)]',
-		artists: 'bg-emerald-500/60 group-hover:bg-emerald-500',
-		genres: 'bg-purple-500/60 group-hover:bg-purple-500',
-		bitrates: 'bg-blue-500/60 group-hover:bg-blue-500',
+		formats: 'bg-[var(--color-accent)]',
+		artists: 'bg-emerald-500',
+		genres: 'bg-purple-500',
+		bitrates: 'bg-blue-500',
 	};
 </script>
 
@@ -169,7 +169,7 @@
 				<div class="flex items-end gap-px h-32">
 					{#each data.years as yr}
 						<div class="flex-1 flex flex-col items-center justify-end h-full group relative">
-							<div class="w-full bg-[var(--color-accent)]/60 rounded-t min-h-[2px] transition-colors group-hover:bg-[var(--color-accent)]"
+							<div class="w-full bg-[var(--color-accent)] rounded-t min-h-[2px] transition-colors"
 								style="height: {barWidth(yr.count, maxYear)}"></div>
 							<div class="hidden group-hover:block absolute bottom-full mb-1 bg-[var(--bg-hover)] text-xs px-2 py-1 rounded whitespace-nowrap z-10 text-[var(--text-body)] border border-[var(--border-subtle)]">
 								{yr.year}: {yr.count} tracks
