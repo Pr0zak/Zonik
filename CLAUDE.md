@@ -105,6 +105,7 @@ docs/                  # Installation, configuration, API reference, development
 - Library page: tabbed Tracks/Artists/Albums with grid (card art) and list view toggle
 - Cover art served via `/rest/getCoverArt?id=<track_or_album_id>` (subsonic endpoint)
 - URLSearchParams pitfall: filter out undefined/null values before passing to URLSearchParams (converts to literal "undefined")
+- Svelte curly brace pitfall: literal `{text}` in HTML attributes is interpreted as JS — use `placeholder={'{artist}'}` not `placeholder="{artist}"`
 - Library page: heart buttons on tracks/artists/albums in both grid and list views; 3-dot context menu on tracks (Find Similar, Edit Info, Favorite, Delete)
 - Track edit: PUT /api/tracks/{id} updates DB + writes tags to audio file via mutagen (title, genre, year, track_number)
 - Favorites: /api/favorites/ids returns track_ids/album_ids/artist_ids sets for fast client-side lookup
