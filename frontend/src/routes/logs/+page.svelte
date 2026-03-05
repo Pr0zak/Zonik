@@ -182,9 +182,21 @@
 								<td colspan="5" class="px-4 py-3 bg-[var(--bg-tertiary)]">
 									<div class="space-y-2 text-xs animate-fade-slide-in">
 										{#if jobDetail.result}
+											{@const parsed = (() => { try { return JSON.parse(jobDetail.result); } catch { return null; } })()}
 											<div>
 												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Result</span>
-												<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto font-mono">{jobDetail.result}</pre>
+												{#if parsed && typeof parsed === 'object' && !parsed.error}
+													<div class="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
+														{#each Object.entries(parsed) as [key, value]}
+															<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+																<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">{key}</span>
+																<p class="text-[var(--text-body)] font-mono font-bold">{typeof value === 'number' ? value.toLocaleString() : value}</p>
+															</div>
+														{/each}
+													</div>
+												{:else}
+													<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto font-mono">{jobDetail.result}</pre>
+												{/if}
 											</div>
 										{/if}
 										{#if jobDetail.tracks}

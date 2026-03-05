@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 
@@ -53,18 +54,35 @@ async def scan_library(background_tasks: BackgroundTasks):
             db.add(job)
             await db.commit()
             await broadcast_job_update({"id": job_id, "type": "library_scan", "status": "running", "progress": 0, "total": 0})
+
+            async def on_progress(stats, total_files):
+                job.progress = stats["scanned"]
+                job.total = total_files
+                job.result = json.dumps(stats)
+                await db.merge(job)
+                await db.commit()
+                await broadcast_job_update({
+                    "id": job_id, "type": "library_scan", "status": "running",
+                    "progress": stats["scanned"], "total": total_files,
+                })
+
             try:
-                stats = await do_scan(db)
+                stats = await do_scan(db, progress_callback=on_progress)
                 job.status = "completed"
-                job.result = str(stats)
+                job.result = json.dumps(stats)
+                job.progress = stats.get("scanned", 0)
+                job.total = stats.get("scanned", 0)
             except Exception as e:
                 job.status = "failed"
-                job.result = str(e)
+                job.result = json.dumps({"error": str(e)})
             finally:
                 job.finished_at = datetime.utcnow()
                 await db.merge(job)
                 await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "library_scan", "status": job.status, "progress": 1, "total": 1})
+                await broadcast_job_update({
+                    "id": job_id, "type": "library_scan", "status": job.status,
+                    "progress": job.progress, "total": job.total,
+                })
 
     background_tasks.add_task(run_scan)
     return {"job_id": job_id}

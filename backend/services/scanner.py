@@ -221,8 +221,12 @@ async def get_or_create_album(db: AsyncSession, title: str, artist: Artist | Non
     return album
 
 
-async def scan_library(db: AsyncSession) -> dict:
-    """Scan the music directory and update the database."""
+async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
+    """Scan the music directory and update the database.
+
+    Args:
+        progress_callback: Optional async callable(stats, total_files) called periodically.
+    """
     settings = get_settings()
     music_dir = Path(settings.library.music_dir)
     cache_dir = Path(settings.library.cover_cache_dir)
@@ -232,16 +236,18 @@ async def scan_library(db: AsyncSession) -> dict:
 
     stats = {"scanned": 0, "added": 0, "updated": 0, "errors": 0}
 
+    # Count total audio files first for progress tracking
+    audio_files = [
+        f for f in music_dir.rglob("*")
+        if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()
+    ]
+    total_files = len(audio_files)
+
     # Collect existing file paths
     result = await db.execute(select(Track.file_path))
     existing_paths = {row[0] for row in result.all()}
 
-    for file_path in music_dir.rglob("*"):
-        if file_path.suffix.lower() not in AUDIO_EXTENSIONS:
-            continue
-        if not file_path.is_file():
-            continue
-
+    for file_path in audio_files:
         stats["scanned"] += 1
         parsed = parse_audio_file(file_path, music_dir)
         if not parsed:
@@ -328,9 +334,11 @@ async def scan_library(db: AsyncSession) -> dict:
             parsed["artist_name"], parsed["album_title"],
         )
 
-        # Flush periodically
-        if stats["scanned"] % 100 == 0:
+        # Flush periodically and report progress
+        if stats["scanned"] % 50 == 0:
             await db.flush()
+            if progress_callback:
+                await progress_callback(stats, total_files)
 
     await db.commit()
 
