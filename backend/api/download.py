@@ -83,6 +83,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     job_id = str(uuid.uuid4())
 
     async def do_download():
+        import asyncio
         async with async_session() as db:
             job = Job(
                 id=job_id, type="download", card="dl", status="running",
@@ -91,24 +92,73 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             )
             db.add(job)
             await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{req.artist} — {req.track}"})
+            desc = f"{req.artist} — {req.track}"
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
             try:
                 client = get_slskd_client()
 
                 if req.username and req.filename:
                     result = await client.download(req.username, req.filename)
+                    dl_username = req.username
+                    dl_filename = req.filename
                 else:
                     from backend.services.soulseek import search_and_download
                     result = await search_and_download(req.artist, req.track)
+                    dl_username = result.get("username", "")
+                    dl_filename = result.get("filename", "")
 
-                status = "completed" if result.get("ok") or result.get("status") == "downloading" else "failed"
-                job.status = status
-                job.result = json.dumps(result)
-                job.tracks = json.dumps([{
-                    "artist": req.artist, "track": req.track,
-                    "status": "downloaded" if status == "completed" else "failed",
-                }])
+                initiated = result.get("ok") or result.get("status") == "downloading"
+                if not initiated:
+                    job.status = "failed"
+                    job.result = json.dumps(result)
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                else:
+                    # Store download details
+                    short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
+                    detail = {**result, "short_filename": short_name}
+                    job.result = json.dumps(detail)
+                    job.tracks = json.dumps([{
+                        "artist": req.artist, "track": req.track, "status": "transferring",
+                        "username": dl_username, "filename": short_name,
+                        "size": result.get("size", 0),
+                    }])
+                    await db.merge(job)
+                    await db.commit()
+                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — from {dl_username}"})
+
+                    # Poll slskd transfer status until complete or timeout (5 min)
+                    final_status = "completed"
+                    for _ in range(60):
+                        await asyncio.sleep(5)
+                        # Check if job was cancelled
+                        await db.refresh(job)
+                        if job.status == "failed":
+                            final_status = "failed"
+                            break
+                        transfer = await client.get_download_status(dl_username, dl_filename)
+                        if not transfer:
+                            continue
+                        state = transfer.get("state", "")
+                        if state in ("Completed", "Succeeded"):
+                            final_status = "completed"
+                            break
+                        elif state in ("Errored", "Cancelled", "Rejected", "TimedOut"):
+                            final_status = "failed"
+                            detail["transfer_error"] = state
+                            break
+                    else:
+                        # Timeout — mark as completed (file may still be transferring in slskd)
+                        final_status = "completed"
+                        detail["note"] = "Transfer monitoring timed out, check slskd"
+
+                    job.status = final_status
+                    job.result = json.dumps(detail)
+                    job.tracks = json.dumps([{
+                        "artist": req.artist, "track": req.track,
+                        "status": "downloaded" if final_status == "completed" else "failed",
+                        "username": dl_username, "filename": short_name,
+                    }])
             except Exception as e:
                 job.status = "failed"
                 job.result = json.dumps({"error": str(e)})
@@ -116,7 +166,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 job.finished_at = datetime.utcnow()
                 await db.merge(job)
                 await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": f"{req.artist} — {req.track}"})
+                await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": desc})
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
@@ -159,11 +209,20 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
                         else:
                             result = await search_and_download(t.get("artist", ""), t.get("track", ""))
                             ok = result.get("ok") or result.get("status") == "downloading"
-                            track_statuses[idx]["status"] = "downloaded" if ok else "failed"
+                            if ok:
+                                track_statuses[idx]["status"] = "downloading"
+                                track_statuses[idx]["username"] = result.get("username", "")
+                                fn = result.get("filename", "")
+                                track_statuses[idx]["filename"] = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if fn else ""
+                                track_statuses[idx]["size"] = result.get("size", 0)
+                            else:
+                                track_statuses[idx]["status"] = "failed"
+                                track_statuses[idx]["error"] = result.get("message", "")
                     except Exception as e:
                         track_statuses[idx]["status"] = "failed"
+                        track_statuses[idx]["error"] = str(e)
 
-                    job.progress = sum(1 for s in track_statuses if s["status"] != "pending")
+                    job.progress = sum(1 for s in track_statuses if s["status"] not in ("pending",))
                     job.tracks = json.dumps(track_statuses)
                     await db.merge(job)
                     await db.commit()
