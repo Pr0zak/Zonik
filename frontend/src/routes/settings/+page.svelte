@@ -46,27 +46,16 @@
 	let changingPw = $state(null);
 	let pwForm = $state({ current_password: '', new_password: '' });
 
-	onMount(async () => {
-		try {
-			const [statsData, svcData, verData, usersData, backupsData] = await Promise.all([
-				fetch('/api/library/stats').then(r => r.json()),
-				fetch('/api/config/services').then(r => r.json()),
-				fetch('/api/config/version').then(r => r.json()),
-				fetch('/api/users').then(r => r.json()),
-				fetch('/api/config/backups').then(r => r.json()).catch(() => []),
-			]);
-			stats = statsData;
-			services = svcData;
-			versionInfo = verData;
-			users = usersData;
-			backups = backupsData;
-		} catch (e) {
-			console.error(e);
-		}
-		try {
-			const tasks = await fetch('/api/schedule').then(r => r.json());
+	onMount(() => {
+		// Load each section independently so one failure doesn't block the page
+		fetch('/api/library/stats').then(r => r.json()).then(d => stats = d).catch(() => {});
+		fetch('/api/config/services').then(r => r.json()).then(d => services = d).catch(() => {});
+		fetch('/api/config/version').then(r => r.json()).then(d => versionInfo = d).catch(() => {});
+		fetch('/api/users').then(r => r.json()).then(d => users = d).catch(() => {});
+		fetch('/api/config/backups').then(r => r.json()).then(d => backups = d).catch(() => {});
+		fetch('/api/schedule').then(r => r.json()).then(tasks => {
 			for (const t of tasks) schedTasks[t.task_name] = t;
-		} catch {}
+		}).catch(() => {});
 	});
 
 	async function checkForUpdates() {
