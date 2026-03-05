@@ -198,10 +198,9 @@
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
 		}).catch(() => {});
-		// Auto-refresh history when a download job completes or fails
+		// Auto-refresh when any download job updates
 		unsubJobUpdate = onJobUpdate((job) => {
-			if ((job.type === 'download' || job.type === 'bulk_download') &&
-				(job.status === 'completed' || job.status === 'failed')) {
+			if (job.type === 'download' || job.type === 'bulk_download') {
 				loadHistory();
 			}
 		});
@@ -344,16 +343,16 @@
 		{/if}
 	</Card>
 
-	<!-- Download History -->
+	<!-- Download Jobs -->
 	<Card padding="p-6" class="mb-6">
 		<div class="flex items-center justify-between mb-4">
 			<div class="flex items-center gap-2">
 				<Download class="w-4 h-4 text-[var(--color-downloads)]" />
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download History</h2>
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download Jobs</h2>
 			</div>
-			{#if history.length}
+			{#if history.some(j => j.status === 'completed' || j.status === 'failed')}
 				<button onclick={async () => {
-					if (!window.confirm('Clear all completed/failed download history?')) return;
+					if (!window.confirm('Clear completed/failed downloads?')) return;
 					try {
 						await api.clearDownloadHistory();
 						history = [];
@@ -391,7 +390,10 @@
 									<RotateCcw class="w-3.5 h-3.5" />
 								</button>
 							{/if}
-							<Badge variant={job.status === 'completed' ? 'success' : 'error'}>
+							<Badge variant={job.status === 'running' || job.status === 'pending' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
+								{#if job.status === 'running'}
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+								{/if}
 								{job.status}
 							</Badge>
 							{#if expandedJob === job.id}
@@ -456,7 +458,7 @@
 				</Button>
 			</div>
 		{:else}
-			<p class="text-sm text-[var(--text-muted)] text-center py-6">No download history yet.</p>
+			<p class="text-sm text-[var(--text-muted)] text-center py-6">No downloads yet.</p>
 		{/if}
 	</Card>
 
