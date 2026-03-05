@@ -59,11 +59,13 @@ def _write_config(data: dict) -> None:
 class ServiceConfig(BaseModel):
     slskd_url: str = ""
     slskd_api_key: str = ""
+    download_dir: str = ""
     lidarr_url: str = ""
     lidarr_api_key: str = ""
     lastfm_api_key: str = ""
     lastfm_write_api_key: str = ""
     lastfm_write_api_secret: str = ""
+    cover_cache_dir: str = ""
 
 
 @router.get("/services")
@@ -73,11 +75,13 @@ async def get_service_config():
     return {
         "slskd_url": settings.soulseek.slskd_url,
         "slskd_api_key": _mask(settings.soulseek.slskd_api_key),
+        "download_dir": settings.soulseek.download_dir,
         "lidarr_url": settings.lidarr.url,
         "lidarr_api_key": _mask(settings.lidarr.api_key),
         "lastfm_api_key": _mask(settings.lastfm.api_key),
         "lastfm_write_api_key": _mask(settings.lastfm.write_api_key),
         "lastfm_write_api_secret": _mask(settings.lastfm.write_api_secret),
+        "cover_cache_dir": settings.library.cover_cache_dir,
     }
 
 
@@ -94,6 +98,8 @@ async def update_service_config(req: ServiceConfig):
         soulseek["slskd_url"] = req.slskd_url
     if req.slskd_api_key and not req.slskd_api_key.endswith("***"):
         soulseek["slskd_api_key"] = req.slskd_api_key
+    if req.download_dir:
+        soulseek["download_dir"] = req.download_dir
     raw["soulseek"] = {**settings.soulseek.model_dump(), **soulseek}
 
     lidarr = raw.get("lidarr", {})
@@ -112,13 +118,83 @@ async def update_service_config(req: ServiceConfig):
         lastfm["write_api_secret"] = req.lastfm_write_api_secret
     raw["lastfm"] = {**settings.lastfm.model_dump(), **lastfm}
 
+    # Update cover cache dir in library section
+    library = raw.get("library", {})
+    if req.cover_cache_dir:
+        library["cover_cache_dir"] = req.cover_cache_dir
+    raw["library"] = {**settings.library.model_dump(), **library}
+
     # Preserve other sections
-    for section in ["server", "library", "database", "redis", "analysis", "subsonic"]:
+    for section in ["server", "database", "redis", "analysis", "subsonic"]:
         if section not in raw:
             raw[section] = getattr(settings, section).model_dump()
 
     _write_config(raw)
     return {"status": "ok"}
+
+
+@router.post("/test/{service}")
+async def test_service(service: str):
+    """Test connectivity to a configured service."""
+    settings = get_settings()
+
+    if service == "lastfm":
+        api_key = settings.lastfm.api_key
+        if not api_key:
+            return {"status": "error", "message": "No API key configured"}
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get("https://ws.audioscrobbler.com/2.0/", params={
+                    "method": "chart.gettopartists",
+                    "api_key": api_key,
+                    "format": "json",
+                    "limit": 1,
+                })
+                data = resp.json()
+                if "error" in data:
+                    return {"status": "error", "message": data.get("message", "Invalid API key")}
+                return {"status": "ok", "message": "Connected"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    elif service == "soulseek":
+        url = settings.soulseek.slskd_url
+        key = settings.soulseek.slskd_api_key
+        if not url:
+            return {"status": "error", "message": "No slskd URL configured"}
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{url.rstrip('/')}/api/v0/application", headers={"X-API-Key": key})
+                if resp.status_code == 200:
+                    return {"status": "ok", "message": "Connected"}
+                elif resp.status_code == 401:
+                    return {"status": "error", "message": "Invalid API key"}
+                else:
+                    return {"status": "error", "message": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    elif service == "lidarr":
+        url = settings.lidarr.url
+        key = settings.lidarr.api_key
+        if not url:
+            return {"status": "error", "message": "No Lidarr URL configured"}
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{url.rstrip('/')}/api/v1/system/status", headers={"X-Api-Key": key})
+                if resp.status_code == 200:
+                    return {"status": "ok", "message": "Connected"}
+                elif resp.status_code == 401:
+                    return {"status": "error", "message": "Invalid API key"}
+                else:
+                    return {"status": "error", "message": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    return {"status": "error", "message": f"Unknown service: {service}"}
 
 
 def _mask(value: str) -> str:
