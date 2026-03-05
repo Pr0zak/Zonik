@@ -35,8 +35,9 @@ async def is_blacklisted(db: AsyncSession, artist: str, track: str) -> str | Non
 
 
 class SearchRequest(BaseModel):
-    artist: str
-    track: str
+    artist: str = ""
+    track: str = ""
+    query: str = ""
 
 
 class DownloadRequest(BaseModel):
@@ -53,7 +54,19 @@ class BulkDownloadRequest(BaseModel):
 @router.post("/search")
 async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)):
     """Search Soulseek P2P network — returns all results with quality info."""
-    reason = await is_blacklisted(db, req.artist, req.track)
+    # Support single query field or artist+track
+    artist = req.artist.strip()
+    track = req.track.strip()
+    if not artist and not track and req.query.strip():
+        # Try to split "Artist - Track" from query
+        q = req.query.strip()
+        parts = [p.strip() for p in q.split(" - ", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            artist, track = parts[0], parts[1]
+        else:
+            artist, track = q, ""
+
+    reason = await is_blacklisted(db, artist, track) if artist else None
     if reason:
         return {"results": [], "count": 0, "users": 0, "blacklisted": True, "reason": reason}
 
@@ -62,7 +75,7 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
 
     if client and client.logged_in:
         # Native client — return all results
-        query = f"{req.artist} {req.track}"
+        query = f"{artist} {track}".strip()
         search_results = await client.search(query, timeout=25, max_responses=100)
 
         results = []
@@ -78,9 +91,10 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
                         break
                 if not ext or fi.size < min_size:
                     continue
-                # Basic relevance: at least track name should match
+                # Basic relevance: at least some query words should match
                 from backend.services.soulseek import words_match, strip_track_extras
-                if not words_match(req.track, fn) and not words_match(strip_track_extras(req.track), fn):
+                match_term = track if track else artist
+                if not words_match(match_term, fn) and not words_match(strip_track_extras(match_term), fn):
                     continue
                 users.add(sr.username)
                 results.append({
@@ -101,7 +115,7 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
         return {"results": results, "count": len(results), "users": len(users)}
 
     # Legacy slskd fallback — limited results
-    candidates = await search_multi_strategy(req.artist, req.track)
+    candidates = await search_multi_strategy(artist, track)
     return {
         "results": [
             {

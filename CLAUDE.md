@@ -58,15 +58,15 @@ frontend/
     +page.svelte       # Dashboard (stats, last scan, version, health)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal
     discover/          # Last.fm charts, similar artists
-    downloads/         # Soulseek search + WS-driven active transfers + paginated download history + blacklist
+    downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics
     schedule/          # Cron job scheduler with task descriptions
-    logs/              # Job history with expandable detail (result, tracks with status badges)
+    logs/              # Job history with category filters (Downloads/Library/Analysis/Discovery/Playlists) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
-  src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), Player, Toast
+  src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell/settings icons), Player, Toast
     ui/                # 8 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader
   src/lib/             # api.js, stores.js, utils.js, websocket.js
 deploy/                # Systemd service files
@@ -111,6 +111,7 @@ docs/                  # Installation, configuration, API reference, development
 - Favorites import: /api/favorites/import accepts [{title, artist, file_path?}] and matches by file_path MD5 or title+artist
 - KimaHub favorites sync: scheduled task (every 6h) syncs LikedTrack from KimaHub PostgreSQL into Zonik favorites via asyncpg
 - KimaHub config: [kimahub] section in zonik.toml with db_url field
+- Downloads page: single fuzzy search field sends `query` or `artist`+`track` to backend; backend SearchRequest accepts all three fields
 - Downloads page: Active Transfers driven by WebSocket (no polling), paginated Download History from /api/jobs with type filter, cancel transfer + retry failed jobs
 - Transfer model includes speed (bytes/sec) and eta_seconds properties; /api/jobs supports offset + type (comma-separated) params
 - /api/download/cancel-transfer marks transfer FAILED, removes it, broadcasts update
@@ -123,7 +124,11 @@ docs/                  # Installation, configuration, API reference, development
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
 - Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
 - Schedule page: each task shows a description explaining what it does
-- Logs page: expanded job detail shows job ID, progress, timestamps; download tracks rendered with colored status badges per track
+- Logs page: category filter tabs (All/Downloads/Library/Analysis/Discovery/Playlists), expanded job detail with colored status badges
+- TopBar: global search (typeahead library + P2P), sync button (library scan), notification bell (active jobs with progress), settings gear
+- Downloads page: single fuzzy search field (auto-splits "Artist - Track"), paginated P2P results (25/50/100 per page), downloads section above results
+- Library page: reads `?search=` URL param on mount for TopBar navigation integration
+- Favorites: total count displayed in PageHeader
 - Sidebar footer: GitHub icon links to github.com/Pr0zak/Zonik
 - Upgrade restarts kill background tasks (enrichment, analysis); stuck "running" jobs must be manually set to "failed" in DB
 

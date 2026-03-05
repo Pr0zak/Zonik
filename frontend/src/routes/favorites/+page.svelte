@@ -73,6 +73,9 @@
 
 <div class="max-w-6xl">
 	<PageHeader title="Favorites" color="var(--color-favorites)">
+		{#if !loading && favorites.length}
+			<span class="text-sm text-[var(--text-muted)] font-mono">{favorites.length} total</span>
+		{/if}
 		<Button variant="secondary" size="sm" onclick={() => showImport = true}>
 			<Upload class="w-3.5 h-3.5" /> Import
 		</Button>

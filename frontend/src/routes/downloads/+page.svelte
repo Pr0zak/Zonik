@@ -12,8 +12,7 @@
 	import Badge from '../../components/ui/Badge.svelte';
 
 	// Search state
-	let artist = $state('');
-	let track = $state('');
+	let searchQuery = $state('');
 	let results = $state([]);
 	let resultCount = $state(0);
 	let resultUsers = $state(0);
@@ -23,6 +22,8 @@
 	let searchDone = $state(false);
 	let sortCol = $state('quality');
 	let sortAsc = $state(false);
+	let resultsPage = $state(0);
+	let resultsPerPage = $state(50);
 
 	const FORMAT_ORDER = { flac: 0, wav: 1, alac: 1, mp3: 2, m4a: 3, ogg: 3, opus: 3 };
 
@@ -52,7 +53,7 @@
 		else { sortCol = col; sortAsc = false; }
 	}
 
-	let filteredResults = $derived(
+	let allFilteredResults = $derived(
 		sortResults(
 			formatFilter === 'all' ? results :
 			formatFilter === 'flac' ? results.filter(r => r.extension === 'flac') :
@@ -61,6 +62,12 @@
 			results
 		)
 	);
+
+	let filteredResults = $derived(
+		allFilteredResults.slice(resultsPage * resultsPerPage, (resultsPage + 1) * resultsPerPage)
+	);
+
+	let totalResultPages = $derived(Math.ceil(allFilteredResults.length / resultsPerPage));
 
 	let formatCounts = $derived({
 		all: results.length,
@@ -260,16 +267,23 @@
 
 	// Soulseek Search
 	async function searchSoulseek() {
-		if (!artist.trim() || !track.trim()) return;
+		if (!searchQuery.trim()) return;
 		searching = true;
 		results = [];
 		searchDone = false;
 		formatFilter = 'all';
+		resultsPage = 0;
 		try {
+			// Try to split "Artist - Track" for blacklist check, otherwise send as query
+			const q = searchQuery.trim();
+			const parts = q.split(/\s*[-–—]\s*/);
+			const body = parts.length >= 2
+				? { artist: parts[0], track: parts.slice(1).join(' ') }
+				: { query: q };
 			const data = await fetch('/api/download/search', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist: artist.trim(), track: track.trim() })
+				body: JSON.stringify(body)
 			}).then(r => r.json());
 			results = data.results || [];
 			resultCount = data.count || 0;
@@ -283,16 +297,23 @@
 		}
 	}
 
+	function parseQuery() {
+		const q = searchQuery.trim();
+		const parts = q.split(/\s*[-–—]\s*/);
+		if (parts.length >= 2) return { artist: parts[0], track: parts.slice(1).join(' ') };
+		return { artist: q, track: q };
+	}
+
 	async function downloadFile(result) {
 		const key = result.username + result.filename;
 		downloading[key] = true;
 		try {
+			const { artist, track } = parseQuery();
 			await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					artist: artist.trim(),
-					track: track.trim(),
+					artist, track,
 					username: result.username,
 					filename: result.filename,
 				})
@@ -307,10 +328,11 @@
 
 	async function autoDownload() {
 		try {
+			const { artist, track } = parseQuery();
 			await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist: artist.trim(), track: track.trim() })
+				body: JSON.stringify({ artist, track })
 			}).then(r => r.json());
 			addToast('Auto-download started', 'success');
 		} catch (e) {
@@ -342,9 +364,16 @@
 
 		// Handle URL params from global search bar
 		const params = $page.url.searchParams;
-		if (params.get('artist')) artist = params.get('artist');
-		if (params.get('track')) track = params.get('track');
-		if (artist && track) searchSoulseek();
+		const paramArtist = params.get('artist');
+		const paramTrack = params.get('track');
+		const paramSearch = params.get('search');
+		if (paramArtist && paramTrack) {
+			searchQuery = `${paramArtist} - ${paramTrack}`;
+			searchSoulseek();
+		} else if (paramSearch) {
+			searchQuery = paramSearch;
+			searchSoulseek();
+		}
 	});
 
 	onDestroy(() => {
@@ -357,145 +386,21 @@
 	<PageHeader title="Downloads" color="var(--color-downloads)" />
 
 	<!-- Search Bar -->
-	<div class="flex flex-col sm:flex-row gap-3 mb-6">
-		<input type="text" placeholder="Artist" bind:value={artist} onkeydown={handleKeydown}
-			class="flex-1 bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-body)]
-				placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
-		<input type="text" placeholder="Track" bind:value={track} onkeydown={handleKeydown}
-			class="flex-1 bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-body)]
-				placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
-		<div class="flex gap-2">
-			<Button variant="primary" loading={searching} disabled={!artist || !track} onclick={searchSoulseek}>
-				<Search class="w-3.5 h-3.5" />
-				Search
-			</Button>
-			<Button variant="success" disabled={!artist || !track} onclick={autoDownload} title="Auto-pick best result">
-				<Zap class="w-3.5 h-3.5" />
-				Auto
-			</Button>
+	<div class="flex gap-3 mb-6">
+		<div class="flex-1 relative">
+			<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
+			<input type="text" placeholder="Search P2P network... (e.g. Artist - Track)" bind:value={searchQuery} onkeydown={handleKeydown}
+				class="w-full bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
+					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
 		</div>
+		<Button variant="primary" loading={searching} disabled={!searchQuery.trim()} onclick={searchSoulseek}>
+			<Search class="w-3.5 h-3.5" />
+			Search
+		</Button>
+		<Button variant="success" disabled={!searchQuery.trim()} onclick={autoDownload} title="Auto-pick best result">
+			<Zap class="w-3.5 h-3.5" />
+		</Button>
 	</div>
-
-	<!-- Search Results -->
-	{#if searching}
-		<Card padding="p-8" class="mb-6">
-			<div class="flex flex-col items-center gap-3">
-				<div class="w-6 h-6 border-2 border-[var(--color-downloads)] border-t-transparent rounded-full animate-spin"></div>
-				<p class="text-sm text-[var(--text-muted)]">Searching P2P network...</p>
-			</div>
-		</Card>
-	{:else if searchDone}
-		<Card padding="p-0" class="mb-6">
-			<!-- Results header -->
-			<div class="px-4 py-3 border-b border-[var(--border-subtle)]">
-				<div class="flex items-center justify-between flex-wrap gap-2">
-					<p class="text-xs text-[var(--text-muted)]">
-						{resultCount} results from {resultUsers} users
-					</p>
-					<!-- Format filter tabs -->
-					<div class="flex gap-1">
-						{#each [
-							{ key: 'all', label: 'All', count: formatCounts.all },
-							{ key: 'flac', label: 'FLAC', count: formatCounts.flac },
-							{ key: '320', label: '320+', count: formatCounts.high },
-							{ key: '256', label: '256+', count: formatCounts.mid },
-						] as tab}
-							<button onclick={() => formatFilter = tab.key}
-								class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
-									{formatFilter === tab.key
-										? 'bg-[var(--color-downloads)] text-white'
-										: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'}">
-								{tab.label}
-								<span class="ml-1 opacity-60">{tab.count}</span>
-							</button>
-						{/each}
-					</div>
-				</div>
-			</div>
-
-			{#if filteredResults.length}
-				<div class="overflow-x-auto">
-					<table class="w-full text-sm min-w-[600px]">
-						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
-								<th class="px-4 py-2 w-5">
-									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors"
-										title="Sort by quality">
-										{sortCol === 'quality' ? (sortAsc ? '▲' : '▼') : '◆'}
-									</button>
-								</th>
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
-								<th class="px-4 py-2 hidden md:table-cell">
-									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										User {sortCol === 'user' ? (sortAsc ? '▲' : '▼') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2">
-									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										Format {sortCol === 'format' ? (sortAsc ? '▲' : '▼') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2 hidden sm:table-cell">
-									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '▲' : '▼') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2">
-									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										Size {sortCol === 'size' ? (sortAsc ? '▲' : '▼') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2"></th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-[var(--border-subtle)]">
-							{#each filteredResults as r}
-								{@const key = r.username + r.filename}
-								{@const fname = shortFilename(r.filename)}
-								{@const pathArtist = extractArtistFromPath(r.filename)}
-								<tr class="hover:bg-[var(--bg-hover)] transition-colors group">
-									<td class="px-4 py-2">
-										{#if r.slots_free}
-											<Wifi class="w-3.5 h-3.5 text-green-400" />
-										{:else}
-											<Wifi class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-										{/if}
-									</td>
-									<td class="px-4 py-2 max-w-xs">
-										<p class="text-[var(--text-body)] truncate" title={r.filename}>{fname}</p>
-										{#if pathArtist}
-											<p class="text-xs text-[var(--text-muted)] truncate">{pathArtist}</p>
-										{/if}
-									</td>
-									<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">
-										<span class="truncate block max-w-[120px]" title={r.username}>{r.username}</span>
-									</td>
-									<td class="px-4 py-2">
-										<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
-											{r.extension.toUpperCase()}
-										</Badge>
-									</td>
-									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
-										{formatBitrate(r.bitrate) || '—'}
-									</td>
-									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">
-										{formatSize(r.size)}
-									</td>
-									<td class="px-4 py-2">
-										<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
-											<Download class="w-3 h-3" />
-										</Button>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{:else}
-				<p class="text-sm text-[var(--text-muted)] text-center py-6">No results match the current filter.</p>
-			{/if}
-		</Card>
-	{/if}
 
 	<!-- Downloads (unified: active + history) -->
 	{#if visibleJobs.length || jobsLoading}
@@ -644,6 +549,155 @@
 						</Button>
 					</div>
 				{/if}
+			{/if}
+		</Card>
+	{/if}
+
+	<!-- Search Results -->
+	{#if searching}
+		<Card padding="p-8" class="mb-6">
+			<div class="flex flex-col items-center gap-3">
+				<div class="w-6 h-6 border-2 border-[var(--color-downloads)] border-t-transparent rounded-full animate-spin"></div>
+				<p class="text-sm text-[var(--text-muted)]">Searching P2P network...</p>
+			</div>
+		</Card>
+	{:else if searchDone}
+		<Card padding="p-0" class="mb-6">
+			<!-- Results header -->
+			<div class="px-4 py-3 border-b border-[var(--border-subtle)]">
+				<div class="flex items-center justify-between flex-wrap gap-2">
+					<p class="text-xs text-[var(--text-muted)]">
+						{resultCount} results from {resultUsers} users
+						{#if allFilteredResults.length !== results.length}
+							· {allFilteredResults.length} shown
+						{/if}
+					</p>
+					<div class="flex items-center gap-3">
+						<!-- Format filter tabs -->
+						<div class="flex gap-1">
+							{#each [
+								{ key: 'all', label: 'All', count: formatCounts.all },
+								{ key: 'flac', label: 'FLAC', count: formatCounts.flac },
+								{ key: '320', label: '320+', count: formatCounts.high },
+								{ key: '256', label: '256+', count: formatCounts.mid },
+							] as tab}
+								<button onclick={() => { formatFilter = tab.key; resultsPage = 0; }}
+									class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+										{formatFilter === tab.key
+											? 'bg-[var(--color-downloads)] text-white'
+											: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'}">
+									{tab.label}
+									<span class="ml-1 opacity-60">{tab.count}</span>
+								</button>
+							{/each}
+						</div>
+						<!-- Per page selector -->
+						<select bind:value={resultsPerPage} onchange={() => resultsPage = 0}
+							class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-muted)]">
+							{#each [25, 50, 100] as n}
+								<option value={n}>{n}/page</option>
+							{/each}
+						</select>
+					</div>
+				</div>
+			</div>
+
+			{#if filteredResults.length}
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm min-w-[600px]">
+						<thead>
+							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+								<th class="px-4 py-2 w-5">
+									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors"
+										title="Sort by quality">
+										{sortCol === 'quality' ? (sortAsc ? '▲' : '▼') : '◆'}
+									</button>
+								</th>
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
+								<th class="px-4 py-2 hidden md:table-cell">
+									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										User {sortCol === 'user' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2">
+									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										Format {sortCol === 'format' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2 hidden sm:table-cell">
+									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2">
+									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										Size {sortCol === 'size' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2"></th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-[var(--border-subtle)]">
+							{#each filteredResults as r}
+								{@const key = r.username + r.filename}
+								{@const fname = shortFilename(r.filename)}
+								{@const pathArtist = extractArtistFromPath(r.filename)}
+								<tr class="hover:bg-[var(--bg-hover)] transition-colors group">
+									<td class="px-4 py-2">
+										{#if r.slots_free}
+											<Wifi class="w-3.5 h-3.5 text-green-400" />
+										{:else}
+											<Wifi class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+										{/if}
+									</td>
+									<td class="px-4 py-2 max-w-xs">
+										<p class="text-[var(--text-body)] truncate" title={r.filename}>{fname}</p>
+										{#if pathArtist}
+											<p class="text-xs text-[var(--text-muted)] truncate">{pathArtist}</p>
+										{/if}
+									</td>
+									<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">
+										<span class="truncate block max-w-[120px]" title={r.username}>{r.username}</span>
+									</td>
+									<td class="px-4 py-2">
+										<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
+											{r.extension.toUpperCase()}
+										</Badge>
+									</td>
+									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
+										{formatBitrate(r.bitrate) || '—'}
+									</td>
+									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">
+										{formatSize(r.size)}
+									</td>
+									<td class="px-4 py-2">
+										<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
+											<Download class="w-3 h-3" />
+										</Button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<!-- Results pagination -->
+				{#if totalResultPages > 1}
+					<div class="flex items-center justify-between px-4 py-2 border-t border-[var(--border-subtle)]">
+						<Button variant="ghost" size="sm" disabled={resultsPage === 0}
+							onclick={() => resultsPage--}>
+							<ChevronLeft class="w-3.5 h-3.5" /> Prev
+						</Button>
+						<span class="text-xs text-[var(--text-muted)]">
+							Page {resultsPage + 1} of {totalResultPages}
+						</span>
+						<Button variant="ghost" size="sm" disabled={resultsPage >= totalResultPages - 1}
+							onclick={() => resultsPage++}>
+							Next <ChevronRight class="w-3.5 h-3.5" />
+						</Button>
+					</div>
+				{/if}
+			{:else}
+				<p class="text-sm text-[var(--text-muted)] text-center py-6">No results match the current filter.</p>
 			{/if}
 		</Card>
 	{/if}

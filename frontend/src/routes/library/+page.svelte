@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast, activeJobs } from '$lib/stores.js';
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
@@ -210,6 +211,12 @@
 	}
 
 	onMount(async () => {
+		// Handle search param from TopBar navigation
+		const searchParam = $page.url.searchParams.get('search');
+		if (searchParam) {
+			search = searchParam;
+			viewMode = 'list';
+		}
 		await Promise.all([loadData(), loadFavoriteIds()]);
 		try {
 			const active = await api.getActiveJobs();

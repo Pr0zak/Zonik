@@ -15,8 +15,27 @@
 	let expandedJob = $state(null);
 	let jobDetail = $state(null);
 	let retrying = $state(false);
+	let categoryFilter = $state('all');
 	let unsubJobs;
 	let refreshInterval;
+
+	const categories = [
+		{ key: 'all', label: 'All' },
+		{ key: 'downloads', label: 'Downloads', types: ['download', 'bulk_download'] },
+		{ key: 'library', label: 'Library', types: ['library_scan', 'library_cleanup'] },
+		{ key: 'analysis', label: 'Analysis', types: ['audio_analysis', 'enrichment'] },
+		{ key: 'discovery', label: 'Discovery', types: ['lastfm_top_tracks', 'discover_similar', 'discover_artists', 'lastfm_sync', 'kimahub_favorites_sync'] },
+		{ key: 'playlists', label: 'Playlists', types: ['playlist_weekly_top', 'playlist_weekly_discover', 'playlist_favorites'] },
+	];
+
+	let filteredJobs = $derived(
+		categoryFilter === 'all'
+			? jobs
+			: jobs.filter(j => {
+				const cat = categories.find(c => c.key === categoryFilter);
+				return cat?.types?.includes(j.type);
+			})
+	);
 
 	onMount(async () => {
 		try {
@@ -128,6 +147,25 @@
 		{/if}
 	</PageHeader>
 
+	<!-- Category filters -->
+	{#if jobs.length}
+		<div class="flex gap-1.5 mb-4 overflow-x-auto">
+			{#each categories as cat}
+				{@const count = cat.key === 'all' ? jobs.length : jobs.filter(j => cat.types?.includes(j.type)).length}
+				{#if cat.key === 'all' || count > 0}
+					<button onclick={() => categoryFilter = cat.key}
+						class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
+							{categoryFilter === cat.key
+								? 'bg-[var(--color-logs)] text-white'
+								: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
+						{cat.label}
+						<span class="opacity-60">{count}</span>
+					</button>
+				{/if}
+			{/each}
+		</div>
+	{/if}
+
 	<Card padding="p-0">
 		{#if loading}
 			<div class="divide-y divide-[var(--border-subtle)]">
@@ -141,7 +179,7 @@
 					</div>
 				{/each}
 			</div>
-		{:else if jobs.length}
+		{:else if filteredJobs.length}
 			<table class="w-full text-sm">
 				<thead>
 					<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
@@ -153,7 +191,7 @@
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-[var(--border-subtle)]">
-					{#each jobs as job}
+					{#each filteredJobs as job}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" onclick={() => toggleExpand(job)}>
 							<td class="px-4 py-3">
