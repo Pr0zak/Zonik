@@ -98,7 +98,7 @@
 
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
 			<!-- Formats -->
-			<Card padding="p-5">
+			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Formats</h2>
 				<div class="space-y-2">
 					{#each Object.entries(data.formats).sort((a, b) => b[1] - a[1]) as [fmt, count]}
@@ -114,7 +114,7 @@
 			</Card>
 
 			<!-- Top Artists -->
-			<Card padding="p-5">
+			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Top Artists</h2>
 				<div class="space-y-2">
 					{#each data.top_artists as artist}
@@ -130,7 +130,7 @@
 			</Card>
 
 			<!-- Genres -->
-			<Card padding="p-5">
+			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Top Genres</h2>
 				<div class="space-y-2">
 					{#each data.genres as genre}
@@ -146,7 +146,7 @@
 			</Card>
 
 			<!-- Bitrate -->
-			<Card padding="p-5">
+			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Bitrate Distribution</h2>
 				<div class="space-y-2">
 					{#each Object.entries(data.bitrates).sort() as [range, count]}
@@ -164,7 +164,7 @@
 
 		<!-- Year Distribution -->
 		{#if data.years.length}
-			<Card padding="p-5" class="mb-8">
+			<Card padding="p-4" class="mb-8">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Year Distribution</h2>
 				<div class="flex items-end gap-px h-32">
 					{#each data.years as yr}
@@ -186,7 +186,7 @@
 
 		<!-- Most Played -->
 		{#if data.most_played.length}
-			<Card padding="p-5" class="mb-8">
+			<Card padding="p-4" class="mb-8">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Most Played</h2>
 				<div class="space-y-2">
 					{#each data.most_played as track, i}
@@ -203,7 +203,7 @@
 
 		<!-- Job Stats -->
 		{#if data.job_stats.length}
-			<Card padding="p-5">
+			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Job History Summary</h2>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 					{#each data.job_stats as js}

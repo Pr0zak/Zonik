@@ -304,7 +304,7 @@
 		{@const scanFn = activeTab === 'top' ? scanTopTracks : scanSimilarTracks}
 
 		{#if tracks.length || isLoading}
-			<Card padding="p-3">
+			<Card padding="p-4">
 				<div class="flex flex-wrap items-center gap-3">
 					<!-- Stats -->
 					<div class="flex items-center gap-4 flex-1 min-w-0">

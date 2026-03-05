@@ -446,7 +446,7 @@
 
 	<!-- Downloads (unified: active + history) -->
 	{#if visibleJobs.length || jobsLoading}
-		<Card padding="p-6" class="mb-6">
+		<Card padding="p-4" class="mb-6">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-2">
 					<Download class="w-4 h-4 text-[var(--color-downloads)]" />
@@ -597,7 +597,7 @@
 
 	<!-- Search Results -->
 	{#if searching}
-		<Card padding="p-8" class="mb-6">
+		<Card padding="p-4" class="mb-6">
 			<div class="flex flex-col items-center gap-3">
 				<div class="w-6 h-6 border-2 border-[var(--color-downloads)] border-t-transparent rounded-full animate-spin"></div>
 				<p class="text-sm text-[var(--text-muted)]">Searching P2P network...</p>
@@ -781,7 +781,7 @@
 	{/if}
 
 	<!-- Blacklist -->
-	<Card padding="p-6">
+	<Card padding="p-4">
 		<div class="flex items-center justify-between mb-4">
 			<div class="flex items-center gap-2">
 				<ShieldBan class="w-4 h-4 text-red-400" />

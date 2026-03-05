@@ -232,7 +232,7 @@
 		</div>
 	{/if}
 
-	<Card padding="p-6" class="mb-6">
+	<Card padding="p-4" class="mb-6">
 		<div class="flex items-center gap-2 mb-1">
 			<Search class="w-4 h-4 text-purple-400" />
 			<h2 class="text-base font-semibold text-[var(--text-primary)]">Vibe Search</h2>
@@ -332,11 +332,11 @@
 	</Card>
 
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-		<Card padding="p-5">
+		<Card padding="p-4">
 			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-2">Echo Match</h2>
 			<p class="text-sm text-[var(--text-muted)]">Find tracks with similar vibes to any track in your library. Use the vibe search above with a track ID, or click "Echo Match" on any track in the library.</p>
 		</Card>
-		<Card padding="p-5">
+		<Card padding="p-4">
 			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-2">Steady Vibes</h2>
 			<p class="text-sm text-[var(--text-muted)]">Generate a playlist that maintains consistent energy and mood from a seed track. Uses CLAP embeddings to walk through vibe space.</p>
 		</Card>

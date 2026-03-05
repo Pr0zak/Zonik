@@ -164,10 +164,10 @@
 	</div>
 
 	{#if showGenerator}
-		<Card padding="p-5" class="mb-6">
+		<Card padding="p-4" class="mb-6">
 			<div class="flex items-center gap-2 mb-4">
-				<Wand2 class="w-5 h-5 text-amber-400" />
-				<h3 class="font-medium text-[var(--text-primary)]">Generate Smart Playlist</h3>
+				<Wand2 class="w-4 h-4 text-amber-400" />
+				<h3 class="text-base font-semibold text-[var(--text-primary)]">Generate Smart Playlist</h3>
 			</div>
 
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">

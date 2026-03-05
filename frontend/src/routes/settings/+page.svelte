@@ -313,7 +313,7 @@
 
 	<div class="space-y-6">
 		<!-- Library -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-4">Library</h2>
 			<div class="space-y-3 text-sm">
 				<div class="flex items-center justify-between">
@@ -352,7 +352,7 @@
 		</Card>
 
 		<!-- Users -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-base font-semibold text-[var(--text-primary)]">User Management</h2>
 			</div>
@@ -404,7 +404,7 @@
 		</Card>
 
 		<!-- Database Backups -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-base font-semibold text-[var(--text-primary)]">Database</h2>
 				<Button variant="secondary" size="sm" loading={creatingBackup} onclick={createBackup}>
@@ -435,7 +435,7 @@
 		</Card>
 
 		<!-- Service Connections -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-base font-semibold text-[var(--text-primary)]">Service Connections</h2>
 				<Button variant="primary" size="sm" loading={saving} disabled={!dirty} onclick={saveServices}>
@@ -582,7 +582,7 @@
 		{/if}
 
 		<!-- Subsonic -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-base font-semibold text-[var(--text-primary)]">Subsonic</h2>
 				<button onclick={() => testConnection('subsonic')} class="transition-colors">
@@ -605,7 +605,7 @@
 		</Card>
 
 		<!-- About -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-4">About</h2>
 			<div class="space-y-2 text-sm text-[var(--text-secondary)]">
 				{#if versionInfo}
@@ -619,7 +619,7 @@
 		</Card>
 
 		<!-- Updates -->
-		<Card padding="p-6">
+		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-base font-semibold text-[var(--text-primary)]">Updates</h2>
 				{#if updateInfo?.update_available}
