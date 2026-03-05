@@ -111,8 +111,11 @@
 
 						<div class="flex-1 min-w-0">
 							<p class="font-medium text-sm text-[var(--text-primary)]">{task.label}</p>
+							{#if task.description}
+								<p class="text-xs text-[var(--text-secondary)] mt-0.5">{task.description}</p>
+							{/if}
 							{#if task.last_run_at}
-								<p class="text-xs text-[var(--text-muted)] font-mono">Last: {new Date(task.last_run_at).toLocaleString()}</p>
+								<p class="text-xs text-[var(--text-muted)] font-mono mt-0.5">Last run: {new Date(task.last_run_at).toLocaleString()}</p>
 							{/if}
 						</div>
 

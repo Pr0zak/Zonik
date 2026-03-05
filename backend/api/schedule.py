@@ -45,6 +45,21 @@ TASK_LABELS = {
     "kimahub_favorites_sync": "KimaHub Favorites Sync",
 }
 
+TASK_DESCRIPTIONS = {
+    "library_scan": "Scan the music directory for new, changed, or removed files and update the database.",
+    "enrichment": "Fetch missing genre tags and cover art from MusicBrainz, Deezer, and other sources.",
+    "lastfm_top_tracks": "Pull the current Last.fm top chart and flag tracks not yet in your library.",
+    "discover_similar": "Find tracks similar to your favorites using Last.fm recommendations.",
+    "discover_artists": "Discover new artists related to those in your library via Last.fm.",
+    "lastfm_sync": "Sync loved tracks and scrobble history with your Last.fm account.",
+    "playlist_weekly_top": "Auto-generate a playlist of the week's most popular chart tracks found in your library.",
+    "playlist_weekly_discover": "Auto-generate a discovery playlist with a random mix from your library.",
+    "playlist_favorites": "Rebuild the Favorites playlist from all currently starred tracks.",
+    "audio_analysis": "Run Essentia audio analysis (BPM, key, energy, danceability) on unanalyzed tracks.",
+    "library_cleanup": "Remove orphaned database entries for files that no longer exist on disk.",
+    "kimahub_favorites_sync": "Import liked tracks from KimaHub's PostgreSQL database into Zonik favorites.",
+}
+
 
 @router.get("")
 async def list_schedule(db: AsyncSession = Depends(get_db)):
@@ -65,6 +80,7 @@ async def list_schedule(db: AsyncSession = Depends(get_db)):
         {
             "task_name": t.task_name,
             "label": TASK_LABELS.get(t.task_name, t.task_name),
+            "description": TASK_DESCRIPTIONS.get(t.task_name, ""),
             "enabled": t.enabled,
             "interval_hours": t.interval_hours,
             "run_at": t.run_at,
