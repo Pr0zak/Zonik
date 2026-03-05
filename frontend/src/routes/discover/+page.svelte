@@ -108,14 +108,15 @@
 		{/if}
 	</PageHeader>
 
-	<div class="flex gap-1.5 mb-6">
+	<div class="flex gap-1.5 mb-6 overflow-x-auto">
 		{#each tabs as tab}
-			<button on:click={() => switchTab(tab.key)}
+			{@const Icon = tab.icon}
+			<button onclick={() => switchTab(tab.key)}
 				class="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors
 					{activeTab === tab.key
 						? 'bg-[var(--color-discover)] text-white'
 						: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
-				<svelte:component this={tab.icon} class="w-3.5 h-3.5" />
+				<Icon class="w-3.5 h-3.5" />
 				{tab.label}
 			</button>
 		{/each}

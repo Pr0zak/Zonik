@@ -1,8 +1,8 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { ScrollText, ChevronDown, ChevronRight, RotateCcw } from 'lucide-svelte';
-	import { addToast } from '$lib/stores.js';
+	import { addToast, activeJobs } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
@@ -15,6 +15,8 @@
 	let expandedJob = $state(null);
 	let jobDetail = $state(null);
 	let retrying = $state(false);
+	let unsubJobs;
+	let refreshInterval;
 
 	onMount(async () => {
 		try {
@@ -24,6 +26,32 @@
 		} finally {
 			loading = false;
 		}
+
+		unsubJobs = activeJobs.subscribe(active => {
+			if (!active.length) return;
+			for (const aj of active) {
+				const idx = jobs.findIndex(j => j.id === aj.id);
+				if (idx >= 0) {
+					jobs[idx] = { ...jobs[idx], ...aj };
+				} else {
+					jobs = [{ ...aj, started_at: new Date().toISOString() }, ...jobs];
+				}
+			}
+		});
+
+		refreshInterval = setInterval(async () => {
+			try {
+				const newJobs = await api.getJobs();
+				if (JSON.stringify(newJobs.map(j => j.id + j.status)) !== JSON.stringify(jobs.map(j => j.id + j.status))) {
+					jobs = newJobs;
+				}
+			} catch {}
+		}, 30000);
+	});
+
+	onDestroy(() => {
+		if (unsubJobs) unsubJobs();
+		if (refreshInterval) clearInterval(refreshInterval);
 	});
 
 	async function toggleExpand(job) {
@@ -79,7 +107,14 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Job History" color="var(--color-logs)" />
+	<PageHeader title="Job History" color="var(--color-logs)">
+		{#if $activeJobs.length > 0}
+			<Badge variant="info">
+				<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1.5"></span>
+				Live
+			</Badge>
+		{/if}
+	</PageHeader>
 
 	<Card padding="p-0">
 		{#if loading}
@@ -108,7 +143,7 @@
 				<tbody class="divide-y divide-[var(--border-subtle)]">
 					{#each jobs as job}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
-						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" on:click={() => toggleExpand(job)}>
+						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" onclick={() => toggleExpand(job)}>
 							<td class="px-4 py-3 font-medium text-[var(--text-body)]">
 								<div class="flex items-center gap-2">
 									{#if expandedJob === job.id}
@@ -120,7 +155,13 @@
 								</div>
 							</td>
 							<td class="px-4 py-3">
-								<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+								{#if job.status === 'running'}
+									<span class="animate-pulse">
+										<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+									</span>
+								{:else}
+									<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+								{/if}
 							</td>
 							<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs">
 								{#if job.total}

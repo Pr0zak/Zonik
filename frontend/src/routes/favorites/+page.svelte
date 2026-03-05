@@ -43,7 +43,7 @@
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
-						on:click={() => { if (fav.track_id) $currentTrack = { id: fav.track_id, title: fav.track_title }; }}>
+						onclick={() => { if (fav.track_id) $currentTrack = { id: fav.track_id, title: fav.track_title }; }}>
 						<div class="flex items-center gap-3">
 							<Heart class="w-4 h-4 text-red-400/60" />
 							<span class="text-sm text-[var(--text-body)]">{fav.track_title || fav.album_id || fav.artist_id}</span>

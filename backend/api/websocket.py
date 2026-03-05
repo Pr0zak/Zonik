@@ -28,6 +28,18 @@ async def broadcast_job_update(job_data: dict):
     _clients -= disconnected
 
 
+async def broadcast_log(log_data: dict):
+    """Broadcast a log entry to all connected WebSocket clients."""
+    message = json.dumps({"type": "log_entry", "entry": log_data})
+    disconnected = set()
+    for ws in _clients:
+        try:
+            await ws.send_text(message)
+        except Exception:
+            disconnected.add(ws)
+    _clients -= disconnected
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()

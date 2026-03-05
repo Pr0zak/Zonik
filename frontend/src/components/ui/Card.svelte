@@ -12,6 +12,6 @@
 	const hoverClass = hover ? 'hover:border-[var(--border-interactive)]' : '';
 </script>
 
-<div class="{base} {hoverClass} {padding} {className}">
+<div class="{base} {hoverClass} {padding} overflow-x-auto {className}">
 	{@render children()}
 </div>

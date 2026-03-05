@@ -37,8 +37,15 @@
 	});
 </script>
 
-<aside class="w-64 bg-[var(--bg-primary)] flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)]"
-	class:hidden={!$sidebarOpen}>
+<!-- Mobile backdrop -->
+{#if $sidebarOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div class="fixed inset-0 bg-black/50 z-40 md:hidden" onclick={() => $sidebarOpen = false}
+		role="presentation"></div>
+{/if}
+
+<aside class="{$sidebarOpen ? '' : 'hidden'} w-64 bg-[var(--bg-primary)] flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)]
+	fixed inset-y-0 left-0 z-50 md:static md:z-auto">
 
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-4">
@@ -62,14 +69,16 @@
 	<nav class="flex-1 px-3 space-y-0.5 overflow-y-auto">
 		{#each nav as item, i}
 			{@const active = isActive($page.url.pathname, item.href)}
+			{@const Icon = item.icon}
 			<a href={item.href}
+				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}
 				class="group flex items-center gap-3 px-3 py-2 text-sm transition-all duration-200 border-l-2 rounded-r-md
 					{active
 						? 'text-white bg-[var(--bg-primary)]'
 						: 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5 border-transparent hover:border-white/20'}"
 				style={active ? `border-color: ${item.color}` : ''}
 			>
-				<svelte:component this={item.icon}
+				<Icon
 					class="w-4 h-4 shrink-0 transition-colors"
 					style={active ? `color: ${item.color}` : ''}
 				/>

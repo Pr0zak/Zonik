@@ -214,8 +214,8 @@
 <div class="max-w-7xl">
 	<PageHeader title="Library" color="var(--color-library)">
 		<input type="text" placeholder="Search tracks..."
-			bind:value={search} on:input={debouncedSearch}
-			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm w-64
+			bind:value={search} oninput={debouncedSearch}
+			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm w-full sm:w-64
 				placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 		<span class="text-sm text-[var(--text-muted)] font-mono">{total.toLocaleString()}</span>
 		<Button variant={selectMode ? 'primary' : 'secondary'} size="sm" onclick={toggleSelectMode}>
@@ -268,13 +268,13 @@
 						{#if selectMode}
 							<th class="px-4 py-3 w-10">
 								<input type="checkbox" checked={selected.size === tracks.length && tracks.length > 0}
-									on:change={toggleSelectAll}
+									onchange={toggleSelectAll}
 									class="rounded border-[var(--border-interactive)] bg-[var(--bg-primary)] text-[var(--color-accent)] cursor-pointer" />
 							</th>
 						{/if}
-						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors" on:click={() => toggleSort('title')}>Title{sortIndicator('title')}</th>
-						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors" on:click={() => toggleSort('artist')}>Artist{sortIndicator('artist')}</th>
-						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors hidden md:table-cell" on:click={() => toggleSort('album')}>Album{sortIndicator('album')}</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors" onclick={() => toggleSort('title')}>Title{sortIndicator('title')}</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors" onclick={() => toggleSort('artist')}>Artist{sortIndicator('artist')}</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors hidden md:table-cell" onclick={() => toggleSort('album')}>Album{sortIndicator('album')}</th>
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Duration</th>
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Format</th>
 						<th class="px-4 py-3 w-10"></th>
@@ -283,11 +283,11 @@
 				<tbody class="divide-y divide-[var(--border-subtle)]">
 					{#each tracks as track}
 						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors group {selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10' : ''}"
-							on:click={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
+							onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
 							{#if selectMode}
 								<td class="px-4 py-3 w-10">
 									<input type="checkbox" checked={selected.has(track.id)}
-										on:click|stopPropagation={() => toggleSelect(track.id)}
+										onclick={(e) => { e.stopPropagation(); toggleSelect(track.id); }}
 										class="rounded border-[var(--border-interactive)] bg-[var(--bg-primary)] text-[var(--color-accent)] cursor-pointer" />
 								</td>
 							{/if}
@@ -299,7 +299,7 @@
 								<Badge>{(track.format || '-').toUpperCase()}</Badge>
 							</td>
 							<td class="px-4 py-3">
-								<button on:click={(e) => findSimilar(track, e)}
+								<button onclick={(e) => findSimilar(track, e)}
 									title="Find similar tracks"
 									class="opacity-0 group-hover:opacity-100 px-2 py-1 bg-[var(--color-accent)]/20 hover:bg-[var(--color-accent)]/30 text-[var(--color-accent-light)]
 										rounded text-xs transition-all">
@@ -349,12 +349,12 @@
 		{/if}
 
 		<div class="flex gap-1 mb-4">
-			<button on:click={() => switchTab('lastfm')}
+			<button onclick={() => switchTab('lastfm')}
 				class="px-3 py-1 rounded-md text-xs font-medium transition-colors
 					{similarTab === 'lastfm' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white'}">
 				Last.fm Similar
 			</button>
-			<button on:click={() => switchTab('vibe')}
+			<button onclick={() => switchTab('vibe')}
 				class="px-3 py-1 rounded-md text-xs font-medium transition-colors
 					{similarTab === 'vibe' ? 'bg-purple-600 text-white' : 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white'}">
 				Vibe Match

@@ -5,7 +5,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,6 +13,13 @@ from backend.database import get_db
 from backend.models.playlist import Playlist, PlaylistTrack
 
 router = APIRouter()
+
+
+class SmartPlaylistRequest(BaseModel):
+    name: str
+    rule: str  # "genre", "bpm_range", "recent", "top_played", "random"
+    value: str | None = None  # e.g. genre name, "120-140" for BPM range
+    limit: int = 50
 
 
 class PlaylistCreate(BaseModel):
@@ -59,6 +66,53 @@ async def create_playlist(req: PlaylistCreate, user_id: str = "admin", db: Async
         db.add(PlaylistTrack(id=str(uuid.uuid4()), playlist_id=playlist.id, track_id=tid, position=i))
     await db.commit()
     return {"id": playlist.id, "name": playlist.name}
+
+
+@router.post("/generate")
+async def generate_smart_playlist(req: SmartPlaylistRequest, db: AsyncSession = Depends(get_db)):
+    """Generate a smart playlist based on rules."""
+    from backend.models.track import Track
+    from backend.models.analysis import TrackAnalysis
+
+    query = select(Track)
+
+    if req.rule == "genre":
+        query = query.where(Track.genre.ilike(f"%{req.value}%"))
+    elif req.rule == "bpm_range" and req.value:
+        parts = req.value.split("-")
+        if len(parts) == 2:
+            low, high = float(parts[0]), float(parts[1])
+            query = query.join(TrackAnalysis).where(
+                TrackAnalysis.bpm >= low, TrackAnalysis.bpm <= high
+            )
+    elif req.rule == "recent":
+        query = query.order_by(Track.created_at.desc())
+    elif req.rule == "top_played":
+        query = query.where(Track.play_count > 0).order_by(Track.play_count.desc())
+    elif req.rule == "random":
+        query = query.order_by(func.random())
+    else:
+        return {"error": f"Unknown rule: {req.rule}"}
+
+    query = query.limit(req.limit)
+    result = await db.execute(query)
+    tracks = result.scalars().all()
+
+    if not tracks:
+        return {"error": "No tracks match the criteria"}
+
+    playlist = Playlist(
+        id=str(uuid.uuid4()),
+        name=req.name,
+        user_id="admin",
+        comment=f"Auto-generated: {req.rule}" + (f" ({req.value})" if req.value else ""),
+    )
+    db.add(playlist)
+    for i, t in enumerate(tracks):
+        db.add(PlaylistTrack(id=str(uuid.uuid4()), playlist_id=playlist.id, track_id=t.id, position=i))
+    await db.commit()
+
+    return {"id": playlist.id, "name": playlist.name, "track_count": len(tracks)}
 
 
 @router.get("/{playlist_id}")

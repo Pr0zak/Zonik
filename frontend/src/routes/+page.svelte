@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { formatSize } from '$lib/utils.js';
-	import { Music, Users, Disc3, HardDrive } from 'lucide-svelte';
+	import { Music, Users, Disc3, HardDrive, Activity } from 'lucide-svelte';
 	import PageHeader from '../components/ui/PageHeader.svelte';
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
@@ -11,6 +11,7 @@
 
 	let stats = $state(null);
 	let recent = $state([]);
+	let health = $state(null);
 	let loading = $state(true);
 
 	const statCards = [
@@ -21,9 +22,10 @@
 
 	onMount(async () => {
 		try {
-			[stats, recent] = await Promise.all([
+			[stats, recent, health] = await Promise.all([
 				api.getStats(),
-				api.getRecent(10)
+				api.getRecent(10),
+				fetch('/api/config/health').then(r => r.json()).catch(() => null)
 			]);
 		} catch (e) {
 			console.error('Failed to load dashboard:', e);
@@ -48,7 +50,8 @@
 			{#each statCards as card}
 				<Card padding="p-4">
 					<div class="flex items-center justify-between mb-2">
-						<svelte:component this={card.icon} class="w-5 h-5" style="color: {card.color}" />
+						{@const Icon = card.icon}
+					<Icon class="w-5 h-5" style="color: {card.color}" />
 					</div>
 					<p class="text-2xl font-bold text-[var(--text-primary)]">{stats[card.key].toLocaleString()}</p>
 					<p class="text-xs text-[var(--text-muted)]">{card.label}</p>
@@ -69,6 +72,23 @@
 				<div class="flex flex-wrap gap-2">
 					{#each Object.entries(stats.formats) as [fmt, count]}
 						<Badge>{fmt.toUpperCase()} <span class="text-[var(--text-muted)] ml-1">{count}</span></Badge>
+					{/each}
+				</div>
+			</Card>
+		{/if}
+
+		{#if health}
+			<Card padding="p-4" class="mb-8">
+				<div class="flex items-center justify-between mb-3">
+					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">System Health</h2>
+					<Badge variant={health.status === 'ok' ? 'success' : 'warning'}>{health.status}</Badge>
+				</div>
+				<div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+					{#each Object.entries(health.services) as [name, check]}
+						<div class="flex items-center gap-2">
+							<div class="w-2 h-2 rounded-full {check.status === 'ok' ? 'bg-emerald-400' : check.status === 'warning' ? 'bg-amber-400' : 'bg-red-400'}"></div>
+							<span class="text-xs text-[var(--text-body)] capitalize">{name}</span>
+						</div>
 					{/each}
 				</div>
 			</Card>

@@ -55,6 +55,27 @@ async def active_jobs(db: AsyncSession = Depends(get_db)):
     ]
 
 
+@router.get("/stream/recent")
+async def recent_job_updates(limit: int = 20, db: AsyncSession = Depends(get_db)):
+    """Get recent job updates for live log display."""
+    result = await db.execute(
+        select(Job).order_by(Job.started_at.desc()).limit(limit)
+    )
+    jobs = result.scalars().all()
+    return [
+        {
+            "id": j.id,
+            "type": j.type,
+            "status": j.status,
+            "progress": j.progress,
+            "total": j.total,
+            "started_at": j.started_at.isoformat() if j.started_at else None,
+            "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+        }
+        for j in jobs
+    ]
+
+
 @router.post("/{job_id}/retry")
 async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Retry failed tracks from a failed download/bulk_download job."""

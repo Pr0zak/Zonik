@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -31,16 +31,28 @@
 	let upgradeJob = $state(null);
 	let upgrading = $state(false);
 
+	let backups = $state([]);
+	let creatingBackup = $state(false);
+
+	let users = $state([]);
+	let newUser = $state({ username: '', password: '', is_admin: false });
+	let changingPw = $state(null);
+	let pwForm = $state({ current_password: '', new_password: '' });
+
 	onMount(async () => {
 		try {
-			const [statsData, svcData, verData] = await Promise.all([
+			const [statsData, svcData, verData, usersData, backupsData] = await Promise.all([
 				fetch('/api/library/stats').then(r => r.json()),
 				fetch('/api/config/services').then(r => r.json()),
 				fetch('/api/config/version').then(r => r.json()),
+				fetch('/api/users').then(r => r.json()),
+				fetch('/api/config/backups').then(r => r.json()).catch(() => []),
 			]);
 			stats = statsData;
 			services = svcData;
 			versionInfo = verData;
+			users = usersData;
+			backups = backupsData;
 		} catch (e) {
 			console.error(e);
 		}
@@ -179,6 +191,90 @@
 		showField = { ...showField };
 	}
 
+	async function loadUsers() {
+		try {
+			users = await fetch('/api/users').then(r => r.json());
+		} catch (e) {
+			console.error('Failed to load users', e);
+		}
+	}
+
+	async function addUser() {
+		try {
+			const resp = await fetch('/api/users', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(newUser),
+			});
+			if (!resp.ok) {
+				const data = await resp.json();
+				addToast(data.detail || 'Failed to create user', 'error');
+				return;
+			}
+			addToast(`User "${newUser.username}" created`, 'success');
+			newUser = { username: '', password: '', is_admin: false };
+			await loadUsers();
+		} catch (e) {
+			addToast('Failed to create user: ' + e.message, 'error');
+		}
+	}
+
+	async function changePassword(userId) {
+		try {
+			const resp = await fetch(`/api/users/${userId}/password`, {
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(pwForm),
+			});
+			if (!resp.ok) {
+				const data = await resp.json();
+				addToast(data.detail || 'Failed to change password', 'error');
+				return;
+			}
+			addToast('Password changed', 'success');
+			changingPw = null;
+			pwForm = { current_password: '', new_password: '' };
+		} catch (e) {
+			addToast('Failed to change password: ' + e.message, 'error');
+		}
+	}
+
+	async function deleteUser(userId) {
+		if (!confirm('Are you sure you want to delete this user?')) return;
+		try {
+			const resp = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
+			if (!resp.ok) {
+				const data = await resp.json();
+				addToast(data.detail || 'Failed to delete user', 'error');
+				return;
+			}
+			addToast('User deleted', 'success');
+			await loadUsers();
+		} catch (e) {
+			addToast('Failed to delete user: ' + e.message, 'error');
+		}
+	}
+
+	async function createBackup() {
+		creatingBackup = true;
+		try {
+			const data = await fetch('/api/config/backup', { method: 'POST' }).then(r => r.json());
+			if (data.error) { addToast(data.error, 'error'); return; }
+			addToast('Backup created', 'success');
+			backups = await fetch('/api/config/backups').then(r => r.json());
+		} catch (e) { addToast('Backup failed', 'error'); }
+		finally { creatingBackup = false; }
+	}
+
+	async function restoreBackup(filename) {
+		if (!confirm('Restore this backup? Current data will be backed up first. Services must be restarted after restore.')) return;
+		try {
+			const data = await fetch(`/api/config/restore/${filename}`, { method: 'POST' }).then(r => r.json());
+			if (data.error) { addToast(data.error, 'error'); return; }
+			addToast(data.message, 'success');
+		} catch (e) { addToast('Restore failed', 'error'); }
+	}
+
 	const inputClass = 'w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20';
 </script>
 
@@ -206,15 +302,98 @@
 			<div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">Download Directory</label>
-					<input type="text" bind:value={services.download_dir} on:input={markDirty}
+					<input type="text" bind:value={services.download_dir} oninput={markDirty}
 						placeholder="/music/Downloads" class={inputClass} />
 				</div>
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">Cover Art Cache</label>
-					<input type="text" bind:value={services.cover_cache_dir} on:input={markDirty}
+					<input type="text" bind:value={services.cover_cache_dir} oninput={markDirty}
 						placeholder="/opt/zonik/cache/covers" class={inputClass} />
 				</div>
 			</div>
+		</Card>
+
+		<!-- Users -->
+		<Card padding="p-6">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">User Management</h2>
+			</div>
+
+			<div class="space-y-3">
+				{#each users as user}
+					<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md">
+						<div class="flex items-center gap-3">
+							<span class="font-medium text-[var(--text-primary)]">{user.username}</span>
+							{#if user.is_admin}
+								<Badge variant="info">Admin</Badge>
+							{/if}
+						</div>
+						<div class="flex items-center gap-2">
+							<Button variant="ghost" size="sm" onclick={() => { changingPw = changingPw === user.id ? null : user.id; }}>
+								<Key class="w-3.5 h-3.5" />
+							</Button>
+							{#if !user.is_admin}
+								<Button variant="ghost" size="sm" onclick={() => deleteUser(user.id)}>
+									<Trash2 class="w-3.5 h-3.5 text-red-400" />
+								</Button>
+							{/if}
+						</div>
+					</div>
+					{#if changingPw === user.id}
+						<div class="ml-3 flex gap-2 animate-fade-slide-in">
+							<input type="password" placeholder="Current password" bind:value={pwForm.current_password} class={inputClass + ' flex-1'} />
+							<input type="password" placeholder="New password" bind:value={pwForm.new_password} class={inputClass + ' flex-1'} />
+							<Button variant="primary" size="sm" onclick={() => changePassword(user.id)}>Save</Button>
+						</div>
+					{/if}
+				{/each}
+			</div>
+
+			<!-- Add User -->
+			<div class="mt-4 pt-4 border-t border-[var(--border-subtle)]">
+				<div class="flex gap-2">
+					<input type="text" placeholder="Username" bind:value={newUser.username} class={inputClass + ' flex-1'} />
+					<input type="password" placeholder="Password" bind:value={newUser.password} class={inputClass + ' flex-1'} />
+					<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+						<input type="checkbox" bind:checked={newUser.is_admin} /> Admin
+					</label>
+					<Button variant="primary" size="sm" disabled={!newUser.username || !newUser.password} onclick={addUser}>
+						<Plus class="w-3.5 h-3.5" />
+						Add
+					</Button>
+				</div>
+			</div>
+		</Card>
+
+		<!-- Database Backups -->
+		<Card padding="p-6">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Database</h2>
+				<Button variant="secondary" size="sm" loading={creatingBackup} onclick={createBackup}>
+					<Database class="w-3.5 h-3.5" />
+					Create Backup
+				</Button>
+			</div>
+			{#if backups.length}
+				<div class="space-y-2">
+					{#each backups as backup}
+						<div class="flex items-center justify-between text-sm bg-[var(--bg-tertiary)] rounded-lg px-3 py-2">
+							<div class="flex flex-col">
+								<span class="font-mono text-xs text-[var(--text-body)]">{backup.filename}</span>
+								<span class="text-xs text-[var(--text-muted)]">
+									{new Date(backup.created_at).toLocaleString()} &middot; {(backup.size / 1024 / 1024).toFixed(1)} MB
+								</span>
+							</div>
+							<button onclick={() => restoreBackup(backup.filename)}
+								class="text-[var(--text-muted)] hover:text-amber-400 transition-colors" title="Restore this backup">
+								<RotateCcw class="w-4 h-4" />
+							</button>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-sm text-[var(--text-muted)]">No backups yet. Create one to protect your data.</p>
+			{/if}
 		</Card>
 
 		<!-- Service Connections -->
@@ -231,7 +410,7 @@
 				<div>
 					<div class="flex items-center justify-between mb-2">
 						<h3 class="text-sm font-medium text-[var(--text-primary)]">Soulseek (slskd)</h3>
-						<button on:click={() => testConnection('soulseek')}
+						<button onclick={() => testConnection('soulseek')}
 							class="transition-colors">
 							<Badge variant={testBadgeVariant('soulseek')}>{testBtnLabel('soulseek', 'Test')}</Badge>
 						</button>
@@ -239,15 +418,15 @@
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 						<div>
 							<label class="block text-xs text-[var(--text-muted)] mb-1">URL</label>
-							<input type="text" bind:value={services.slskd_url} on:input={markDirty}
+							<input type="text" bind:value={services.slskd_url} oninput={markDirty}
 								placeholder="http://host:5030" class={inputClass} />
 						</div>
 						<div>
 							<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
 							<div class="relative">
-								<input type={showField.slskd ? 'text' : 'password'} bind:value={services.slskd_api_key} on:input={markDirty}
+								<input type={showField.slskd ? 'text' : 'password'} bind:value={services.slskd_api_key} oninput={markDirty}
 									placeholder="slskd API key" class="{inputClass} pr-8" />
-								<button type="button" on:click={() => toggleField('slskd')}
+								<button type="button" onclick={() => toggleField('slskd')}
 									class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 									{#if showField.slskd}
 										<EyeOff class="w-4 h-4" />
@@ -264,7 +443,7 @@
 				<div>
 					<div class="flex items-center justify-between mb-2">
 						<h3 class="text-sm font-medium text-[var(--text-primary)]">Lidarr</h3>
-						<button on:click={() => testConnection('lidarr')}
+						<button onclick={() => testConnection('lidarr')}
 							class="transition-colors">
 							<Badge variant={testBadgeVariant('lidarr')}>{testBtnLabel('lidarr', 'Test')}</Badge>
 						</button>
@@ -272,15 +451,15 @@
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 						<div>
 							<label class="block text-xs text-[var(--text-muted)] mb-1">URL</label>
-							<input type="text" bind:value={services.lidarr_url} on:input={markDirty}
+							<input type="text" bind:value={services.lidarr_url} oninput={markDirty}
 								placeholder="http://host:8686" class={inputClass} />
 						</div>
 						<div>
 							<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
 							<div class="relative">
-								<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} on:input={markDirty}
+								<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} oninput={markDirty}
 									placeholder="Lidarr API key" class="{inputClass} pr-8" />
-								<button type="button" on:click={() => toggleField('lidarr')}
+								<button type="button" onclick={() => toggleField('lidarr')}
 									class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 									{#if showField.lidarr}
 										<EyeOff class="w-4 h-4" />
@@ -297,7 +476,7 @@
 				<div>
 					<div class="flex items-center justify-between mb-2">
 						<h3 class="text-sm font-medium text-[var(--text-primary)]">Last.fm</h3>
-						<button on:click={() => testConnection('lastfm')}
+						<button onclick={() => testConnection('lastfm')}
 							class="transition-colors">
 							<Badge variant={testBadgeVariant('lastfm')}>{testBtnLabel('lastfm', 'Test')}</Badge>
 						</button>
@@ -311,9 +490,9 @@
 							<div>
 								<label class="block text-xs text-[var(--text-muted)] mb-1">{field.label}</label>
 								<div class="relative">
-									<input type={showField[field.key] ? 'text' : 'password'} bind:value={services[field.bind]} on:input={markDirty}
+									<input type={showField[field.key] ? 'text' : 'password'} bind:value={services[field.bind]} oninput={markDirty}
 										placeholder={field.placeholder} class="{inputClass} pr-8" />
-									<button type="button" on:click={() => toggleField(field.key)}
+									<button type="button" onclick={() => toggleField(field.key)}
 										class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 										{#if showField[field.key]}
 											<EyeOff class="w-4 h-4" />
@@ -333,7 +512,7 @@
 		<Card padding="p-6">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-base font-semibold text-[var(--text-primary)]">Subsonic</h2>
-				<button on:click={() => testConnection('subsonic')} class="transition-colors">
+				<button onclick={() => testConnection('subsonic')} class="transition-colors">
 					<Badge variant={testBadgeVariant('subsonic')}>{testBtnLabel('subsonic', 'Test')}</Badge>
 				</button>
 			</div>

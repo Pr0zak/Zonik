@@ -29,6 +29,15 @@
 		audio.play();
 		$isPlaying = true;
 	}
+
+	// React to external isPlaying changes (e.g. keyboard shortcut)
+	$: if (audio && $currentTrack) {
+		if ($isPlaying && audio.paused) {
+			audio.play();
+		} else if (!$isPlaying && !audio.paused) {
+			audio.pause();
+		}
+	}
 </script>
 
 <div class="h-16 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 gap-4 shrink-0">
@@ -45,7 +54,7 @@
 
 		<div class="flex-1 flex flex-col items-center gap-1">
 			<div class="flex items-center gap-4">
-				<button on:click={togglePlay}
+				<button onclick={togglePlay}
 					class="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
 					{#if $isPlaying}
 						<Pause class="w-4 h-4" />
@@ -58,7 +67,7 @@
 				<span class="font-mono tabular-nums">{formatDuration(currentTime)}</span>
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full cursor-pointer group" on:click={seek}>
+				<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full cursor-pointer group" onclick={seek}>
 					<div class="h-full bg-[var(--color-accent)] rounded-full transition-all"
 						style="width: {duration ? (currentTime / duration * 100) : 0}%"></div>
 				</div>
@@ -75,7 +84,7 @@
 <audio bind:this={audio}
 	bind:currentTime
 	bind:duration
-	on:ended={() => { $isPlaying = false; }}
-	on:pause={() => { $isPlaying = false; }}
-	on:play={() => { $isPlaying = true; }}>
+	onended={() => { $isPlaying = false; }}
+	onpause={() => { $isPlaying = false; }}
+	onplay={() => { $isPlaying = true; }}>
 </audio>

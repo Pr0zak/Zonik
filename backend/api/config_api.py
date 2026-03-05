@@ -15,8 +15,10 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from backend.config import get_settings, CONFIG_PATHS
-from backend.database import get_db
+from backend.database import async_session, get_db
 from backend.models.job import Job
 
 logger = logging.getLogger(__name__)
@@ -460,6 +462,152 @@ async def trigger_upgrade(db: AsyncSession = Depends(get_db)):
     asyncio.create_task(_run_upgrade(job_id))
 
     return {"job_id": job_id}
+
+
+@router.get("/health")
+async def health_check():
+    """Check health of all connected services."""
+    settings = get_settings()
+    checks = {}
+
+    # Database
+    try:
+        async with async_session() as db:
+            await db.execute(select(1))
+        checks["database"] = {"status": "ok", "message": "Connected"}
+    except Exception as e:
+        checks["database"] = {"status": "error", "message": str(e)}
+
+    # Redis
+    try:
+        import redis.asyncio as aioredis
+        r = aioredis.from_url(settings.redis.url, socket_timeout=3)
+        await r.ping()
+        await r.aclose()
+        checks["redis"] = {"status": "ok", "message": "Connected"}
+    except Exception as e:
+        checks["redis"] = {"status": "error", "message": str(e)}
+
+    # slskd
+    if settings.soulseek.slskd_url:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    f"{settings.soulseek.slskd_url.rstrip('/')}/api/v0/application",
+                    headers={"X-API-Key": settings.soulseek.slskd_api_key},
+                )
+                checks["soulseek"] = {"status": "ok" if resp.status_code == 200 else "error", "message": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            checks["soulseek"] = {"status": "error", "message": str(e)}
+    else:
+        checks["soulseek"] = {"status": "warning", "message": "Not configured"}
+
+    # Last.fm
+    if settings.lastfm.api_key:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get("https://ws.audioscrobbler.com/2.0/", params={
+                    "method": "chart.gettopartists", "api_key": settings.lastfm.api_key,
+                    "format": "json", "limit": 1,
+                })
+                data = resp.json()
+                if "error" in data:
+                    checks["lastfm"] = {"status": "error", "message": data.get("message", "API error")}
+                else:
+                    checks["lastfm"] = {"status": "ok", "message": "Connected"}
+        except Exception as e:
+            checks["lastfm"] = {"status": "error", "message": str(e)}
+    else:
+        checks["lastfm"] = {"status": "warning", "message": "Not configured"}
+
+    # Lidarr
+    if settings.lidarr.url:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    f"{settings.lidarr.url.rstrip('/')}/api/v1/system/status",
+                    headers={"X-Api-Key": settings.lidarr.api_key},
+                )
+                checks["lidarr"] = {"status": "ok" if resp.status_code == 200 else "error", "message": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            checks["lidarr"] = {"status": "error", "message": str(e)}
+    else:
+        checks["lidarr"] = {"status": "warning", "message": "Not configured"}
+
+    overall = "ok" if all(c["status"] == "ok" for c in checks.values()) else "degraded"
+    return {"status": overall, "services": checks}
+
+
+@router.post("/backup")
+async def create_backup():
+    """Create a backup of the SQLite database."""
+    import shutil
+    settings = get_settings()
+    db_path = Path(settings.database.path)
+    if not db_path.exists():
+        return {"error": "Database not found"}
+
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"zonik_{timestamp}.db"
+
+    shutil.copy2(str(db_path), str(backup_path))
+
+    # Keep only last 10 backups
+    backups = sorted(backup_dir.glob("zonik_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in backups[10:]:
+        old.unlink()
+
+    size = backup_path.stat().st_size
+    return {"path": str(backup_path), "size": size, "timestamp": timestamp}
+
+
+@router.get("/backups")
+async def list_backups():
+    """List available database backups."""
+    settings = get_settings()
+    db_path = Path(settings.database.path)
+    backup_dir = db_path.parent / "backups"
+    if not backup_dir.exists():
+        return []
+
+    backups = sorted(backup_dir.glob("zonik_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return [
+        {
+            "filename": b.name,
+            "size": b.stat().st_size,
+            "created_at": datetime.fromtimestamp(b.stat().st_mtime, tz=timezone.utc).isoformat(),
+        }
+        for b in backups
+    ]
+
+
+@router.post("/restore/{filename}")
+async def restore_backup(filename: str):
+    """Restore database from a backup. Requires service restart."""
+    import shutil
+    settings = get_settings()
+    db_path = Path(settings.database.path)
+    backup_dir = db_path.parent / "backups"
+    backup_path = backup_dir / filename
+
+    if not backup_path.exists():
+        return {"error": "Backup not found"}
+
+    # Safety: don't allow path traversal
+    if ".." in filename or "/" in filename:
+        return {"error": "Invalid filename"}
+
+    # Create a pre-restore backup first
+    pre_restore = backup_dir / f"zonik_pre_restore.db"
+    shutil.copy2(str(db_path), str(pre_restore))
+
+    # Restore
+    shutil.copy2(str(backup_path), str(db_path))
+
+    return {"ok": True, "message": "Database restored. Restart services to apply."}
 
 
 def _mask(value: str) -> str:

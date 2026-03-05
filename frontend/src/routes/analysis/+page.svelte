@@ -139,7 +139,7 @@
 		<div class="flex gap-3">
 			<input type="text" placeholder="e.g., chill ambient beats, energetic dance music..."
 				bind:value={vibeQuery}
-				on:keydown={(e) => { if (e.key === 'Enter') vibeSearch(); }}
+				onkeydown={(e) => { if (e.key === 'Enter') vibeSearch(); }}
 				class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)]
 					focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 			<Button variant="secondary" loading={searching} disabled={!vibeQuery}

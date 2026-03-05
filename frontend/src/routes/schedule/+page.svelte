@@ -102,7 +102,7 @@
 			<div class="divide-y divide-[var(--border-subtle)]">
 				{#each tasks as task}
 					<div class="p-4 flex items-center gap-4 hover:bg-[var(--bg-hover)] transition-colors">
-						<button on:click={() => toggleTask(task)}
+						<button onclick={() => toggleTask(task)}
 							class="w-10 h-6 rounded-full transition-colors relative flex-shrink-0
 								{task.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
 							<span class="absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm
@@ -117,7 +117,7 @@
 						</div>
 
 						<select value={task.interval_hours}
-							on:change={(e) => updateInterval(task, e.target.value)}
+							onchange={(e) => updateInterval(task, e.target.value)}
 							class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none focus:border-[var(--color-accent)]/50">
 							{#each intervalOptions as opt}
 								<option value={opt.value} selected={opt.value === task.interval_hours}>{opt.label}</option>
@@ -125,7 +125,7 @@
 						</select>
 
 						<input type="time" value={task.run_at || ''}
-							on:change={(e) => updateRunAt(task, e.target.value)}
+							onchange={(e) => updateRunAt(task, e.target.value)}
 							class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] w-24 focus:outline-none focus:border-[var(--color-accent)]/50" />
 
 						<Button variant="primary" size="sm"
