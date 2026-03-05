@@ -20,6 +20,29 @@
 	let blTrack = $state('');
 	let blReason = $state('');
 	let showBlacklist = $state(false);
+	let blSearch = $state('');
+	let blSearching = $state(false);
+	let blSearchResults = $state([]);
+	let blFilter = $state('');
+	let filteredBlacklist = $derived(
+		blFilter.trim()
+			? blacklist.filter(e =>
+				e.artist.toLowerCase().includes(blFilter.toLowerCase()) ||
+				(e.track && e.track.toLowerCase().includes(blFilter.toLowerCase())))
+			: blacklist
+	);
+
+	async function searchLibraryForBlacklist() {
+		if (!blSearch.trim()) return;
+		blSearching = true;
+		try {
+			const data = await api.getArtists({ search: blSearch.trim(), limit: 20 });
+			const artists = (data.artists || data || []).map(a => a.name).filter(Boolean);
+			blSearchResults = artists;
+			if (!artists.length) addToast('No matching artists found', 'warning');
+		} catch (e) { addToast('Search failed', 'error'); }
+		finally { blSearching = false; }
+	}
 
 	let recentDlJobs = $state([]);
 	let activeDlJobs = $derived($activeJobs.filter(j => j.type === 'download' || j.type === 'bulk_download'));
@@ -313,9 +336,26 @@
 								<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">{formatSize(r.size)}</td>
 								<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{r.bitRate ? r.bitRate + ' kbps' : '-'}</td>
 								<td class="px-4 py-2">
-									<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
-										<Download class="w-3 h-3" />
-									</Button>
+									<div class="flex gap-1">
+										<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
+											<Download class="w-3 h-3" />
+										</Button>
+										<button onclick={async () => {
+											if (!window.confirm(`Blacklist artist "${artist.trim()}"?`)) return;
+											try {
+												await fetch('/api/download/blacklist', {
+													method: 'POST',
+													headers: { 'Content-Type': 'application/json' },
+													body: JSON.stringify({ artist: artist.trim() })
+												});
+												await loadBlacklist();
+												addToast(`Blacklisted: ${artist.trim()}`, 'success');
+											} catch { addToast('Failed to blacklist', 'error'); }
+										}} class="p-1.5 rounded-md text-[var(--text-muted)] hover:text-orange-400 hover:bg-[var(--bg-hover)] transition-colors"
+											title="Blacklist artist">
+											<ShieldBan class="w-3.5 h-3.5" />
+										</button>
+									</div>
 								</td>
 							</tr>
 						{/each}
@@ -339,6 +379,43 @@
 		</div>
 
 		{#if showBlacklist}
+			<!-- Search library to blacklist -->
+			<div class="mb-4 animate-fade-slide-in">
+				<div class="flex flex-col sm:flex-row gap-2 mb-2">
+					<input type="text" placeholder="Search library to blacklist..." bind:value={blSearch}
+						onkeydown={(e) => e.key === 'Enter' && searchLibraryForBlacklist()}
+						class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+							placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+					<Button variant="secondary" size="sm" disabled={!blSearch.trim() || blSearching} onclick={searchLibraryForBlacklist}>
+						<Search class="w-3 h-3" />
+						Find
+					</Button>
+				</div>
+				{#if blSearchResults.length}
+					<div class="space-y-1 mb-3 max-h-48 overflow-y-auto">
+						{#each blSearchResults as artist}
+							<div class="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-tertiary)] rounded-md text-sm hover:bg-[var(--bg-hover)] transition-colors">
+								<span class="text-[var(--text-primary)]">{artist}</span>
+								<button onclick={async () => {
+									try {
+										await fetch('/api/download/blacklist', {
+											method: 'POST',
+											headers: { 'Content-Type': 'application/json' },
+											body: JSON.stringify({ artist })
+										});
+										await loadBlacklist();
+										blSearchResults = blSearchResults.filter(a => a !== artist);
+										addToast(`Blacklisted: ${artist}`, 'success');
+									} catch { addToast('Failed to blacklist', 'error'); }
+								}} class="flex items-center gap-1 text-xs text-orange-400 hover:text-orange-300 transition-colors">
+									<ShieldBan class="w-3 h-3" /> Block
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			<!-- Manual add -->
 			<div class="flex flex-col sm:flex-row gap-2 mb-4 animate-fade-slide-in">
 				<input type="text" placeholder="Artist *" bind:value={blArtist}
 					class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
@@ -355,9 +432,16 @@
 				</Button>
 			</div>
 
-			{#if blacklist.length}
+			{#if blacklist.length > 3}
+				<div class="mb-2">
+					<input type="text" placeholder="Filter blacklist..." bind:value={blFilter}
+						class="w-full sm:w-64 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+							placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				</div>
+			{/if}
+			{#if filteredBlacklist.length}
 				<div class="space-y-1 animate-fade-slide-in">
-					{#each blacklist as entry}
+					{#each filteredBlacklist as entry}
 						<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm hover:bg-[var(--bg-hover)] transition-colors">
 							<div>
 								<span class="font-medium text-[var(--text-primary)]">{entry.artist}</span>
@@ -378,7 +462,7 @@
 					{/each}
 				</div>
 			{:else}
-				<p class="text-[var(--text-muted)] text-sm">No blacklisted artists or tracks.</p>
+				<p class="text-[var(--text-muted)] text-sm">{blFilter ? 'No matching entries.' : 'No blacklisted artists or tracks.'}</p>
 			{/if}
 		{/if}
 	</Card>

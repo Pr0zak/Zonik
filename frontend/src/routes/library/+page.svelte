@@ -592,10 +592,20 @@
 						<div class="flex items-center justify-center w-full h-full"><Users class="w-8 h-8 text-[var(--text-disabled)]" /></div>
 					{/if}
 				</div>
-				<div>
+				<div class="flex-1">
 					<h2 class="text-xl font-bold text-[var(--text-primary)]">{selectedArtist.name}</h2>
 					<p class="text-sm text-[var(--text-muted)]">{selectedArtist.track_count} track{selectedArtist.track_count !== 1 ? 's' : ''} &middot; {artistAlbums.length} album{artistAlbums.length !== 1 ? 's' : ''}</p>
 				</div>
+				<button onclick={async () => {
+					if (!window.confirm(`Blacklist artist "${selectedArtist.name}"? Future downloads will be blocked.`)) return;
+					try {
+						await api.addToBlacklist(selectedArtist.name);
+						addToast(`Blacklisted: ${selectedArtist.name}`, 'success');
+					} catch (e) { addToast('Blacklist failed: ' + e.message, 'error'); }
+				}} class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-orange-400 hover:text-orange-300 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] rounded-md transition-colors"
+					title="Blacklist this artist from downloads">
+					<ShieldBan class="w-3.5 h-3.5" /> Blacklist
+				</button>
 			</div>
 
 			{#if artistAlbums.length}
