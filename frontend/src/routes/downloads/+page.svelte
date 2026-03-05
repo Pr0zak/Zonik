@@ -378,9 +378,6 @@
 						<!-- Job header -->
 						<button onclick={() => toggleJobDetail(job.id)}
 							class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors text-left">
-							<Badge variant={job.status === 'running' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
-								{job.type === 'bulk_download' ? 'bulk' : 'download'}
-							</Badge>
 							<div class="flex-1 min-w-0">
 								<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
 								<p class="text-xs text-[var(--text-muted)]">
@@ -394,13 +391,7 @@
 									<RotateCcw class="w-3.5 h-3.5" />
 								</button>
 							{/if}
-							{#if job.status === 'running' && job.total}
-								<span class="text-xs text-[var(--text-muted)] font-mono">{Math.round(((job.progress || 0) / job.total) * 100)}%</span>
-							{/if}
-							<Badge variant={job.status === 'running' ? 'info' : job.status === 'completed' ? 'success' : 'error'}>
-								{#if job.status === 'running'}
-									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
-								{/if}
+							<Badge variant={job.status === 'completed' ? 'success' : 'error'}>
 								{job.status}
 							</Badge>
 							{#if expandedJob === job.id}
