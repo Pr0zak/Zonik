@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime
+
+log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
@@ -159,10 +162,12 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             desc = f"{req.artist} — {req.track}"
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
-            async def poll_transfer(client, username, filename, timeout_polls=150, stall_timeout=60):
+            async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60):
                 """Poll transfer until terminal state. Returns (status, save_path, error)."""
+                import time
                 last_bytes = 0
                 stall_start = None
+                queue_start = time.monotonic()
                 for _ in range(timeout_polls):
                     await asyncio.sleep(2)
                     await db.refresh(job)
@@ -175,12 +180,20 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         return "completed", transfer.save_path, None
                     elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
                         return "failed", None, transfer.error or transfer.state
-                    # Detect stalled transfers (no progress for stall_timeout seconds)
+
+                    # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
+                    if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
+                        if time.monotonic() - queue_start > queue_timeout:
+                            client.transfers.update_state(transfer, TransferState.FAILED, error="Peer did not respond")
+                            client.transfers.remove_transfer(username, filename)
+                            return "failed", None, "Peer did not respond in time"
+                        continue  # Don't check stall yet
+
+                    # CONNECTED/TRANSFERRING — detect data stall
                     if transfer.received_bytes > last_bytes:
                         last_bytes = transfer.received_bytes
                         stall_start = None
                     else:
-                        import time
                         if stall_start is None:
                             stall_start = time.monotonic()
                         elif time.monotonic() - stall_start > stall_timeout:
@@ -233,11 +246,14 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
                     try:
                         await native_client.download(dl_username, dl_filename)
+                        log.info(f"[download] Transfer created for {dl_username}:{short_name}")
                     except Exception as e:
+                        log.warning(f"[download] Failed to connect to {dl_username}: {e}")
                         await native_client.reputation.record_failure(dl_username)
                         continue
 
                     status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                    log.info(f"[download] Transfer result for {dl_username}:{short_name} → {status} ({error or 'ok'})")
 
                     if status == "completed":
                         job.status = "completed"

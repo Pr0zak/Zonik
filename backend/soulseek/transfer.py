@@ -90,7 +90,18 @@ class TransferManager:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     def get_transfer(self, username: str, filename: str) -> Transfer | None:
-        return self.transfers.get(f"{username}:{filename}")
+        # Exact match first
+        t = self.transfers.get(f"{username}:{filename}")
+        if t:
+            return t
+        # Fuzzy fallback: match by username + basename (handles path separator differences)
+        basename = filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        for t in self.transfers.values():
+            if t.username == username and t.state in ("requested", "queued"):
+                t_basename = t.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
+                if t_basename == basename:
+                    return t
+        return None
 
     def get_transfer_by_token(self, username: str, token: bytes) -> Transfer | None:
         for t in self.transfers.values():
