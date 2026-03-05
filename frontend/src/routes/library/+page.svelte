@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { currentTrack, addToast } from '$lib/stores.js';
+	import { currentTrack, addToast, activeJobs } from '$lib/stores.js';
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
 	import { Search, ScanLine, ArrowUpDown, Download, X, CheckSquare, Square, Trash2 } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -19,8 +19,20 @@
 	let limit = 50;
 	let sort = $state('title');
 	let order = $state('asc');
-	let scanning = $state(false);
+	let scanTriggered = $state(false);
+	let scanning = $derived(scanTriggered || $activeJobs.some(j => j.type === 'library_scan'));
+	let prevScanning = $state(false);
 	let loading = $state(true);
+
+	// Auto-reload tracks when scan completes
+	$effect(() => {
+		if (prevScanning && !scanning) {
+			scanTriggered = false;
+			loadTracks();
+			addToast('Library scan finished', 'success');
+		}
+		prevScanning = scanning;
+	});
 
 	let selectMode = $state(false);
 	let selected = $state(new Set());
@@ -87,15 +99,23 @@
 		}
 	}
 
-	onMount(loadTracks);
+	onMount(async () => {
+		await loadTracks();
+		// Check if a scan is already running
+		try {
+			const active = await api.getActiveJobs();
+			if (active.some(j => j.type === 'library_scan')) scanTriggered = true;
+		} catch {}
+	});
 
 	async function scanLibrary() {
-		scanning = true;
+		scanTriggered = true;
 		try {
 			await api.scanLibrary();
 			addToast('Library scan started', 'success');
 		} catch (e) {
 			addToast('Scan failed: ' + e.message, 'error');
+			scanTriggered = false;
 		}
 	}
 

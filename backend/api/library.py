@@ -12,6 +12,7 @@ from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
 from backend.models.job import Job
+from backend.api.websocket import broadcast_job_update
 
 router = APIRouter()
 
@@ -51,6 +52,7 @@ async def scan_library(background_tasks: BackgroundTasks):
             job = Job(id=job_id, type="library_scan", card="lib", status="running", started_at=datetime.utcnow())
             db.add(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "library_scan", "status": "running", "progress": 0, "total": 0})
             try:
                 stats = await do_scan(db)
                 job.status = "completed"
@@ -62,6 +64,7 @@ async def scan_library(background_tasks: BackgroundTasks):
                 job.finished_at = datetime.utcnow()
                 await db.merge(job)
                 await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "library_scan", "status": job.status, "progress": 1, "total": 1})
 
     background_tasks.add_task(run_scan)
     return {"job_id": job_id}
