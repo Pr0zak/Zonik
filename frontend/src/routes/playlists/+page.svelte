@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast } from '$lib/stores.js';
 	import { formatDuration } from '$lib/utils.js';
-	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2 } from 'lucide-svelte';
+	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -22,6 +22,9 @@
 	let playlistDetail = $state(null);
 	let detailLoading = $state(false);
 	let deleting = $state(false);
+	let trackOffset = $state(0);
+	let trackLimit = $state(50);
+	const trackLimitOptions = [25, 50, 100, 200];
 
 	let showGenerator = $state(false);
 	let genName = $state('');
@@ -69,9 +72,15 @@
 		}
 	}
 
+	let paginatedTracks = $derived(
+		playlistDetail?.tracks?.slice(trackOffset, trackOffset + trackLimit) || []
+	);
+	let totalTracks = $derived(playlistDetail?.tracks?.length || 0);
+
 	async function openPlaylist(playlist) {
 		selectedPlaylist = playlist;
 		detailLoading = true;
+		trackOffset = 0;
 		try {
 			playlistDetail = await fetch(`/api/playlists/${playlist.id}`).then(r => r.json());
 		} catch (e) {
@@ -250,10 +259,10 @@
 		{:else if playlistDetail?.tracks?.length}
 			<Card padding="p-0">
 				<div class="divide-y divide-[var(--border-subtle)]">
-					{#each playlistDetail.tracks as track, i}
+					{#each paginatedTracks as track, i}
 						<button class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors group text-left"
 							onclick={() => playTrack(track)}>
-							<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right flex-shrink-0">{i + 1}</span>
+							<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right flex-shrink-0">{trackOffset + i + 1}</span>
 							<div class="relative w-9 h-9 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
 								{#if coverUrl(track.cover_art)}
 									<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
@@ -277,6 +286,27 @@
 					{/each}
 				</div>
 			</Card>
+
+			<div class="flex justify-center items-center gap-3 mt-4">
+				{#if totalTracks > trackLimit}
+					<Button variant="secondary" size="sm" disabled={trackOffset === 0} onclick={() => { trackOffset = Math.max(0, trackOffset - trackLimit); }}>
+						<ChevronLeft class="w-4 h-4" /> Prev
+					</Button>
+					<span class="text-sm text-[var(--text-muted)] font-mono">
+						{trackOffset + 1}-{Math.min(trackOffset + trackLimit, totalTracks)} of {totalTracks}
+					</span>
+					<Button variant="secondary" size="sm" disabled={trackOffset + trackLimit >= totalTracks} onclick={() => { trackOffset += trackLimit; }}>
+						Next <ChevronRight class="w-4 h-4" />
+					</Button>
+				{/if}
+				<select value={trackLimit}
+					onchange={(e) => { trackLimit = parseInt(e.target.value); trackOffset = 0; }}
+					class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
+					{#each trackLimitOptions as opt}
+						<option value={opt} selected={opt === trackLimit}>{opt} / page</option>
+					{/each}
+				</select>
+			</div>
 		{:else}
 			<Card>
 				<EmptyState title="Empty playlist" description="This playlist has no tracks.">
