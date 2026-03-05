@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { formatSize } from '$lib/utils.js';
-	import { Music, Users, Disc3, HardDrive, Activity } from 'lucide-svelte';
+	import { Music, Users, Disc3, HardDrive, Clock, RefreshCw } from 'lucide-svelte';
 	import PageHeader from '../components/ui/PageHeader.svelte';
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
@@ -12,6 +12,8 @@
 	let stats = $state(null);
 	let recent = $state([]);
 	let health = $state(null);
+	let version = $state(null);
+	let lastScan = $state(null);
 	let loading = $state(true);
 
 	const statCards = [
@@ -20,12 +22,26 @@
 		{ key: 'albums', label: 'Albums', icon: Disc3, color: 'var(--color-playlists)' },
 	];
 
+	function timeAgo(iso) {
+		if (!iso) return 'Never';
+		const diff = Date.now() - new Date(iso).getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return 'Just now';
+		if (mins < 60) return `${mins}m ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs}h ago`;
+		const days = Math.floor(hrs / 24);
+		return `${days}d ago`;
+	}
+
 	onMount(async () => {
 		try {
-			[stats, recent, health] = await Promise.all([
+			[stats, recent, health, version, lastScan] = await Promise.all([
 				api.getStats(),
 				api.getRecent(10),
-				fetch('/api/config/health').then(r => r.json()).catch(() => null)
+				fetch('/api/config/health').then(r => r.json()).catch(() => null),
+				fetch('/api/config/version').then(r => r.json()).catch(() => null),
+				fetch('/api/jobs?limit=50').then(r => r.json()).then(jobs => jobs.find(j => j.type === 'library_scan' && j.status === 'completed')).catch(() => null),
 			]);
 		} catch (e) {
 			console.error('Failed to load dashboard:', e);
@@ -76,6 +92,33 @@
 				</div>
 			</Card>
 		{/if}
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+			{#if lastScan}
+				<Card padding="p-4">
+					<div class="flex items-center gap-2 mb-2">
+						<RefreshCw class="w-4 h-4 text-[var(--color-library)]" />
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Last Scan</h2>
+					</div>
+					<p class="text-lg font-bold text-[var(--text-primary)]">{timeAgo(lastScan.finished_at)}</p>
+					<p class="text-xs text-[var(--text-muted)]">
+						{lastScan.finished_at ? new Date(lastScan.finished_at).toLocaleString() : ''}
+					</p>
+				</Card>
+			{/if}
+			{#if version}
+				<Card padding="p-4">
+					<div class="flex items-center gap-2 mb-2">
+						<Clock class="w-4 h-4 text-[var(--color-settings)]" />
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Version</h2>
+					</div>
+					<p class="text-lg font-bold text-[var(--text-primary)]">v{version.version}</p>
+					{#if version.commit}
+						<p class="text-xs text-[var(--text-muted)] font-mono">{version.commit.slice(0, 7)}</p>
+					{/if}
+				</Card>
+			{/if}
+		</div>
 
 		{#if health}
 			<Card padding="p-4" class="mb-8">
