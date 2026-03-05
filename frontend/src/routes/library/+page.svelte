@@ -29,8 +29,8 @@
 	let tab = $state('tracks');
 	let search = $state('');
 	let offset = $state(0);
-	let limit = $state(25);
-	const limitOptions = [25, 50, 100, 200];
+	let limit = $state(24);
+	const limitOptions = [24, 48, 96, 192];
 	let loading = $state(true);
 	let viewMode = $state('grid');
 
