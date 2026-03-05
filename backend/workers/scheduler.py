@@ -27,6 +27,12 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         select(ScheduleTask).where(ScheduleTask.task_name == task_name)
     )).scalar_one_or_none()
     count = task_row.count if task_row and task_row.count else None
+    task_config = {}
+    if task_row and task_row.config:
+        try:
+            task_config = json.loads(task_row.config)
+        except (ValueError, TypeError):
+            pass
 
     if not job_id:
         job_id = str(uuid.uuid4())
@@ -106,6 +112,36 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
 
         await db.merge(job)
         await db.commit()
+
+        # Auto-download missing tracks if configured
+        if (
+            job.status == "completed"
+            and task_config.get("auto_download")
+            and task_name in ("lastfm_top_tracks", "discover_similar")
+            and job.tracks
+        ):
+            try:
+                missing = json.loads(job.tracks)
+                if missing:
+                    await _auto_download_missing(missing, task_name)
+            except Exception as e:
+                log.error(f"Auto-download after {task_name} failed: {e}")
+
+
+async def _auto_download_missing(missing: list[dict], source: str):
+    """Trigger bulk download of missing tracks found by discovery."""
+    from backend.services.soulseek import search_and_download
+
+    log.info(f"Auto-downloading {len(missing)} missing tracks from {source}")
+    for t in missing:
+        artist = t.get("artist", "")
+        track = t.get("track", "")
+        if not artist or not track:
+            continue
+        try:
+            await search_and_download(artist, track)
+        except Exception as e:
+            log.warning(f"Auto-download failed for {artist} - {track}: {e}")
 
 
 async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):

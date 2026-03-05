@@ -555,7 +555,8 @@ async def health_check():
     else:
         checks["lidarr"] = {"status": "warning", "message": "Not configured"}
 
-    overall = "ok" if all(c["status"] == "ok" for c in checks.values()) else "degraded"
+    # Only count errors (not warnings for disabled/optional services) as degraded
+    overall = "ok" if all(c["status"] in ("ok", "warning") for c in checks.values()) else "degraded"
     return {"status": overall, "services": checks}
 
 
