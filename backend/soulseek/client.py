@@ -298,14 +298,13 @@ class SoulseekClient:
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
             if transfer:
                 self.transfers.update_state(transfer, TransferState.DENIED, error=msg.get("reason", ""))
-                self.transfers.remove_transfer(peer.username, msg["filename"])
-                await self.reputation.record_failure(peer.username)
+                await self._on_transfer_complete(transfer)
 
         elif kind == "upload_failed":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
             if transfer:
                 self.transfers.update_state(transfer, TransferState.FAILED, error="Upload failed by peer")
-                await self.reputation.record_failure(peer.username)
+                await self._on_transfer_complete(transfer)
 
     async def _handle_peer_close(self, peer: PeerConnection) -> None:
         self.peers.pop(peer.username, None)
@@ -344,15 +343,22 @@ class SoulseekClient:
         if now - self._last_broadcast < 0.5:
             return
         self._last_broadcast = now
-        try:
-            from backend.api.websocket import broadcast_transfer_progress
-            await broadcast_transfer_progress(self.transfers.get_all_transfers())
-        except Exception:
-            pass
+        await self._broadcast_transfers()
 
     async def _on_transfer_complete(self, transfer: Transfer) -> None:
-        """Called when download completes."""
-        await self.reputation.record_success(transfer.username)
+        """Called when download completes or fails."""
+        if transfer.state == TransferState.COMPLETED:
+            await self.reputation.record_success(transfer.username)
+        else:
+            await self.reputation.record_failure(transfer.username)
+        await self._broadcast_transfers()
+        # Remove terminal transfers after broadcasting so UI sees final state
+        if transfer.state in (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED):
+            self.transfers.remove_transfer(transfer.username, transfer.filename)
+            await self._broadcast_transfers()
+
+    async def _broadcast_transfers(self) -> None:
+        """Broadcast current transfers to all WebSocket clients."""
         try:
             from backend.api.websocket import broadcast_transfer_progress
             await broadcast_transfer_progress(self.transfers.get_all_transfers())

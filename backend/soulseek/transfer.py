@@ -161,8 +161,6 @@ class TransferManager:
             if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
                 self.update_state(transfer, TransferState.COMPLETED)
                 log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
-                if self.on_complete:
-                    await self.on_complete(transfer)
             else:
                 self.update_state(transfer, TransferState.FAILED, error="Connection closed before complete")
                 log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
@@ -174,6 +172,8 @@ class TransferManager:
                 writer.close()
             except Exception:
                 pass
+            if self.on_complete:
+                await self.on_complete(transfer)
 
     async def handle_outbound_file_transfer(
         self,

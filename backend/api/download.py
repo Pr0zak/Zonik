@@ -97,76 +97,93 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             desc = f"{req.artist} — {req.track}"
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
+            async def poll_transfer(client, username, filename, timeout_polls=60):
+                """Poll transfer until terminal state. Returns (status, save_path, error)."""
+                for _ in range(timeout_polls):
+                    await asyncio.sleep(5)
+                    await db.refresh(job)
+                    if job.status == "failed":
+                        return "cancelled", None, "Cancelled by user"
+                    transfer = client.transfers.get_transfer(username, filename)
+                    if not transfer:
+                        # Transfer was cleaned up (failed/denied already processed)
+                        return "failed", None, "Transfer removed"
+                    if transfer.state == TransferState.COMPLETED:
+                        return "completed", transfer.save_path, None
+                    elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
+                        return "failed", None, transfer.error or transfer.state
+                return "timeout", None, "Transfer monitoring timed out"
+
             try:
                 native_client = get_client()
 
                 if req.username and req.filename and native_client:
-                    # Direct download via native client
-                    transfer = await native_client.download(req.username, req.filename)
-                    result = {"status": "downloading", "username": req.username, "filename": req.filename, "size": transfer.total_bytes}
-                    dl_username = req.username
-                    dl_filename = req.filename
+                    # Direct download — single candidate, try once
+                    candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
+                elif native_client:
+                    # Auto-download — get candidates from search
+                    from backend.soulseek.search import search_multi_strategy_native
+                    candidates = await search_multi_strategy_native(native_client, req.artist, req.track)
                 else:
                     from backend.services.soulseek import search_and_download
                     result = await search_and_download(req.artist, req.track)
-                    dl_username = result.get("username", "")
-                    dl_filename = result.get("filename", "")
-
-                initiated = result.get("ok") or result.get("status") == "downloading"
-                if not initiated:
-                    job.status = "failed"
+                    ok = result.get("ok") or result.get("status") == "downloading"
+                    job.status = "completed" if ok else "failed"
                     job.result = json.dumps(result)
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded" if ok else "failed"}])
+                    candidates = []  # Skip native loop
+
+                if native_client and not candidates:
+                    job.status = "failed"
+                    job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
-                else:
-                    # Store download details
+
+                # Try candidates with transfer-level retry
+                for i, candidate in enumerate(candidates):
+                    dl_username = candidate["username"]
+                    dl_filename = candidate["filename"]
                     short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
-                    detail = {**result, "short_filename": short_name}
-                    job.result = json.dumps(detail)
+
+                    if await native_client.reputation.is_blocked(dl_username):
+                        continue
+
+                    attempt_label = f"attempt {i+1}/{len(candidates)}"
                     job.tracks = json.dumps([{
                         "artist": req.artist, "track": req.track, "status": "transferring",
                         "username": dl_username, "filename": short_name,
-                        "size": result.get("size", 0),
                     }])
                     await db.merge(job)
                     await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — from {dl_username}"})
+                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
 
-                    # Poll native transfer status until complete or timeout (5 min)
-                    final_status = "completed"
-                    for _ in range(60):
-                        await asyncio.sleep(5)
-                        # Check if job was cancelled
-                        await db.refresh(job)
-                        if job.status == "failed":
-                            final_status = "failed"
-                            break
+                    try:
+                        await native_client.download(dl_username, dl_filename)
+                    except Exception as e:
+                        await native_client.reputation.record_failure(dl_username)
+                        continue
 
-                        if native_client:
-                            transfer = native_client.transfers.get_transfer(dl_username, dl_filename)
-                            if not transfer:
-                                continue
-                            state = transfer.state
-                            if state == TransferState.COMPLETED:
-                                final_status = "completed"
-                                detail["save_path"] = transfer.save_path
-                                break
-                            elif state in (TransferState.FAILED, TransferState.DENIED):
-                                final_status = "failed"
-                                detail["transfer_error"] = transfer.error or state
-                                break
-                        else:
-                            continue
+                    status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+
+                    if status == "completed":
+                        job.status = "completed"
+                        job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "attempt": i + 1})
+                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name}])
+                        break
+                    elif status == "cancelled":
+                        job.status = "failed"
+                        job.result = json.dumps({"error": "Cancelled by user"})
+                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                        break
                     else:
-                        final_status = "completed"
-                        detail["note"] = "Transfer monitoring timed out"
+                        # Transfer failed — try next candidate
+                        pass
+                else:
+                    # All candidates exhausted
+                    if candidates and job.status != "failed":
+                        job.status = "failed"
+                        job.result = json.dumps({"message": f"All {len(candidates)} sources failed"})
+                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
-                    job.status = final_status
-                    job.result = json.dumps(detail)
-                    job.tracks = json.dumps([{
-                        "artist": req.artist, "track": req.track,
-                        "status": "downloaded" if final_status == "completed" else "failed",
-                        "username": dl_username, "filename": short_name,
-                    }])
             except Exception as e:
                 job.status = "failed"
                 job.result = json.dumps({"error": str(e)})
