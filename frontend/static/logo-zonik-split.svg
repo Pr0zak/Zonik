@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="bgt3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#bgt3)"/>
+  <!-- Z in large white, ONIK underneath in smaller semi-transparent -->
+  <text x="16" y="19" font-family="Inter, system-ui, sans-serif" font-size="18" font-weight="900" text-anchor="middle" fill="white">Z</text>
+  <text x="16" y="27" font-family="Inter, system-ui, sans-serif" font-size="5" font-weight="700" text-anchor="middle" letter-spacing="2" fill="white" opacity="0.6">ONIK</text>
+</svg>

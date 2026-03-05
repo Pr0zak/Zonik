@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <defs>
+    <linearGradient id="bgt4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111111"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="url(#bgt4)"/>
+  <!-- Accent bar on left -->
+  <rect x="3" y="8" width="2.5" height="16" rx="1.25" fill="#6366f1"/>
+  <!-- ZONIK vertical stacked letters -->
+  <text x="17" y="13" font-family="Inter, system-ui, sans-serif" font-size="10" font-weight="800" text-anchor="middle">
+    <tspan fill="#6366f1">Z</tspan><tspan fill="white" font-size="7" font-weight="600" letter-spacing="0.5">NK</tspan>
+  </text>
+  <text x="16" y="25" font-family="Inter, system-ui, sans-serif" font-size="5" font-weight="600" text-anchor="middle" letter-spacing="4" fill="#525252">ZONIK</text>
+</svg>

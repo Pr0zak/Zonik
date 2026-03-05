@@ -5,56 +5,131 @@
 <title>Zonik Logo Options</title>
 <style>
   body { background: #0a0a0a; color: #e5e5e5; font-family: Inter, system-ui, sans-serif; margin: 0; padding: 40px; }
-  h1 { font-size: 24px; margin-bottom: 32px; color: #fff; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; }
+  h1 { font-size: 24px; margin-bottom: 8px; color: #fff; }
+  h2.section { font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: #525252; margin: 32px 0 16px; font-weight: 700; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
   .card {
-    background: #141414; border: 1px solid #1c1c1c; border-radius: 12px; padding: 24px;
-    display: flex; flex-direction: column; align-items: center; gap: 16px;
-    transition: border-color 0.2s;
+    background: #141414; border: 1px solid #1c1c1c; border-radius: 12px; padding: 20px;
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+    transition: border-color 0.2s; cursor: pointer;
   }
   .card:hover { border-color: #6366f1; }
-  .card img { width: 96px; height: 96px; border-radius: 14px; }
-  .card .small { display: flex; gap: 12px; align-items: center; }
-  .card .small img { width: 32px; height: 32px; border-radius: 7px; }
-  .card .small span { font-size: 12px; color: #737373; }
-  h2 { font-size: 14px; font-weight: 600; margin: 0; }
-  p { font-size: 12px; color: #737373; margin: 4px 0 0; text-align: center; }
+  .card img.big { width: 80px; height: 80px; border-radius: 14px; }
+  .sizes { display: flex; gap: 16px; align-items: center; }
+  .sizes img { border-radius: 7px; }
+  .sizes span { font-size: 10px; color: #525252; font-family: monospace; }
+  h3 { font-size: 13px; font-weight: 600; margin: 0; }
+  p { font-size: 11px; color: #737373; margin: 4px 0 0; text-align: center; }
   .current { border-color: #22c55e; }
-  .current::after { content: 'CURRENT'; font-size: 10px; background: #22c55e; color: #000; padding: 2px 8px; border-radius: 4px; font-weight: 700; }
+  .tag { font-size: 9px; padding: 2px 8px; border-radius: 4px; font-weight: 700; letter-spacing: 0.5px; }
+  .tag.green { background: #22c55e; color: #000; }
+  .tag.blue { background: #6366f1; color: #fff; }
 </style>
 </head>
 <body>
 <h1>Zonik Logo Options</h1>
+
+<h2 class="section">Icon Logos</h2>
 <div class="grid">
   <div class="card current">
-    <img src="/logo-waveform-z.svg" alt="Waveform Z">
-    <h2>1. Waveform Z</h2>
-    <p>Audio bars arranged in Z shape</p>
-    <div class="small"><img src="/logo-waveform-z.svg"><span>32px</span></div>
+    <span class="tag green">CURRENT</span>
+    <img class="big" src="/logo-waveform-z.svg" alt="">
+    <h3>1. Waveform Z</h3>
+    <p>Audio bars in Z shape</p>
+    <div class="sizes">
+      <div><img src="/logo-waveform-z.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-waveform-z.svg" width="20" height="20"><span>20</span></div>
+    </div>
   </div>
   <div class="card">
-    <img src="/logo-vinyl-z.svg" alt="Vinyl Z">
-    <h2>2. Vinyl Z</h2>
-    <p>Bold Z over vinyl record rings</p>
-    <div class="small"><img src="/logo-vinyl-z.svg"><span>32px</span></div>
+    <img class="big" src="/logo-vinyl-z.svg" alt="">
+    <h3>2. Vinyl Z</h3>
+    <p>Bold Z over vinyl rings</p>
+    <div class="sizes">
+      <div><img src="/logo-vinyl-z.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-vinyl-z.svg" width="20" height="20"><span>20</span></div>
+    </div>
   </div>
   <div class="card">
-    <img src="/logo-soundwave.svg" alt="Soundwave">
-    <h2>3. Soundwave</h2>
-    <p>Sine waves forming Z silhouette</p>
-    <div class="small"><img src="/logo-soundwave.svg"><span>32px</span></div>
+    <img class="big" src="/logo-soundwave.svg" alt="">
+    <h3>3. Soundwave</h3>
+    <p>Sine waves forming Z</p>
+    <div class="sizes">
+      <div><img src="/logo-soundwave.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-soundwave.svg" width="20" height="20"><span>20</span></div>
+    </div>
   </div>
   <div class="card">
-    <img src="/logo-minimal-z.svg" alt="Minimal Z">
-    <h2>4. Minimal Z</h2>
-    <p>Clean geometric Z + music note</p>
-    <div class="small"><img src="/logo-minimal-z.svg"><span>32px</span></div>
+    <img class="big" src="/logo-minimal-z.svg" alt="">
+    <h3>4. Minimal Z</h3>
+    <p>Geometric Z + music note</p>
+    <div class="sizes">
+      <div><img src="/logo-minimal-z.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-minimal-z.svg" width="20" height="20"><span>20</span></div>
+    </div>
   </div>
   <div class="card">
-    <img src="/logo-equalizer.svg" alt="Equalizer">
-    <h2>5. Equalizer</h2>
-    <p>EQ bars forming Z diagonal</p>
-    <div class="small"><img src="/logo-equalizer.svg"><span>32px</span></div>
+    <img class="big" src="/logo-equalizer.svg" alt="">
+    <h3>5. Equalizer</h3>
+    <p>EQ bars in Z diagonal</p>
+    <div class="sizes">
+      <div><img src="/logo-equalizer.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-equalizer.svg" width="20" height="20"><span>20</span></div>
+    </div>
+  </div>
+</div>
+
+<h2 class="section">Text Logos (ZONIK with colored Z)</h2>
+<div class="grid">
+  <div class="card">
+    <span class="tag blue">NEW</span>
+    <img class="big" src="/logo-zonik-text.svg" alt="">
+    <h3>6. Zonik Text</h3>
+    <p>ZONIK spelled out, dark bg</p>
+    <div class="sizes">
+      <div><img src="/logo-zonik-text.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-zonik-text.svg" width="20" height="20"><span>20</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag blue">NEW</span>
+    <img class="big" src="/logo-zonik-bold.svg" alt="">
+    <h3>7. Zonik Bold</h3>
+    <p>Large gradient Z + ONIK below</p>
+    <div class="sizes">
+      <div><img src="/logo-zonik-bold.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-zonik-bold.svg" width="20" height="20"><span>20</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag blue">NEW</span>
+    <img class="big" src="/logo-zonik-split.svg" alt="">
+    <h3>8. Zonik Split</h3>
+    <p>White Z on indigo + ONIK</p>
+    <div class="sizes">
+      <div><img src="/logo-zonik-split.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-zonik-split.svg" width="20" height="20"><span>20</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag blue">NEW</span>
+    <img class="big" src="/logo-zonik-bar.svg" alt="">
+    <h3>9. Zonik Bar</h3>
+    <p>Accent sidebar + ZNK text</p>
+    <div class="sizes">
+      <div><img src="/logo-zonik-bar.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-zonik-bar.svg" width="20" height="20"><span>20</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <span class="tag blue">NEW</span>
+    <img class="big" src="/logo-zonik-wave.svg" alt="">
+    <h3>10. Zonik Wave</h3>
+    <p>Waveform header + ZONIK text</p>
+    <div class="sizes">
+      <div><img src="/logo-zonik-wave.svg" width="32" height="32"><span>32</span></div>
+      <div><img src="/logo-zonik-wave.svg" width="20" height="20"><span>20</span></div>
+    </div>
   </div>
 </div>
 </body>
