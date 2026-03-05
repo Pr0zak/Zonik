@@ -98,18 +98,21 @@ Base URL: `/api`
 |----------|--------|-------------|
 | `/api/library/stats` | GET | Basic library counts |
 | `/api/library/stats/detailed` | GET | Detailed stats with breakdowns |
-| `/api/library/scan` | POST | Trigger library scan |
+| `/api/library/scan` | POST | Trigger library scan (returns `{job_id}`) |
 | `/api/library/recent?limit=` | GET | Recently added tracks |
+| `/api/library/artists?offset=&limit=&search=&sort=&order=` | GET | List artists with cover art and track counts |
+| `/api/library/albums?offset=&limit=&search=&sort=&order=&artist_id=` | GET | List albums with artist and cover art |
 | `/api/library/genres` | GET | Genre list with counts |
 
 ### Tracks
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/tracks/` | GET | List tracks with pagination |
-| `/api/tracks/{id}` | GET | Track details |
-| `/api/tracks/{id}` | DELETE | Delete track |
-| `/api/tracks/search?q=` | GET | Search tracks |
+| `/api/tracks?offset=&limit=&sort=&order=&search=&genre=&artist_id=&album_id=` | GET | List tracks with pagination, filtering |
+| `/api/tracks/{id}` | GET | Track details with analysis |
+| `/api/tracks/{id}` | DELETE | Delete track and file |
+| `/api/tracks/bulk-delete` | POST | Bulk delete `{track_ids: [...]}` |
+| `/api/tracks/bulk-analyze` | POST | Queue bulk analysis `{track_ids: [...]}` |
 
 ### Downloads
 
@@ -150,6 +153,7 @@ Base URL: `/api`
 |----------|--------|-------------|
 | `/api/playlists/` | GET | List playlists |
 | `/api/playlists/` | POST | Create playlist |
+| `/api/playlists/generate` | POST | Smart playlist `{name, rule, value?, limit?}` |
 | `/api/playlists/{id}` | GET | Playlist details |
 | `/api/playlists/{id}` | PUT | Update playlist |
 | `/api/playlists/{id}` | DELETE | Delete playlist |
@@ -173,6 +177,19 @@ Base URL: `/api`
 | `/api/config/version` | GET | Current version and git commit hash |
 | `/api/config/updates` | GET | Check GitHub for updates (5-min cache) |
 | `/api/config/upgrade` | POST | Trigger upgrade via `upgrade.sh` (returns `{job_id}`) |
+| `/api/config/health` | GET | System health check (database, Redis, slskd, Last.fm, Lidarr) |
+| `/api/config/backup` | POST | Create database backup |
+| `/api/config/backups` | GET | List available backups |
+| `/api/config/restore/{filename}` | POST | Restore from backup |
+
+### Users
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/users/` | GET | List users |
+| `/api/users/` | POST | Create user `{username, password, is_admin?}` |
+| `/api/users/{id}/password` | PUT | Change password `{password}` |
+| `/api/users/{id}` | DELETE | Delete user |
 
 ### Schedule
 
@@ -187,7 +204,10 @@ Base URL: `/api`
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/jobs/` | GET | Job history |
-| `/api/jobs/{id}` | GET | Job details |
+| `/api/jobs/active` | GET | Currently running jobs |
+| `/api/jobs/stream/recent?limit=` | GET | Recent job updates for live display |
+| `/api/jobs/{id}` | GET | Job details (result, log, tracks) |
+| `/api/jobs/{id}/retry` | POST | Retry failed download job |
 
 ### WebSocket
 

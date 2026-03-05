@@ -128,9 +128,11 @@ The frontend uses a CSS variable-based design system defined in `frontend/src/ap
 The WebSocket connection (`/api/ws`) provides real-time job progress updates:
 
 - Connected in `+layout.svelte` on mount
-- `broadcast_job_update()` is called in `download.py` for both single and bulk downloads
+- `broadcast_job_update()` is called in `download.py` and `library.py` for downloads and scans
 - Active jobs are tracked in `stores.js` via the `activeJobs` store
-- Sidebar footer shows a spinning loader with active job count
+- Sidebar footer shows a spinning loader with active job count (clickable, links to /logs)
+- Library scan broadcasts progress every 50 files; job result stored as JSON
+- **Important**: Use `_clients.difference_update()` not `_clients -=` in websocket.py (augmented assignment creates local variable scope issue)
 
 Message format:
 ```json
@@ -152,3 +154,7 @@ Message format:
 - **Cover art**: Deezer -> Cover Art Archive -> iTunes -> Last.fm fallback chain
 - **FTS5**: Full-text search populated during library scan, prefix matching
 - **Transcoding**: ffmpeg streaming via `asyncio.create_subprocess_exec`
+- **SQLite single writer**: Never use concurrent sessions for writes; progress updates go via WebSocket only
+- **db.get() for dedup**: Use `await db.get(Model, id)` in get_or_create patterns to check identity map first
+- **URLSearchParams**: Always filter out undefined/null values before passing to `new URLSearchParams()` — it converts them to literal strings
+- **Cover art**: Library card views use `/rest/getCoverArt?id=<album_id>` for thumbnails

@@ -29,16 +29,17 @@ backend/
   models/              # 14 SQLAlchemy models (Track, Artist, Album, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
-    jobs.py            # Job listing and details
-    tracks.py          # Track CRUD + search
-    library.py         # Library stats + scan trigger
+    jobs.py            # Job listing, details, retry failed downloads
+    tracks.py          # Track CRUD + search + bulk actions
+    library.py         # Library stats, scan, artists/albums list endpoints
     download.py        # Soulseek search/trigger/bulk + blacklist
     discovery.py       # Last.fm charts, similar tracks/artists
     analysis.py        # Essentia/CLAP analysis queue
     schedule.py        # Cron scheduler management
     websocket.py       # Real-time job progress
     favorites.py       # Star/unstar
-    playlists.py       # Playlist CRUD
+    playlists.py       # Playlist CRUD + smart playlist generation
+    users.py           # User management (CRUD, password change)
   subsonic/            # Full OpenSubsonic API (auth, browsing, media, search, etc.)
   services/            # Business logic (scanner, soulseek, lastfm, artwork, etc.)
   workers/             # ARQ task functions + cron scheduler
@@ -46,7 +47,7 @@ backend/
 frontend/
   src/routes/          # SvelteKit pages (12 routes)
     +page.svelte       # Dashboard (stats, recent additions)
-    library/           # Track browser with search, sort, similar tracks
+    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks
     discover/          # Last.fm charts, similar artists
     downloads/         # Soulseek download management
     playlists/         # Playlist management
@@ -87,7 +88,13 @@ docs/                  # Installation, configuration, API reference, development
 - Backend sends full API keys (not masked) — self-hosted single-user app, frontend password fields handle hiding
 - WebSocket real-time job progress (broadcast_job_update in download.py for single and bulk downloads)
 - "Download All Missing" button on Discover page wires to /api/download/bulk
-- Active jobs indicator in sidebar footer (spinning loader + count)
+- Active jobs indicator in sidebar footer (spinning loader + count, clickable → /logs)
+- Library scan: pre-counts files, broadcasts progress via WebSocket every 50 files, stores JSON result
+- Library scan: uses db.get() for artist/album dedup (identity map aware), separate session for job completion
+- SQLite single-writer constraint: never use concurrent DB sessions for writes; progress updates go through WebSocket only
+- Library page: tabbed Tracks/Artists/Albums with grid (card art) and list view toggle
+- Cover art served via `/rest/getCoverArt?id=<track_or_album_id>` (subsonic endpoint)
+- URLSearchParams pitfall: filter out undefined/null values before passing to URLSearchParams (converts to literal "undefined")
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
@@ -104,7 +111,7 @@ docs/                  # Installation, configuration, API reference, development
 - SPA: `adapter-static` with `fallback: 'index.html'`; backend has catch-all route
 - Production URL: `http://10.0.0.205:3000` (CT 228)
 - Svelte 5 deprecation warnings (on:click → onclick) are harmless, builds succeed
-- `stores.js` exports: sidebarOpen, currentTrack, isPlaying, activeJobs, toasts, updateAvailable, addToast
+- `stores.js` exports: sidebarOpen, currentTrack, isPlaying, activeJobs, toasts, updateAvailable, addToast, showShortcuts
 - CSS variable-based design system in `app.css` (layered backgrounds: --bg-primary/#0a0a0a → --bg-secondary → --bg-tertiary → --bg-hover)
 - Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, schedule=orange, logs=violet, settings=slate)
 - Inter font via Google Fonts CDN; lucide-svelte icons throughout (tree-shakeable SVG icons)
