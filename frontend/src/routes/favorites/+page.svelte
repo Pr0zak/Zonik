@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast } from '$lib/stores.js';
 	import { formatDuration } from '$lib/utils.js';
-	import { Heart, Music, Play, Upload } from 'lucide-svelte';
+	import { Heart, Music, Play, Upload, ChevronLeft, ChevronRight } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -12,6 +12,9 @@
 	import Modal from '../../components/ui/Modal.svelte';
 
 	let favorites = $state([]);
+	let total = $state(0);
+	let offset = $state(0);
+	let limit = 50;
 	let loading = $state(true);
 	let showImport = $state(false);
 	let importFile = $state(null);
@@ -29,11 +32,25 @@
 	async function loadFavorites() {
 		loading = true;
 		try {
-			favorites = await api.getFavorites();
+			const data = await api.getFavorites(offset, limit);
+			favorites = data.items;
+			total = data.total;
 		} catch (e) {
 			console.error('Failed to load favorites:', e);
 		} finally {
 			loading = false;
+		}
+	}
+
+	function prevPage() {
+		offset = Math.max(0, offset - limit);
+		loadFavorites();
+	}
+
+	function nextPage() {
+		if (offset + limit < total) {
+			offset += limit;
+			loadFavorites();
 		}
 	}
 
@@ -43,6 +60,7 @@
 			else if (fav.album_id) await api.unstar({ album_id: fav.album_id });
 			else if (fav.artist_id) await api.unstar({ artist_id: fav.artist_id });
 			favorites = favorites.filter(f => f.id !== fav.id);
+			total--;
 		} catch { addToast('Failed to unstar', 'error'); }
 	}
 
@@ -62,6 +80,7 @@
 			addToast(`Imported ${result.imported}, skipped ${result.skipped}, not found ${result.not_found}`, 'success');
 			showImport = false;
 			importFile = null;
+			offset = 0;
 			await loadFavorites();
 		} catch (e) {
 			addToast('Import failed: ' + e.message, 'error');
@@ -73,8 +92,8 @@
 
 <div class="max-w-6xl">
 	<PageHeader title="Favorites" color="var(--color-favorites)">
-		{#if !loading && favorites.length}
-			<span class="text-sm text-[var(--text-muted)] font-mono">{favorites.length} total</span>
+		{#if !loading && total}
+			<span class="text-sm text-[var(--text-muted)] font-mono">{total} total</span>
 		{/if}
 		<Button variant="secondary" size="sm" onclick={() => showImport = true}>
 			<Upload class="w-3.5 h-3.5" /> Import
@@ -126,8 +145,21 @@
 				{/each}
 			</div>
 		</Card>
-		<p class="text-center text-xs text-[var(--text-muted)] mt-3">{favorites.length} favorite{favorites.length !== 1 ? 's' : ''}</p>
-	{:else}
+
+		{#if total > limit}
+			<div class="flex justify-center items-center gap-3 mt-4">
+				<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
+					<ChevronLeft class="w-4 h-4" /> Prev
+				</Button>
+				<span class="text-sm text-[var(--text-muted)] font-mono">
+					{offset + 1}-{Math.min(offset + limit, total)} of {total}
+				</span>
+				<Button variant="secondary" size="sm" disabled={offset + limit >= total} onclick={nextPage}>
+					Next <ChevronRight class="w-4 h-4" />
+				</Button>
+			</div>
+		{/if}
+	{:else if total === 0}
 		<Card>
 			<EmptyState
 				title="No favorites yet"

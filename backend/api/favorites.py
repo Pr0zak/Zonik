@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -35,8 +35,16 @@ class StarRequest(BaseModel):
 
 
 @router.get("")
-async def list_favorites(user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+async def list_favorites(
+    user_id: str = "admin",
+    offset: int = 0,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+):
     user_id = await _resolve_user_id(user_id, db)
+    total = (await db.execute(
+        select(func.count()).select_from(Favorite).where(Favorite.user_id == user_id)
+    )).scalar()
     result = await db.execute(
         select(Favorite)
         .options(
@@ -47,6 +55,8 @@ async def list_favorites(user_id: str = "admin", db: AsyncSession = Depends(get_
         )
         .where(Favorite.user_id == user_id)
         .order_by(Favorite.starred_at.desc())
+        .offset(offset)
+        .limit(limit)
     )
     favs = result.scalars().all()
     out = []
@@ -71,7 +81,7 @@ async def list_favorites(user_id: str = "admin", db: AsyncSession = Depends(get_
             item["title"] = f.artist.name
             item["cover_art"] = f.artist.id
         out.append(item)
-    return out
+    return {"items": out, "total": total}
 
 
 @router.get("/ids")

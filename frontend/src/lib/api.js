@@ -41,7 +41,7 @@ export const api = {
 	},
 
 	// Favorites
-	getFavorites: () => request('/favorites'),
+	getFavorites: (offset = 0, limit = 50) => request(`/favorites?offset=${offset}&limit=${limit}`),
 	getFavoriteIds: () => request('/favorites/ids'),
 	star: (data) => request('/favorites/star', { method: 'POST', body: JSON.stringify(data) }),
 	unstar: (data) => request('/favorites/unstar', { method: 'POST', body: JSON.stringify(data) }),
