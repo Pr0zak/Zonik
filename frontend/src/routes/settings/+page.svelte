@@ -18,18 +18,80 @@
 	let saving = $state(false);
 	let dirty = $state(false);
 
+	// Update system state
+	let versionInfo = $state(null);
+	let updateInfo = $state(null);
+	let checkingUpdates = $state(false);
+	let upgradeJobId = $state(null);
+	let upgradeJob = $state(null);
+	let upgrading = $state(false);
+
 	onMount(async () => {
 		try {
-			const [statsData, svcData] = await Promise.all([
+			const [statsData, svcData, verData] = await Promise.all([
 				fetch('/api/library/stats').then(r => r.json()),
 				fetch('/api/config/services').then(r => r.json()),
+				fetch('/api/config/version').then(r => r.json()),
 			]);
 			stats = statsData;
 			services = svcData;
+			versionInfo = verData;
 		} catch (e) {
 			console.error(e);
 		}
 	});
+
+	async function checkForUpdates() {
+		checkingUpdates = true;
+		updateInfo = null;
+		try {
+			const data = await fetch('/api/config/updates').then(r => r.json());
+			updateInfo = data;
+		} catch (e) {
+			addToast('Failed to check for updates: ' + e.message, 'error');
+		} finally {
+			checkingUpdates = false;
+		}
+	}
+
+	async function triggerUpgrade() {
+		upgrading = true;
+		try {
+			const data = await fetch('/api/config/upgrade', { method: 'POST' }).then(r => r.json());
+			if (data.error) {
+				addToast(data.error, 'error');
+				upgrading = false;
+				return;
+			}
+			upgradeJobId = data.job_id;
+			pollUpgradeJob();
+		} catch (e) {
+			addToast('Failed to start upgrade: ' + e.message, 'error');
+			upgrading = false;
+		}
+	}
+
+	function pollUpgradeJob() {
+		if (!upgradeJobId) return;
+		const interval = setInterval(async () => {
+			try {
+				const data = await fetch(`/api/jobs/${upgradeJobId}`).then(r => r.json());
+				upgradeJob = data;
+				if (data.status === 'completed' || data.status === 'failed') {
+					clearInterval(interval);
+					upgrading = false;
+					if (data.status === 'completed') {
+						addToast('Upgrade completed! Reloading...', 'success');
+						setTimeout(() => window.location.reload(), 3000);
+					} else {
+						addToast('Upgrade failed. Check log for details.', 'error');
+					}
+				}
+			} catch {
+				// Server may be restarting
+			}
+		}, 2000);
+	}
 
 	function markDirty() {
 		dirty = true;
@@ -272,9 +334,115 @@
 		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
 			<h2 class="text-lg font-semibold mb-4">About</h2>
 			<div class="space-y-2 text-sm text-gray-400">
-				<p>Zonik v0.1.0</p>
+				{#if versionInfo}
+					<p>Zonik v{versionInfo.version} <span class="font-mono text-xs text-gray-600">({versionInfo.commit})</span></p>
+				{:else}
+					<p>Zonik</p>
+				{/if}
 				<p>Self-hosted music backend with OpenSubsonic API</p>
 				<p>FastAPI + SQLite + SvelteKit</p>
+			</div>
+		</div>
+
+		<!-- Updates -->
+		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
+			<div class="flex items-center justify-between mb-4">
+				<h2 class="text-lg font-semibold">Updates</h2>
+				{#if updateInfo?.update_available}
+					<span class="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">Update Available</span>
+				{:else if updateInfo && !updateInfo.error}
+					<span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Up to Date</span>
+				{/if}
+			</div>
+
+			<div class="space-y-4">
+				{#if versionInfo}
+					<div class="flex items-center justify-between text-sm">
+						<span class="text-gray-400">Current Version</span>
+						<span class="font-mono text-xs">v{versionInfo.version} ({versionInfo.commit})</span>
+					</div>
+				{/if}
+
+				{#if !upgrading}
+					<div class="flex gap-2">
+						<button on:click={checkForUpdates} disabled={checkingUpdates}
+							class="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50
+								rounded text-xs font-medium transition">
+							{checkingUpdates ? 'Checking...' : 'Check for Updates'}
+						</button>
+						{#if updateInfo?.update_available}
+							<button on:click={triggerUpgrade}
+								class="px-4 py-1.5 bg-accent-600 hover:bg-accent-700
+									rounded text-xs font-medium transition">
+								Upgrade Now
+							</button>
+						{/if}
+					</div>
+				{/if}
+
+				{#if updateInfo?.error}
+					<p class="text-sm text-red-400">{updateInfo.error}</p>
+				{/if}
+
+				{#if updateInfo?.update_available}
+					<div class="bg-gray-800 rounded-lg p-3 space-y-2">
+						<div class="flex items-center justify-between text-sm">
+							<span class="text-gray-400">Latest</span>
+							<span class="font-mono text-xs">{updateInfo.latest_commit}</span>
+						</div>
+						<p class="text-sm">{updateInfo.latest_message}</p>
+						{#if updateInfo.ahead_by}
+							<p class="text-xs text-gray-500">{updateInfo.ahead_by} commit{updateInfo.ahead_by > 1 ? 's' : ''} behind</p>
+						{/if}
+						{#if updateInfo.commits?.length}
+							<div class="mt-2 space-y-1 max-h-32 overflow-y-auto">
+								{#each updateInfo.commits as c}
+									<div class="flex gap-2 text-xs">
+										<span class="font-mono text-accent-400 shrink-0">{c.sha}</span>
+										<span class="text-gray-300 truncate">{c.message}</span>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
+				{#if upgrading || upgradeJob}
+					<div class="space-y-3">
+						<!-- Progress bar -->
+						<div>
+							<div class="flex justify-between text-xs mb-1">
+								<span class="text-blue-400">Upgrading...</span>
+								<span class="text-gray-500">{upgradeJob?.progress || 0}/5</span>
+							</div>
+							<div class="w-full bg-gray-800 rounded-full h-2">
+								<div class="h-2 rounded-full transition-all duration-500
+									{upgradeJob?.status === 'completed' ? 'bg-green-500' : upgradeJob?.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'}"
+									style="width: {((upgradeJob?.progress || 0) / 5) * 100}%"></div>
+							</div>
+						</div>
+
+						<!-- Log output -->
+						{#if upgradeJob?.log}
+							{@const logLines = (() => { try { return JSON.parse(upgradeJob.log); } catch { return []; } })()}
+							<div class="bg-black rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs text-gray-400 space-y-0.5">
+								{#each logLines as line}
+									<div class:text-green-400={line.includes('✓') || line.includes('upgraded')}
+										 class:text-red-400={line.includes('Error') || line.includes('error')}
+										 class:text-yellow-400={line.startsWith('[')}>
+										{line}
+									</div>
+								{/each}
+							</div>
+						{/if}
+
+						{#if upgradeJob?.status === 'completed'}
+							<p class="text-sm text-green-400">Upgrade completed! Page will reload shortly...</p>
+						{:else if upgradeJob?.status === 'failed'}
+							<p class="text-sm text-red-400">Upgrade failed. Review the log above for details.</p>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 	</div>

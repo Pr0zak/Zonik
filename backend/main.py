@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
+from backend.api.config_api import _get_version
 from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
@@ -37,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 settings = get_settings()
 
-app = FastAPI(title="Zonik", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Zonik", version=_get_version(), lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
