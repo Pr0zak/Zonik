@@ -57,13 +57,13 @@ frontend/
   src/routes/          # SvelteKit pages (12 routes)
     +page.svelte       # Dashboard (stats, last scan, version, health)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal
-    discover/          # Last.fm charts, similar artists
+    discover/          # Last.fm charts + inline download (per-track status, bulk download), similar artists
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics
-    schedule/          # Cron job scheduler with task descriptions
+    schedule/          # Cron job scheduler with task descriptions, expandable results panel, download missing tracks
     logs/              # Job history with category filters (Downloads/Library/Analysis/Discovery/Playlists) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
   src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell/settings icons), Player, Toast
@@ -123,13 +123,20 @@ docs/                  # Installation, configuration, API reference, development
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
 - Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
-- Schedule page: each task shows a description explaining what it does
+- Schedule page: each task shows a description explaining what it does; expandable results panel loads last job from DB (persists across navigations)
+- Schedule page: Run button returns job_id, polls for result, shows inline; Last.fm Top Tracks shows missing track list + "Download All" button
+- Discover page: top tracks limit fetched from scheduled task config (default 100); per-track inline download with status (spinner/check/failed+retry)
+- Discovery library matching: joins Artist table, matches exact artist + title (case-insensitive) — not loose ILIKE %title%
 - Logs page: category filter tabs (All/Downloads/Library/Analysis/Discovery/Playlists), expanded job detail with colored status badges
 - TopBar: global search (typeahead library + P2P), sync button (library scan), notification bell (active jobs with progress), settings gear
 - Downloads page: single fuzzy search field (auto-splits "Artist - Track"), paginated P2P results (25/50/100 per page), downloads section above results
 - Library page: reads `?search=` URL param on mount for TopBar navigation integration
 - Favorites: total count displayed in PageHeader
 - Sidebar footer: GitHub icon links to github.com/Pr0zak/Zonik
+- Native Soulseek transfers: don't remove immediately on complete — let poll_transfer see final state; cleanup loop removes after 60s
+- Native Soulseek downloads: split queue_timeout (120s, waiting for peer) vs stall_timeout (60s, no data during transfer)
+- Native Soulseek downloads: auto-fallback — when direct download fails, searches for up to 4 additional peers
+- Native Soulseek transfers: fuzzy filename matching in get_transfer (basename fallback for path separator differences)
 - Upgrade restarts kill background tasks (enrichment, analysis); stuck "running" jobs must be manually set to "failed" in DB
 
 ## Important Files
