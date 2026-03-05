@@ -1,6 +1,7 @@
 <script>
 	import '../app.css';
 	import Sidebar from '../components/Sidebar.svelte';
+	import TopBar from '../components/TopBar.svelte';
 	import Player from '../components/Player.svelte';
 	import Toast from '../components/Toast.svelte';
 	import { onMount, onDestroy } from 'svelte';
@@ -47,6 +48,13 @@
 		// Escape = close shortcuts / clear focus
 		if (key === 'escape') {
 			$showShortcuts = false;
+			return;
+		}
+
+		// / = focus search bar
+		if (key === '/' && !event.shiftKey && !ctrl) {
+			event.preventDefault();
+			document.querySelector('[data-search-input]')?.focus();
 			return;
 		}
 
@@ -145,11 +153,17 @@
 
 	<div class="flex flex-1 overflow-hidden">
 		<Sidebar />
-		<main class="flex-1 overflow-y-auto p-4 md:p-6">
-			<div class="animate-fade-in">
-				{@render children()}
+		<div class="flex-1 flex flex-col overflow-hidden">
+			<!-- Top bar with search -->
+			<div class="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-primary)] shrink-0">
+				<TopBar />
 			</div>
-		</main>
+			<main class="flex-1 overflow-y-auto p-4 md:p-6">
+				<div class="animate-fade-in">
+					{@render children()}
+				</div>
+			</main>
+		</div>
 	</div>
 	<Player />
 	<Toast />

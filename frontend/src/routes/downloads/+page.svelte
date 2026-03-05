@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
@@ -306,6 +307,12 @@
 			}
 		});
 		autoHideTimer = setInterval(() => { jobs = [...jobs]; }, 30000);
+
+		// Handle URL params from global search bar
+		const params = $page.url.searchParams;
+		if (params.get('artist')) artist = params.get('artist');
+		if (params.get('track')) track = params.get('track');
+		if (artist && track) searchSoulseek();
 	});
 
 	onDestroy(() => {
