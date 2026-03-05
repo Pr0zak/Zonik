@@ -204,10 +204,32 @@ def _sanitize_filename(name: str) -> str:
     return name or "Unknown"
 
 
+def _build_target_path(track: Track, scheme: str) -> str:
+    """Build target file path from naming scheme template."""
+    artist_name = _sanitize_filename(track.artist.name if track.artist else "Unknown Artist")
+    album_title = _sanitize_filename(track.album.title if track.album else "Unknown Album")
+    track_num = f"{track.track_number:02d}" if track.track_number else ""
+    title = _sanitize_filename(track.title or "Unknown")
+    ext = Path(track.file_path).suffix
+
+    path = scheme.format(
+        artist=artist_name,
+        album=album_title,
+        track_number=track_num,
+        title=title,
+    )
+    # Clean up empty segments from missing track_number (e.g. " - Title" -> "Title")
+    path = re.sub(r'(?:^|/)[ -]+', lambda m: m.group().rsplit('/', 1)[0] + '/' if '/' in m.group() else '', path)
+    # Sanitize each path segment
+    parts = [_sanitize_filename(p) for p in path.split('/') if p.strip()]
+    return '/'.join(parts) + ext
+
+
 async def preview_organize(db: AsyncSession) -> list[dict]:
     """Preview what file renames/moves would happen."""
     settings = get_settings()
     music_dir = Path(settings.library.music_dir)
+    scheme = settings.library.naming_scheme
 
     result = await db.execute(
         select(Track).options(selectinload(Track.artist), selectinload(Track.album))
@@ -217,17 +239,10 @@ async def preview_organize(db: AsyncSession) -> list[dict]:
     moves = []
     for track in tracks:
         current_path = track.file_path
-        artist_name = _sanitize_filename(track.artist.name if track.artist else "Unknown Artist")
-        album_title = _sanitize_filename(track.album.title if track.album else "Unknown Album")
-
-        # Build target filename: "01 - Title.ext"
-        ext = Path(current_path).suffix
-        prefix = f"{track.track_number:02d} - " if track.track_number else ""
-        filename = _sanitize_filename(f"{prefix}{track.title}") + ext
-
-        target_path = f"{artist_name}/{album_title}/{filename}"
+        target_path = _build_target_path(track, scheme)
 
         if current_path != target_path:
+            artist_name = track.artist.name if track.artist else "Unknown Artist"
             moves.append({
                 "track_id": track.id,
                 "title": track.title,
@@ -244,6 +259,7 @@ async def execute_organize(db: AsyncSession, move_ids: list[str] | None = None) 
     """Rename and sort files into Artist/Album/Track structure."""
     settings = get_settings()
     music_dir = Path(settings.library.music_dir)
+    scheme = settings.library.naming_scheme
 
     query = select(Track).options(selectinload(Track.artist), selectinload(Track.album))
     if move_ids:
@@ -255,13 +271,7 @@ async def execute_organize(db: AsyncSession, move_ids: list[str] | None = None) 
     errors = 0
     for track in tracks:
         current_path = track.file_path
-        artist_name = _sanitize_filename(track.artist.name if track.artist else "Unknown Artist")
-        album_title = _sanitize_filename(track.album.title if track.album else "Unknown Album")
-
-        ext = Path(current_path).suffix
-        prefix = f"{track.track_number:02d} - " if track.track_number else ""
-        filename = _sanitize_filename(f"{prefix}{track.title}") + ext
-        target_path = f"{artist_name}/{album_title}/{filename}"
+        target_path = _build_target_path(track, scheme)
 
         if current_path == target_path:
             continue

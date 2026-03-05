@@ -16,6 +16,7 @@ class ServerConfig(BaseModel):
 class LibraryConfig(BaseModel):
     music_dir: str = "/music"
     cover_cache_dir: str = "/opt/zonik/cache/covers"
+    naming_scheme: str = "{artist}/{album}/{track_number} - {title}"
 
 
 class DatabaseConfig(BaseModel):

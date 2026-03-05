@@ -73,6 +73,7 @@ def _write_config(data: dict) -> None:
 class ServiceConfig(BaseModel):
     download_dir: str = ""
     cover_cache_dir: str = ""
+    naming_scheme: str = "{artist}/{album}/{track_number} - {title}"
     # Soulseek (native only)
     slsk_username: str = ""
     slsk_password: str = ""
@@ -94,6 +95,7 @@ async def get_service_config():
     return {
         "download_dir": settings.soulseek.download_dir,
         "cover_cache_dir": settings.library.cover_cache_dir,
+        "naming_scheme": settings.library.naming_scheme,
         "slsk_username": settings.soulseek.username,
         "slsk_password": settings.soulseek.password,
         "slsk_listen_port": settings.soulseek.listen_port,
@@ -141,10 +143,12 @@ async def update_service_config(req: ServiceConfig):
         lastfm["write_api_secret"] = req.lastfm_write_api_secret
     raw["lastfm"] = {**settings.lastfm.model_dump(), **lastfm}
 
-    # Update cover cache dir in library section
+    # Update library section
     library = raw.get("library", {})
     if req.cover_cache_dir:
         library["cover_cache_dir"] = req.cover_cache_dir
+    if req.naming_scheme:
+        library["naming_scheme"] = req.naming_scheme
     raw["library"] = {**settings.library.model_dump(), **library}
 
     # Preserve other sections
