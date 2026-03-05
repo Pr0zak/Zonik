@@ -1,8 +1,9 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { addToast } from '$lib/stores.js';
-	import { ListMusic, Wand2, Plus, Clock } from 'lucide-svelte';
+	import { currentTrack, addToast } from '$lib/stores.js';
+	import { formatDuration } from '$lib/utils.js';
+	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2 } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -15,6 +16,12 @@
 	let loading = $state(true);
 	let schedTasks = $state({});
 	let schedRunning = $state({});
+
+	// Detail view
+	let selectedPlaylist = $state(null);
+	let playlistDetail = $state(null);
+	let detailLoading = $state(false);
+	let deleting = $state(false);
 
 	let showGenerator = $state(false);
 	let genName = $state('');
@@ -60,6 +67,44 @@
 		} finally {
 			generating = false;
 		}
+	}
+
+	async function openPlaylist(playlist) {
+		selectedPlaylist = playlist;
+		detailLoading = true;
+		try {
+			playlistDetail = await fetch(`/api/playlists/${playlist.id}`).then(r => r.json());
+		} catch (e) {
+			addToast('Failed to load playlist', 'error');
+		} finally {
+			detailLoading = false;
+		}
+	}
+
+	function closeDetail() {
+		selectedPlaylist = null;
+		playlistDetail = null;
+	}
+
+	function playTrack(track) {
+		$currentTrack = { id: track.id, title: track.title, artist: track.artist };
+	}
+
+	async function deletePlaylist(id) {
+		if (!window.confirm('Delete this playlist?')) return;
+		deleting = true;
+		try {
+			await fetch(`/api/playlists/${id}`, { method: 'DELETE' });
+			playlists = playlists.filter(p => p.id !== id);
+			closeDetail();
+			addToast('Playlist deleted', 'success');
+		} catch { addToast('Failed to delete playlist', 'error'); }
+		finally { deleting = false; }
+	}
+
+	function coverUrl(id) {
+		if (!id) return null;
+		return `/rest/getCoverArt?id=${id}`;
 	}
 
 	async function toggleSched(name) {
@@ -178,7 +223,68 @@
 		</Card>
 	{/if}
 
-	{#if loading}
+	{#if selectedPlaylist}
+		<!-- Detail View -->
+		<div class="mb-4 flex items-center gap-3">
+			<Button variant="ghost" size="sm" onclick={closeDetail}>
+				<ArrowLeft class="w-4 h-4" />
+			</Button>
+			<div class="flex-1 min-w-0">
+				<h2 class="text-lg font-semibold text-[var(--text-primary)] truncate">{selectedPlaylist.name}</h2>
+				{#if playlistDetail?.comment}
+					<p class="text-xs text-[var(--text-muted)]">{playlistDetail.comment}</p>
+				{/if}
+			</div>
+			<span class="text-sm text-[var(--text-muted)] font-mono">{selectedPlaylist.track_count} tracks</span>
+			<Button variant="ghost" size="sm" loading={deleting} onclick={() => deletePlaylist(selectedPlaylist.id)}>
+				<Trash2 class="w-4 h-4 text-red-400" />
+			</Button>
+		</div>
+
+		{#if detailLoading}
+			<div class="space-y-2">
+				{#each Array(8) as _}
+					<Skeleton class="h-14 rounded-lg" />
+				{/each}
+			</div>
+		{:else if playlistDetail?.tracks?.length}
+			<Card padding="p-0">
+				<div class="divide-y divide-[var(--border-subtle)]">
+					{#each playlistDetail.tracks as track, i}
+						<button class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors group text-left"
+							onclick={() => playTrack(track)}>
+							<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right flex-shrink-0">{i + 1}</span>
+							<div class="relative w-9 h-9 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+								{#if coverUrl(track.cover_art)}
+									<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
+								{:else}
+									<div class="flex items-center justify-center w-full h-full">
+										<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+									</div>
+								{/if}
+								<div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+									<Play class="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+								</div>
+							</div>
+							<div class="flex-1 min-w-0">
+								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{track.title}</p>
+								<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}{#if track.album}<span class="text-[var(--text-disabled)]"> &middot; {track.album}</span>{/if}</p>
+							</div>
+							{#if track.duration}
+								<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0 hidden sm:block">{formatDuration(track.duration)}</span>
+							{/if}
+						</button>
+					{/each}
+				</div>
+			</Card>
+		{:else}
+			<Card>
+				<EmptyState title="Empty playlist" description="This playlist has no tracks.">
+					{#snippet icon()}<ListMusic class="w-10 h-10" />{/snippet}
+				</EmptyState>
+			</Card>
+		{/if}
+	{:else if loading}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 			{#each Array(6) as _}
 				<Skeleton class="h-20 rounded-lg" />
@@ -187,17 +293,21 @@
 	{:else if playlists.length}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 			{#each playlists as playlist}
-				<Card hover padding="p-4" class="cursor-pointer group">
-					<div class="flex items-center gap-3">
-						<div class="w-10 h-10 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center group-hover:bg-amber-500/10 transition-colors">
-							<ListMusic class="w-5 h-5 text-[var(--text-disabled)] group-hover:text-amber-400 transition-colors" />
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div onclick={() => openPlaylist(playlist)}>
+					<Card hover padding="p-4" class="cursor-pointer group">
+						<div class="flex items-center gap-3">
+							<div class="w-10 h-10 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center group-hover:bg-amber-500/10 transition-colors">
+								<ListMusic class="w-5 h-5 text-[var(--text-disabled)] group-hover:text-amber-400 transition-colors" />
+							</div>
+							<div>
+								<h3 class="font-medium text-[var(--text-primary)]">{playlist.name}</h3>
+								<p class="text-xs text-[var(--text-muted)]">{playlist.track_count} tracks</p>
+							</div>
 						</div>
-						<div>
-							<h3 class="font-medium text-[var(--text-primary)]">{playlist.name}</h3>
-							<p class="text-xs text-[var(--text-muted)]">{playlist.track_count} tracks</p>
-						</div>
-					</div>
-				</Card>
+					</Card>
+				</div>
 			{/each}
 		</div>
 	{:else}

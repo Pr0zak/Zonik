@@ -117,14 +117,24 @@ async def generate_smart_playlist(req: SmartPlaylistRequest, db: AsyncSession = 
 
 @router.get("/{playlist_id}")
 async def get_playlist(playlist_id: str, db: AsyncSession = Depends(get_db)):
+    from backend.models.track import Track
+    from backend.models.artist import Artist
+    from backend.models.album import Album
+
     result = await db.execute(
         select(Playlist).options(
-            selectinload(Playlist.entries).selectinload(PlaylistTrack.track)
+            selectinload(Playlist.entries).selectinload(
+                PlaylistTrack.track
+            ).selectinload(Track.artist),
+            selectinload(Playlist.entries).selectinload(
+                PlaylistTrack.track
+            ).selectinload(Track.album),
         ).where(Playlist.id == playlist_id)
     )
     p = result.scalar_one_or_none()
     if not p:
         raise HTTPException(404, "Playlist not found")
+    entries = sorted([e for e in p.entries if e.track], key=lambda e: e.position)
     return {
         "id": p.id,
         "name": p.name,
@@ -133,10 +143,13 @@ async def get_playlist(playlist_id: str, db: AsyncSession = Depends(get_db)):
             {
                 "id": e.track.id,
                 "title": e.track.title,
+                "artist": e.track.artist.name if e.track.artist else None,
+                "album": e.track.album.title if e.track.album else None,
+                "cover_art": e.track.album_id or e.track.id,
                 "position": e.position,
                 "duration": e.track.duration_seconds,
             }
-            for e in p.entries if e.track
+            for e in entries
         ],
     }
 

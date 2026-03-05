@@ -14,7 +14,8 @@
 	let favorites = $state([]);
 	let total = $state(0);
 	let offset = $state(0);
-	let limit = 50;
+	let limit = $state(50);
+	const limitOptions = [25, 50, 100, 200];
 	let loading = $state(true);
 	let showImport = $state(false);
 	let importFile = $state(null);
@@ -146,8 +147,8 @@
 			</div>
 		</Card>
 
-		{#if total > limit}
-			<div class="flex justify-center items-center gap-3 mt-4">
+		<div class="flex justify-center items-center gap-3 mt-4">
+			{#if total > limit}
 				<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
 					<ChevronLeft class="w-4 h-4" /> Prev
 				</Button>
@@ -157,8 +158,15 @@
 				<Button variant="secondary" size="sm" disabled={offset + limit >= total} onclick={nextPage}>
 					Next <ChevronRight class="w-4 h-4" />
 				</Button>
-			</div>
-		{/if}
+			{/if}
+			<select value={limit}
+				onchange={(e) => { limit = parseInt(e.target.value); offset = 0; loadFavorites(); }}
+				class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
+				{#each limitOptions as opt}
+					<option value={opt} selected={opt === limit}>{opt} / page</option>
+				{/each}
+			</select>
+		</div>
 	{:else if total === 0}
 		<Card>
 			<EmptyState
