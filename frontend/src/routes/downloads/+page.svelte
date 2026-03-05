@@ -77,20 +77,22 @@
 		if (job.status === 'completed') return 'completed';
 		if (job.status === 'failed') return 'failed';
 		if (job.status === 'pending') return 'queued';
-		if (!transfer) {
-			// No active transfer yet — check job track status
-			const tracks = jobDetails[job.id];
-			if (tracks?.length) {
-				const t = tracks[0];
-				if (t.status === 'transferring') return 'downloading';
-				if (t.status === 'pending') return 'searching';
-			}
-			return 'searching';
+		if (transfer) {
+			const s = transfer.state;
+			if (s === 'transferring' || s === 'connected') return 'downloading';
+			if (s === 'queued' || s === 'requested') return 'queued';
+			return s;
 		}
-		const s = transfer.state;
-		if (s === 'transferring' || s === 'connected') return 'downloading';
-		if (s === 'queued' || s === 'requested') return 'queued';
-		return s;
+		// No active transfer — check job track status or WS description
+		const tracks = jobDetails[job.id];
+		if (tracks?.length) {
+			const t = tracks[0];
+			if (t.status === 'downloading' || t.status === 'transferring') return 'downloading';
+		}
+		// WS description includes "attempt" once a candidate is being tried
+		const wsDesc = wsDescriptions[job.id] || job.description || '';
+		if (wsDesc.includes('(attempt')) return 'downloading';
+		return 'searching';
 	}
 
 	function statusVariant(status) {
@@ -247,6 +249,9 @@
 		if (e.key === 'Enter') searchSoulseek();
 	}
 
+	// Track WS description updates (richer than REST-derived descriptions)
+	let wsDescriptions = $state({});
+
 	let unsubJobUpdate;
 	let autoHideTimer;
 
@@ -258,8 +263,10 @@
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
 		}).catch(() => {});
 		// Auto-refresh when any download job updates
-		unsubJobUpdate = onJobUpdate((job) => {
-			if (job.type === 'download' || job.type === 'bulk_download') {
+		unsubJobUpdate = onJobUpdate((wsJob) => {
+			if (wsJob.type === 'download' || wsJob.type === 'bulk_download') {
+				// Capture WS description (includes attempt info, filename)
+				if (wsJob.description) wsDescriptions[wsJob.id] = wsJob.description;
 				loadJobs();
 			}
 		});
@@ -396,6 +403,9 @@
 									<div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
 										{#if transfer?.username}
 											<span>from {transfer.username}</span>
+											<span class="text-[var(--text-disabled)]">&middot;</span>
+										{:else if job.status === 'running' && jobDetails[job.id]?.[0]?.username}
+											<span>from {jobDetails[job.id][0].username}</span>
 											<span class="text-[var(--text-disabled)]">&middot;</span>
 										{/if}
 										{#if transfer && transfer.speed > 0}
