@@ -7,10 +7,8 @@
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
 	import Skeleton from '../components/ui/Skeleton.svelte';
-	import EmptyState from '../components/ui/EmptyState.svelte';
 
 	let stats = $state(null);
-	let recent = $state([]);
 	let health = $state(null);
 	let version = $state(null);
 	let lastScan = $state(null);
@@ -36,9 +34,8 @@
 
 	onMount(async () => {
 		try {
-			[stats, recent, health, version, lastScan] = await Promise.all([
+			[stats, health, version, lastScan] = await Promise.all([
 				api.getStats(),
-				api.getRecent(10),
 				fetch('/api/config/health').then(r => r.json()).catch(() => null),
 				fetch('/api/config/version').then(r => r.json()).catch(() => null),
 				fetch('/api/jobs?limit=50').then(r => r.json()).then(jobs => jobs.find(j => j.type === 'library_scan' && j.status === 'completed')).catch(() => null),
@@ -138,33 +135,4 @@
 		{/if}
 	{/if}
 
-	<Card padding="p-0">
-		<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] px-4 py-3 border-b border-[var(--border-subtle)]">Recent Additions</h2>
-		{#if loading}
-			<div class="divide-y divide-[var(--border-subtle)]">
-				{#each Array(5) as _}
-					<div class="px-4 py-3 flex items-center justify-between">
-						<Skeleton class="h-4 w-48" />
-						<Skeleton class="h-3 w-20" />
-					</div>
-				{/each}
-			</div>
-		{:else if recent.length}
-			<div class="divide-y divide-[var(--border-subtle)]">
-				{#each recent as track}
-					<div class="px-4 py-3 flex items-center justify-between text-sm hover:bg-[var(--bg-hover)] transition-colors">
-						<span class="text-[var(--text-body)]">{track.title}</span>
-						<span class="text-xs text-[var(--text-muted)] font-mono">{track.created_at ? new Date(track.created_at).toLocaleDateString() : ''}</span>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<EmptyState
-			title="No tracks yet"
-			description="Scan your library to get started."
-		>
-			{#snippet icon()}<Music class="w-10 h-10" />{/snippet}
-		</EmptyState>
-		{/if}
-	</Card>
 </div>

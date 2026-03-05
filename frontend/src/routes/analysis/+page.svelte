@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { addToast } from '$lib/stores.js';
+	import { addToast, activeJobs } from '$lib/stores.js';
 	import { AudioWaveform, Sparkles, Database, Search } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -13,9 +13,33 @@
 	let vibeQuery = $state('');
 	let vibeResults = $state([]);
 	let searching = $state(false);
-	let runningAnalysis = $state(false);
-	let runningEmbeddings = $state(false);
-	let runningEnrichment = $state(false);
+
+	// Derive running state from activeJobs store
+	let analysisJob = $derived($activeJobs.find(j => j.type === 'audio_analysis'));
+	let embeddingsJob = $derived($activeJobs.find(j => j.type === 'vibe_embeddings'));
+	let enrichmentJob = $derived($activeJobs.find(j => j.type === 'enrichment'));
+
+	let prevAnalysis = $state(false);
+	let prevEmbeddings = $state(false);
+	let prevEnrichment = $state(false);
+
+	// Auto-refresh stats when jobs complete
+	$effect(() => {
+		if (prevAnalysis && !analysisJob) { refreshStats(); addToast('Audio analysis complete', 'success'); }
+		prevAnalysis = !!analysisJob;
+	});
+	$effect(() => {
+		if (prevEmbeddings && !embeddingsJob) { refreshStats(); addToast('Vibe embeddings complete', 'success'); }
+		prevEmbeddings = !!embeddingsJob;
+	});
+	$effect(() => {
+		if (prevEnrichment && !enrichmentJob) { refreshStats(); addToast('Metadata enrichment complete', 'success'); }
+		prevEnrichment = !!enrichmentJob;
+	});
+
+	async function refreshStats() {
+		try { stats = await fetch('/api/analysis/stats').then(r => r.json()); } catch {}
+	}
 
 	onMount(async () => {
 		try {
@@ -28,38 +52,29 @@
 	});
 
 	async function startAnalysis() {
-		runningAnalysis = true;
 		try {
 			await fetch('/api/analysis/start', { method: 'POST' }).then(r => r.json());
 			addToast('Audio analysis started', 'success');
 		} catch (e) {
 			addToast('Failed to start analysis', 'error');
-		} finally {
-			runningAnalysis = false;
 		}
 	}
 
 	async function startEmbeddings() {
-		runningEmbeddings = true;
 		try {
 			await fetch('/api/analysis/embeddings/start', { method: 'POST' }).then(r => r.json());
 			addToast('Vibe embedding generation started', 'success');
 		} catch (e) {
 			addToast('Failed to start embeddings', 'error');
-		} finally {
-			runningEmbeddings = false;
 		}
 	}
 
 	async function startEnrichment() {
-		runningEnrichment = true;
 		try {
 			await fetch('/api/analysis/enrich', { method: 'POST' }).then(r => r.json());
 			addToast('Metadata enrichment started', 'success');
 		} catch (e) {
 			addToast('Failed to start enrichment', 'error');
-		} finally {
-			runningEnrichment = false;
 		}
 	}
 
@@ -80,6 +95,11 @@
 			searching = false;
 		}
 	}
+
+	function progressPct(job) {
+		if (!job || !job.total) return 0;
+		return Math.round((job.progress / job.total) * 100);
+	}
 </script>
 
 <div class="max-w-6xl">
@@ -93,6 +113,7 @@
 		</div>
 	{:else if stats}
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+			<!-- Audio Analysis Card -->
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
 					<AudioWaveform class="w-4 h-4 text-[var(--color-accent)]" />
@@ -102,7 +123,25 @@
 				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
 					<div class="h-full bg-[var(--color-accent)] rounded-full transition-all" style="width: {stats.analysis_pct}%"></div>
 				</div>
+				{#if analysisJob}
+					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
+						<div class="flex items-center justify-between mb-1">
+							<span class="text-xs text-[var(--color-info)] font-medium animate-pulse">Running...</span>
+							<span class="text-xs text-[var(--text-muted)] font-mono">{analysisJob.progress}/{analysisJob.total}</span>
+						</div>
+						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
+							<div class="h-full bg-[var(--color-info)] rounded-full transition-all" style="width: {progressPct(analysisJob)}%"></div>
+						</div>
+					</div>
+				{:else}
+					<Button variant="primary" size="sm" class="mt-3 w-full" onclick={startAnalysis}>
+						<AudioWaveform class="w-3.5 h-3.5" />
+						Run Analysis
+					</Button>
+				{/if}
 			</Card>
+
+			<!-- Vibe Embeddings Card -->
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
 					<Sparkles class="w-4 h-4 text-purple-400" />
@@ -112,20 +151,47 @@
 				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
 					<div class="h-full bg-purple-500 rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
 				</div>
+				{#if embeddingsJob}
+					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
+						<div class="flex items-center justify-between mb-1">
+							<span class="text-xs text-purple-400 font-medium animate-pulse">Running...</span>
+							<span class="text-xs text-[var(--text-muted)] font-mono">{embeddingsJob.progress}/{embeddingsJob.total}</span>
+						</div>
+						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
+							<div class="h-full bg-purple-500 rounded-full transition-all" style="width: {progressPct(embeddingsJob)}%"></div>
+						</div>
+					</div>
+				{:else}
+					<Button variant="secondary" size="sm" class="mt-3 w-full" onclick={startEmbeddings}>
+						<Sparkles class="w-3.5 h-3.5 text-purple-400" />
+						Generate Embeddings
+					</Button>
+				{/if}
 			</Card>
-			<Card padding="p-4" class="flex flex-col gap-2">
-				<Button variant="primary" size="sm" loading={runningAnalysis} onclick={startAnalysis}>
-					<AudioWaveform class="w-3.5 h-3.5" />
-					{runningAnalysis ? 'Running...' : 'Run Analysis'}
-				</Button>
-				<Button variant="secondary" size="sm" loading={runningEmbeddings} onclick={startEmbeddings}>
-					<Sparkles class="w-3.5 h-3.5 text-purple-400" />
-					{runningEmbeddings ? 'Running...' : 'Generate Embeddings'}
-				</Button>
-				<Button variant="success" size="sm" loading={runningEnrichment} onclick={startEnrichment}>
-					<Database class="w-3.5 h-3.5" />
-					{runningEnrichment ? 'Running...' : 'Enrich Metadata'}
-				</Button>
+
+			<!-- Enrichment Card -->
+			<Card padding="p-4">
+				<div class="flex items-center gap-2 mb-2">
+					<Database class="w-4 h-4 text-emerald-400" />
+					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Enrichment</span>
+				</div>
+				<p class="text-sm text-[var(--text-muted)] mb-1">Fill missing genres, cover art, and metadata from online sources.</p>
+				{#if enrichmentJob}
+					<div class="mt-2 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
+						<div class="flex items-center justify-between mb-1">
+							<span class="text-xs text-emerald-400 font-medium animate-pulse">Enriching...</span>
+							<span class="text-xs text-[var(--text-muted)] font-mono">{enrichmentJob.progress}/{enrichmentJob.total}</span>
+						</div>
+						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
+							<div class="h-full bg-emerald-500 rounded-full transition-all" style="width: {progressPct(enrichmentJob)}%"></div>
+						</div>
+					</div>
+				{:else}
+					<Button variant="success" size="sm" class="mt-2 w-full" onclick={startEnrichment}>
+						<Database class="w-3.5 h-3.5" />
+						Enrich Metadata
+					</Button>
+				{/if}
 			</Card>
 		</div>
 	{/if}

@@ -16,6 +16,7 @@ from backend.models.track import Track
 from backend.models.analysis import TrackAnalysis
 from backend.models.embedding import TrackEmbedding
 from backend.models.job import Job
+from backend.api.websocket import broadcast_job_update
 
 router = APIRouter()
 
@@ -55,12 +56,14 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                 )
             tracks = result.all()
 
+            total = len(tracks)
             job = Job(
                 id=job_id, type="audio_analysis", card="an", status="running",
-                total=len(tracks), started_at=datetime.utcnow(),
+                total=total, started_at=datetime.utcnow(),
             )
             db.add(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": 0, "total": total})
 
             for i, (track_id, file_path) in enumerate(tracks):
                 try:
@@ -80,13 +83,17 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                     job.progress = i + 1
                     await db.merge(job)
                     await db.commit()
-                except Exception as e:
-                    pass  # Continue with next track
+                except Exception:
+                    pass
+
+                if (i + 1) % 5 == 0 or i + 1 == total:
+                    await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": i + 1, "total": total})
 
             job.status = "completed"
             job.finished_at = datetime.utcnow()
             await db.merge(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "completed", "progress": total, "total": total})
 
     background_tasks.add_task(run_analysis)
     return {"job_id": job_id}
@@ -110,12 +117,14 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
                 )
             tracks = result.all()
 
+            total = len(tracks)
             job = Job(
                 id=job_id, type="vibe_embeddings", card="an", status="running",
-                total=len(tracks), started_at=datetime.utcnow(),
+                total=total, started_at=datetime.utcnow(),
             )
             db.add(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": 0, "total": total})
 
             for i, (track_id, file_path) in enumerate(tracks):
                 try:
@@ -133,10 +142,14 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
                 except Exception:
                     pass
 
+                if (i + 1) % 5 == 0 or i + 1 == total:
+                    await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": i + 1, "total": total})
+
             job.status = "completed"
             job.finished_at = datetime.utcnow()
             await db.merge(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "completed", "progress": total, "total": total})
 
     background_tasks.add_task(run_embeddings)
     return {"job_id": job_id}
@@ -159,12 +172,14 @@ async def start_enrichment(background_tasks: BackgroundTasks):
             )
             tracks = result.scalars().all()
 
+            total = len(tracks)
             job = Job(
                 id=job_id, type="enrichment", card="en", status="running",
-                total=len(tracks), started_at=datetime.utcnow(),
+                total=total, started_at=datetime.utcnow(),
             )
             db.add(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": 0, "total": total})
 
             for i, track in enumerate(tracks):
                 try:
@@ -176,10 +191,14 @@ async def start_enrichment(background_tasks: BackgroundTasks):
                 await db.merge(job)
                 await db.commit()
 
+                if (i + 1) % 5 == 0 or i + 1 == total:
+                    await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": i + 1, "total": total})
+
             job.status = "completed"
             job.finished_at = datetime.utcnow()
             await db.merge(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "completed", "progress": total, "total": total})
 
     background_tasks.add_task(run_enrichment)
     return {"job_id": job_id}
