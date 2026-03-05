@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+
+log = logging.getLogger(__name__)
 from pydantic import BaseModel
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -195,8 +199,8 @@ async def update_track(track_id: str, req: TrackUpdateRequest, db: AsyncSession 
                 if req.track_number is not None:
                     audio["tracknumber"] = str(req.track_number)
                 audio.save()
-    except Exception:
-        pass  # DB updated even if tag write fails
+    except Exception as e:
+        log.warning("Tag write failed for track %s: %s", track_id, e)
 
     return {
         "ok": True,
@@ -309,8 +313,8 @@ async def bulk_analyze_tracks(req: BulkAnalyzeRequest, background_tasks: Backgro
                     job.progress = i + 1
                     await db_inner.merge(job)
                     await db_inner.commit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("Track analysis progress update failed: %s", e)
 
             job.status = "completed"
             job.finished_at = datetime.utcnow()

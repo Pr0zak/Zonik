@@ -216,8 +216,8 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                             if fb["username"] != req.username:
                                 candidates.append(fb)
                         candidates = candidates[:5]  # Limit total attempts
-                    except Exception:
-                        pass  # Search failed, just try the direct source
+                    except Exception as e:
+                        log.debug("Fallback search failed: %s", e)
                 elif native_client:
                     # Auto-download — get candidates from search
                     from backend.soulseek.search import search_multi_strategy_native

@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
 
+log = logging.getLogger(__name__)
+
 from backend.config import get_settings, CONFIG_PATHS
 from backend.database import async_session, get_db
 from backend.models.job import Job
@@ -258,7 +260,8 @@ async def _get_local_commit() -> str:
         )
         stdout, _ = await proc.communicate()
         return stdout.decode().strip() if proc.returncode == 0 else "unknown"
-    except Exception:
+    except Exception as e:
+        log.debug("Git version check failed: %s", e)
         return "unknown"
 
 
@@ -272,7 +275,8 @@ async def _get_local_full_commit() -> str:
         )
         stdout, _ = await proc.communicate()
         return stdout.decode().strip() if proc.returncode == 0 else ""
-    except Exception:
+    except Exception as e:
+        log.debug("Git hash check failed: %s", e)
         return ""
 
 
@@ -357,8 +361,8 @@ async def check_updates():
                         for c in data.get("commits", [])[:20]
                     ]
                     result["ahead_by"] = data.get("ahead_by", 0)
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug("GitHub update check failed: %s", e)
 
     return result
 

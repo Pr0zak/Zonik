@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -70,5 +73,6 @@ async def search_fts(db: AsyncSession, query: str, limit: int = 50) -> list[str]
             {"query": fts_query, "limit": limit},
         )
         return [row[0] for row in result.all()]
-    except Exception:
+    except Exception as e:
+        log.debug("FTS search failed for %r: %s", query, e)
         return []

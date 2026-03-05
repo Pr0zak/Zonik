@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime
+
+log = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, BackgroundTasks, Query
 from pydantic import BaseModel
@@ -83,8 +86,8 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                     job.progress = i + 1
                     await db.merge(job)
                     await db.commit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("Analysis progress update failed for track %s: %s", track.id if track else "?", e)
 
                 if (i + 1) % 5 == 0 or i + 1 == total:
                     await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": i + 1, "total": total})
@@ -139,8 +142,8 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
                     job.progress = i + 1
                     await db.merge(job)
                     await db.commit()
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("Embedding progress update failed for track %s: %s", track.id if track else "?", e)
 
                 if (i + 1) % 5 == 0 or i + 1 == total:
                     await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": i + 1, "total": total})
@@ -203,8 +206,8 @@ async def start_enrichment(background_tasks: BackgroundTasks):
                                 log.info(f"[enrich] Job cancelled at {i+1}/{total}")
                                 status = "failed"
                                 break
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("Enrichment cancel check failed: %s", e)
 
                 try:
                     async with async_session() as track_db:
@@ -244,8 +247,8 @@ async def start_enrichment(background_tasks: BackgroundTasks):
                             if pjob and pjob.status != "failed":
                                 pjob.progress = progress
                                 await prog_db.commit()
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.debug("Enrichment progress update failed: %s", e)
 
                 # Rate limit between tracks
                 await asyncio.sleep(1.5)

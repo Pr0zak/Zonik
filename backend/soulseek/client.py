@@ -362,8 +362,8 @@ class SoulseekClient:
         try:
             from backend.api.websocket import broadcast_transfer_progress
             await broadcast_transfer_progress(self.transfers.get_all_transfers())
-        except Exception:
-            pass
+        except Exception as e:
+            self.log.debug("Transfer broadcast failed: %s", e)
 
     async def _peer_cleanup_loop(self) -> None:
         """Close idle peer connections to prevent fd leaks."""

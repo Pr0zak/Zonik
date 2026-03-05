@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -49,8 +50,8 @@ async def lifespan(app: FastAPI):
     try:
         from backend.soulseek import stop_client
         await stop_client()
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).debug("Soulseek client shutdown error: %s", e)
 
 
 settings = get_settings()
