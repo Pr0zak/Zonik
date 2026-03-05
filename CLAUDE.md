@@ -63,11 +63,11 @@ frontend/
     favorites/         # Starred items
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics
-    schedule/          # Cron job scheduler with task descriptions, expandable results panel, download missing tracks
+    schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters (Downloads/Library/Analysis/Discovery/Playlists) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
   src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell/settings icons), Player, Toast
-    ui/                # 8 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader
+    ui/                # 9 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl
   src/lib/             # api.js, stores.js, utils.js, websocket.js
 deploy/                # Systemd service files
 docs/                  # Installation, configuration, API reference, development guide
@@ -123,8 +123,9 @@ docs/                  # Installation, configuration, API reference, development
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
 - Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
-- Schedule page: each task shows a description explaining what it does; expandable results panel loads last job from DB (persists across navigations)
-- Schedule page: Run button returns job_id, polls for result, shows inline; Last.fm Top Tracks shows missing track list + "Download All" button
+- Schedule controls distributed to section pages via reusable ScheduleControl component (Library, Analysis, Discover, Playlists, Settings)
+- Schedule page is summary/overview: groups tasks by section, shows status/interval/last run, links to respective pages
+- ScheduleControl component: compact row with toggle, label, interval select, time input, optional day/count, run button
 - Discover page: top tracks limit fetched from scheduled task config (default 100); per-track inline download with status (spinner/check/failed+retry)
 - Discovery library matching: joins Artist table, matches exact artist + title (case-insensitive) — not loose ILIKE %title%
 - Logs page: category filter tabs (All/Downloads/Library/Analysis/Discovery/Playlists), expanded job detail with colored status badges
@@ -158,7 +159,7 @@ docs/                  # Installation, configuration, API reference, development
 - CSS variable-based design system in `app.css` (layered backgrounds: --bg-primary/#0a0a0a → --bg-secondary → --bg-tertiary → --bg-hover)
 - Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, schedule=orange, logs=violet, settings=slate)
 - Inter font via Google Fonts CDN; lucide-svelte icons throughout (tree-shakeable SVG icons)
-- 8 reusable UI components in `frontend/src/components/ui/`: Button (6 variants), Badge (5 variants), Card, Skeleton, FormInput, Modal, EmptyState, PageHeader
+- 9 reusable UI components in `frontend/src/components/ui/`: Button (6 variants), Badge (5 variants), Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl
 - WebSocket connected in +layout.svelte on mount
 - Default admin credentials: admin/admin (created on first startup)
 
