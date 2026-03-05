@@ -108,7 +108,7 @@ async def update_service_config(req: ServiceConfig):
     soulseek = raw.get("soulseek", {})
     if req.slskd_url or req.slskd_url == "":
         soulseek["slskd_url"] = req.slskd_url
-    if req.slskd_api_key and not req.slskd_api_key.endswith("***"):
+    if req.slskd_api_key and "***" not in req.slskd_api_key:
         soulseek["slskd_api_key"] = req.slskd_api_key
     if req.download_dir:
         soulseek["download_dir"] = req.download_dir
@@ -117,16 +117,16 @@ async def update_service_config(req: ServiceConfig):
     lidarr = raw.get("lidarr", {})
     if req.lidarr_url or req.lidarr_url == "":
         lidarr["url"] = req.lidarr_url
-    if req.lidarr_api_key and not req.lidarr_api_key.endswith("***"):
+    if req.lidarr_api_key and "***" not in req.lidarr_api_key:
         lidarr["api_key"] = req.lidarr_api_key
     raw["lidarr"] = {**settings.lidarr.model_dump(), **lidarr}
 
     lastfm = raw.get("lastfm", {})
-    if req.lastfm_api_key and not req.lastfm_api_key.endswith("***"):
+    if req.lastfm_api_key and "***" not in req.lastfm_api_key:
         lastfm["api_key"] = req.lastfm_api_key
-    if req.lastfm_write_api_key and not req.lastfm_write_api_key.endswith("***"):
+    if req.lastfm_write_api_key and "***" not in req.lastfm_write_api_key:
         lastfm["write_api_key"] = req.lastfm_write_api_key
-    if req.lastfm_write_api_secret and not req.lastfm_write_api_secret.endswith("***"):
+    if req.lastfm_write_api_secret and "***" not in req.lastfm_write_api_secret:
         lastfm["write_api_secret"] = req.lastfm_write_api_secret
     raw["lastfm"] = {**settings.lastfm.model_dump(), **lastfm}
 
