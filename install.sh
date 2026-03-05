@@ -51,7 +51,7 @@ fi
 echo "[3/8] Setting up Python environment..."
 python3 -m venv "$ZONIK_DIR/venv"
 "$ZONIK_DIR/venv/bin/pip" install --upgrade pip setuptools wheel -q
-"$ZONIK_DIR/venv/bin/pip" install -e "$ZONIK_DIR" -q
+"$ZONIK_DIR/venv/bin/pip" install -e "$ZONIK_DIR[analysis,clap]" -q
 
 echo "[4/8] Building frontend..."
 cd "$ZONIK_DIR/frontend"

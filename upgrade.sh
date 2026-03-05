@@ -37,7 +37,7 @@ with open('pyproject.toml', 'rb') as f:
 echo "  $OLD_VERSION → $NEW_VERSION"
 
 echo "[2/5] Updating Python dependencies..."
-"$ZONIK_DIR/venv/bin/pip" install -e "$ZONIK_DIR" -q
+"$ZONIK_DIR/venv/bin/pip" install -e "$ZONIK_DIR[analysis,clap]" -q
 
 echo "[3/5] Rebuilding frontend..."
 cd "$ZONIK_DIR/frontend"
