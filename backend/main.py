@@ -66,4 +66,15 @@ app.include_router(subsonic_router, prefix="/rest")
 # Serve frontend build in production
 frontend_build = Path(__file__).parent.parent / "frontend" / "build"
 if frontend_build.exists():
-    app.mount("/", StaticFiles(directory=str(frontend_build), html=True), name="frontend")
+    from fastapi.responses import FileResponse
+
+    app.mount("/_app", StaticFiles(directory=str(frontend_build / "_app")), name="frontend-assets")
+    app.mount("/static", StaticFiles(directory=str(frontend_build)), name="frontend-static")
+
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        """Serve SvelteKit SPA — return index.html for all non-API routes."""
+        file = frontend_build / path
+        if file.is_file():
+            return FileResponse(file)
+        return FileResponse(frontend_build / "index.html")
