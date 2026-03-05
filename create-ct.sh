@@ -306,7 +306,7 @@ cd /opt/zonik
 echo "       Done."
 
 echo "[6/8] Creating directories..."
-mkdir -p /opt/zonik/data /opt/zonik/cache/covers /etc/zonik /music/Downloads
+mkdir -p /opt/zonik/data /opt/zonik/cache/covers /etc/zonik /music /downloads
 
 echo "[7/8] Initializing database..."
 cd /opt/zonik
@@ -351,7 +351,7 @@ url = \"redis://localhost:6379/0\"
 [soulseek]
 slskd_url = \"\"
 slskd_api_key = \"\"
-download_dir = \"/music/Downloads\"
+download_dir = \"/downloads\"
 preferred_formats = [\"flac\", \"wav\", \"mp3\"]
 min_file_size_mb = 3
 max_workers = 4

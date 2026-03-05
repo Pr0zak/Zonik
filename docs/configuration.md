@@ -26,7 +26,7 @@ url = "redis://localhost:6379/0"        # Redis URL for ARQ worker
 [soulseek]
 slskd_url = ""                           # slskd API URL (e.g. http://host:5030)
 slskd_api_key = ""                       # slskd API key
-download_dir = "/music/Downloads"        # Where downloads are saved
+download_dir = "/downloads"              # Where downloads are saved
 preferred_formats = ["flac", "wav", "mp3"]  # Format preference order
 min_file_size_mb = 3                     # Skip files smaller than this
 max_workers = 4                          # Parallel download workers

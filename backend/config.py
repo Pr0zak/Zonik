@@ -29,7 +29,7 @@ class RedisConfig(BaseModel):
 class SoulseekConfig(BaseModel):
     slskd_url: str = ""
     slskd_api_key: str = ""
-    download_dir: str = "/music/Downloads"
+    download_dir: str = "/downloads"
     preferred_formats: list[str] = ["flac", "wav", "mp3"]
     min_file_size_mb: int = 3
     max_workers: int = 4

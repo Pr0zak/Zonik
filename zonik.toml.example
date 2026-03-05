@@ -16,7 +16,7 @@ url = "redis://localhost:6379/0"
 [soulseek]
 slskd_url = ""
 slskd_api_key = ""
-download_dir = "/music/Downloads"
+download_dir = "/downloads"
 preferred_formats = ["flac", "wav", "mp3"]
 min_file_size_mb = 3
 max_workers = 4

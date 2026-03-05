@@ -8,6 +8,7 @@ CONFIG_DIR="/etc/zonik"
 DATA_DIR="/opt/zonik/data"
 CACHE_DIR="/opt/zonik/cache"
 MUSIC_DIR="/music"
+DOWNLOAD_DIR="/downloads"
 
 echo "╔══════════════════════════════════════╗"
 echo "║         Zonik Installer v0.1         ║"
@@ -59,7 +60,7 @@ npm run build
 cd "$ZONIK_DIR"
 
 echo "[5/8] Creating directories..."
-mkdir -p "$DATA_DIR" "$CACHE_DIR/covers" "$CONFIG_DIR" "$MUSIC_DIR"
+mkdir -p "$DATA_DIR" "$CACHE_DIR/covers" "$CONFIG_DIR" "$MUSIC_DIR" "$DOWNLOAD_DIR"
 
 echo "[6/8] Setting up configuration..."
 if [ ! -f "$CONFIG_DIR/zonik.toml" ]; then
