@@ -21,13 +21,45 @@
 	let downloading = $state({});
 	let formatFilter = $state('all');
 	let searchDone = $state(false);
+	let sortCol = $state('quality');
+	let sortAsc = $state(false);
+
+	const FORMAT_ORDER = { flac: 0, wav: 1, alac: 1, mp3: 2, m4a: 3, ogg: 3, opus: 3 };
+
+	function sortResults(list) {
+		return [...list].sort((a, b) => {
+			let cmp = 0;
+			if (sortCol === 'quality') {
+				// Format → slots_free → size
+				cmp = (FORMAT_ORDER[a.extension] ?? 9) - (FORMAT_ORDER[b.extension] ?? 9);
+				if (cmp === 0) cmp = (b.slots_free ? 1 : 0) - (a.slots_free ? 1 : 0);
+				if (cmp === 0) cmp = b.size - a.size;
+			} else if (sortCol === 'format') {
+				cmp = (FORMAT_ORDER[a.extension] ?? 9) - (FORMAT_ORDER[b.extension] ?? 9);
+			} else if (sortCol === 'bitrate') {
+				cmp = (b.bitrate || 0) - (a.bitrate || 0);
+			} else if (sortCol === 'size') {
+				cmp = b.size - a.size;
+			} else if (sortCol === 'user') {
+				cmp = a.username.localeCompare(b.username);
+			}
+			return sortAsc ? -cmp : cmp;
+		});
+	}
+
+	function toggleSort(col) {
+		if (sortCol === col) { sortAsc = !sortAsc; }
+		else { sortCol = col; sortAsc = false; }
+	}
 
 	let filteredResults = $derived(
-		formatFilter === 'all' ? results :
-		formatFilter === 'flac' ? results.filter(r => r.extension === 'flac') :
-		formatFilter === '320' ? results.filter(r => r.bitrate >= 320 || r.extension === 'flac') :
-		formatFilter === '256' ? results.filter(r => r.bitrate >= 256 || r.extension === 'flac') :
-		results
+		sortResults(
+			formatFilter === 'all' ? results :
+			formatFilter === 'flac' ? results.filter(r => r.extension === 'flac') :
+			formatFilter === '320' ? results.filter(r => r.bitrate >= 320 || r.extension === 'flac') :
+			formatFilter === '256' ? results.filter(r => r.bitrate >= 256 || r.extension === 'flac') :
+			results
+		)
 	);
 
 	let formatCounts = $derived({
@@ -386,12 +418,33 @@
 					<table class="w-full text-sm min-w-[600px]">
 						<thead>
 							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider w-5"></th>
+								<th class="px-4 py-2 w-5">
+									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors"
+										title="Sort by quality">
+										{sortCol === 'quality' ? (sortAsc ? '▲' : '▼') : '◆'}
+									</button>
+								</th>
 								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden md:table-cell">User</th>
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Format</th>
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Bitrate</th>
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Size</th>
+								<th class="px-4 py-2 hidden md:table-cell">
+									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										User {sortCol === 'user' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2">
+									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										Format {sortCol === 'format' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2 hidden sm:table-cell">
+									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
+								<th class="px-4 py-2">
+									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+										Size {sortCol === 'size' ? (sortAsc ? '▲' : '▼') : ''}
+									</button>
+								</th>
 								<th class="px-4 py-2"></th>
 							</tr>
 						</thead>
