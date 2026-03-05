@@ -158,47 +158,74 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
 @router.post("/enrich")
 async def start_enrichment(background_tasks: BackgroundTasks):
     """Run metadata enrichment pipeline on tracks missing metadata."""
+    import asyncio
     job_id = str(uuid.uuid4())
 
     async def run_enrichment():
         from backend.services.enrichment import enrich_track
 
-        async with async_session() as db:
-            # Find tracks missing genre or cover art
-            result = await db.execute(
-                select(Track).options(selectinload(Track.artist), selectinload(Track.album))
-                .where((Track.genre.is_(None)) | (Track.cover_art_path.is_(None)))
-                .limit(200)
-            )
-            tracks = result.scalars().all()
+        status = "completed"
+        progress = 0
+        total = 0
+        enriched = 0
+        errors = 0
 
-            total = len(tracks)
-            job = Job(
-                id=job_id, type="enrichment", card="en", status="running",
-                total=total, started_at=datetime.utcnow(),
-            )
-            db.add(job)
-            await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": 0, "total": total})
+        try:
+            async with async_session() as db:
+                # Find ALL tracks missing genre or cover art (no limit)
+                result = await db.execute(
+                    select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+                    .where((Track.genre.is_(None)) | (Track.cover_art_path.is_(None)))
+                )
+                tracks = result.scalars().all()
 
-            for i, track in enumerate(tracks):
-                try:
-                    await enrich_track(db, track)
-                except Exception:
-                    pass
-
-                job.progress = i + 1
-                await db.merge(job)
+                total = len(tracks)
+                job = Job(
+                    id=job_id, type="enrichment", card="en", status="running",
+                    total=total, started_at=datetime.utcnow(),
+                )
+                db.add(job)
                 await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": 0, "total": total})
 
-                if (i + 1) % 5 == 0 or i + 1 == total:
-                    await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": i + 1, "total": total})
+                for i, track in enumerate(tracks):
+                    try:
+                        changes = await enrich_track(db, track)
+                        if changes:
+                            enriched += 1
+                    except Exception as e:
+                        errors += 1
+                        # Rollback if session is in a bad state
+                        try:
+                            await db.rollback()
+                        except Exception:
+                            pass
 
-            job.status = "completed"
-            job.finished_at = datetime.utcnow()
-            await db.merge(job)
-            await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "completed", "progress": total, "total": total})
+                    progress = i + 1
+
+                    if (i + 1) % 5 == 0 or i + 1 == total:
+                        await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": i + 1, "total": total})
+
+                    # Rate limit: 1.5 sec between tracks to respect MusicBrainz/Deezer limits
+                    await asyncio.sleep(1.5)
+        except Exception:
+            status = "failed"
+
+        # Update job in separate session
+        try:
+            async with async_session() as finish_db:
+                result = await finish_db.execute(select(Job).where(Job.id == job_id))
+                fjob = result.scalar_one_or_none()
+                if fjob:
+                    fjob.status = status
+                    fjob.progress = progress
+                    fjob.total = total
+                    fjob.result = json.dumps({"enriched": enriched, "errors": errors, "total": total})
+                    fjob.finished_at = datetime.utcnow()
+                    await finish_db.commit()
+        except Exception:
+            pass
+        await broadcast_job_update({"id": job_id, "type": "enrichment", "status": status, "progress": progress, "total": total})
 
     background_tasks.add_task(run_enrichment)
     return {"job_id": job_id}
