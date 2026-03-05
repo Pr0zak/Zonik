@@ -59,6 +59,7 @@ export const api = {
 	getActiveJobs: () => request('/jobs/active'),
 	getJob: (id) => request(`/jobs/${id}`),
 	retryJob: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
+	cancelJob: (id) => request(`/jobs/${id}/cancel`, { method: 'POST' }),
 
 	// Discovery / Similar
 	getSimilarTracks: (artist, track, limit = 20) =>

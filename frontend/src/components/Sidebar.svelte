@@ -49,17 +49,15 @@
 
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-4">
-		<div>
-			<h1 class="text-base font-bold tracking-tight"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
-			<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider">Music Backend</p>
-		</div>
-	</div>
-
-	<!-- Navigation -->
-	<div class="px-3 mb-2">
-		<div class="flex items-center gap-2 px-2 mb-2">
-			<div class="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]"></div>
-			<span class="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--text-disabled)]">Navigation</span>
+		<div class="flex items-center justify-between">
+			<div>
+				<h1 class="text-base font-bold tracking-tight"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
+				<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider">Music Backend</p>
+			</div>
+			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
+				class="text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors" title="GitHub">
+				<Github class="w-4 h-4" />
+			</a>
 		</div>
 	</div>
 
@@ -101,12 +99,6 @@
 				</div>
 			</a>
 		{/if}
-		<div class="flex items-center justify-between">
-			<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
-			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
-				class="text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors" title="GitHub">
-				<Github class="w-3.5 h-3.5" />
-			</a>
-		</div>
+		<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
 	</div>
 </aside>

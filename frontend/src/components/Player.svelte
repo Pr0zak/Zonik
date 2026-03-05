@@ -1,7 +1,78 @@
 <script>
-	import { currentTrack, isPlaying } from '$lib/stores.js';
+	import { currentTrack, isPlaying, addToast } from '$lib/stores.js';
+	import { api } from '$lib/api.js';
 	import { formatDuration } from '$lib/utils.js';
-	import { Play, Pause, Music } from 'lucide-svelte';
+	import { Play, Pause, Music, Heart, Pencil } from 'lucide-svelte';
+
+	let isFav = $state(false);
+	let favIds = $state(new Set());
+
+	// Load favorite IDs
+	async function loadFavs() {
+		try {
+			const data = await api.getFavoriteIds();
+			favIds = new Set((data.track_ids || []).map(String));
+		} catch {}
+	}
+
+	$effect(() => {
+		loadFavs();
+	});
+
+	$effect(() => {
+		if ($currentTrack) {
+			isFav = favIds.has($currentTrack.id);
+		}
+	});
+
+	async function toggleFav() {
+		if (!$currentTrack) return;
+		try {
+			if (isFav) {
+				await api.unstar({ id: $currentTrack.id, type: 'track' });
+				favIds.delete($currentTrack.id);
+				isFav = false;
+				addToast('Removed from favorites', 'success');
+			} else {
+				await api.star({ id: $currentTrack.id, type: 'track' });
+				favIds.add($currentTrack.id);
+				isFav = true;
+				addToast('Added to favorites', 'success');
+			}
+		} catch (e) { addToast('Failed: ' + e.message, 'error'); }
+	}
+
+	let showEditModal = $state(false);
+	let editForm = $state({ title: '', genre: '', year: '', track_number: '' });
+	let editSaving = $state(false);
+
+	function openEdit() {
+		if (!$currentTrack) return;
+		editForm = {
+			title: $currentTrack.title || '',
+			genre: $currentTrack.genre || '',
+			year: $currentTrack.year || '',
+			track_number: $currentTrack.track_number || '',
+		};
+		showEditModal = true;
+	}
+
+	async function saveEdit() {
+		if (!$currentTrack) return;
+		editSaving = true;
+		try {
+			const data = {};
+			if (editForm.title) data.title = editForm.title;
+			if (editForm.genre) data.genre = editForm.genre;
+			if (editForm.year) data.year = parseInt(editForm.year) || null;
+			if (editForm.track_number) data.track_number = parseInt(editForm.track_number) || null;
+			await api.updateTrack($currentTrack.id, data);
+			$currentTrack = { ...$currentTrack, ...data };
+			showEditModal = false;
+			addToast('Track updated', 'success');
+		} catch (e) { addToast('Save failed: ' + e.message, 'error'); }
+		finally { editSaving = false; }
+	}
 
 	let audio;
 	let currentTime = 0;
@@ -24,20 +95,26 @@
 		audio.currentTime = pct * duration;
 	}
 
-	$: if ($currentTrack && audio) {
-		audio.src = `/rest/stream?id=${$currentTrack.id}&u=admin&p=admin&v=1.16.1&c=zonik-web`;
-		audio.play();
-		$isPlaying = true;
-	}
+	let lastTrackId = $state(null);
+	$effect(() => {
+		if ($currentTrack && audio && $currentTrack.id !== lastTrackId) {
+			lastTrackId = $currentTrack.id;
+			audio.src = `/rest/stream?id=${$currentTrack.id}&u=admin&p=admin&v=1.16.1&c=zonik-web`;
+			audio.play();
+			$isPlaying = true;
+		}
+	});
 
 	// React to external isPlaying changes (e.g. keyboard shortcut)
-	$: if (audio && $currentTrack) {
-		if ($isPlaying && audio.paused) {
-			audio.play();
-		} else if (!$isPlaying && !audio.paused) {
-			audio.pause();
+	$effect(() => {
+		if (audio && $currentTrack) {
+			if ($isPlaying && audio.paused) {
+				audio.play();
+			} else if (!$isPlaying && !audio.paused) {
+				audio.pause();
+			}
 		}
-	}
+	});
 </script>
 
 <div class="h-16 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 gap-4 shrink-0">
@@ -75,11 +152,70 @@
 			</div>
 		</div>
 
-		<div class="w-32"></div>
+		<div class="w-32 flex items-center justify-end gap-2">
+			<button onclick={toggleFav}
+				class="p-1.5 rounded-md transition-colors {isFav ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-white'}"
+				title={isFav ? 'Unfavorite' : 'Favorite'}>
+				<Heart class="w-4 h-4" fill={isFav ? 'currentColor' : 'none'} />
+			</button>
+			<button onclick={openEdit}
+				class="p-1.5 rounded-md text-[var(--text-muted)] hover:text-white transition-colors"
+				title="Edit track info">
+				<Pencil class="w-4 h-4" />
+			</button>
+		</div>
 	{:else}
 		<p class="text-sm text-[var(--text-disabled)] mx-auto">No track selected</p>
 	{/if}
 </div>
+
+{#if showEditModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" onclick={() => showEditModal = false}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-xl shadow-2xl p-6 w-full max-w-md mx-4" onclick={(e) => e.stopPropagation()}>
+			<h3 class="text-lg font-semibold text-[var(--text-primary)] mb-4">Edit Track</h3>
+			<div class="space-y-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Title</label>
+					<input type="text" bind:value={editForm.title}
+						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				</div>
+				<div class="grid grid-cols-3 gap-3">
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">Genre</label>
+						<input type="text" bind:value={editForm.genre}
+							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+								focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+					</div>
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">Year</label>
+						<input type="number" bind:value={editForm.year}
+							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+								focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+					</div>
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">Track #</label>
+						<input type="number" bind:value={editForm.track_number}
+							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+								focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+					</div>
+				</div>
+			</div>
+			<div class="flex justify-end gap-2 mt-5">
+				<button onclick={() => showEditModal = false}
+					class="px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-white transition-colors">Cancel</button>
+				<button onclick={saveEdit} disabled={editSaving}
+					class="px-4 py-2 text-sm bg-[var(--color-accent)] text-white rounded-md hover:opacity-90 transition-opacity disabled:opacity-50">
+					{editSaving ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <audio bind:this={audio}
 	bind:currentTime

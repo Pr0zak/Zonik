@@ -1,7 +1,7 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { ScrollText, ChevronDown, ChevronRight, RotateCcw } from 'lucide-svelte';
+	import { ScrollText, ChevronDown, ChevronRight, RotateCcw, XCircle } from 'lucide-svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -66,6 +66,18 @@
 		} catch (e) {
 			jobDetail = null;
 		}
+	}
+
+	async function cancelJob(jobId) {
+		try {
+			const result = await api.cancelJob(jobId);
+			if (result.error) {
+				addToast(result.error, 'error');
+			} else {
+				addToast('Job cancelled', 'success');
+				jobs = await api.getJobs();
+			}
+		} catch (e) { addToast('Failed to cancel', 'error'); }
 	}
 
 	async function retryJob(jobId) {
@@ -160,13 +172,19 @@
 								</div>
 							</td>
 							<td class="px-4 py-3">
-								{#if job.status === 'running'}
-									<span class="animate-pulse">
+								<div class="flex items-center gap-2">
+									{#if job.status === 'running'}
+										<span class="animate-pulse">
+											<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+										</span>
+										<button onclick={(e) => { e.stopPropagation(); cancelJob(job.id); }}
+											class="text-[var(--text-muted)] hover:text-red-400 transition-colors" title="Cancel job">
+											<XCircle class="w-4 h-4" />
+										</button>
+									{:else}
 										<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
-									</span>
-								{:else}
-									<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
-								{/if}
+									{/if}
+								</div>
 							</td>
 							<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs">
 								{#if job.total}

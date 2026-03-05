@@ -105,6 +105,24 @@ async def recent_job_updates(limit: int = 20, db: AsyncSession = Depends(get_db)
     ]
 
 
+@router.post("/{job_id}/cancel")
+async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Mark a running job as failed/cancelled. The background task checks this flag."""
+    result = await db.execute(select(Job).where(Job.id == job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        return {"error": "Job not found"}
+    if job.status not in ("pending", "running"):
+        return {"error": "Job not cancellable"}
+    job.status = "failed"
+    job.finished_at = datetime.utcnow()
+    if not job.result:
+        job.result = json.dumps({"error": "Cancelled by user"})
+    await db.commit()
+    await broadcast_job_update({"id": job_id, "type": job.type, "status": "failed", "progress": job.progress, "total": job.total})
+    return {"ok": True}
+
+
 @router.post("/{job_id}/retry")
 async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Retry failed tracks from a failed download/bulk_download job."""
