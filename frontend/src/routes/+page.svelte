@@ -2,11 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { formatSize, formatDuration } from '$lib/utils.js';
-	import { addToast } from '$lib/stores.js';
-
 	let stats = $state(null);
 	let recent = $state([]);
-	let scanning = $state(false);
 
 	onMount(async () => {
 		try {
@@ -18,26 +15,11 @@
 			console.error('Failed to load dashboard:', e);
 		}
 	});
-
-	async function scanLibrary() {
-		scanning = true;
-		try {
-			const result = await api.scanLibrary();
-			addToast('Library scan started', 'success');
-		} catch (e) {
-			addToast('Scan failed: ' + e.message, 'error');
-		}
-	}
 </script>
 
 <div class="max-w-6xl">
-	<div class="flex items-center justify-between mb-6">
+	<div class="mb-6">
 		<h1 class="text-2xl font-bold">Dashboard</h1>
-		<button on:click={scanLibrary} disabled={scanning}
-			class="px-4 py-2 bg-accent-600 hover:bg-accent-700 rounded-lg text-sm font-medium
-				disabled:opacity-50 transition">
-			{scanning ? 'Scanning...' : 'Scan Library'}
-		</button>
 	</div>
 
 	{#if stats}

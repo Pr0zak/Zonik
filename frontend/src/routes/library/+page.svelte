@@ -11,6 +11,7 @@
 	let limit = 50;
 	let sort = $state('title');
 	let order = $state('asc');
+	let scanning = $state(false);
 
 	// Similar tracks modal
 	let showSimilar = $state(false);
@@ -30,6 +31,16 @@
 	}
 
 	onMount(loadTracks);
+
+	async function scanLibrary() {
+		scanning = true;
+		try {
+			await api.scanLibrary();
+			addToast('Library scan started', 'success');
+		} catch (e) {
+			addToast('Scan failed: ' + e.message, 'error');
+		}
+	}
 
 	const debouncedSearch = debounce(() => {
 		offset = 0;
@@ -147,6 +158,11 @@
 				class="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm w-64
 					focus:outline-none focus:border-accent-500" />
 			<span class="text-sm text-gray-400">{total.toLocaleString()} tracks</span>
+			<button on:click={scanLibrary} disabled={scanning}
+				class="px-4 py-2 bg-accent-600 hover:bg-accent-700 rounded-lg text-sm font-medium
+					disabled:opacity-50 transition">
+				{scanning ? 'Scanning...' : 'Scan Library'}
+			</button>
 		</div>
 	</div>
 
