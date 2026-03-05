@@ -58,7 +58,7 @@ frontend/
     +page.svelte       # Dashboard (stats, last scan, version, health)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal
     discover/          # Last.fm charts, similar artists
-    downloads/         # Soulseek download management + slskd active transfers panel
+    downloads/         # Soulseek search + WS-driven active transfers + paginated download history + blacklist
     playlists/         # Playlist management
     favorites/         # Starred items
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
@@ -66,7 +66,7 @@ frontend/
     schedule/          # Cron job scheduler with task descriptions
     logs/              # Job history with expandable detail (result, tracks with status badges)
     settings/          # Service config, subsonic info, updates/upgrade
-  src/components/      # Sidebar (update indicator, GitHub link, active jobs), Player, Toast
+  src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), Player, Toast
     ui/                # 8 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader
   src/lib/             # api.js, stores.js, utils.js, websocket.js
 deploy/                # Systemd service files
@@ -95,9 +95,10 @@ docs/                  # Installation, configuration, API reference, development
 - Sidebar shows yellow pulsing dot on Settings when update is available
 - upgrade.sh supports SKIP_RESTART=1 env var (used by web UI to handle restart separately)
 - Backend sends full API keys (not masked) — self-hosted single-user app, frontend password fields handle hiding
-- WebSocket real-time job progress (broadcast_job_update in download.py, library.py, analysis.py)
+- WebSocket real-time: job progress (broadcast_job_update), transfer progress (broadcast_transfer_progress with 500ms throttle)
 - "Download All Missing" button on Discover page wires to /api/download/bulk
 - Active jobs indicator in sidebar footer (spinning loader + count, clickable → /logs)
+- Sidebar transfer mini-progress: shows active transferring file with thin progress bar (blue accent, links to /downloads)
 - Library scan: pre-counts files, broadcasts progress via WebSocket every 50 files, stores JSON result
 - Library scan: uses db.get() for artist/album dedup (identity map aware), separate session for job completion
 - SQLite single-writer constraint: never use concurrent DB sessions for writes; progress updates go through WebSocket only
@@ -110,7 +111,9 @@ docs/                  # Installation, configuration, API reference, development
 - Favorites import: /api/favorites/import accepts [{title, artist, file_path?}] and matches by file_path MD5 or title+artist
 - KimaHub favorites sync: scheduled task (every 6h) syncs LikedTrack from KimaHub PostgreSQL into Zonik favorites via asyncpg
 - KimaHub config: [kimahub] section in zonik.toml with db_url field
-- Downloads page: "Active Transfers" panel polls slskd or native client status every 5s, shows per-file progress
+- Downloads page: Active Transfers driven by WebSocket (no polling), paginated Download History from /api/jobs with type filter, cancel transfer + retry failed jobs
+- Transfer model includes speed (bytes/sec) and eta_seconds properties; /api/jobs supports offset + type (comma-separated) params
+- /api/download/cancel-transfer marks transfer FAILED, removes it, broadcasts update
 - Native Soulseek client: persistent singleton in FastAPI lifespan, feature-flagged via `use_native` config toggle
 - Native Soulseek: protocol layer (struct.pack/unpack), server connection with auto-reconnect (exp backoff), peer connection racing (direct vs indirect), file transfer state machine, zlib-compressed search responses
 - Native Soulseek: `services/soulseek.py` is a facade — routes to native or slskd based on `use_native` flag, zero changes needed in download.py callers
@@ -139,7 +142,7 @@ docs/                  # Installation, configuration, API reference, development
 - SPA: `adapter-static` with `fallback: 'index.html'`; backend has catch-all route
 - Production URL: `http://10.0.0.205:3000` (CT 228)
 - Svelte 5 deprecation warnings (on:click → onclick) are harmless, builds succeed
-- `stores.js` exports: sidebarOpen, currentTrack, isPlaying, activeJobs, toasts, updateAvailable, addToast, showShortcuts
+- `stores.js` exports: sidebarOpen, currentTrack, isPlaying, activeJobs, activeTransfers, toasts, updateAvailable, addToast, showShortcuts
 - CSS variable-based design system in `app.css` (layered backgrounds: --bg-primary/#0a0a0a → --bg-secondary → --bg-tertiary → --bg-hover)
 - Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, schedule=orange, logs=violet, settings=slate)
 - Inter font via Google Fonts CDN; lucide-svelte icons throughout (tree-shakeable SVG icons)

@@ -133,25 +133,17 @@ The frontend uses a CSS variable-based design system defined in `frontend/src/ap
 
 ## WebSocket Real-Time Updates
 
-The WebSocket connection (`/api/ws`) provides real-time job progress updates:
+The WebSocket connection (`/api/ws`) provides real-time updates:
 
 - Connected in `+layout.svelte` on mount
-- `broadcast_job_update()` is called in `download.py`, `library.py`, and `analysis.py` for downloads, scans, analysis, embeddings, and enrichment
-- Active jobs are tracked in `stores.js` via the `activeJobs` store
-- Sidebar footer shows a spinning loader with active job count (clickable, links to /logs)
+- **Job updates**: `broadcast_job_update()` called in `download.py`, `library.py`, `analysis.py`. Tracked in `activeJobs` store
+- **Transfer progress**: `broadcast_transfer_progress()` called from native Soulseek client (500ms throttle). Tracked in `activeTransfers` store
+- On connect: server sends current active jobs + current transfers
+- Sidebar footer: spinning loader for active jobs (links to /logs), mini progress bar for active transfers (links to /downloads)
 - Library scan broadcasts progress every 50 files; job result stored as JSON
 - **Important**: Use `_clients.difference_update()` not `_clients -=` in websocket.py (augmented assignment creates local variable scope issue)
 
-Message format:
-```json
-{
-  "id": "job-uuid",
-  "type": "download",
-  "status": "running",
-  "progress": 3,
-  "total": 10
-}
-```
+Message types: `job_update`, `transfer_progress`, `log_entry`, `ping`
 
 ## Key Patterns
 

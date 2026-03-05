@@ -123,6 +123,7 @@ Base URL: `/api`
 | `/api/download/trigger` | POST | Download track `{artist, track, username?, filename?}` |
 | `/api/download/bulk` | POST | Bulk download `{tracks: [{artist, track}]}` |
 | `/api/download/status` | GET | Download status (native transfers or slskd) |
+| `/api/download/cancel-transfer` | POST | Cancel active transfer `{username, filename}` |
 | `/api/download/blacklist` | GET | List blacklisted items |
 | `/api/download/blacklist` | POST | Add to blacklist `{artist, track?, reason?}` |
 | `/api/download/blacklist/{id}` | DELETE | Remove from blacklist |
@@ -228,7 +229,7 @@ Available scheduled tasks:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/jobs/` | GET | Job history |
+| `/api/jobs/?offset=&limit=&type=` | GET | Job history (type accepts comma-separated, e.g. `download,bulk_download`) |
 | `/api/jobs/active` | GET | Currently running jobs |
 | `/api/jobs/stream/recent?limit=` | GET | Recent job updates for live display |
 | `/api/jobs/{id}` | GET | Job details (result, log, tracks) |
@@ -238,22 +239,34 @@ Available scheduled tasks:
 
 | Endpoint | Description |
 |----------|-------------|
-| `ws:///api/ws` | Real-time job progress updates |
+| `ws:///api/ws` | Real-time job progress + transfer updates |
 
-WebSocket messages use the following format:
+WebSocket message types:
 
+**Job updates** (`type: "job_update"`):
 ```json
 {
-  "id": "job-uuid",
-  "type": "download",
-  "status": "running",
-  "progress": 3,
-  "total": 10
+  "type": "job_update",
+  "job": { "id": "uuid", "type": "download", "status": "running", "progress": 3, "total": 10 }
 }
 ```
 
-- `type`: Job type (e.g. `download`, `scan`, `analysis`, `upgrade`)
-- `status`: One of `running`, `completed`, `failed`
-- `progress` / `total`: Numeric progress for bulk operations (e.g. 3 of 10 tracks downloaded)
+**Transfer progress** (`type: "transfer_progress"`):
+```json
+{
+  "type": "transfer_progress",
+  "transfers": [
+    {
+      "username": "peer", "filename": "path\\file.flac", "state": "transferring",
+      "total_bytes": 40000000, "received_bytes": 12000000, "progress": 30.0,
+      "speed": 524288, "eta_seconds": 53, "save_path": "/downloads/file.flac", "error": null
+    }
+  ]
+}
+```
+
+Transfer states: `requested`, `queued`, `connected`, `transferring`, `completed`, `failed`, `denied`
+
+On connect, server sends current active jobs + current transfers.
 
 **Download retry behavior**: When downloading via Soulseek, `search_and_download` tries up to 5 candidates (sorted by quality score) before marking the job as failed. Each candidate attempt uses the 4-strategy search fallback.
