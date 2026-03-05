@@ -205,6 +205,15 @@ async def start_enrichment(background_tasks: BackgroundTasks):
 
                     if (i + 1) % 5 == 0 or i + 1 == total:
                         await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": i + 1, "total": total})
+                        # Also update DB progress periodically (separate session)
+                        try:
+                            async with async_session() as prog_db:
+                                pjob = (await prog_db.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+                                if pjob:
+                                    pjob.progress = i + 1
+                                    await prog_db.commit()
+                        except Exception:
+                            pass
 
                     # Rate limit: 1.5 sec between tracks to respect MusicBrainz/Deezer limits
                     await asyncio.sleep(1.5)
