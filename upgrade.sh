@@ -53,9 +53,12 @@ asyncio.run(init_db())
 print('  Database up to date.')
 "
 
-echo "[5/5] Restarting services..."
-systemctl restart zonik-web zonik-worker
-
-echo ""
-echo "Zonik upgraded to v$NEW_VERSION"
-echo "Services restarted."
+if [ "${SKIP_RESTART:-0}" = "1" ]; then
+    echo "Skipping service restart (managed by web UI)."
+else
+    echo "[5/5] Restarting services..."
+    systemctl restart zonik-web zonik-worker
+    echo ""
+    echo "Zonik upgraded to v$NEW_VERSION"
+    echo "Services restarted."
+fi

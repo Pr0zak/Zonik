@@ -359,10 +359,15 @@ async def _run_upgrade(job_id: str):
     step = 0
 
     try:
+        # Run upgrade steps 1-4 (everything except service restart).
+        # We skip step 5 (systemctl restart) because it kills this process.
+        # Instead we mark the job completed and let the frontend reload.
         proc = await asyncio.create_subprocess_exec(
-            "bash", str(upgrade_script),
+            "bash", "-c",
+            f"export SKIP_RESTART=1; source {upgrade_script}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env={**__import__("os").environ, "SKIP_RESTART": "1"},
         )
 
         async for line_bytes in proc.stdout:
@@ -386,14 +391,30 @@ async def _run_upgrade(job_id: str):
 
         await proc.wait()
 
-        async with async_session() as session:
-            job = await session.get(Job, job_id)
-            if job:
-                job.status = "completed" if proc.returncode == 0 else "failed"
-                job.progress = 5 if proc.returncode == 0 else step
-                job.log = json.dumps(log_lines)
-                job.finished_at = datetime.now(timezone.utc)
-                await session.commit()
+        if proc.returncode == 0:
+            # Mark completed before restart
+            log_lines.append("[5/5] Restarting services...")
+            async with async_session() as session:
+                job = await session.get(Job, job_id)
+                if job:
+                    job.status = "completed"
+                    job.progress = 5
+                    job.log = json.dumps(log_lines)
+                    job.finished_at = datetime.now(timezone.utc)
+                    await session.commit()
+
+            # Now restart services — this will kill us, but the job is already saved
+            await asyncio.sleep(1)  # Give the DB write time to flush
+            asyncio.create_task(_restart_services())
+        else:
+            async with async_session() as session:
+                job = await session.get(Job, job_id)
+                if job:
+                    job.status = "failed"
+                    job.progress = step
+                    job.log = json.dumps(log_lines)
+                    job.finished_at = datetime.now(timezone.utc)
+                    await session.commit()
 
     except Exception as e:
         log_lines.append(f"Error: {e}")
@@ -404,6 +425,14 @@ async def _run_upgrade(job_id: str):
                 job.log = json.dumps(log_lines)
                 job.finished_at = datetime.now(timezone.utc)
                 await session.commit()
+
+
+async def _restart_services():
+    """Restart systemd services after a short delay."""
+    await asyncio.sleep(2)
+    await asyncio.create_subprocess_exec(
+        "systemctl", "restart", "zonik-web", "zonik-worker",
+    )
 
 
 @router.post("/upgrade")

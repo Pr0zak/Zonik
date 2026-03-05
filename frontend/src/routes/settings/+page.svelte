@@ -73,22 +73,42 @@
 
 	function pollUpgradeJob() {
 		if (!upgradeJobId) return;
+		let failCount = 0;
+		let sawCompleted = false;
 		const interval = setInterval(async () => {
 			try {
 				const data = await fetch(`/api/jobs/${upgradeJobId}`).then(r => r.json());
 				upgradeJob = data;
+				failCount = 0;
 				if (data.status === 'completed' || data.status === 'failed') {
 					clearInterval(interval);
 					upgrading = false;
 					if (data.status === 'completed') {
+						sawCompleted = true;
 						addToast('Upgrade completed! Reloading...', 'success');
-						setTimeout(() => window.location.reload(), 3000);
+						setTimeout(() => window.location.reload(), 5000);
 					} else {
 						addToast('Upgrade failed. Check log for details.', 'error');
 					}
 				}
 			} catch {
-				// Server may be restarting
+				failCount++;
+				// Server is restarting after upgrade — wait for it to come back
+				if (failCount > 3) {
+					clearInterval(interval);
+					upgrading = false;
+					addToast('Server is restarting after upgrade...', 'success');
+					// Poll until server is back, then reload
+					const reloadCheck = setInterval(async () => {
+						try {
+							await fetch('/api/config/version');
+							clearInterval(reloadCheck);
+							window.location.reload();
+						} catch {
+							// still restarting
+						}
+					}, 3000);
+				}
 			}
 		}, 2000);
 	}
