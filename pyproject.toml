@@ -32,8 +32,11 @@ clap = [
     "transformers>=4.40.0",
     "torch>=2.0.0",
 ]
+kimahub = [
+    "asyncpg>=0.29.0",
+]
 all = [
-    "zonik[analysis,clap]",
+    "zonik[analysis,clap,kimahub]",
 ]
 
 [build-system]

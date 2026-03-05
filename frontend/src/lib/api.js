@@ -41,8 +41,10 @@ export const api = {
 
 	// Favorites
 	getFavorites: () => request('/favorites'),
+	getFavoriteIds: () => request('/favorites/ids'),
 	star: (data) => request('/favorites/star', { method: 'POST', body: JSON.stringify(data) }),
 	unstar: (data) => request('/favorites/unstar', { method: 'POST', body: JSON.stringify(data) }),
+	importFavorites: (tracks) => request('/favorites/import', { method: 'POST', body: JSON.stringify({ tracks }) }),
 
 	// Playlists
 	getPlaylists: () => request('/playlists'),

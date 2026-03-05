@@ -76,6 +76,10 @@ async def run_task(task_name: str, db: AsyncSession):
                     await db.merge(TrackAnalysis(track_id=track_id, **analysis))
             await db.commit()
 
+        elif task_name == "kimahub_favorites_sync":
+            result = await _run_kimahub_favorites_sync(db)
+            job.result = json.dumps(result)
+
         elif task_name == "library_cleanup":
             job.result = json.dumps({"status": "cleanup_placeholder"})
 
@@ -168,6 +172,74 @@ async def _run_auto_playlist(db: AsyncSession, name: str, source: str):
     for i, tid in enumerate(track_ids):
         db.add(PlaylistTrack(id=str(uuid.uuid4()), playlist_id=playlist.id, track_id=tid, position=i))
     await db.commit()
+
+
+async def _run_kimahub_favorites_sync(db: AsyncSession) -> dict:
+    """Sync liked tracks from KimaHub PostgreSQL into Zonik favorites."""
+    import hashlib
+
+    from backend.config import get_settings
+
+    kimahub_db_url = get_settings().kimahub.db_url
+    if not kimahub_db_url:
+        return {"error": "kimahub_db_url not configured in zonik.toml"}
+
+    try:
+        import asyncpg
+    except ImportError:
+        # Fallback to sync psycopg2
+        pass
+
+    imported = 0
+    skipped = 0
+    not_found = 0
+
+    try:
+        conn = await asyncpg.connect(kimahub_db_url)
+        rows = await conn.fetch("""
+            SELECT t."filePath", t.title, a.name as artist
+            FROM "LikedTrack" lt
+            JOIN "Track" t ON t.id = lt."trackId"
+            JOIN "Album" al ON al.id = t."albumId"
+            JOIN "Artist" a ON a.id = al."artistId"
+        """)
+        await conn.close()
+    except Exception as e:
+        return {"error": f"Failed to connect to KimaHub DB: {str(e)}"}
+
+    for row in rows:
+        file_path = row["filePath"]
+        # Generate Zonik track ID from file path
+        track_id = hashlib.md5(file_path.encode()).hexdigest()
+        track = await db.get(Track, track_id)
+
+        if not track:
+            not_found += 1
+            continue
+
+        # Check if already favorited
+        existing = (await db.execute(
+            select(Favorite).where(
+                Favorite.user_id == "admin",
+                Favorite.track_id == track.id,
+            )
+        )).scalar_one_or_none()
+
+        if existing:
+            skipped += 1
+            continue
+
+        fav = Favorite(
+            id=str(uuid.uuid4()),
+            user_id="admin",
+            track_id=track.id,
+            starred_at=datetime.utcnow(),
+        )
+        db.add(fav)
+        imported += 1
+
+    await db.commit()
+    return {"imported": imported, "skipped": skipped, "not_found": not_found, "total": len(rows)}
 
 
 async def _run_favorites_playlist(db: AsyncSession):

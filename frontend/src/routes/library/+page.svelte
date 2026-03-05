@@ -5,7 +5,7 @@
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
-		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare
+		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -60,6 +60,41 @@
 	let selectMode = $state(false);
 	let selected = $state(new Set());
 
+	// Favorites
+	let favTrackIds = $state(new Set());
+	let favAlbumIds = $state(new Set());
+	let favArtistIds = $state(new Set());
+
+	async function loadFavoriteIds() {
+		try {
+			const ids = await api.getFavoriteIds();
+			favTrackIds = new Set(ids.track_ids);
+			favAlbumIds = new Set(ids.album_ids);
+			favArtistIds = new Set(ids.artist_ids);
+		} catch {}
+	}
+
+	async function toggleFav(type, id, e) {
+		e?.stopPropagation();
+		const setMap = { track: favTrackIds, album: favAlbumIds, artist: favArtistIds };
+		const keyMap = { track: 'track_id', album: 'album_id', artist: 'artist_id' };
+		const s = setMap[type];
+		const isFav = s.has(id);
+		try {
+			if (isFav) {
+				await api.unstar({ [keyMap[type]]: id });
+				s.delete(id);
+			} else {
+				await api.star({ [keyMap[type]]: id });
+				s.add(id);
+			}
+			// Trigger reactivity
+			if (type === 'track') favTrackIds = new Set(favTrackIds);
+			else if (type === 'album') favAlbumIds = new Set(favAlbumIds);
+			else favArtistIds = new Set(favArtistIds);
+		} catch { addToast('Failed to update favorite', 'error'); }
+	}
+
 	// Similar tracks modal
 	let showSimilar = $state(false);
 	let similarSource = $state(null);
@@ -101,7 +136,7 @@
 	}
 
 	onMount(async () => {
-		await loadData();
+		await Promise.all([loadData(), loadFavoriteIds()]);
 		try {
 			const active = await api.getActiveJobs();
 			if (active.some(j => j.type === 'library_scan')) scanTriggered = true;
@@ -376,7 +411,13 @@
 									</div>
 								{/if}
 							</div>
-							<p class="text-sm font-medium text-[var(--text-primary)] truncate">{track.title}</p>
+							<div class="flex items-center justify-between">
+								<p class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">{track.title}</p>
+								<button onclick={(e) => toggleFav('track', track.id, e)}
+									class="p-0.5 flex-shrink-0 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+									<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
+								</button>
+							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}</p>
 						</button>
 					{/each}
@@ -398,6 +439,7 @@
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Artist</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16">Time</th>
+								<th class="px-3 py-2.5 w-10"></th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-[var(--border-subtle)]">
@@ -426,6 +468,12 @@
 									<td class="px-3 py-2 text-[var(--text-secondary)] hidden md:table-cell truncate max-w-[200px]">{track.artist || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] hidden lg:table-cell truncate max-w-[200px]">{track.album || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{formatDuration(track.duration)}</td>
+									<td class="px-3 py-2 w-10">
+										<button onclick={(e) => toggleFav('track', track.id, e)}
+											class="p-1 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+											<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
+										</button>
+									</td>
 								</tr>
 							{/each}
 						</tbody>
@@ -539,7 +587,13 @@
 									</div>
 								{/if}
 							</div>
-							<p class="text-sm font-medium text-[var(--text-primary)] truncate">{artist.name}</p>
+							<div class="flex items-center justify-center gap-1">
+								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{artist.name}</p>
+								<button onclick={(e) => toggleFav('artist', artist.id, e)}
+									class="p-0.5 flex-shrink-0 transition-colors {favArtistIds.has(artist.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+									<Heart class="w-3 h-3" fill={favArtistIds.has(artist.id) ? 'currentColor' : 'none'} />
+								</button>
+							</div>
 							<p class="text-xs text-[var(--text-muted)]">{artist.track_count} track{artist.track_count !== 1 ? 's' : ''}</p>
 						</button>
 					{/each}
@@ -548,19 +602,25 @@
 				<Card padding="p-0">
 					<div class="divide-y divide-[var(--border-subtle)]">
 						{#each artists as artist}
-							<button class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors text-left" onclick={() => openArtist(artist)}>
-								<div class="w-10 h-10 rounded-full bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
-									{#if coverUrl(artist.cover_art)}
-										<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-									{:else}
-										<div class="flex items-center justify-center w-full h-full"><Users class="w-4 h-4 text-[var(--text-disabled)]" /></div>
-									{/if}
-								</div>
-								<div class="flex-1 min-w-0">
-									<p class="text-sm font-medium text-[var(--text-primary)]">{artist.name}</p>
-								</div>
-								<span class="text-xs text-[var(--text-muted)] font-mono">{artist.track_count} tracks</span>
-							</button>
+							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors">
+								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => openArtist(artist)}>
+									<div class="w-10 h-10 rounded-full bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+										{#if coverUrl(artist.cover_art)}
+											<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
+										{:else}
+											<div class="flex items-center justify-center w-full h-full"><Users class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+										{/if}
+									</div>
+									<div class="flex-1 min-w-0">
+										<p class="text-sm font-medium text-[var(--text-primary)]">{artist.name}</p>
+									</div>
+									<span class="text-xs text-[var(--text-muted)] font-mono">{artist.track_count} tracks</span>
+								</button>
+								<button onclick={(e) => toggleFav('artist', artist.id, e)}
+									class="p-1 flex-shrink-0 transition-colors {favArtistIds.has(artist.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+									<Heart class="w-3.5 h-3.5" fill={favArtistIds.has(artist.id) ? 'currentColor' : 'none'} />
+								</button>
+							</div>
 						{/each}
 					</div>
 				</Card>
@@ -607,7 +667,13 @@
 									</div>
 								{/if}
 							</div>
-							<p class="text-sm font-medium text-[var(--text-primary)] truncate">{album.title}</p>
+							<div class="flex items-center justify-between">
+								<p class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">{album.title}</p>
+								<button onclick={(e) => toggleFav('album', album.id, e)}
+									class="p-0.5 flex-shrink-0 transition-colors {favAlbumIds.has(album.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+									<Heart class="w-3.5 h-3.5" fill={favAlbumIds.has(album.id) ? 'currentColor' : 'none'} />
+								</button>
+							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{album.artist || 'Various'} &middot; {album.track_count} tracks</p>
 						</button>
 					{/each}
@@ -616,23 +682,29 @@
 				<Card padding="p-0">
 					<div class="divide-y divide-[var(--border-subtle)]">
 						{#each albums as album}
-							<button class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors text-left" onclick={() => openAlbum(album)}>
-								<div class="w-10 h-10 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
-									{#if coverUrl(album.cover_art)}
-										<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-									{:else}
-										<div class="flex items-center justify-center w-full h-full"><Disc3 class="w-4 h-4 text-[var(--text-disabled)]" /></div>
-									{/if}
-								</div>
-								<div class="flex-1 min-w-0">
-									<p class="text-sm font-medium text-[var(--text-primary)] truncate">{album.title}</p>
-									<p class="text-xs text-[var(--text-muted)] truncate">{album.artist || 'Various'}</p>
-								</div>
-								<div class="text-right flex-shrink-0">
-									{#if album.year}<span class="text-xs text-[var(--text-muted)] font-mono">{album.year}</span>{/if}
-									<p class="text-xs text-[var(--text-disabled)]">{album.track_count} tracks</p>
-								</div>
-							</button>
+							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors">
+								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => openAlbum(album)}>
+									<div class="w-10 h-10 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+										{#if coverUrl(album.cover_art)}
+											<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
+										{:else}
+											<div class="flex items-center justify-center w-full h-full"><Disc3 class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+										{/if}
+									</div>
+									<div class="flex-1 min-w-0">
+										<p class="text-sm font-medium text-[var(--text-primary)] truncate">{album.title}</p>
+										<p class="text-xs text-[var(--text-muted)] truncate">{album.artist || 'Various'}</p>
+									</div>
+									<div class="text-right flex-shrink-0">
+										{#if album.year}<span class="text-xs text-[var(--text-muted)] font-mono">{album.year}</span>{/if}
+										<p class="text-xs text-[var(--text-disabled)]">{album.track_count} tracks</p>
+									</div>
+								</button>
+								<button onclick={(e) => toggleFav('album', album.id, e)}
+									class="p-1 flex-shrink-0 transition-colors {favAlbumIds.has(album.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+									<Heart class="w-3.5 h-3.5" fill={favAlbumIds.has(album.id) ? 'currentColor' : 'none'} />
+								</button>
+							</div>
 						{/each}
 					</div>
 				</Card>

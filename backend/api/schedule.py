@@ -27,6 +27,7 @@ DEFAULT_TASKS = [
     {"task_name": "playlist_favorites", "interval_hours": 24, "run_at": "01:00"},
     {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
     {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
+    {"task_name": "kimahub_favorites_sync", "interval_hours": 6, "run_at": "00:00"},
 ]
 
 TASK_LABELS = {
@@ -41,6 +42,7 @@ TASK_LABELS = {
     "playlist_favorites": "Favorites Playlist",
     "audio_analysis": "Audio Analysis",
     "library_cleanup": "Library Cleanup",
+    "kimahub_favorites_sync": "KimaHub Favorites Sync",
 }
 
 

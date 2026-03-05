@@ -40,3 +40,6 @@ max_analysis_workers = 2
 
 [subsonic]
 server_name = "Zonik"
+
+[kimahub]
+db_url = ""  # postgresql://kima:pass@host:5432/kima
