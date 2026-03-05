@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session
@@ -43,20 +43,21 @@ def _job_description(j: Job) -> str:
 
 
 @router.get("")
-async def list_jobs(limit: int = 50, offset: int = 0, type: str | None = None, status: str | None = None, db: AsyncSession = Depends(get_db)):
-    query = select(Job)
+async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, status: str | None = None, db: AsyncSession = Depends(get_db)):
+    base = select(Job)
     if type:
         type_list = [t.strip() for t in type.split(",") if t.strip()]
         if type_list:
-            query = query.where(Job.type.in_(type_list))
+            base = base.where(Job.type.in_(type_list))
     if status:
         status_list = [s.strip() for s in status.split(",") if s.strip()]
         if status_list:
-            query = query.where(Job.status.in_(status_list))
-    query = query.order_by(Job.started_at.desc()).offset(offset).limit(limit)
+            base = base.where(Job.status.in_(status_list))
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar()
+    query = base.order_by(Job.started_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     jobs = result.scalars().all()
-    return [
+    items = [
         {
             "id": j.id,
             "type": j.type,
@@ -70,6 +71,7 @@ async def list_jobs(limit: int = 50, offset: int = 0, type: str | None = None, s
         }
         for j in jobs
     ]
+    return {"items": items, "total": total}
 
 
 @router.get("/active")

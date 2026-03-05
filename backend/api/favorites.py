@@ -38,7 +38,7 @@ class StarRequest(BaseModel):
 async def list_favorites(
     user_id: str = "admin",
     offset: int = 0,
-    limit: int = 50,
+    limit: int = 25,
     db: AsyncSession = Depends(get_db),
 ):
     user_id = await _resolve_user_id(user_id, db)

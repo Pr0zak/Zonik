@@ -14,7 +14,7 @@
 	let favorites = $state([]);
 	let total = $state(0);
 	let offset = $state(0);
-	let limit = $state(50);
+	let limit = $state(25);
 	const limitOptions = [25, 50, 100, 200];
 	let loading = $state(true);
 	let showImport = $state(false);

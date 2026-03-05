@@ -41,7 +41,7 @@ export const api = {
 	},
 
 	// Favorites
-	getFavorites: (offset = 0, limit = 50) => request(`/favorites?offset=${offset}&limit=${limit}`),
+	getFavorites: (offset = 0, limit = 25) => request(`/favorites?offset=${offset}&limit=${limit}`),
 	getFavoriteIds: () => request('/favorites/ids'),
 	star: (data) => request('/favorites/star', { method: 'POST', body: JSON.stringify(data) }),
 	unstar: (data) => request('/favorites/unstar', { method: 'POST', body: JSON.stringify(data) }),
@@ -55,7 +55,7 @@ export const api = {
 	deletePlaylist: (id) => request(`/playlists/${id}`, { method: 'DELETE' }),
 
 	// Jobs
-	getJobs: (params = {}) => {
+	getJobs: async (params = {}) => {
 		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
 		const qs = new URLSearchParams(clean).toString();
 		return request(`/jobs?${qs}`);

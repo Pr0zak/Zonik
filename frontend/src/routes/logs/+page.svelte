@@ -1,7 +1,7 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { ScrollText, ChevronDown, ChevronRight, RotateCcw, XCircle } from 'lucide-svelte';
+	import { ScrollText, ChevronDown, ChevronRight, ChevronLeft, RotateCcw, XCircle } from 'lucide-svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -11,6 +11,9 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 
 	let jobs = $state([]);
+	let total = $state(0);
+	let offset = $state(0);
+	let limit = $state(25);
 	let loading = $state(true);
 	let expandedJob = $state(null);
 	let jobDetail = $state(null);
@@ -18,6 +21,7 @@
 	let categoryFilter = $state('all');
 	let unsubJobs;
 	let refreshInterval;
+	const limitOptions = [25, 50, 100, 200];
 
 	const categories = [
 		{ key: 'all', label: 'All' },
@@ -28,23 +32,24 @@
 		{ key: 'playlists', label: 'Playlists', types: ['playlist_weekly_top', 'playlist_weekly_discover', 'playlist_favorites'] },
 	];
 
-	let filteredJobs = $derived(
-		categoryFilter === 'all'
-			? jobs
-			: jobs.filter(j => {
-				const cat = categories.find(c => c.key === categoryFilter);
-				return cat?.types?.includes(j.type);
-			})
-	);
-
-	onMount(async () => {
+	async function loadJobs() {
+		loading = true;
 		try {
-			jobs = await api.getJobs({ limit: 200 });
+			const params = { limit, offset };
+			const cat = categories.find(c => c.key === categoryFilter);
+			if (cat?.types) params.type = cat.types.join(',');
+			const data = await api.getJobs(params);
+			jobs = data.items || data;
+			total = data.total ?? jobs.length;
 		} catch (e) {
 			console.error('Failed to load jobs:', e);
 		} finally {
 			loading = false;
 		}
+	}
+
+	onMount(async () => {
+		await loadJobs();
 
 		unsubJobs = activeJobs.subscribe(active => {
 			if (!active.length) return;
@@ -52,19 +57,27 @@
 				const idx = jobs.findIndex(j => j.id === aj.id);
 				if (idx >= 0) {
 					jobs[idx] = { ...jobs[idx], ...aj };
-				} else {
+				} else if (offset === 0) {
 					jobs = [{ ...aj, started_at: new Date().toISOString() }, ...jobs];
 				}
 			}
 		});
 
 		refreshInterval = setInterval(async () => {
-			try {
-				const newJobs = await api.getJobs({ limit: 200 });
-				if (JSON.stringify(newJobs.map(j => j.id + j.status)) !== JSON.stringify(jobs.map(j => j.id + j.status))) {
-					jobs = newJobs;
-				}
-			} catch {}
+			if (offset === 0) {
+				try {
+					const params = { limit, offset: 0 };
+					const cat = categories.find(c => c.key === categoryFilter);
+					if (cat?.types) params.type = cat.types.join(',');
+					const data = await api.getJobs(params);
+					const newJobs = data.items || data;
+					const newTotal = data.total ?? newJobs.length;
+					if (JSON.stringify(newJobs.map(j => j.id + j.status)) !== JSON.stringify(jobs.map(j => j.id + j.status))) {
+						jobs = newJobs;
+						total = newTotal;
+					}
+				} catch {}
+			}
 		}, 30000);
 	});
 
@@ -72,6 +85,24 @@
 		if (unsubJobs) unsubJobs();
 		if (refreshInterval) clearInterval(refreshInterval);
 	});
+
+	function changeCategory(key) {
+		categoryFilter = key;
+		offset = 0;
+		loadJobs();
+	}
+
+	function prevPage() {
+		offset = Math.max(0, offset - limit);
+		loadJobs();
+	}
+
+	function nextPage() {
+		if (offset + limit < total) {
+			offset += limit;
+			loadJobs();
+		}
+	}
 
 	async function toggleExpand(job) {
 		if (expandedJob === job.id) {
@@ -94,7 +125,7 @@
 				addToast(result.error, 'error');
 			} else {
 				addToast('Job cancelled', 'success');
-				jobs = await api.getJobs();
+				await loadJobs();
 			}
 		} catch (e) { addToast('Failed to cancel', 'error'); }
 	}
@@ -109,7 +140,7 @@
 				addToast('Retry job started', 'success');
 				expandedJob = null;
 				jobDetail = null;
-				jobs = await api.getJobs();
+				await loadJobs();
 			}
 		} catch (e) {
 			addToast('Failed to retry job', 'error');
@@ -148,23 +179,17 @@
 	</PageHeader>
 
 	<!-- Category filters -->
-	{#if jobs.length}
-		<div class="flex gap-1.5 mb-4 overflow-x-auto">
-			{#each categories as cat}
-				{@const count = cat.key === 'all' ? jobs.length : jobs.filter(j => cat.types?.includes(j.type)).length}
-				{#if cat.key === 'all' || count > 0}
-					<button onclick={() => categoryFilter = cat.key}
-						class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-							{categoryFilter === cat.key
-								? 'bg-[var(--color-logs)] text-white'
-								: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
-						{cat.label}
-						<span class="opacity-60">{count}</span>
-					</button>
-				{/if}
-			{/each}
-		</div>
-	{/if}
+	<div class="flex gap-1.5 mb-4 overflow-x-auto">
+		{#each categories as cat}
+			<button onclick={() => changeCategory(cat.key)}
+				class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
+					{categoryFilter === cat.key
+						? 'bg-[var(--color-logs)] text-white'
+						: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
+				{cat.label}
+			</button>
+		{/each}
+	</div>
 
 	<Card padding="p-0">
 		{#if loading}
@@ -179,7 +204,7 @@
 					</div>
 				{/each}
 			</div>
-		{:else if filteredJobs.length}
+		{:else if jobs.length}
 			<table class="w-full text-sm">
 				<thead>
 					<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
@@ -191,7 +216,7 @@
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-[var(--border-subtle)]">
-					{#each filteredJobs as job}
+					{#each jobs as job}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" onclick={() => toggleExpand(job)}>
 							<td class="px-4 py-3">
@@ -242,7 +267,6 @@
 							<tr>
 								<td colspan="5" class="px-4 py-3 bg-[var(--bg-tertiary)]">
 									<div class="space-y-2 text-xs animate-fade-slide-in">
-										<!-- Job summary -->
 										<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
 												<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Job ID</span>
@@ -331,4 +355,26 @@
 			</EmptyState>
 		{/if}
 	</Card>
+
+	<!-- Pagination -->
+	<div class="flex justify-center items-center gap-3 mt-4">
+		{#if total > limit}
+			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
+				<ChevronLeft class="w-4 h-4" /> Prev
+			</Button>
+			<span class="text-sm text-[var(--text-muted)] font-mono">
+				{offset + 1}-{Math.min(offset + limit, total)} of {total}
+			</span>
+			<Button variant="secondary" size="sm" disabled={offset + limit >= total} onclick={nextPage}>
+				Next <ChevronRight class="w-4 h-4" />
+			</Button>
+		{/if}
+		<select value={limit}
+			onchange={(e) => { limit = parseInt(e.target.value); offset = 0; loadJobs(); }}
+			class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
+			{#each limitOptions as opt}
+				<option value={opt} selected={opt === limit}>{opt} / page</option>
+			{/each}
+		</select>
+	</div>
 </div>

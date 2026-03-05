@@ -23,7 +23,7 @@
 	let detailLoading = $state(false);
 	let deleting = $state(false);
 	let trackOffset = $state(0);
-	let trackLimit = $state(50);
+	let trackLimit = $state(25);
 	const trackLimitOptions = [25, 50, 100, 200];
 
 	let showGenerator = $state(false);

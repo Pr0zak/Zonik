@@ -64,7 +64,8 @@
 	async function loadCachedResults(taskType, setter, limitSetter, lastScannedSetter) {
 		try {
 			const res = await fetch(`/api/jobs?type=${taskType}&limit=1`);
-			const jobs = await res.json();
+			const data = await res.json();
+			const jobs = data.items || data;
 			if (!jobs.length) return false;
 
 			const detail = await fetch(`/api/jobs/${jobs[0].id}`).then(r => r.json());

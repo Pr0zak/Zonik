@@ -38,7 +38,7 @@
 				api.getStats(),
 				fetch('/api/config/health').then(r => r.json()).catch(() => null),
 				fetch('/api/config/version').then(r => r.json()).catch(() => null),
-				fetch('/api/jobs?limit=50').then(r => r.json()).then(jobs => jobs.find(j => j.type === 'library_scan' && j.status === 'completed')).catch(() => null),
+				fetch('/api/jobs?limit=50').then(r => r.json()).then(data => (data.items || data).find(j => j.type === 'library_scan' && j.status === 'completed')).catch(() => null),
 			]);
 		} catch (e) {
 			console.error('Failed to load dashboard:', e);
