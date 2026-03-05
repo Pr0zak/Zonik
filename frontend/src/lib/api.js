@@ -18,7 +18,8 @@ export const api = {
 
 	// Tracks
 	getTracks: (params = {}) => {
-		const qs = new URLSearchParams(params).toString();
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
 		return request(`/tracks?${qs}`);
 	},
 	getTrack: (id) => request(`/tracks/${id}`),
