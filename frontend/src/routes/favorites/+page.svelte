@@ -56,6 +56,7 @@
 	}
 
 	async function unstar(fav) {
+		if (!window.confirm(`Remove "${fav.title || fav.name}" from favorites?`)) return;
 		try {
 			if (fav.track_id) await api.unstar({ track_id: fav.track_id });
 			else if (fav.album_id) await api.unstar({ album_id: fav.album_id });
