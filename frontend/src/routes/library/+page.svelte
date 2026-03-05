@@ -9,7 +9,7 @@
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock,
-		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle
+		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle, X
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -154,6 +154,69 @@
 			loadData();
 		} catch { addToast('Organize failed', 'error'); }
 		finally { cleanupExecuting = false; }
+	}
+
+	// Upgrade scanner state
+	let showUpgrades = $state(false);
+	let upgradeMode = $state('low_bitrate');
+	let upgradeMaxBitrate = $state(256);
+	let upgradeLimit = $state(100);
+	let upgradeLoading = $state(false);
+	let upgradeTracks = $state([]);
+	let upgradeSelected = $state(new Set());
+	let upgradeDownloading = $state(false);
+
+	const upgradeModes = [
+		{ value: 'low_bitrate', label: 'Low Bitrate', desc: 'Tracks below a bitrate threshold' },
+		{ value: 'lossy_to_lossless', label: 'Lossy → Lossless', desc: 'All MP3/AAC/OGG tracks (upgrade to FLAC)' },
+		{ value: 'all_lossy', label: 'All Lossy Formats', desc: 'Every non-lossless track in library' },
+	];
+
+	async function scanUpgrades() {
+		upgradeLoading = true;
+		upgradeTracks = [];
+		upgradeSelected = new Set();
+		try {
+			const res = await fetch('/api/library/upgrades/scan', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ mode: upgradeMode, max_bitrate: upgradeMaxBitrate, limit: upgradeLimit }),
+			});
+			const data = await res.json();
+			upgradeTracks = data.tracks || [];
+		} catch { addToast('Scan failed', 'error'); }
+		finally { upgradeLoading = false; }
+	}
+
+	function toggleUpgradeSelect(id) {
+		const s = new Set(upgradeSelected);
+		s.has(id) ? s.delete(id) : s.add(id);
+		upgradeSelected = s;
+	}
+
+	function selectAllUpgrades() {
+		if (upgradeSelected.size === upgradeTracks.length) {
+			upgradeSelected = new Set();
+		} else {
+			upgradeSelected = new Set(upgradeTracks.map(t => t.id));
+		}
+	}
+
+	async function downloadUpgrades() {
+		const tracks = upgradeTracks.filter(t => upgradeSelected.has(t.id));
+		if (!tracks.length) return;
+		upgradeDownloading = true;
+		try {
+			const res = await fetch('/api/download/bulk', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ tracks: tracks.map(t => ({ artist: t.artist, track: t.title })) }),
+			});
+			const data = await res.json();
+			addToast(`Upgrade download started (${tracks.length} tracks)`, 'success');
+			showUpgrades = false;
+		} catch { addToast('Download failed', 'error'); }
+		finally { upgradeDownloading = false; }
 	}
 
 	// Select mode (tracks only)
@@ -467,11 +530,122 @@
 
 <div class="max-w-7xl">
 	<PageHeader title="Library" color="var(--color-library)">
+		<Button variant="secondary" size="sm" onclick={() => { showUpgrades = !showUpgrades; if (showUpgrades && !upgradeTracks.length) scanUpgrades(); }}>
+			<Download class="w-3.5 h-3.5" />
+			Upgrade
+		</Button>
 		<Button variant="primary" size="sm" loading={scanning} onclick={scanLibrary}>
 			<ScanLine class="w-3.5 h-3.5" />
 			{scanning ? 'Scanning...' : 'Scan'}
 		</Button>
 	</PageHeader>
+
+	<!-- Upgrade Scanner -->
+	{#if showUpgrades}
+		<Card padding="p-4" class="mb-4">
+			<div class="flex items-center justify-between mb-3">
+				<h3 class="text-sm font-semibold text-[var(--text-primary)]">Find Upgradeable Tracks</h3>
+				<button onclick={() => showUpgrades = false} class="text-[var(--text-muted)] hover:text-[var(--text-primary)]">
+					<X class="w-4 h-4" />
+				</button>
+			</div>
+
+			<!-- Options -->
+			<div class="flex flex-wrap items-center gap-3 mb-3">
+				<div class="flex items-center gap-2">
+					<span class="text-xs text-[var(--text-muted)]">Mode:</span>
+					<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" bind:value={upgradeMode} onchange={scanUpgrades}>
+						{#each upgradeModes as m}
+							<option value={m.value}>{m.label}</option>
+						{/each}
+					</select>
+				</div>
+				{#if upgradeMode === 'low_bitrate'}
+					<div class="flex items-center gap-2">
+						<span class="text-xs text-[var(--text-muted)]">Below:</span>
+						<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" bind:value={upgradeMaxBitrate} onchange={scanUpgrades}>
+							<option value={128}>128 kbps</option>
+							<option value={192}>192 kbps</option>
+							<option value={256}>256 kbps</option>
+							<option value={320}>320 kbps</option>
+						</select>
+					</div>
+				{/if}
+				<div class="flex items-center gap-2">
+					<span class="text-xs text-[var(--text-muted)]">Limit:</span>
+					<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" bind:value={upgradeLimit} onchange={scanUpgrades}>
+						<option value={25}>25</option>
+						<option value={50}>50</option>
+						<option value={100}>100</option>
+						<option value={200}>200</option>
+					</select>
+				</div>
+				<Button variant="secondary" size="sm" loading={upgradeLoading} onclick={scanUpgrades}>
+					<Search class="w-3 h-3" /> Rescan
+				</Button>
+			</div>
+
+			<p class="text-xs text-[var(--text-muted)] mb-3">
+				{upgradeModes.find(m => m.value === upgradeMode)?.desc}
+			</p>
+
+			{#if upgradeLoading}
+				<div class="flex items-center gap-2 py-4 text-[var(--text-muted)]">
+					<Loader2 class="w-4 h-4 animate-spin" />
+					<span class="text-sm">Scanning library...</span>
+				</div>
+			{:else if upgradeTracks.length}
+				<div class="flex items-center justify-between mb-2">
+					<div class="flex items-center gap-2">
+						<button onclick={selectAllUpgrades} class="text-xs text-[var(--color-accent)] hover:underline">
+							{upgradeSelected.size === upgradeTracks.length ? 'Deselect All' : 'Select All'}
+						</button>
+						<span class="text-xs text-[var(--text-muted)]">{upgradeSelected.size} selected</span>
+					</div>
+					{#if upgradeSelected.size > 0}
+						<Button variant="primary" size="sm" loading={upgradeDownloading} onclick={downloadUpgrades}>
+							<Download class="w-3 h-3" /> Download {upgradeSelected.size} Upgrade{upgradeSelected.size !== 1 ? 's' : ''}
+						</Button>
+					{/if}
+				</div>
+				<div class="max-h-80 overflow-y-auto border border-[var(--border-primary)] rounded-lg">
+					<table class="w-full text-xs">
+						<thead class="bg-[var(--bg-tertiary)] sticky top-0">
+							<tr class="text-left text-[var(--text-muted)]">
+								<th class="p-2 w-8"></th>
+								<th class="p-2">Track</th>
+								<th class="p-2">Artist</th>
+								<th class="p-2 w-16">Format</th>
+								<th class="p-2 w-20">Bitrate</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-[var(--border-subtle)]">
+							{#each upgradeTracks as track}
+								<tr class="hover:bg-[var(--bg-hover)] cursor-pointer" onclick={() => toggleUpgradeSelect(track.id)}>
+									<td class="p-2">
+										<input type="checkbox" checked={upgradeSelected.has(track.id)}
+											class="rounded border-[var(--border-interactive)]" />
+									</td>
+									<td class="p-2 text-[var(--text-body)] truncate max-w-[200px]">{track.title}</td>
+									<td class="p-2 text-[var(--text-muted)] truncate max-w-[150px]">{track.artist}</td>
+									<td class="p-2">
+										<Badge variant={track.format === 'flac' || track.format === 'wav' ? 'success' : 'default'}>
+											{(track.format || '?').toUpperCase()}
+										</Badge>
+									</td>
+									<td class="p-2 text-[var(--text-muted)] font-mono">
+										{track.bitrate ? `${Math.round(track.bitrate / 1000)}k` : '—'}
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{:else}
+				<p class="text-sm text-emerald-400 py-2">No tracks found matching the upgrade criteria. Your library is already high quality!</p>
+			{/if}
+		</Card>
+	{/if}
 
 	<!-- Tabs -->
 	<div class="flex items-center gap-1 mb-4 border-b border-[var(--border-subtle)]">

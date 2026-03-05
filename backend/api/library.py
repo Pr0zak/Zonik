@@ -291,6 +291,70 @@ async def organize_files(
     return await execute_organize(db, move_ids)
 
 
+# --- Track Upgrade Scanner ---
+
+@router.post("/upgrades/scan")
+async def scan_upgradeable_tracks(
+    request: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Find tracks that could be upgraded to better quality.
+
+    Body options:
+      mode: 'lossy_to_lossless' | 'low_bitrate' | 'all_lossy'
+      max_bitrate: int (for low_bitrate mode, default 256)
+      limit: int (default 100)
+    """
+    from sqlalchemy.orm import selectinload
+
+    mode = (request or {}).get("mode", "low_bitrate")
+    max_bitrate = (request or {}).get("max_bitrate", 256)
+    limit_count = (request or {}).get("limit", 100)
+
+    query = select(Track).options(
+        selectinload(Track.artist), selectinload(Track.album)
+    )
+
+    lossy_formats = ["mp3", "m4a", "ogg", "opus", "aac", "wma"]
+
+    if mode == "lossy_to_lossless":
+        query = query.where(Track.format.in_(lossy_formats))
+    elif mode == "low_bitrate":
+        query = query.where(
+            (Track.bitrate.isnot(None)) & (Track.bitrate < max_bitrate * 1000)
+        )
+    elif mode == "all_lossy":
+        query = query.where(Track.format.in_(lossy_formats))
+    else:
+        query = query.where(
+            (Track.bitrate.isnot(None)) & (Track.bitrate < max_bitrate * 1000)
+        )
+
+    query = query.order_by(Track.bitrate.asc().nullslast()).limit(limit_count)
+    result = await db.execute(query)
+    tracks = result.scalars().all()
+
+    return {
+        "tracks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "artist": t.artist.name if t.artist else "Unknown",
+                "album": t.album.title if t.album else None,
+                "format": t.format,
+                "bitrate": t.bitrate,
+                "bit_depth": t.bit_depth,
+                "sample_rate": t.sample_rate,
+                "file_size": t.file_size,
+                "file_path": t.file_path,
+            }
+            for t in tracks
+        ],
+        "count": len(tracks),
+        "mode": mode,
+    }
+
+
 @router.get("/genres")
 async def list_genres(db: AsyncSession = Depends(get_db)):
     result = await db.execute(

@@ -207,7 +207,8 @@
 	async function loadJobs() {
 		jobsLoading = true;
 		try {
-			jobs = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
+			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
+			jobs = data.items || data;
 			for (const j of jobs) {
 				if ((j.status === 'running' || !jobDetails[j.id])) {
 					try {
