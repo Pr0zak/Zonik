@@ -6,6 +6,7 @@ secret_key = "change-me-to-a-random-string"
 [library]
 music_dir = "/music"
 cover_cache_dir = "/opt/zonik/cache/covers"
+naming_scheme = "{artist}/{album}/{track_number} - {title}"
 
 [database]
 path = "/opt/zonik/data/zonik.db"

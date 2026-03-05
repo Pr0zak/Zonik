@@ -88,7 +88,7 @@ docs/                  # Installation, configuration, API reference, development
 - Config: zonik.toml (gitignored), zonik.toml.example (committed with empty keys)
 - Service connections (slskd, Lidarr, Last.fm) configurable via web UI Settings page
 - Settings page: color-coded test buttons, per-field eye toggles for API keys
-- Download dir and cover cache dir also web-configurable
+- Download dir, cover cache dir, and file naming scheme are web-configurable
 - Installer (`create-ct.sh`) only asks for infrastructure — no API keys
 - SPA routing: catch-all route serves index.html for client-side SvelteKit routes
 - Web UI upgrade system: check GitHub for updates, run upgrade.sh as background Job with live progress
@@ -138,18 +138,22 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek downloads: split queue_timeout (120s, waiting for peer) vs stall_timeout (60s, no data during transfer)
 - Native Soulseek downloads: auto-fallback — when direct download fails, searches for up to 4 additional peers
 - Native Soulseek transfers: fuzzy filename matching in get_transfer (basename fallback for path separator differences)
-- Pagination: all lists default to 25 per page with per-page selector (25/50/100/200); Jobs API returns {items, total}
+- Pagination: library defaults to 24 per page (multiples of 12 for even grid rows: 24/48/96/192); other lists default 25/page (25/50/100/200); Jobs API returns {items, total}
 - Library cleanup tools: three separate operations (orphan removal, deduplication, file organization) each with preview/dry-run before execution
-- Cleanup service in backend/services/cleanup.py: find_orphaned_tracks, find_duplicates (quality scoring), preview_organize, execute_organize
+- Cleanup dedup: per-track checkboxes (select/deselect all), file sizes displayed, only selected tracks removed
+- Cleanup organize: per-track checkboxes (select/deselect all), only selected files moved; uses configurable naming scheme
+- Naming scheme: configurable in Settings under Library, template vars {artist}/{album}/{track_number}/{title}, default "{artist}/{album}/{track_number} - {title}"
+- Cleanup service in backend/services/cleanup.py: find_orphaned_tracks, find_duplicates (quality scoring + file_size), preview_organize, execute_organize, _build_target_path
 - Scheduled library_cleanup task runs orphan removal only (safe default); dedup and organize are manual-only via UI
 - Track upgrade scanner: POST /api/library/upgrades/scan with modes (low_bitrate, lossy_to_lossless, all_lossy), triggers bulk Soulseek download
-- ScheduleControl last-run display: relative time ("ran 2h ago") with full timestamp on hover, not ambiguous date format
+- ScheduleControl last-run display: relative time ("2h ago") shown after label (not end of line), full timestamp on hover, guards against negative time diff
 - Auto-run after scan: analysis/enrichment tasks can be auto-triggered after library scan via ScheduleTask.config JSON {auto_after_scan: true}
 - Auto-download: discover tasks can auto-download missing tracks via ScheduleTask.config JSON {auto_download: true}
 - Health check: disabled services return "warning" status which doesn't degrade overall status (only "error" degrades)
 - Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
 - Favorites paginated server-side: /api/favorites returns {items, total} with offset/limit
 - Upgrade restarts kill background tasks (enrichment, analysis); stuck "running" jobs must be manually set to "failed" in DB
+- Player bar: shows cover art (subsonic getCoverArt), track title + artist + album; progress bar uses $state + ontimeupdate for Svelte 5 reactivity
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)

@@ -16,6 +16,7 @@ secret_key = "change-me"   # Session secret (generate a random string)
 [library]
 music_dir = "/music"                    # Root music directory
 cover_cache_dir = "/opt/zonik/cache/covers"  # Extracted cover art cache
+naming_scheme = "{artist}/{album}/{track_number} - {title}"  # File naming template for Rename & Sort
 
 [database]
 path = "/opt/zonik/data/zonik.db"       # SQLite database path
@@ -64,6 +65,37 @@ server_name = "Zonik"       # Server name reported to clients
 Service connections (Soulseek, Lidarr, Last.fm) can be configured from the web UI at **Settings > Service Connections**. Changes are saved directly to `zonik.toml`.
 
 You can also edit `zonik.toml` directly if you prefer.
+
+## File Naming Scheme
+
+The `naming_scheme` setting controls how the **Rename & Sort** cleanup tool organizes files. Available template variables:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `{artist}` | Artist name | `Pink Floyd` |
+| `{album}` | Album title | `The Wall` |
+| `{track_number}` | Zero-padded track number | `01` |
+| `{title}` | Track title | `Comfortably Numb` |
+
+**Examples:**
+
+```toml
+# Default: Artist/Album/01 - Title.flac
+naming_scheme = "{artist}/{album}/{track_number} - {title}"
+
+# Flat by artist: Artist - Title.flac
+naming_scheme = "{artist} - {title}"
+
+# Artist folders only: Artist/Title.flac
+naming_scheme = "{artist}/{title}"
+
+# No track number: Artist/Album/Title.flac
+naming_scheme = "{artist}/{album}/{title}"
+```
+
+The file extension is appended automatically. Special characters in names are sanitized. If `{track_number}` is missing from the track metadata, it is omitted gracefully.
+
+This can also be configured from the web UI at **Settings > Library > File Naming Scheme**.
 
 ## Soulseek Download Client
 
