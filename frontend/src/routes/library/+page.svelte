@@ -5,7 +5,8 @@
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
-		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart
+		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
+		MoreVertical, Pencil, AudioWaveform
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -101,6 +102,29 @@
 	let similarTracks = $state([]);
 	let similarLoading = $state(false);
 	let similarTab = $state('lastfm');
+
+	// Track action menu
+	let menuTrack = $state(null);
+	let menuPos = $state({ x: 0, y: 0 });
+
+	function openMenu(track, e) {
+		e.stopPropagation();
+		const rect = e.currentTarget.getBoundingClientRect();
+		menuPos = { x: rect.left, y: rect.bottom + 4 };
+		menuTrack = track;
+	}
+
+	function closeMenu() { menuTrack = null; }
+
+	async function deleteTrack(track) {
+		closeMenu();
+		if (!window.confirm(`Delete "${track.title}"? This cannot be undone.`)) return;
+		try {
+			await api.deleteTrack(track.id);
+			addToast(`Deleted: ${track.title}`, 'success');
+			await loadData();
+		} catch (e) { addToast('Delete failed: ' + e.message, 'error'); }
+	}
 
 	// Artist detail overlay
 	let selectedArtist = $state(null);
@@ -412,11 +436,15 @@
 									{/if}
 								</div>
 							</button>
-							<div class="flex items-center justify-between">
+							<div class="flex items-center justify-between gap-1">
 								<p class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">{track.title}</p>
 								<button onclick={(e) => toggleFav('track', track.id, e)}
 									class="p-0.5 flex-shrink-0 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
 									<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
+								</button>
+								<button onclick={(e) => openMenu(track, e)}
+									class="p-0.5 flex-shrink-0 text-[var(--text-disabled)] hover:text-[var(--text-primary)] transition-colors">
+									<MoreVertical class="w-3.5 h-3.5" />
 								</button>
 							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}</p>
@@ -469,11 +497,17 @@
 									<td class="px-3 py-2 text-[var(--text-secondary)] hidden md:table-cell truncate max-w-[200px]">{track.artist || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] hidden lg:table-cell truncate max-w-[200px]">{track.album || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{formatDuration(track.duration)}</td>
-									<td class="px-3 py-2 w-10">
-										<button onclick={(e) => toggleFav('track', track.id, e)}
-											class="p-1 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
-											<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
-										</button>
+									<td class="px-3 py-2 w-20">
+										<div class="flex items-center gap-0.5">
+											<button onclick={(e) => toggleFav('track', track.id, e)}
+												class="p-1 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+												<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
+											</button>
+											<button onclick={(e) => openMenu(track, e)}
+												class="p-1 text-[var(--text-disabled)] hover:text-[var(--text-primary)] transition-colors">
+												<MoreVertical class="w-3.5 h-3.5" />
+											</button>
+										</div>
 									</td>
 								</tr>
 							{/each}
@@ -736,6 +770,31 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Track Action Menu -->
+{#if menuTrack}
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class="fixed inset-0 z-40" onclick={closeMenu}></div>
+	<div class="fixed z-50 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1 min-w-[160px]"
+		style="left: {Math.min(menuPos.x, window.innerWidth - 180)}px; top: {Math.min(menuPos.y, window.innerHeight - 200)}px">
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => { const t = menuTrack; closeMenu(); findSimilar(t, new Event('click')); }}>
+			<AudioWaveform class="w-3.5 h-3.5 text-purple-400" /> Find Similar
+		</button>
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => { toggleFav('track', menuTrack.id); closeMenu(); }}>
+			<Heart class="w-3.5 h-3.5 {favTrackIds.has(menuTrack.id) ? 'text-red-400' : ''}"
+				fill={favTrackIds.has(menuTrack.id) ? 'currentColor' : 'none'} />
+			{favTrackIds.has(menuTrack.id) ? 'Unfavorite' : 'Favorite'}
+		</button>
+		<div class="border-t border-[var(--border-subtle)] my-1"></div>
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => deleteTrack(menuTrack)}>
+			<Trash2 class="w-3.5 h-3.5" /> Delete Track
+		</button>
+	</div>
+{/if}
 
 <!-- Similar Tracks Modal -->
 <Modal bind:open={showSimilar} title="Find Similar">
