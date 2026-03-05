@@ -14,7 +14,7 @@ from backend.database import get_db, async_session
 from backend.models.job import Job
 from backend.models.blacklist import DownloadBlacklist
 from backend.services.soulseek import (
-    search_multi_strategy, get_slskd_client, pick_best_results, normalize_text,
+    search_multi_strategy, pick_best_results, normalize_text,
 )
 from backend.api.websocket import broadcast_job_update
 
@@ -84,6 +84,8 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
     async def do_download():
         import asyncio
+        from backend.soulseek import get_client
+        from backend.soulseek.protocol.types import TransferState
         async with async_session() as db:
             job = Job(
                 id=job_id, type="download", card="dl", status="running",
@@ -96,10 +98,12 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
             try:
-                client = get_slskd_client()
+                native_client = get_client()
 
-                if req.username and req.filename:
-                    result = await client.download(req.username, req.filename)
+                if req.username and req.filename and native_client:
+                    # Direct download via native client
+                    transfer = await native_client.download(req.username, req.filename)
+                    result = {"status": "downloading", "username": req.username, "filename": req.filename, "size": transfer.total_bytes}
                     dl_username = req.username
                     dl_filename = req.filename
                 else:
@@ -127,7 +131,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                     await db.commit()
                     await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — from {dl_username}"})
 
-                    # Poll slskd transfer status until complete or timeout (5 min)
+                    # Poll native transfer status until complete or timeout (5 min)
                     final_status = "completed"
                     for _ in range(60):
                         await asyncio.sleep(5)
@@ -136,21 +140,25 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         if job.status == "failed":
                             final_status = "failed"
                             break
-                        transfer = await client.get_download_status(dl_username, dl_filename)
-                        if not transfer:
+
+                        if native_client:
+                            transfer = native_client.transfers.get_transfer(dl_username, dl_filename)
+                            if not transfer:
+                                continue
+                            state = transfer.state
+                            if state == TransferState.COMPLETED:
+                                final_status = "completed"
+                                detail["save_path"] = transfer.save_path
+                                break
+                            elif state in (TransferState.FAILED, TransferState.DENIED):
+                                final_status = "failed"
+                                detail["transfer_error"] = transfer.error or state
+                                break
+                        else:
                             continue
-                        state = transfer.get("state", "")
-                        if state in ("Completed", "Succeeded"):
-                            final_status = "completed"
-                            break
-                        elif state in ("Errored", "Cancelled", "Rejected", "TimedOut"):
-                            final_status = "failed"
-                            detail["transfer_error"] = state
-                            break
                     else:
-                        # Timeout — mark as completed (file may still be transferring in slskd)
                         final_status = "completed"
-                        detail["note"] = "Transfer monitoring timed out, check slskd"
+                        detail["note"] = "Transfer monitoring timed out"
 
                     job.status = final_status
                     job.result = json.dumps(detail)
