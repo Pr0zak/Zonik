@@ -1,7 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { sidebarOpen, updateAvailable } from '$lib/stores.js';
+	import { sidebarOpen, updateAvailable, activeJobs } from '$lib/stores.js';
+	import { Loader2 } from 'lucide-svelte';
 	import {
 		LayoutDashboard, Library, Compass, Download, ListMusic,
 		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings
@@ -89,6 +90,12 @@
 
 	<!-- Footer -->
 	<div class="px-5 py-4 border-t border-[var(--border-subtle)]">
+		{#if $activeJobs.length > 0}
+			<div class="flex items-center gap-2 mb-2">
+				<Loader2 class="w-3.5 h-3.5 text-[var(--color-info)] animate-spin" />
+				<span class="text-xs text-[var(--color-info)]">{$activeJobs.length} active job{$activeJobs.length > 1 ? 's' : ''}</span>
+			</div>
+		{/if}
 		<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
 	</div>
 </aside>

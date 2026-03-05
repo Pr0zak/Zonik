@@ -16,6 +16,7 @@ from backend.models.blacklist import DownloadBlacklist
 from backend.services.soulseek import (
     search_multi_strategy, get_slskd_client, pick_best_results, normalize_text,
 )
+from backend.api.websocket import broadcast_job_update
 
 router = APIRouter()
 
@@ -90,15 +91,14 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             )
             db.add(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1})
 
             try:
                 client = get_slskd_client()
 
                 if req.username and req.filename:
-                    # Direct download from specified peer
                     result = await client.download(req.username, req.filename)
                 else:
-                    # Auto-search and download best
                     from backend.services.soulseek import search_and_download
                     result = await search_and_download(req.artist, req.track)
 
@@ -116,6 +116,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 job.finished_at = datetime.utcnow()
                 await db.merge(job)
                 await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1})
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
@@ -139,6 +140,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             )
             db.add(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": len(req.tracks)})
 
             from backend.services.soulseek import search_and_download
             from backend.config import get_settings
@@ -165,6 +167,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
                     job.tracks = json.dumps(track_statuses)
                     await db.merge(job)
                     await db.commit()
+                    await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": job.progress, "total": len(req.tracks)})
 
             tasks = [download_one(i, t) for i, t in enumerate(req.tracks)]
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -174,6 +177,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             job.tracks = json.dumps(track_statuses)
             await db.merge(job)
             await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "completed", "progress": len(req.tracks), "total": len(req.tracks)})
 
     background_tasks.add_task(do_bulk)
     return {"job_id": job_id, "total": len(req.tracks)}

@@ -3,12 +3,17 @@
 	import Sidebar from '../components/Sidebar.svelte';
 	import Player from '../components/Player.svelte';
 	import Toast from '../components/Toast.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { connectWebSocket, disconnectWebSocket } from '$lib/websocket.js';
 
 	let { children } = $props();
 
 	onMount(() => {
-		// WebSocket connection will be set up when backend supports it
+		connectWebSocket();
+	});
+
+	onDestroy(() => {
+		disconnectWebSocket();
 	});
 </script>
 

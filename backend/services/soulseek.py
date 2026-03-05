@@ -296,22 +296,29 @@ async def search_multi_strategy(artist: str, track: str) -> list[dict]:
 
 
 async def search_and_download(artist: str, track: str) -> dict:
-    """Search for a track and download the best result."""
+    """Search for a track and download the best result, with candidate fallback."""
     candidates = await search_multi_strategy(artist, track)
     if not candidates:
         return {"status": "not_found", "message": f"No results for {artist} - {track}"}
 
     client = get_slskd_client()
-    best = candidates[0]
-    username = best.get("username", "")
-    filename = best.get("filename", "")
+    last_error = "Download failed"
 
-    result = await client.download(username, filename)
-    if result.get("ok"):
-        return {
-            "status": "downloading",
-            "username": username,
-            "filename": filename,
-            "size": best.get("size", 0),
-        }
-    return {"status": "failed", "message": result.get("error", "Download failed")}
+    for i, candidate in enumerate(candidates):
+        username = candidate.get("username", "")
+        filename = candidate.get("filename", "")
+
+        log.info(f"Download attempt {i+1}/{len(candidates)}: {username} - {filename}")
+        result = await client.download(username, filename)
+        if result.get("ok"):
+            return {
+                "status": "downloading",
+                "username": username,
+                "filename": filename,
+                "size": candidate.get("size", 0),
+                "attempt": i + 1,
+            }
+        last_error = result.get("error", "Download failed")
+        log.warning(f"Download attempt {i+1} failed ({username}): {last_error}")
+
+    return {"status": "failed", "message": f"All {len(candidates)} candidates failed: {last_error}"}
