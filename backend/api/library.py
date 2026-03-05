@@ -161,27 +161,46 @@ async def list_artists(
     query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
     query = query.offset(offset).limit(limit)
 
-    result = await db.execute(query)
-    artists = result.scalars().all()
+    # Subquery for track counts per artist
+    track_count_sq = (
+        select(Track.artist_id, func.count(Track.id).label("track_count"))
+        .group_by(Track.artist_id)
+        .subquery()
+    )
+    # Subquery for first album cover per artist
+    album_cover_sq = (
+        select(
+            Album.artist_id,
+            func.min(Album.id).label("album_id"),
+        )
+        .group_by(Album.artist_id)
+        .subquery()
+    )
+
+    full_query = (
+        query
+        .outerjoin(track_count_sq, Artist.id == track_count_sq.c.artist_id)
+        .outerjoin(album_cover_sq, Artist.id == album_cover_sq.c.artist_id)
+        .add_columns(
+            func.coalesce(track_count_sq.c.track_count, 0).label("track_count"),
+            album_cover_sq.c.album_id.label("cover_album_id"),
+        )
+    )
+
+    result = await db.execute(full_query)
+    rows = result.all()
     total = (await db.execute(count_q)).scalar() or 0
 
-    items = []
-    for a in artists:
-        track_count = (await db.execute(
-            select(func.count(Track.id)).where(Track.artist_id == a.id)
-        )).scalar() or 0
-        # Get cover art from first album
-        album_result = await db.execute(
-            select(Album.id, Album.cover_art_path).where(Album.artist_id == a.id).limit(1)
-        )
-        album_row = album_result.first()
-        items.append({
+    items = [
+        {
             "id": a.id,
             "name": a.name,
             "image_url": a.image_url,
-            "cover_art": album_row[0] if album_row else None,
+            "cover_art": cover_album_id,
             "track_count": track_count,
-        })
+        }
+        for a, track_count, cover_album_id in rows
+    ]
 
     return {"artists": items, "total": total}
 

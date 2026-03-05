@@ -78,17 +78,6 @@ async def similar_tracks(
             if key in seen:
                 continue
             seen.add(key)
-
-            # Check if in library (match both artist + title)
-            existing = await db.execute(
-                select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                    Track.title.ilike(t["name"]),
-                    Artist.name.ilike(t["artist"]),
-                ).limit(1)
-            )
-            existing_track = existing.scalar_one_or_none()
-            t["in_library"] = existing_track is not None
-            t["track_id"] = existing_track.id if existing_track else None
             t["source_track"] = track_name
             t["source_artist"] = artist_name
             similar.append(t)
@@ -96,8 +85,33 @@ async def similar_tracks(
         if len(similar) >= limit:
             break
 
+    similar = similar[:limit]
+
+    # Batch library match — single query for all similar tracks
+    if similar:
+        from sqlalchemy import or_, and_, func as sqfunc
+        conditions = [
+            and_(
+                sqfunc.lower(Track.title) == t["name"].lower(),
+                sqfunc.lower(Artist.name) == t["artist"].lower(),
+            )
+            for t in similar
+        ]
+        lib_result = await db.execute(
+            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(or_(*conditions))
+        )
+        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+
+        for t in similar:
+            key = (t["name"].lower(), t["artist"].lower())
+            matched_id = lib_map.get(key)
+            t["in_library"] = matched_id is not None
+            t["track_id"] = matched_id
+
     return {
-        "tracks": similar[:limit],
+        "tracks": similar,
         "total": len(similar),
         "from_favorites": len(favorites),
     }
