@@ -51,7 +51,7 @@
 		<span class="text-xs text-[var(--text-secondary)] font-medium min-w-0 truncate">{label}</span>
 	{/if}
 	{#if lastRunAt}
-		<span class="text-[9px] text-[var(--text-muted)] font-mono flex-shrink-0" title="Last ran: {new Date(lastRunAt).toLocaleString()}">
+		<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0" title="Last ran: {new Date(lastRunAt).toLocaleString()}">
 			ran {(() => {
 				const d = new Date(lastRunAt);
 				const now = new Date();
