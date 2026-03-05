@@ -290,11 +290,16 @@
 												</div>
 												<div class="space-y-1 max-h-64 overflow-y-auto">
 													{#each trackList as t}
-														<div class="flex items-center justify-between bg-[var(--bg-primary)] px-3 py-2 rounded-md">
+														<div class="flex items-center justify-between bg-[var(--bg-primary)] px-3 py-2 rounded-md gap-2">
 															<div class="min-w-0">
-																<span class="text-sm text-[var(--text-body)]">{t.artist}</span>
-																<span class="text-[var(--text-muted)] mx-1">—</span>
-																<span class="text-sm text-[var(--text-primary)] font-medium">{t.track}</span>
+																<div>
+																	<span class="text-sm text-[var(--text-body)]">{t.artist}</span>
+																	<span class="text-[var(--text-muted)] mx-1">—</span>
+																	<span class="text-sm text-[var(--text-primary)] font-medium">{t.track}</span>
+																</div>
+																{#if t.source}
+																	<p class="text-[10px] text-[var(--text-muted)] font-mono mt-0.5">similar to {t.source}</p>
+																{/if}
 															</div>
 															<Badge variant="warning">Missing</Badge>
 														</div>

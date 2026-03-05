@@ -137,22 +137,52 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
 
 
 async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
-    """Find similar tracks from favorites."""
+    """Find similar tracks from favorites, flag missing ones."""
     from backend.services.lastfm import get_similar_tracks
+    from backend.services.soulseek import normalize_text
     favorites = (await db.execute(
         select(Favorite).options(
             selectinload(Favorite.track).selectinload(Track.artist)
         ).where(Favorite.track_id.isnot(None)).limit(count)
     )).scalars().all()
 
-    found = 0
+    missing = []
+    in_library = 0
+    seen: set[str] = set()
+
     for fav in favorites:
         if not fav.track or not fav.track.artist:
             continue
         similar = await get_similar_tracks(fav.track.artist.name, fav.track.title, limit=5)
-        found += len(similar)
+        for t in similar:
+            key = normalize_text(f"{t['artist']} {t['name']}")
+            if key in seen:
+                continue
+            seen.add(key)
 
-    job.result = json.dumps({"favorites_checked": len(favorites), "similar_found": found})
+            result = await db.execute(
+                select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                    Track.title.ilike(t["name"]),
+                    Artist.name.ilike(t["artist"]),
+                ).limit(1)
+            )
+            if result.scalar_one_or_none():
+                in_library += 1
+            else:
+                missing.append({
+                    "artist": t["artist"], "track": t["name"], "status": "missing",
+                    "source": f"{fav.track.artist.name} — {fav.track.title}",
+                })
+
+    job.total = len(seen)
+    job.progress = in_library
+    job.tracks = json.dumps(missing)
+    job.result = json.dumps({
+        "favorites_checked": len(favorites),
+        "similar_found": len(seen),
+        "in_library": in_library,
+        "missing": len(missing),
+    })
 
 
 async def _run_auto_playlist(db: AsyncSession, name: str, source: str, count: int = 50):
