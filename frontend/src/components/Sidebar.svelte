@@ -71,11 +71,6 @@
 						: 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5 border-transparent hover:border-white/20'}"
 				style={active ? `border-color: ${item.color}` : ''}
 			>
-				<span class="text-[10px] font-mono font-bold tabular-nums w-4 text-right"
-					style={active ? `color: ${item.color}` : ''}
-					class:text-[var(--text-disabled)]={!active}>
-					{String(i + 1).padStart(2, '0')}
-				</span>
 				<svelte:component this={item.icon}
 					class="w-4 h-4 shrink-0 transition-colors"
 					style={active ? `color: ${item.color}` : ''}
