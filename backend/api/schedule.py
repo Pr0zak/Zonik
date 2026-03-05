@@ -17,7 +17,7 @@ router = APIRouter()
 # Default task definitions
 DEFAULT_TASKS = [
     {"task_name": "library_scan", "interval_hours": 24, "run_at": "03:00"},
-    {"task_name": "enrichment", "interval_hours": 24, "run_at": "03:30", "count": 100},
+    {"task_name": "enrichment", "interval_hours": 24, "run_at": "03:30"},
     {"task_name": "lastfm_top_tracks", "interval_hours": 24, "run_at": "04:00", "count": 50},
     {"task_name": "discover_similar", "interval_hours": 48, "run_at": "04:30", "count": 10},
     {"task_name": "discover_artists", "interval_hours": 48, "run_at": "05:00", "count": 10},
@@ -25,7 +25,7 @@ DEFAULT_TASKS = [
     {"task_name": "playlist_weekly_top", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0, "count": 50},
     {"task_name": "playlist_weekly_discover", "interval_hours": 168, "run_at": "06:30", "day_of_week": 0, "count": 30},
     {"task_name": "playlist_favorites", "interval_hours": 24, "run_at": "01:00"},
-    {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30", "count": 50},
+    {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
     {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
     {"task_name": "kimahub_favorites_sync", "interval_hours": 6, "run_at": "00:00"},
 ]

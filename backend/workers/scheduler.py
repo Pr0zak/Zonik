@@ -43,11 +43,10 @@ async def run_task(task_name: str, db: AsyncSession):
 
         elif task_name == "enrichment":
             from backend.services.enrichment import enrich_batch
-            tracks = (await db.execute(
-                select(Track.id)
-                .where((Track.genre.is_(None)) | (Track.cover_art_path.is_(None)))
-                .limit(count or 100)
-            )).scalars().all()
+            query = select(Track.id).where(
+                (Track.genre.is_(None)) | (Track.cover_art_path.is_(None))
+            )
+            tracks = (await db.execute(query)).scalars().all()
             result = await enrich_batch(db, tracks)
             job.result = json.dumps(result)
 
@@ -74,7 +73,7 @@ async def run_task(task_name: str, db: AsyncSession):
             from backend.models.analysis import TrackAnalysis
             analyzed_ids = (await db.execute(select(TrackAnalysis.track_id))).scalars().all()
             tracks = (await db.execute(
-                select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids)).limit(count or 50)
+                select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids))
             )).all()
             for track_id, file_path in tracks:
                 analysis = await analyze_track_async(file_path)
