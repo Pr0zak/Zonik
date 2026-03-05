@@ -128,7 +128,7 @@ The frontend uses a CSS variable-based design system defined in `frontend/src/ap
 The WebSocket connection (`/api/ws`) provides real-time job progress updates:
 
 - Connected in `+layout.svelte` on mount
-- `broadcast_job_update()` is called in `download.py` and `library.py` for downloads and scans
+- `broadcast_job_update()` is called in `download.py`, `library.py`, and `analysis.py` for downloads, scans, analysis, embeddings, and enrichment
 - Active jobs are tracked in `stores.js` via the `activeJobs` store
 - Sidebar footer shows a spinning loader with active job count (clickable, links to /logs)
 - Library scan broadcasts progress every 50 files; job result stored as JSON

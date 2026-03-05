@@ -34,7 +34,7 @@ backend/
     library.py         # Library stats, scan, artists/albums list endpoints
     download.py        # Soulseek search/trigger/bulk + blacklist
     discovery.py       # Last.fm charts, similar tracks/artists
-    analysis.py        # Essentia/CLAP analysis queue
+    analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management
     websocket.py       # Real-time job progress
     favorites.py       # Star/unstar
@@ -46,13 +46,13 @@ backend/
   migrations/          # Alembic migrations
 frontend/
   src/routes/          # SvelteKit pages (12 routes)
-    +page.svelte       # Dashboard (stats, recent additions)
+    +page.svelte       # Dashboard (stats, last scan, version, health)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks
     discover/          # Last.fm charts, similar artists
     downloads/         # Soulseek download management
     playlists/         # Playlist management
     favorites/         # Starred items
-    analysis/          # Audio analysis queue
+    analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics
     schedule/          # Cron job scheduler
     logs/              # Job history
@@ -86,7 +86,7 @@ docs/                  # Installation, configuration, API reference, development
 - Sidebar shows yellow pulsing dot on Settings when update is available
 - upgrade.sh supports SKIP_RESTART=1 env var (used by web UI to handle restart separately)
 - Backend sends full API keys (not masked) — self-hosted single-user app, frontend password fields handle hiding
-- WebSocket real-time job progress (broadcast_job_update in download.py for single and bulk downloads)
+- WebSocket real-time job progress (broadcast_job_update in download.py, library.py, analysis.py)
 - "Download All Missing" button on Discover page wires to /api/download/bulk
 - Active jobs indicator in sidebar footer (spinning loader + count, clickable → /logs)
 - Library scan: pre-counts files, broadcasts progress via WebSocket every 50 files, stores JSON result
