@@ -613,21 +613,33 @@
 				<Card padding="p-0">
 					<div class="divide-y divide-[var(--border-subtle)]">
 						{#each artistTracks as track, i}
-							<button class="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors text-left" onclick={() => playTrack(track)}>
-								<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right">{i + 1}</span>
-								<div class="w-8 h-8 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
-									{#if coverUrl(track.cover_art)}
-										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-									{:else}
-										<div class="flex items-center justify-center w-full h-full"><Music class="w-3 h-3 text-[var(--text-disabled)]" /></div>
-									{/if}
+							<div class="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors group">
+								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => playTrack(track)}>
+									<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right">{i + 1}</span>
+									<div class="w-8 h-8 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+										{#if coverUrl(track.cover_art)}
+											<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
+										{:else}
+											<div class="flex items-center justify-center w-full h-full"><Music class="w-3 h-3 text-[var(--text-disabled)]" /></div>
+										{/if}
+									</div>
+									<div class="flex-1 min-w-0">
+										<p class="text-sm font-medium text-[var(--text-primary)] truncate">{track.title}</p>
+										<p class="text-xs text-[var(--text-muted)] truncate">{track.album || ''}</p>
+									</div>
+									<span class="text-xs text-[var(--text-muted)] font-mono">{formatDuration(track.duration)}</span>
+								</button>
+								<div class="flex items-center gap-0.5">
+									<button onclick={(e) => toggleFav('track', track.id, e)}
+										class="p-1 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+										<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
+									</button>
+									<button onclick={(e) => openMenu(track, e)}
+										class="p-1 text-[var(--text-disabled)] hover:text-[var(--text-primary)] transition-colors">
+										<MoreVertical class="w-3.5 h-3.5" />
+									</button>
 								</div>
-								<div class="flex-1 min-w-0">
-									<p class="text-sm font-medium text-[var(--text-primary)] truncate">{track.title}</p>
-									<p class="text-xs text-[var(--text-muted)] truncate">{track.album || ''}</p>
-								</div>
-								<span class="text-xs text-[var(--text-muted)] font-mono">{formatDuration(track.duration)}</span>
-							</button>
+							</div>
 						{/each}
 					</div>
 				</Card>
@@ -930,13 +942,15 @@
 		{/if}
 	{/snippet}
 	{#snippet footer()}
-		{#if similarTracks.some(t => !t.in_library)}
-			<div class="flex items-center justify-between">
-				<span class="text-xs text-[var(--text-muted)]">{similarTracks.filter(t => !t.in_library).length} not in library</span>
+		<div class="flex items-center justify-between">
+			<span class="text-xs text-[var(--text-muted)]">
+				{similarTracks.length} similar &middot; {similarTracks.filter(t => t.in_library).length} in library &middot; {similarTracks.filter(t => !t.in_library).length} missing
+			</span>
+			{#if similarTracks.some(t => !t.in_library)}
 				<Button variant="success" size="sm" onclick={downloadAllMissing}>
-					<Download class="w-3 h-3" /> Download All Missing
+					<Download class="w-3 h-3" /> Get All Missing ({similarTracks.filter(t => !t.in_library).length})
 				</Button>
-			</div>
-		{/if}
+			{/if}
+		</div>
 	{/snippet}
 </Modal>
