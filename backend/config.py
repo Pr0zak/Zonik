@@ -33,6 +33,13 @@ class SoulseekConfig(BaseModel):
     preferred_formats: list[str] = ["flac", "wav", "mp3"]
     min_file_size_mb: int = 3
     max_workers: int = 4
+    # Native client settings
+    username: str = ""
+    password: str = ""
+    listen_port: int = 2234
+    server_host: str = "server.slsknet.org"
+    server_port: int = 2242
+    use_native: bool = False
 
 
 class LidarrConfig(BaseModel):

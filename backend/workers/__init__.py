@@ -68,9 +68,20 @@ async def analyze_track(ctx: dict, track_id: str, file_path: str):
 
 async def enrich_track(ctx: dict, track_id: str):
     """Background enrichment task."""
-    from backend.services.enrichment import enrich_track
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from backend.models.track import Track
+    from backend.services.enrichment import enrich_track as _enrich_track
     async with async_session() as db:
-        return await enrich_track(db, track_id)
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+            .where(Track.id == track_id)
+        )
+        track = result.scalar_one_or_none()
+        if not track:
+            log.warning(f"enrich_track: track {track_id} not found")
+            return None
+        return await _enrich_track(db, track)
 
 
 async def generate_embedding(ctx: dict, track_id: str, file_path: str):

@@ -268,8 +268,26 @@ def get_slskd_client() -> SlskdClient:
 
 # --- Multi-strategy search ---
 
+def _use_native() -> bool:
+    """Check if native Soulseek client is enabled and running."""
+    settings = get_settings()
+    if not settings.soulseek.use_native:
+        return False
+    from backend.soulseek import get_client
+    client = get_client()
+    return client is not None and client.logged_in
+
+
 async def search_multi_strategy(artist: str, track: str) -> list[dict]:
-    """Try multiple search strategies, return best candidates."""
+    """Try multiple search strategies, return best candidates.
+    Routes to native client or slskd based on config.
+    """
+    if _use_native():
+        from backend.soulseek import get_client
+        from backend.soulseek.search import search_multi_strategy_native
+        return await search_multi_strategy_native(get_client(), artist, track)
+
+    # Legacy slskd path
     client = get_slskd_client()
 
     queries = [f"{artist} {track}"]
@@ -302,7 +320,15 @@ async def search_multi_strategy(artist: str, track: str) -> list[dict]:
 
 
 async def search_and_download(artist: str, track: str) -> dict:
-    """Search for a track and download the best result, with candidate fallback."""
+    """Search for a track and download the best result, with candidate fallback.
+    Routes to native client or slskd based on config.
+    """
+    if _use_native():
+        from backend.soulseek import get_client
+        from backend.soulseek.search import search_and_download_native
+        return await search_and_download_native(get_client(), artist, track)
+
+    # Legacy slskd path
     candidates = await search_multi_strategy(artist, track)
     if not candidates:
         return {"status": "not_found", "message": f"No results for {artist} - {track}"}

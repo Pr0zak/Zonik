@@ -33,7 +33,25 @@ async def lifespan(app: FastAPI):
             )
             session.add(user)
             await session.commit()
+
+    # Start native Soulseek client if configured
+    if settings.soulseek.use_native and settings.soulseek.username:
+        try:
+            from backend.soulseek import start_client
+            await start_client()
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to start native Soulseek client: {e}")
+
     yield
+
+    # Stop native Soulseek client
+    if settings.soulseek.use_native:
+        try:
+            from backend.soulseek import stop_client
+            await stop_client()
+        except Exception:
+            pass
 
 
 settings = get_settings()
