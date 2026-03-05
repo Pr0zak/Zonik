@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session
@@ -266,7 +266,7 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
     # Bitrate distribution
     bitrate_result = await db.execute(
         select(
-            func.case(
+            case(
                 (Track.bitrate < 128, "< 128"),
                 (Track.bitrate < 256, "128-255"),
                 (Track.bitrate < 320, "256-319"),
@@ -299,7 +299,7 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
 
     # Recent jobs
     jobs_result = await db.execute(
-        select(Job.type, func.count(Job.id), func.sum(func.case((Job.status == "completed", 1), else_=0)))
+        select(Job.type, func.count(Job.id), func.sum(case((Job.status == "completed", 1), else_=0)))
         .group_by(Job.type)
     )
     job_stats = [{"type": t, "total": total, "completed": comp or 0} for t, total, comp in jobs_result.all()]
