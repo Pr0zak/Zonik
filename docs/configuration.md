@@ -24,12 +24,19 @@ path = "/opt/zonik/data/zonik.db"       # SQLite database path
 url = "redis://localhost:6379/0"        # Redis URL for ARQ worker
 
 [soulseek]
-slskd_url = ""                           # slskd API URL (e.g. http://host:5030)
-slskd_api_key = ""                       # slskd API key
+slskd_url = ""                           # slskd API URL (e.g. http://host:5030) — legacy mode
+slskd_api_key = ""                       # slskd API key — legacy mode
 download_dir = "/downloads"              # Where downloads are saved
 preferred_formats = ["flac", "wav", "mp3"]  # Format preference order
 min_file_size_mb = 3                     # Skip files smaller than this
 max_workers = 4                          # Parallel download workers (used for bulk downloads)
+# Native Soulseek client (direct P2P, replaces slskd)
+username = ""                            # Soulseek username
+password = ""                            # Soulseek password
+listen_port = 2234                       # Inbound peer connection port
+server_host = "server.slsknet.org"       # Soulseek server host
+server_port = 2242                       # Soulseek server port
+use_native = false                       # Enable native client (disables slskd)
 
 [lidarr]
 url = ""                                 # Lidarr API URL (e.g. http://host:8686)
@@ -54,9 +61,41 @@ server_name = "Zonik"       # Server name reported to clients
 
 ## Service Connections
 
-Service connections (slskd, Lidarr, Last.fm) can be configured from the web UI at **Settings > Service Connections**. Changes are saved directly to `zonik.toml`. API keys are masked in the UI for security.
+Service connections (Soulseek, Lidarr, Last.fm) can be configured from the web UI at **Settings > Service Connections**. Changes are saved directly to `zonik.toml`.
 
 You can also edit `zonik.toml` directly if you prefer.
+
+## Soulseek Download Client
+
+Zonik supports two modes for Soulseek downloads:
+
+### Native Client (Recommended)
+
+Direct connection to the Soulseek P2P network — no external dependencies:
+
+1. In Settings, check **"Native Client"**
+2. Enter your Soulseek username and password
+3. Click **Test** to verify login
+4. Save
+
+The native client connects directly to `server.slsknet.org`, manages peer connections, and handles file transfers natively. Features:
+- Auto-reconnect with exponential backoff
+- Peer reputation tracking (blocks unreliable peers for 24h)
+- Direct + indirect peer connection racing for faster downloads
+- Real-time transfer progress via WebSocket
+
+### Legacy slskd (Deprecated)
+
+Uses a separate slskd container as a Soulseek proxy:
+
+1. Deploy an slskd instance (e.g. CT 224)
+2. In Settings, uncheck "Native Client"
+3. Enter the slskd URL and API key
+4. Click Test to verify
+
+### Switching Between Modes
+
+The `use_native` toggle in Settings controls which backend is used. The switch takes effect after saving — running downloads will continue on the current backend.
 
 ## Getting API Keys
 
@@ -67,7 +106,7 @@ You can also edit `zonik.toml` directly if you prefer.
 3. Copy the API Key and Shared Secret
 4. For write access (scrobbling), you need the same key but with write permissions
 
-### slskd
+### slskd (Legacy)
 
 1. Your slskd instance should have an API key configured
 2. Find it in slskd's `options.yaml` under `web > authentication > api_keys`

@@ -10,7 +10,7 @@ Run on your **Proxmox host** — it creates the CT, installs everything, and sta
 bash <(curl -sL https://raw.githubusercontent.com/Pr0zak/Zonik/main/create-ct.sh)
 ```
 
-The interactive installer will prompt for CT resources, network, music path, and GPU passthrough. Service connections (slskd, Lidarr, Last.fm) are configured via the web UI after install.
+The interactive installer will prompt for CT resources, network, music path, and GPU passthrough. Service connections (Soulseek, Lidarr, Last.fm) are configured via the web UI after install. The native Soulseek client connects directly — no slskd container needed.
 
 ### Inside an Existing CT
 
@@ -44,7 +44,7 @@ cd frontend && npm install && npm run build && cd ..
 mkdir -p /etc/zonik
 cp zonik.toml.example /etc/zonik/zonik.toml
 ln -sf /etc/zonik/zonik.toml /opt/zonik/zonik.toml
-# Service connections (slskd, Lidarr, Last.fm) can be configured via the web UI
+# Service connections (Soulseek, Lidarr, Last.fm) can be configured via the web UI
 
 # Database
 mkdir -p /opt/zonik/data /opt/zonik/cache/covers

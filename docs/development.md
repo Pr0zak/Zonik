@@ -11,7 +11,15 @@ zonik/
 │   ├── models/               # SQLAlchemy models (14 models)
 │   ├── api/                  # REST API routes
 │   ├── subsonic/             # OpenSubsonic API implementation
-│   ├── services/             # Business logic
+│   ├── soulseek/             # Native Soulseek P2P client
+│   │   ├── protocol/        # Binary encode/decode, TCP framing
+│   │   ├── client.py        # Client orchestrator
+│   │   ├── server_conn.py   # Server connection + auto-reconnect
+│   │   ├── peer.py          # Peer connections
+│   │   ├── transfer.py      # Download state machine
+│   │   ├── search.py        # Multi-strategy search
+│   │   └── reputation.py    # Peer reliability tracking
+│   ├── services/             # Business logic (soulseek facade, scanner, etc.)
 │   ├── workers/              # ARQ background tasks
 │   └── migrations/           # Alembic migrations
 ├── frontend/
@@ -147,13 +155,17 @@ Message format:
 
 ## Key Patterns
 
+- **Soulseek**: Two backends — native P2P client (`backend/soulseek/`) or legacy slskd HTTP API. Toggled via `use_native` config. `services/soulseek.py` is a facade that routes to the active backend
+- **Native Soulseek architecture**: Persistent singleton in FastAPI lifespan. Protocol layer (struct.pack/unpack) → Server connection (auto-reconnect) → Peer connections (direct+indirect race) → Transfer state machine (aiofiles)
 - **Soulseek search**: 4-strategy fallback (full -> cleaned -> track-only -> first-word)
 - **Soulseek retry**: `search_and_download` tries up to 5 candidates before failing
-- **Quality scoring**: FLAC preference, size/bitrate bonuses, per-user dedup
+- **Peer reputation**: Redis-backed (in-memory fallback). 3 failures = 24h block. Adjusts quality scoring
+- **Quality scoring**: FLAC preference, size/bitrate bonuses, per-user dedup, peer speed/slots bonus (native)
 - **Text normalization**: `normalize_text()` strips accents, special chars for fuzzy matching
 - **Cover art**: Deezer -> Cover Art Archive -> iTunes -> Last.fm fallback chain
 - **FTS5**: Full-text search populated during library scan, prefix matching
 - **Transcoding**: ffmpeg streaming via `asyncio.create_subprocess_exec`
+- **Enrichment**: Per-track 45s timeout, concurrent MB+Last.fm lookups, cover art 20s timeout, cancel support
 - **SQLite single writer**: Never use concurrent sessions for writes; progress updates go via WebSocket only
 - **db.get() for dedup**: Use `await db.get(Model, id)` in get_or_create patterns to check identity map first
 - **URLSearchParams**: Always filter out undefined/null values before passing to `new URLSearchParams()` — it converts them to literal strings

@@ -6,7 +6,7 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) + ARQ/Redis
 - **Frontend**: SvelteKit 5 + Tailwind CSS (dark theme, 12 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
-- **Downloads**: slskd (Soulseek) with multi-strategy search + quality scoring
+- **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
 - **Discovery**: Last.fm API (similar tracks/artists, top charts, scrobbling)
 - **Deployment**: Proxmox LXC via `create-ct.sh` interactive installer
 
@@ -41,7 +41,16 @@ backend/
     playlists.py       # Playlist CRUD + smart playlist generation
     users.py           # User management (CRUD, password change)
   subsonic/            # Full OpenSubsonic API (auth, browsing, media, search, etc.)
-  services/            # Business logic (scanner, soulseek, lastfm, artwork, etc.)
+  soulseek/            # Native Soulseek P2P client (protocol, network, transfers)
+    protocol/          # Binary encode/decode, TCP framing, message types
+    client.py          # Orchestrator: server + peers + transfers + search
+    server_conn.py     # TCP connection to server.slsknet.org with auto-reconnect
+    peer.py            # Per-user peer connections (direct + indirect)
+    listener.py        # Inbound peer listener (TCP server)
+    transfer.py        # Download state machine + file I/O via aiofiles
+    search.py          # Multi-strategy search using native client
+    reputation.py      # Redis-backed peer failure tracking
+  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, etc.)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
@@ -101,9 +110,14 @@ docs/                  # Installation, configuration, API reference, development
 - Favorites import: /api/favorites/import accepts [{title, artist, file_path?}] and matches by file_path MD5 or title+artist
 - KimaHub favorites sync: scheduled task (every 6h) syncs LikedTrack from KimaHub PostgreSQL into Zonik favorites via asyncpg
 - KimaHub config: [kimahub] section in zonik.toml with db_url field
-- Downloads page: "Active Transfers" panel polls slskd /api/v0/transfers/downloads every 5s, shows per-file progress
-- Enrichment: processes all tracks missing genre/cover (no limit), 1.5s rate limit between tracks, per-track error recovery with rollback
-- Enrichment progress: updates DB every 5 tracks (separate session) so Logs page shows progress, not just WebSocket
+- Downloads page: "Active Transfers" panel polls slskd or native client status every 5s, shows per-file progress
+- Native Soulseek client: persistent singleton in FastAPI lifespan, feature-flagged via `use_native` config toggle
+- Native Soulseek: protocol layer (struct.pack/unpack), server connection with auto-reconnect (exp backoff), peer connection racing (direct vs indirect), file transfer state machine, zlib-compressed search responses
+- Native Soulseek: `services/soulseek.py` is a facade — routes to native or slskd based on `use_native` flag, zero changes needed in download.py callers
+- Native Soulseek: peer reputation tracking (Redis or in-memory fallback), 3 failures = 24h block, adjusts quality scoring
+- Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
+- Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
+- Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
 - Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
 - Schedule page: each task shows a description explaining what it does
 - Logs page: expanded job detail shows job ID, progress, timestamps; download tracks rendered with colored status badges per track
@@ -135,7 +149,7 @@ docs/                  # Installation, configuration, API reference, development
 
 ## Infrastructure
 - CT 228 on pve5 (Zonik production)
-- CT 224 on pve5 (slskd — Soulseek client, `10.0.0.116:5030`)
+- CT 224 on pve5 (slskd — Soulseek client, `10.0.0.116:5030` — optional when native client enabled)
 - CT 210 (Lidarr, `10.0.0.179:8686`)
 - CT 215 on pve4 (Kima-Hub, `10.0.0.78`, PostgreSQL `kima` DB for favorites sync)
 - Mount points: `/nfs/MUSIC` → `/music`, `/nfs/DOWNLOADS` → `/downloads`
@@ -148,7 +162,7 @@ docs/                  # Installation, configuration, API reference, development
 - After push, upgrade production: SSH into pve5, run upgrade.sh on CT 228
 
 ## External Services
-- slskd (Soulseek P2P): API at configured URL (set via web UI)
+- Soulseek P2P: Native client (direct protocol) OR legacy slskd HTTP API — toggled via `use_native` in config
 - Last.fm: Read API + Write API (scrobble, love) with method signatures (set via web UI)
 - Lidarr: Secondary download source (set via web UI)
 - MusicBrainz: Metadata enrichment (1 req/sec rate limit)

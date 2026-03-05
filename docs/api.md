@@ -122,7 +122,7 @@ Base URL: `/api`
 | `/api/download/search` | POST | Soulseek search `{artist, track}` |
 | `/api/download/trigger` | POST | Download track `{artist, track, username?, filename?}` |
 | `/api/download/bulk` | POST | Bulk download `{tracks: [{artist, track}]}` |
-| `/api/download/status` | GET | slskd download status |
+| `/api/download/status` | GET | Download status (native transfers or slskd) |
 | `/api/download/blacklist` | GET | List blacklisted items |
 | `/api/download/blacklist` | POST | Add to blacklist `{artist, track?, reason?}` |
 | `/api/download/blacklist/{id}` | DELETE | Remove from blacklist |
@@ -179,13 +179,13 @@ Base URL: `/api`
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/config/services` | GET | Get service connection settings (keys masked) |
-| `/api/config/services` | PUT | Update service connections and directories |
-| `/api/config/test/{service}` | POST | Test service connectivity (`lastfm`, `soulseek`, `lidarr`) |
+| `/api/config/services` | GET | Get service connection settings (includes native Soulseek config) |
+| `/api/config/services` | PUT | Update service connections, directories, and native Soulseek settings |
+| `/api/config/test/{service}` | POST | Test service connectivity (`lastfm`, `soulseek`, `lidarr`). Soulseek test routes to native login or slskd API based on `use_native` flag |
 | `/api/config/version` | GET | Current version and git commit hash |
 | `/api/config/updates` | GET | Check GitHub for updates (5-min cache) |
 | `/api/config/upgrade` | POST | Trigger upgrade via `upgrade.sh` (returns `{job_id}`) |
-| `/api/config/health` | GET | System health check (database, Redis, slskd, Last.fm, Lidarr) |
+| `/api/config/health` | GET | System health check (database, Redis, Soulseek native/slskd, Last.fm, Lidarr) |
 | `/api/config/backup` | POST | Create database backup |
 | `/api/config/backups` | GET | List available backups |
 | `/api/config/restore/{filename}` | POST | Restore from backup |
