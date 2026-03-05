@@ -227,6 +227,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
                 # Try candidates with transfer-level retry
+                last_error = ""
                 for i, candidate in enumerate(candidates):
                     dl_username = candidate["username"]
                     dl_filename = candidate["filename"]
@@ -246,14 +247,14 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
                     try:
                         await native_client.download(dl_username, dl_filename)
-                        log.info(f"[download] Transfer created for {dl_username}:{short_name}")
+                        log.warning(f"[download] Transfer queued: {dl_username} / {short_name}")
                     except Exception as e:
                         log.warning(f"[download] Failed to connect to {dl_username}: {e}")
                         await native_client.reputation.record_failure(dl_username)
                         continue
 
                     status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
-                    log.info(f"[download] Transfer result for {dl_username}:{short_name} → {status} ({error or 'ok'})")
+                    log.warning(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                     if status == "completed":
                         job.status = "completed"
@@ -266,16 +267,20 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
                         break
                     else:
-                        # Transfer failed — try next candidate
-                        pass
+                        # Transfer failed — record error, try next candidate
+                        await native_client.reputation.record_failure(dl_username)
+                        last_error = error or status
+
                 else:
                     # All candidates exhausted
                     if candidates and job.status != "failed":
                         job.status = "failed"
-                        job.result = json.dumps({"message": f"All {len(candidates)} sources failed"})
+                        err_detail = last_error or "unknown"
+                        job.result = json.dumps({"message": f"All {len(candidates)} sources failed", "last_error": err_detail})
                         job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
             except Exception as e:
+                log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)
                 job.status = "failed"
                 job.result = json.dumps({"error": str(e)})
             finally:
