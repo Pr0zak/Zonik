@@ -90,10 +90,16 @@
 	<!-- Footer -->
 	<div class="px-5 py-4 border-t border-[var(--border-subtle)]">
 		{#if $activeJobs.length > 0}
-			<div class="flex items-center gap-2 mb-2">
+			<a href="/logs" class="flex items-center gap-2 mb-2 hover:bg-white/5 -mx-2 px-2 py-1 rounded transition-colors"
+				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>
 				<Loader2 class="w-3.5 h-3.5 text-[var(--color-info)] animate-spin" />
-				<span class="text-xs text-[var(--color-info)]">{$activeJobs.length} active job{$activeJobs.length > 1 ? 's' : ''}</span>
-			</div>
+				<div class="flex-1 min-w-0">
+					<span class="text-xs text-[var(--color-info)]">{$activeJobs.length} active job{$activeJobs.length > 1 ? 's' : ''}</span>
+					{#if $activeJobs[0]}
+						<p class="text-[10px] text-[var(--text-muted)] truncate">{$activeJobs[0].type.replace('_', ' ')}{$activeJobs[0].total ? ` ${$activeJobs[0].progress || 0}/${$activeJobs[0].total}` : ''}</p>
+					{/if}
+				</div>
+			</a>
 		{/if}
 		<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
 	</div>
