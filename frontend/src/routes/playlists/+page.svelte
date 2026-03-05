@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast } from '$lib/stores.js';
-	import { formatDuration } from '$lib/utils.js';
+	import { formatDuration, inputClass } from '$lib/utils.js';
 	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -173,20 +173,12 @@
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1.5">Playlist Name</label>
-					<input
-						type="text"
-						bind:value={genName}
-						placeholder="My Smart Playlist"
-						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
-					/>
+					<input type="text" bind:value={genName} placeholder="My Smart Playlist" class={inputClass} />
 				</div>
 
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1.5">Rule</label>
-					<select
-						bind:value={genRule}
-						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
-					>
+					<select bind:value={genRule} class={inputClass}>
 						{#each ruleOptions as opt}
 							<option value={opt.value}>{opt.label}</option>
 						{/each}
@@ -196,12 +188,7 @@
 				{#if selectedRule?.needsValue}
 					<div>
 						<label class="block text-xs text-[var(--text-muted)] mb-1.5">Value</label>
-						<input
-							type="text"
-							bind:value={genValue}
-							placeholder={selectedRule.placeholder}
-							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20"
-						/>
+						<input type="text" bind:value={genValue} placeholder={selectedRule.placeholder} class={inputClass} />
 					</div>
 				{/if}
 
