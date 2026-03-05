@@ -143,6 +143,7 @@ async def find_duplicates(db: AsyncSession) -> list[dict]:
                 "file_path": keep.file_path,
                 "format": keep.format,
                 "bitrate": keep.bitrate,
+                "file_size": keep.file_size,
                 "quality_score": _track_quality_score(keep),
             },
             "remove": [
@@ -151,6 +152,7 @@ async def find_duplicates(db: AsyncSession) -> list[dict]:
                     "file_path": t.file_path,
                     "format": t.format,
                     "bitrate": t.bitrate,
+                    "file_size": t.file_size,
                     "quality_score": _track_quality_score(t),
                 }
                 for t in remove

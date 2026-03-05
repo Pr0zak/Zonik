@@ -91,19 +91,53 @@
 	let cleanupLoading = $state(false);
 	let cleanupPreview = $state(null);
 	let cleanupExecuting = $state(false);
+	let dedupSelected = $state(new Set()); // track IDs selected for removal
+	let organizeSelected = $state(new Set()); // track IDs selected for organize
 
 	async function previewCleanup(type) {
 		cleanupTab = type;
 		cleanupLoading = true;
 		cleanupPreview = null;
+		dedupSelected = new Set();
+		organizeSelected = new Set();
 		try {
 			const res = await fetch(`/api/library/cleanup/${type}/preview`, { method: 'POST' });
 			cleanupPreview = await res.json();
+			if (type === 'duplicates' && cleanupPreview?.groups) {
+				dedupSelected = new Set(cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id)));
+			}
+			if (type === 'organize' && cleanupPreview?.moves) {
+				organizeSelected = new Set(cleanupPreview.moves.map(m => m.track_id));
+			}
 		} catch (e) {
 			addToast('Preview failed', 'error');
 		} finally {
 			cleanupLoading = false;
 		}
+	}
+
+	function toggleDedupTrack(id) {
+		const s = new Set(dedupSelected);
+		if (s.has(id)) s.delete(id); else s.add(id);
+		dedupSelected = s;
+	}
+
+	function toggleDedupAll() {
+		if (!cleanupPreview?.groups) return;
+		const allIds = cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id));
+		dedupSelected = dedupSelected.size === allIds.length ? new Set() : new Set(allIds);
+	}
+
+	function toggleOrganizeTrack(id) {
+		const s = new Set(organizeSelected);
+		if (s.has(id)) s.delete(id); else s.add(id);
+		organizeSelected = s;
+	}
+
+	function toggleOrganizeAll() {
+		if (!cleanupPreview?.moves) return;
+		const allIds = cleanupPreview.moves.map(m => m.track_id);
+		organizeSelected = organizeSelected.size === allIds.length ? new Set() : new Set(allIds);
 	}
 
 	async function executeOrphans() {
@@ -120,8 +154,7 @@
 	}
 
 	async function executeDuplicates(deleteFiles = false) {
-		if (!cleanupPreview?.groups) return;
-		const removeIds = cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id));
+		const removeIds = [...dedupSelected];
 		if (!removeIds.length) return;
 		cleanupExecuting = true;
 		try {
@@ -140,12 +173,14 @@
 	}
 
 	async function executeOrganize() {
+		const moveIds = [...organizeSelected];
+		if (!moveIds.length) return;
 		cleanupExecuting = true;
 		try {
 			const res = await fetch('/api/library/cleanup/organize', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({}),
+				body: JSON.stringify({ move_ids: moveIds }),
 			});
 			const result = await res.json();
 			addToast(`Organized ${result.moved} files${result.errors ? `, ${result.errors} errors` : ''}`, 'success');
@@ -1186,11 +1221,19 @@
 		{:else if cleanupTab === 'duplicates' && cleanupPreview}
 			<div class="border border-[var(--border-primary)] rounded-lg p-3">
 				<div class="flex items-center justify-between mb-2">
-					<span class="text-sm font-medium text-[var(--text-primary)]">
-						{cleanupPreview.total_groups} duplicate group{cleanupPreview.total_groups !== 1 ? 's' : ''} ({cleanupPreview.total_duplicates} extra file{cleanupPreview.total_duplicates !== 1 ? 's' : ''})
-					</span>
-					{#if cleanupPreview.total_duplicates > 0}
-						<div class="flex gap-2">
+					<div class="flex items-center gap-3">
+						<span class="text-sm font-medium text-[var(--text-primary)]">
+							{cleanupPreview.total_groups} duplicate group{cleanupPreview.total_groups !== 1 ? 's' : ''} ({cleanupPreview.total_duplicates} extra file{cleanupPreview.total_duplicates !== 1 ? 's' : ''})
+						</span>
+						{#if cleanupPreview.total_duplicates > 0}
+							<button onclick={toggleDedupAll} class="text-xs text-[var(--color-accent)] hover:underline">
+								{dedupSelected.size === cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id)).length ? 'Deselect All' : 'Select All'}
+							</button>
+						{/if}
+					</div>
+					{#if dedupSelected.size > 0}
+						<div class="flex items-center gap-2">
+							<span class="text-xs text-[var(--text-muted)]">{dedupSelected.size} selected</span>
 							<Button variant="warning" size="sm" disabled={cleanupExecuting} onclick={() => executeDuplicates(false)}>
 								{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
 								Remove from DB
@@ -1209,16 +1252,20 @@
 								<div class="text-xs space-y-1">
 									<div class="flex items-center gap-2 text-emerald-400">
 										<span class="font-mono">KEEP</span>
-										<span class="text-[var(--text-muted)]">{group.keep.file_path}</span>
+										<span class="text-[var(--text-muted)] flex-1 truncate">{group.keep.file_path}</span>
 										<Badge>{group.keep.format?.toUpperCase()}</Badge>
 										{#if group.keep.bitrate}<Badge variant="info">{Math.round(group.keep.bitrate / 1000)}k</Badge>{/if}
+										{#if group.keep.file_size}<span class="text-[var(--text-muted)] font-mono">{formatSize(group.keep.file_size)}</span>{/if}
 									</div>
 									{#each group.remove as rem}
-										<div class="flex items-center gap-2 text-red-400">
-											<span class="font-mono">DROP</span>
-											<span class="text-[var(--text-muted)]">{rem.file_path}</span>
+										<div class="flex items-center gap-2 {dedupSelected.has(rem.id) ? 'text-red-400' : 'text-[var(--text-disabled)]'}">
+											<input type="checkbox" checked={dedupSelected.has(rem.id)} onchange={() => toggleDedupTrack(rem.id)}
+												class="w-3.5 h-3.5 rounded accent-red-500 cursor-pointer" />
+											<span class="font-mono">{dedupSelected.has(rem.id) ? 'DROP' : 'SKIP'}</span>
+											<span class="text-[var(--text-muted)] flex-1 truncate">{rem.file_path}</span>
 											<Badge>{rem.format?.toUpperCase()}</Badge>
 											{#if rem.bitrate}<Badge variant="info">{Math.round(rem.bitrate / 1000)}k</Badge>{/if}
+											{#if rem.file_size}<span class="text-[var(--text-muted)] font-mono">{formatSize(rem.file_size)}</span>{/if}
 										</div>
 									{/each}
 								</div>
@@ -1232,14 +1279,24 @@
 		{:else if cleanupTab === 'organize' && cleanupPreview}
 			<div class="border border-[var(--border-primary)] rounded-lg p-3">
 				<div class="flex items-center justify-between mb-2">
-					<span class="text-sm font-medium text-[var(--text-primary)]">
-						{cleanupPreview.count} file{cleanupPreview.count !== 1 ? 's' : ''} to reorganize
-					</span>
-					{#if cleanupPreview.count > 0}
-						<Button variant="primary" size="sm" disabled={cleanupExecuting} onclick={executeOrganize}>
-							{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
-							Organize All
-						</Button>
+					<div class="flex items-center gap-3">
+						<span class="text-sm font-medium text-[var(--text-primary)]">
+							{cleanupPreview.count} file{cleanupPreview.count !== 1 ? 's' : ''} to reorganize
+						</span>
+						{#if cleanupPreview.count > 0}
+							<button onclick={toggleOrganizeAll} class="text-xs text-[var(--color-accent)] hover:underline">
+								{organizeSelected.size === cleanupPreview.moves.length ? 'Deselect All' : 'Select All'}
+							</button>
+						{/if}
+					</div>
+					{#if organizeSelected.size > 0}
+						<div class="flex items-center gap-2">
+							<span class="text-xs text-[var(--text-muted)]">{organizeSelected.size} selected</span>
+							<Button variant="primary" size="sm" disabled={cleanupExecuting} onclick={executeOrganize}>
+								{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+								Organize Selected
+							</Button>
+						</div>
 					{/if}
 				</div>
 				{#if cleanupPreview.count > 0}
@@ -1251,9 +1308,13 @@
 				{#if cleanupPreview.moves?.length}
 					<div class="max-h-80 overflow-y-auto space-y-1">
 						{#each cleanupPreview.moves as move}
-							<div class="text-xs py-1 border-b border-[var(--border-primary)] last:border-0">
-								<div class="text-red-400 font-mono truncate">- {move.current_path}</div>
-								<div class="text-emerald-400 font-mono truncate">+ {move.target_path}</div>
+							<div class="flex items-start gap-2 text-xs py-1 border-b border-[var(--border-primary)] last:border-0 {organizeSelected.has(move.track_id) ? '' : 'opacity-40'}">
+								<input type="checkbox" checked={organizeSelected.has(move.track_id)} onchange={() => toggleOrganizeTrack(move.track_id)}
+									class="w-3.5 h-3.5 mt-0.5 rounded accent-blue-500 cursor-pointer flex-shrink-0" />
+								<div class="min-w-0 flex-1">
+									<div class="text-red-400 font-mono truncate">- {move.current_path}</div>
+									<div class="text-emerald-400 font-mono truncate">+ {move.target_path}</div>
+								</div>
 							</div>
 						{/each}
 					</div>
