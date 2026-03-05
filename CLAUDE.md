@@ -29,9 +29,9 @@ backend/
   models/              # 14 SQLAlchemy models (Track, Artist, Album, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
-    jobs.py            # Job listing, details (result/tracks/log), retry failed downloads
+    jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
-    library.py         # Library stats, scan, artists/albums list endpoints
+    library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner
     download.py        # Soulseek search/trigger/bulk + blacklist
     discovery.py       # Last.fm charts, similar tracks/artists
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
@@ -50,21 +50,21 @@ backend/
     transfer.py        # Download state machine + file I/O via aiofiles
     search.py          # Multi-strategy search using native client
     reputation.py      # Redis-backed peer failure tracking
-  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, etc.)
+  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, etc.)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
   src/routes/          # SvelteKit pages (12 routes)
     +page.svelte       # Dashboard (stats, last scan, version, health)
-    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal
+    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner
     discover/          # Last.fm charts + inline download (per-track status, bulk download), similar artists
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
-    favorites/         # Starred items
+    favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
-    logs/              # Job history with category filters (Downloads/Library/Analysis/Discovery/Playlists) + expandable detail
+    logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
   src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell/settings icons), Player, Toast
     ui/                # 9 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl
@@ -138,6 +138,17 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek downloads: split queue_timeout (120s, waiting for peer) vs stall_timeout (60s, no data during transfer)
 - Native Soulseek downloads: auto-fallback — when direct download fails, searches for up to 4 additional peers
 - Native Soulseek transfers: fuzzy filename matching in get_transfer (basename fallback for path separator differences)
+- Pagination: all lists default to 25 per page with per-page selector (25/50/100/200); Jobs API returns {items, total}
+- Library cleanup tools: three separate operations (orphan removal, deduplication, file organization) each with preview/dry-run before execution
+- Cleanup service in backend/services/cleanup.py: find_orphaned_tracks, find_duplicates (quality scoring), preview_organize, execute_organize
+- Scheduled library_cleanup task runs orphan removal only (safe default); dedup and organize are manual-only via UI
+- Track upgrade scanner: POST /api/library/upgrades/scan with modes (low_bitrate, lossy_to_lossless, all_lossy), triggers bulk Soulseek download
+- ScheduleControl last-run display: relative time ("ran 2h ago") with full timestamp on hover, not ambiguous date format
+- Auto-run after scan: analysis/enrichment tasks can be auto-triggered after library scan via ScheduleTask.config JSON {auto_after_scan: true}
+- Auto-download: discover tasks can auto-download missing tracks via ScheduleTask.config JSON {auto_download: true}
+- Health check: disabled services return "warning" status which doesn't degrade overall status (only "error" degrades)
+- Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
+- Favorites paginated server-side: /api/favorites returns {items, total} with offset/limit
 - Upgrade restarts kill background tasks (enrichment, analysis); stuck "running" jobs must be manually set to "failed" in DB
 
 ## Important Files
