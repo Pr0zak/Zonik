@@ -4,7 +4,7 @@
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -14,8 +14,27 @@
 	let artist = $state('');
 	let track = $state('');
 	let results = $state([]);
+	let resultCount = $state(0);
+	let resultUsers = $state(0);
 	let searching = $state(false);
 	let downloading = $state({});
+	let formatFilter = $state('all');
+	let searchDone = $state(false);
+
+	let filteredResults = $derived(
+		formatFilter === 'all' ? results :
+		formatFilter === 'flac' ? results.filter(r => r.extension === 'flac') :
+		formatFilter === '320' ? results.filter(r => r.bitrate >= 320 || r.extension === 'flac') :
+		formatFilter === '256' ? results.filter(r => r.bitrate >= 256 || r.extension === 'flac') :
+		results
+	);
+
+	let formatCounts = $derived({
+		all: results.length,
+		flac: results.filter(r => r.extension === 'flac').length,
+		high: results.filter(r => r.bitrate >= 320 || r.extension === 'flac').length,
+		mid: results.filter(r => r.bitrate >= 256 || r.extension === 'flac').length,
+	});
 
 	// Blacklist state
 	let blacklist = $state([]);
@@ -42,9 +61,8 @@
 	let expandedJob = $state(null);
 	let jobDetails = $state({});
 	const PAGE_LIMIT = 20;
-	const AUTO_HIDE_MS = 5 * 60 * 1000; // 5 minutes
+	const AUTO_HIDE_MS = 5 * 60 * 1000;
 
-	// Filter out completed jobs older than 5 minutes
 	let visibleJobs = $derived(
 		jobs.filter(j => {
 			if (j.status === 'completed' && j.finished_at) {
@@ -57,10 +75,8 @@
 
 	let hasCleanable = $derived(jobs.some(j => j.status === 'completed' || j.status === 'failed'));
 
-	// Find matching transfer for a running job
 	function getTransferForJob(job) {
 		if (job.status !== 'running') return null;
-		// Match by username+filename from job tracks
 		let tracks;
 		try { tracks = jobDetails[job.id]; } catch { return null; }
 		if (!tracks?.length) return null;
@@ -72,7 +88,6 @@
 		);
 	}
 
-	// Friendly state label
 	function friendlyStatus(job, transfer) {
 		if (job.status === 'completed') return 'completed';
 		if (job.status === 'failed') return 'failed';
@@ -83,13 +98,11 @@
 			if (s === 'queued' || s === 'requested') return 'queued';
 			return s;
 		}
-		// No active transfer — check job track status or WS description
 		const tracks = jobDetails[job.id];
 		if (tracks?.length) {
 			const t = tracks[0];
 			if (t.status === 'downloading' || t.status === 'transferring') return 'downloading';
 		}
-		// WS description includes "attempt" once a candidate is being tried
 		const wsDesc = wsDescriptions[job.id] || job.description || '';
 		if (wsDesc.includes('(attempt')) return 'downloading';
 		return 'searching';
@@ -102,11 +115,33 @@
 		return 'default';
 	}
 
+	function shortFilename(filename) {
+		return filename?.split(/[/\\]/).pop() || filename;
+	}
+
+	function extractArtistFromPath(filename) {
+		const parts = filename?.split(/[/\\]/) || [];
+		if (parts.length >= 3) return parts[parts.length - 3];
+		if (parts.length >= 2) return parts[parts.length - 2];
+		return '';
+	}
+
+	function formatBitrate(br) {
+		if (!br) return '';
+		return `${br}k`;
+	}
+
+	function formatUserSpeed(speed) {
+		if (!speed) return '';
+		if (speed > 1000000) return `${(speed / 1000000).toFixed(1)} MB/s`;
+		if (speed > 1000) return `${(speed / 1000).toFixed(0)} KB/s`;
+		return `${speed} B/s`;
+	}
+
 	async function loadJobs() {
 		jobsLoading = true;
 		try {
 			jobs = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
-			// Pre-fetch track details for running jobs
 			for (const j of jobs) {
 				if ((j.status === 'running' || !jobDetails[j.id])) {
 					try {
@@ -195,6 +230,8 @@
 		if (!artist.trim() || !track.trim()) return;
 		searching = true;
 		results = [];
+		searchDone = false;
+		formatFilter = 'all';
 		try {
 			const data = await fetch('/api/download/search', {
 				method: 'POST',
@@ -202,6 +239,9 @@
 				body: JSON.stringify({ artist: artist.trim(), track: track.trim() })
 			}).then(r => r.json());
 			results = data.results || [];
+			resultCount = data.count || 0;
+			resultUsers = data.users || 0;
+			searchDone = true;
 			if (!results.length) addToast('No results found', 'warning');
 		} catch (e) {
 			addToast('Search failed: ' + e.message, 'error');
@@ -239,7 +279,7 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ artist: artist.trim(), track: track.trim() })
 			}).then(r => r.json());
-			addToast('Auto-download started (best result)', 'success');
+			addToast('Auto-download started', 'success');
 		} catch (e) {
 			addToast('Download failed: ' + e.message, 'error');
 		}
@@ -249,28 +289,22 @@
 		if (e.key === 'Enter') searchSoulseek();
 	}
 
-	// Track WS description updates (richer than REST-derived descriptions)
 	let wsDescriptions = $state({});
-
 	let unsubJobUpdate;
 	let autoHideTimer;
 
 	onMount(() => {
 		loadBlacklist();
 		loadJobs();
-		// Seed transfers from REST on mount (WebSocket takes over after)
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
 		}).catch(() => {});
-		// Auto-refresh when any download job updates
 		unsubJobUpdate = onJobUpdate((wsJob) => {
 			if (wsJob.type === 'download' || wsJob.type === 'bulk_download') {
-				// Capture WS description (includes attempt info, filename)
 				if (wsJob.description) wsDescriptions[wsJob.id] = wsJob.description;
 				loadJobs();
 			}
 		});
-		// Periodically re-evaluate auto-hide for completed jobs
 		autoHideTimer = setInterval(() => { jobs = [...jobs]; }, 30000);
 	});
 
@@ -283,86 +317,125 @@
 <div class="max-w-6xl">
 	<PageHeader title="Downloads" color="var(--color-downloads)" />
 
-	<!-- Soulseek Search -->
-	<Card padding="p-6" class="mb-6">
-		<div class="flex items-center gap-2 mb-4">
-			<Search class="w-4 h-4 text-[var(--color-downloads)]" />
-			<h2 class="text-base font-semibold text-[var(--text-primary)]">Soulseek Search</h2>
+	<!-- Search Bar -->
+	<div class="flex flex-col sm:flex-row gap-3 mb-6">
+		<input type="text" placeholder="Artist" bind:value={artist} onkeydown={handleKeydown}
+			class="flex-1 bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-body)]
+				placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
+		<input type="text" placeholder="Track" bind:value={track} onkeydown={handleKeydown}
+			class="flex-1 bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg px-4 py-2.5 text-sm text-[var(--text-body)]
+				placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
+		<div class="flex gap-2">
+			<Button variant="primary" loading={searching} disabled={!artist || !track} onclick={searchSoulseek}>
+				<Search class="w-3.5 h-3.5" />
+				Search
+			</Button>
+			<Button variant="success" disabled={!artist || !track} onclick={autoDownload} title="Auto-pick best result">
+				<Zap class="w-3.5 h-3.5" />
+				Auto
+			</Button>
 		</div>
-		<div class="flex flex-col sm:flex-row gap-3 mb-4">
-			<input type="text" placeholder="Artist" bind:value={artist} onkeydown={handleKeydown}
-				class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)]
-					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
-			<input type="text" placeholder="Track" bind:value={track} onkeydown={handleKeydown}
-				class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)]
-					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
-			<div class="flex gap-2">
-				<Button variant="primary" loading={searching} disabled={!artist || !track} onclick={searchSoulseek}>
-					<Search class="w-3.5 h-3.5" />
-					Search
-				</Button>
-				<Button variant="success" disabled={!artist || !track} onclick={autoDownload}>
-					<Zap class="w-3.5 h-3.5" />
-					Auto
-				</Button>
-			</div>
-		</div>
+	</div>
 
-		{#if results.length}
-			<div class="border border-[var(--border-subtle)] rounded-lg overflow-hidden overflow-x-auto">
-				<table class="w-full text-sm min-w-[400px]">
-					<thead>
-						<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
-							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">File</th>
-							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden md:table-cell">User</th>
-							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Format</th>
-							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Size</th>
-							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Bitrate</th>
-							<th class="px-4 py-2"></th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-[var(--border-subtle)]">
-						{#each results as r}
-							{@const key = r.username + r.filename}
-							<tr class="hover:bg-[var(--bg-hover)] transition-colors">
-								<td class="px-4 py-2 max-w-xs truncate text-[var(--text-body)]" title={r.filename}>
-									{r.filename.split(/[/\\]/).pop()}
-								</td>
-								<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">{r.username}</td>
-								<td class="px-4 py-2">
-									<Badge>{(r.extension || '').toUpperCase()}</Badge>
-								</td>
-								<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">{formatSize(r.size)}</td>
-								<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{r.bitRate ? r.bitRate + ' kbps' : '-'}</td>
-								<td class="px-4 py-2">
-									<div class="flex gap-1">
+	<!-- Search Results -->
+	{#if searching}
+		<Card padding="p-8" class="mb-6">
+			<div class="flex flex-col items-center gap-3">
+				<div class="w-6 h-6 border-2 border-[var(--color-downloads)] border-t-transparent rounded-full animate-spin"></div>
+				<p class="text-sm text-[var(--text-muted)]">Searching P2P network...</p>
+			</div>
+		</Card>
+	{:else if searchDone}
+		<Card padding="p-0" class="mb-6">
+			<!-- Results header -->
+			<div class="px-4 py-3 border-b border-[var(--border-subtle)]">
+				<div class="flex items-center justify-between flex-wrap gap-2">
+					<p class="text-xs text-[var(--text-muted)]">
+						{resultCount} results from {resultUsers} users
+					</p>
+					<!-- Format filter tabs -->
+					<div class="flex gap-1">
+						{#each [
+							{ key: 'all', label: 'All', count: formatCounts.all },
+							{ key: 'flac', label: 'FLAC', count: formatCounts.flac },
+							{ key: '320', label: '320+', count: formatCounts.high },
+							{ key: '256', label: '256+', count: formatCounts.mid },
+						] as tab}
+							<button onclick={() => formatFilter = tab.key}
+								class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+									{formatFilter === tab.key
+										? 'bg-[var(--color-downloads)] text-white'
+										: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'}">
+								{tab.label}
+								<span class="ml-1 opacity-60">{tab.count}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+			</div>
+
+			{#if filteredResults.length}
+				<div class="overflow-x-auto">
+					<table class="w-full text-sm min-w-[600px]">
+						<thead>
+							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider w-5"></th>
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden md:table-cell">User</th>
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Format</th>
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Bitrate</th>
+								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Size</th>
+								<th class="px-4 py-2"></th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-[var(--border-subtle)]">
+							{#each filteredResults as r}
+								{@const key = r.username + r.filename}
+								{@const fname = shortFilename(r.filename)}
+								{@const pathArtist = extractArtistFromPath(r.filename)}
+								<tr class="hover:bg-[var(--bg-hover)] transition-colors group">
+									<td class="px-4 py-2">
+										{#if r.slots_free}
+											<Wifi class="w-3.5 h-3.5 text-green-400" />
+										{:else}
+											<Wifi class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+										{/if}
+									</td>
+									<td class="px-4 py-2 max-w-xs">
+										<p class="text-[var(--text-body)] truncate" title={r.filename}>{fname}</p>
+										{#if pathArtist}
+											<p class="text-xs text-[var(--text-muted)] truncate">{pathArtist}</p>
+										{/if}
+									</td>
+									<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">
+										<span class="truncate block max-w-[120px]" title={r.username}>{r.username}</span>
+									</td>
+									<td class="px-4 py-2">
+										<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
+											{r.extension.toUpperCase()}
+										</Badge>
+									</td>
+									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
+										{formatBitrate(r.bitrate) || '—'}
+									</td>
+									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">
+										{formatSize(r.size)}
+									</td>
+									<td class="px-4 py-2">
 										<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
 											<Download class="w-3 h-3" />
 										</Button>
-										<button onclick={async () => {
-											if (!window.confirm(`Blacklist artist "${artist.trim()}"?`)) return;
-											try {
-												await fetch('/api/download/blacklist', {
-													method: 'POST',
-													headers: { 'Content-Type': 'application/json' },
-													body: JSON.stringify({ artist: artist.trim() })
-												});
-												await loadBlacklist();
-												addToast(`Blacklisted: ${artist.trim()}`, 'success');
-											} catch { addToast('Failed to blacklist', 'error'); }
-										}} class="p-1.5 rounded-md text-[var(--text-muted)] hover:text-orange-400 hover:bg-[var(--bg-hover)] transition-colors"
-											title="Blacklist artist">
-											<ShieldBan class="w-3.5 h-3.5" />
-										</button>
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</Card>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{:else}
+				<p class="text-sm text-[var(--text-muted)] text-center py-6">No results match the current filter.</p>
+			{/if}
+		</Card>
+	{/if}
 
 	<!-- Downloads (unified: active + history) -->
 	{#if visibleJobs.length || jobsLoading}
@@ -456,7 +529,7 @@
 								{/if}
 							</div>
 							<!-- Progress bar -->
-							{#if transfer && status === 'downloading'}
+							{#if transfer && (status === 'downloading' || job.status === 'running')}
 								<div class="h-1 bg-[var(--border-interactive)]">
 									<div class="h-full bg-[var(--color-downloads)] transition-all duration-300"
 										style="width: {transfer.progress}%"></div>

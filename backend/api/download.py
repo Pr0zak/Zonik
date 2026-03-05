@@ -52,11 +52,55 @@ class BulkDownloadRequest(BaseModel):
 
 @router.post("/search")
 async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)):
-    """Search Soulseek for a track using multi-strategy search."""
+    """Search Soulseek P2P network — returns all results with quality info."""
     reason = await is_blacklisted(db, req.artist, req.track)
     if reason:
-        return {"results": [], "count": 0, "blacklisted": True, "reason": reason}
+        return {"results": [], "count": 0, "users": 0, "blacklisted": True, "reason": reason}
 
+    from backend.soulseek import get_client
+    client = get_client()
+
+    if client and client.logged_in:
+        # Native client — return all results
+        query = f"{req.artist} {req.track}"
+        search_results = await client.search(query, timeout=25, max_responses=100)
+
+        results = []
+        users = set()
+        min_size = 3 * 1024 * 1024
+        for sr in search_results:
+            for fi in sr.files:
+                fn = fi.filename
+                ext = ""
+                for e in [".flac", ".wav", ".alac", ".mp3", ".m4a", ".ogg", ".opus"]:
+                    if fn.lower().endswith(e):
+                        ext = e[1:]
+                        break
+                if not ext or fi.size < min_size:
+                    continue
+                # Basic relevance: at least track name should match
+                from backend.services.soulseek import words_match, strip_track_extras
+                if not words_match(req.track, fn) and not words_match(strip_track_extras(req.track), fn):
+                    continue
+                users.add(sr.username)
+                results.append({
+                    "username": sr.username,
+                    "filename": fn,
+                    "size": fi.size,
+                    "bitrate": fi.bitrate,
+                    "extension": ext,
+                    "slots_free": sr.slots_free,
+                    "speed": sr.avg_speed,
+                    "queue_length": sr.queue_length,
+                })
+
+        # Sort: FLAC first, then by size descending, slots_free preferred
+        format_order = {"flac": 0, "wav": 1, "alac": 1, "mp3": 2, "m4a": 3, "ogg": 3, "opus": 3}
+        results.sort(key=lambda r: (format_order.get(r["extension"], 9), not r["slots_free"], -r["size"]))
+
+        return {"results": results, "count": len(results), "users": len(users)}
+
+    # Legacy slskd fallback — limited results
     candidates = await search_multi_strategy(req.artist, req.track)
     return {
         "results": [
@@ -64,12 +108,16 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
                 "username": c.get("username", ""),
                 "filename": c.get("filename", ""),
                 "size": c.get("size", 0),
-                "bitRate": c.get("bitRate", 0) or c.get("bitrate", 0),
+                "bitrate": c.get("bitRate", 0) or c.get("bitrate", 0),
                 "extension": c.get("filename", "").rsplit(".", 1)[-1] if "." in c.get("filename", "") else "",
+                "slots_free": True,
+                "speed": 0,
+                "queue_length": 0,
             }
             for c in candidates
         ],
         "count": len(candidates),
+        "users": len(set(c.get("username", "") for c in candidates)),
     }
 
 
