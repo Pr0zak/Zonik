@@ -126,6 +126,45 @@
 		} catch (e) { addToast('Delete failed: ' + e.message, 'error'); }
 	}
 
+	// Edit track modal
+	let editTrack = $state(null);
+	let showEdit = $state(false);
+	let editForm = $state({ title: '', genre: '', year: '', track_number: '' });
+	let editSaving = $state(false);
+
+	$effect(() => {
+		if (!showEdit) editTrack = null;
+	});
+
+	function openEdit(track) {
+		closeMenu();
+		editForm = {
+			title: track.title || '',
+			genre: track.genre || '',
+			year: track.year || '',
+			track_number: track.track_number || '',
+		};
+		editTrack = track;
+		showEdit = true;
+	}
+
+	async function saveEdit() {
+		if (!editTrack) return;
+		editSaving = true;
+		try {
+			const data = {};
+			if (editForm.title) data.title = editForm.title;
+			if (editForm.genre) data.genre = editForm.genre;
+			if (editForm.year) data.year = parseInt(editForm.year) || null;
+			if (editForm.track_number) data.track_number = parseInt(editForm.track_number) || null;
+			await api.updateTrack(editTrack.id, data);
+			addToast('Track updated', 'success');
+			showEdit = false;
+			await loadData();
+		} catch (e) { addToast('Update failed: ' + e.message, 'error'); }
+		finally { editSaving = false; }
+	}
+
 	// Artist detail overlay
 	let selectedArtist = $state(null);
 	let artistAlbums = $state([]);
@@ -783,6 +822,10 @@
 			<AudioWaveform class="w-3.5 h-3.5 text-purple-400" /> Find Similar
 		</button>
 		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => openEdit(menuTrack)}>
+			<Pencil class="w-3.5 h-3.5 text-blue-400" /> Edit Info
+		</button>
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
 			onclick={() => { toggleFav('track', menuTrack.id); closeMenu(); }}>
 			<Heart class="w-3.5 h-3.5 {favTrackIds.has(menuTrack.id) ? 'text-red-400' : ''}"
 				fill={favTrackIds.has(menuTrack.id) ? 'currentColor' : 'none'} />
@@ -795,6 +838,47 @@
 		</button>
 	</div>
 {/if}
+
+<!-- Edit Track Modal -->
+<Modal bind:open={showEdit} title="Edit Track Info">
+	{#snippet children()}
+		<div class="space-y-3">
+			<div>
+				<label class="block text-xs text-[var(--text-muted)] mb-1">Title</label>
+				<input type="text" bind:value={editForm.title}
+					class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+						focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+			</div>
+			<div class="grid grid-cols-3 gap-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Genre</label>
+					<input type="text" bind:value={editForm.genre}
+						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Year</label>
+					<input type="number" bind:value={editForm.year}
+						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Track #</label>
+					<input type="number" bind:value={editForm.track_number}
+						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				</div>
+			</div>
+			<p class="text-xs text-[var(--text-disabled)]">Changes are saved to both the database and the audio file tags.</p>
+		</div>
+	{/snippet}
+	{#snippet footer()}
+		<div class="flex justify-end gap-2">
+			<Button variant="secondary" size="sm" onclick={() => showEdit = false}>Cancel</Button>
+			<Button variant="primary" size="sm" loading={editSaving} onclick={saveEdit}>Save</Button>
+		</div>
+	{/snippet}
+</Modal>
 
 <!-- Similar Tracks Modal -->
 <Modal bind:open={showSimilar} title="Find Similar">

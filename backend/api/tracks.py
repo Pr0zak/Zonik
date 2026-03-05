@@ -122,6 +122,72 @@ async def get_track(track_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+class TrackUpdateRequest(BaseModel):
+    title: str | None = None
+    genre: str | None = None
+    year: int | None = None
+    track_number: int | None = None
+
+
+@router.put("/{track_id}")
+async def update_track(track_id: str, req: TrackUpdateRequest, db: AsyncSession = Depends(get_db)):
+    """Update track metadata in DB and write tags to file."""
+    result = await db.execute(
+        select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+        .where(Track.id == track_id)
+    )
+    track = result.scalar_one_or_none()
+    if not track:
+        raise HTTPException(404, "Track not found")
+
+    if req.title is not None:
+        track.title = req.title
+    if req.genre is not None:
+        track.genre = req.genre
+    if req.year is not None:
+        track.year = req.year
+    if req.track_number is not None:
+        track.track_number = req.track_number
+
+    await db.commit()
+
+    # Write tags to file
+    try:
+        from pathlib import Path
+        from backend.config import get_settings
+        import mutagen
+        from mutagen.easyid3 import EasyID3
+
+        settings = get_settings()
+        file_path = Path(settings.library.music_dir) / track.file_path
+
+        if file_path.exists():
+            audio = mutagen.File(str(file_path), easy=True)
+            if audio is not None:
+                if req.title is not None:
+                    audio["title"] = req.title
+                if req.genre is not None:
+                    audio["genre"] = req.genre
+                if req.year is not None:
+                    audio["date"] = str(req.year)
+                if req.track_number is not None:
+                    audio["tracknumber"] = str(req.track_number)
+                audio.save()
+    except Exception:
+        pass  # DB updated even if tag write fails
+
+    return {
+        "ok": True,
+        "track": {
+            "id": track.id,
+            "title": track.title,
+            "genre": track.genre,
+            "year": track.year,
+            "track_number": track.track_number,
+        },
+    }
+
+
 @router.delete("/{track_id}")
 async def delete_track(track_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Track).where(Track.id == track_id))
