@@ -173,81 +173,88 @@ async def start_enrichment(background_tasks: BackgroundTasks):
         errors = 0
 
         try:
+            # Step 1: Collect track IDs in one session (lightweight query)
             async with async_session() as db:
-                # Find ALL tracks missing genre or cover art (no limit)
                 result = await db.execute(
-                    select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+                    select(Track.id)
                     .where((Track.genre.is_(None)) | (Track.cover_art_path.is_(None)))
                 )
-                tracks = result.scalars().all()
+                track_ids = [row[0] for row in result.all()]
+                total = len(track_ids)
 
-                total = len(tracks)
                 job = Job(
                     id=job_id, type="enrichment", card="en", status="running",
                     total=total, started_at=datetime.utcnow(),
                 )
                 db.add(job)
                 await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": 0, "total": total})
 
-                for i, track in enumerate(tracks):
-                    # Check if job was cancelled
+            await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": 0, "total": total})
+
+            # Step 2: Process each track in its own session (isolation)
+            for i, track_id in enumerate(track_ids):
+                # Check cancellation every 10 tracks
+                if i % 10 == 0:
                     try:
-                        await db.refresh(job)
-                        if job.status == "failed":
-                            log.info(f"[enrich] Job {job_id} cancelled at track {i+1}/{total}")
-                            status = "failed"
-                            break
+                        async with async_session() as check_db:
+                            result = await check_db.execute(select(Job.status).where(Job.id == job_id))
+                            job_status = result.scalar_one_or_none()
+                            if job_status == "failed":
+                                log.info(f"[enrich] Job cancelled at {i+1}/{total}")
+                                status = "failed"
+                                break
                     except Exception:
                         pass
 
-                    track_label = f"{track.artist.name if track.artist else '?'} - {track.title}"
-                    try:
+                try:
+                    async with async_session() as track_db:
+                        result = await track_db.execute(
+                            select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+                            .where(Track.id == track_id)
+                        )
+                        track = result.scalar_one_or_none()
+                        if not track:
+                            progress = i + 1
+                            continue
+
+                        track_label = f"{track.artist.name if track.artist else '?'} - {track.title}"
                         changes = await asyncio.wait_for(
-                            enrich_track(db, track),
+                            enrich_track(track_db, track),
                             timeout=ENRICH_TRACK_TIMEOUT,
                         )
                         if changes:
                             enriched += 1
                             log.info(f"[enrich] {track_label}: {list(changes.keys())}")
-                    except asyncio.TimeoutError:
-                        errors += 1
-                        log.warning(f"[enrich] Timed out ({ENRICH_TRACK_TIMEOUT}s): {track_label}")
-                        try:
-                            await db.rollback()
-                        except Exception:
-                            pass
-                    except Exception as e:
-                        errors += 1
-                        log.error(f"[enrich] Error on {track_label}: {e}")
-                        try:
-                            await db.rollback()
-                        except Exception:
-                            pass
+                except asyncio.TimeoutError:
+                    errors += 1
+                    log.warning(f"[enrich] Timed out ({ENRICH_TRACK_TIMEOUT}s): track {track_id}")
+                except Exception as e:
+                    errors += 1
+                    log.error(f"[enrich] Error on track {track_id}: {e}")
 
-                    progress = i + 1
+                progress = i + 1
 
-                    # Update progress every track via WebSocket + DB every 5
-                    await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": progress, "total": total})
-                    if progress % 5 == 0 or progress == total:
-                        job.progress = progress
-                        try:
-                            await db.merge(job)
-                            await db.commit()
-                        except Exception:
-                            try:
-                                await db.rollback()
-                            except Exception:
-                                pass
+                # WebSocket every track, DB every 10
+                await broadcast_job_update({"id": job_id, "type": "enrichment", "status": "running", "progress": progress, "total": total})
+                if progress % 10 == 0 or progress == total:
+                    try:
+                        async with async_session() as prog_db:
+                            result = await prog_db.execute(select(Job).where(Job.id == job_id))
+                            pjob = result.scalar_one_or_none()
+                            if pjob and pjob.status != "failed":
+                                pjob.progress = progress
+                                await prog_db.commit()
+                    except Exception:
+                        pass
 
-                    # Rate limit: 1.5 sec between tracks to respect MusicBrainz/Deezer limits
-                    await asyncio.sleep(1.5)
+                # Rate limit between tracks
+                await asyncio.sleep(1.5)
+
         except Exception as e:
-            import logging
-            logging.getLogger("enrichment").error(f"[enrich] Fatal error: {e}")
+            log.error(f"[enrich] Fatal error: {e}", exc_info=True)
             status = "failed"
 
-        # Update job in separate session (avoids session state issues)
+        # Final job update in clean session
         try:
             async with async_session() as finish_db:
                 result = await finish_db.execute(select(Job).where(Job.id == job_id))
@@ -259,8 +266,8 @@ async def start_enrichment(background_tasks: BackgroundTasks):
                     fjob.result = json.dumps({"enriched": enriched, "errors": errors, "total": total})
                     fjob.finished_at = datetime.utcnow()
                     await finish_db.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"[enrich] Failed to update final job status: {e}")
         await broadcast_job_update({"id": job_id, "type": "enrichment", "status": status, "progress": progress, "total": total})
 
     background_tasks.add_task(run_enrichment)
