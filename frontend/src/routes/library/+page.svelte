@@ -377,40 +377,41 @@
 			{#if viewMode === 'grid'}
 				<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 					{#each tracks as track}
-						<button class="group text-left transition-all"
-							onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
-							<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]
-								{selectMode && selected.has(track.id) ? 'ring-2 ring-[var(--color-accent)]' : ''}">
-								{#if coverUrl(track.cover_art)}
-									<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
-										onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-									<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
-										<Music class="w-8 h-8 text-[var(--text-disabled)]" />
-									</div>
-								{:else}
-									<div class="flex items-center justify-center w-full h-full">
-										<Music class="w-8 h-8 text-[var(--text-disabled)]" />
-									</div>
-								{/if}
-								<div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-									<Play class="w-10 h-10 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
-								</div>
-								{#if track.format}
-									<div class="absolute top-1.5 right-1.5">
-										<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-black/60 text-white/80">{track.format}</span>
-									</div>
-								{/if}
-								{#if selectMode}
-									<div class="absolute top-1.5 left-1.5">
-										<div class="w-5 h-5 rounded border-2 flex items-center justify-center
-											{selected.has(track.id) ? 'bg-[var(--color-accent)] border-[var(--color-accent)]' : 'border-white/60 bg-black/30'}">
-											{#if selected.has(track.id)}
-												<svg class="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-											{/if}
+						<div class="group text-left transition-all">
+							<button class="w-full text-left" onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
+								<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]
+									{selectMode && selected.has(track.id) ? 'ring-2 ring-[var(--color-accent)]' : ''}">
+									{#if coverUrl(track.cover_art)}
+										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
+											<Music class="w-8 h-8 text-[var(--text-disabled)]" />
 										</div>
+									{:else}
+										<div class="flex items-center justify-center w-full h-full">
+											<Music class="w-8 h-8 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+										<Play class="w-10 h-10 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
 									</div>
-								{/if}
-							</div>
+									{#if track.format}
+										<div class="absolute top-1.5 right-1.5">
+											<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-black/60 text-white/80">{track.format}</span>
+										</div>
+									{/if}
+									{#if selectMode}
+										<div class="absolute top-1.5 left-1.5">
+											<div class="w-5 h-5 rounded border-2 flex items-center justify-center
+												{selected.has(track.id) ? 'bg-[var(--color-accent)] border-[var(--color-accent)]' : 'border-white/60 bg-black/30'}">
+												{#if selected.has(track.id)}
+													<svg class="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+												{/if}
+											</div>
+										</div>
+									{/if}
+								</div>
+							</button>
 							<div class="flex items-center justify-between">
 								<p class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">{track.title}</p>
 								<button onclick={(e) => toggleFav('track', track.id, e)}
@@ -419,7 +420,7 @@
 								</button>
 							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}</p>
-						</button>
+						</div>
 					{/each}
 				</div>
 			{:else}
@@ -572,21 +573,23 @@
 			{#if viewMode === 'grid'}
 				<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 					{#each artists as artist}
-						<button class="group text-center" onclick={() => openArtist(artist)}>
-							<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-full overflow-hidden mb-2 border border-[var(--border-subtle)] mx-auto
-								group-hover:border-[var(--color-accent)]/50 transition-colors">
-								{#if coverUrl(artist.cover_art)}
-									<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
-										onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-									<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
-										<Users class="w-8 h-8 text-[var(--text-disabled)]" />
-									</div>
-								{:else}
-									<div class="flex items-center justify-center w-full h-full">
-										<Users class="w-8 h-8 text-[var(--text-disabled)]" />
-									</div>
-								{/if}
-							</div>
+						<div class="group text-center">
+							<button class="w-full" onclick={() => openArtist(artist)}>
+								<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-full overflow-hidden mb-2 border border-[var(--border-subtle)] mx-auto
+									group-hover:border-[var(--color-accent)]/50 transition-colors">
+									{#if coverUrl(artist.cover_art)}
+										<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
+											<Users class="w-8 h-8 text-[var(--text-disabled)]" />
+										</div>
+									{:else}
+										<div class="flex items-center justify-center w-full h-full">
+											<Users class="w-8 h-8 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+								</div>
+							</button>
 							<div class="flex items-center justify-center gap-1">
 								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{artist.name}</p>
 								<button onclick={(e) => toggleFav('artist', artist.id, e)}
@@ -595,7 +598,7 @@
 								</button>
 							</div>
 							<p class="text-xs text-[var(--text-muted)]">{artist.track_count} track{artist.track_count !== 1 ? 's' : ''}</p>
-						</button>
+						</div>
 					{/each}
 				</div>
 			{:else}
@@ -647,26 +650,28 @@
 			{#if viewMode === 'grid'}
 				<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 					{#each albums as album}
-						<button class="group text-left" onclick={() => openAlbum(album)}>
-							<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]">
-								{#if coverUrl(album.cover_art)}
-									<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
-										onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-									<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
-										<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
-									</div>
-								{:else}
-									<div class="flex items-center justify-center w-full h-full">
-										<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
-									</div>
-								{/if}
-								<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors"></div>
-								{#if album.year}
-									<div class="absolute top-1.5 right-1.5">
-										<span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/80">{album.year}</span>
-									</div>
-								{/if}
-							</div>
+						<div class="group text-left">
+							<button class="w-full text-left" onclick={() => openAlbum(album)}>
+								<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]">
+									{#if coverUrl(album.cover_art)}
+										<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
+											<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
+										</div>
+									{:else}
+										<div class="flex items-center justify-center w-full h-full">
+											<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors"></div>
+									{#if album.year}
+										<div class="absolute top-1.5 right-1.5">
+											<span class="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-black/60 text-white/80">{album.year}</span>
+										</div>
+									{/if}
+								</div>
+							</button>
 							<div class="flex items-center justify-between">
 								<p class="text-sm font-medium text-[var(--text-primary)] truncate flex-1">{album.title}</p>
 								<button onclick={(e) => toggleFav('album', album.id, e)}
@@ -675,7 +680,7 @@
 								</button>
 							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{album.artist || 'Various'} &middot; {album.track_count} tracks</p>
-						</button>
+						</div>
 					{/each}
 				</div>
 			{:else}
