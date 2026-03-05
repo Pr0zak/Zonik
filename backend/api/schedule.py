@@ -125,12 +125,15 @@ async def update_task(task_name: str, req: TaskUpdateRequest, db: AsyncSession =
 
 @router.post("/{task_name}/run")
 async def run_task_now(task_name: str, background_tasks: BackgroundTasks):
-    """Run a scheduled task immediately."""
+    """Run a scheduled task immediately, returns job_id for polling."""
+    import uuid
     from backend.workers.scheduler import run_task
+
+    job_id = str(uuid.uuid4())
 
     async def do_run():
         async with async_session() as db:
-            await run_task(task_name, db)
+            await run_task(task_name, db, job_id=job_id)
 
     background_tasks.add_task(do_run)
-    return {"ok": True, "task": task_name}
+    return {"ok": True, "task": task_name, "job_id": job_id}

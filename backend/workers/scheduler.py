@@ -13,13 +13,14 @@ from sqlalchemy.orm import selectinload
 from backend.models.job import Job
 from backend.models.schedule import ScheduleTask
 from backend.models.track import Track
+from backend.models.artist import Artist
 from backend.models.favorite import Favorite
 from backend.models.playlist import Playlist, PlaylistTrack
 
 log = logging.getLogger(__name__)
 
 
-async def run_task(task_name: str, db: AsyncSession):
+async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
     """Execute a scheduled task by name."""
     # Load task config for count
     task_row = (await db.execute(
@@ -27,7 +28,8 @@ async def run_task(task_name: str, db: AsyncSession):
     )).scalar_one_or_none()
     count = task_row.count if task_row and task_row.count else None
 
-    job_id = str(uuid.uuid4())
+    if not job_id:
+        job_id = str(uuid.uuid4())
     job = Job(
         id=job_id, type=task_name, card="sched", status="running",
         started_at=datetime.utcnow(),
@@ -107,19 +109,31 @@ async def run_task(task_name: str, db: AsyncSession):
 
 
 async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
-    """Download missing Last.fm top tracks."""
+    """Pull Last.fm top chart, find missing tracks, store list for download."""
     from backend.services.lastfm import get_top_tracks
     chart = await get_top_tracks(limit=count)
     missing = []
+    in_library = 0
     for t in chart:
         result = await db.execute(
-            select(Track).where(Track.title.ilike(f"%{t['name']}%")).limit(1)
+            select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                Track.title.ilike(t["name"]),
+                Artist.name.ilike(t["artist"]),
+            ).limit(1)
         )
-        if not result.scalar_one_or_none():
-            missing.append(t)
+        if result.scalar_one_or_none():
+            in_library += 1
+        else:
+            missing.append({"artist": t["artist"], "track": t["name"], "status": "missing"})
 
-    job.total = len(missing)
-    job.result = json.dumps({"total_chart": len(chart), "missing": len(missing)})
+    job.total = len(chart)
+    job.progress = in_library
+    job.tracks = json.dumps(missing)
+    job.result = json.dumps({
+        "total_chart": len(chart),
+        "in_library": in_library,
+        "missing": len(missing),
+    })
 
 
 async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):

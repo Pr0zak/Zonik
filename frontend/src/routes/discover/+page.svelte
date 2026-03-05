@@ -1,8 +1,7 @@
 <script>
-	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
-	import { addToast } from '$lib/stores.js';
-	import { Compass, Download, TrendingUp, Users, Music } from 'lucide-svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { addToast, activeJobs } from '$lib/stores.js';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2 } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -15,12 +14,32 @@
 	let similarTracks = $state([]);
 	let similarArtists = $state([]);
 	let loading = $state(false);
+	let bulkDownloading = $state(false);
+
+	/** Per-track download status: key = "artist::name", value = "downloading" | "queued" | "completed" | "failed" */
+	let trackStatus = $state({});
 
 	const tabs = [
 		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
 	];
+
+	function trackKey(t) {
+		return `${t.artist}::${t.name}`.toLowerCase();
+	}
+
+	function getStatus(t) {
+		return trackStatus[trackKey(t)] || null;
+	}
+
+	let missingCount = $derived(
+		activeTab === 'top'
+			? topTracks.filter(t => !t.in_library && !getStatus(t)).length
+			: activeTab === 'similar'
+				? similarTracks.filter(t => !t.in_library && !getStatus(t)).length
+				: 0
+	);
 
 	async function loadTopTracks() {
 		loading = true;
@@ -58,25 +77,115 @@
 		}
 	}
 
-	function downloadTrack(artist, track) {
-		goto(`/downloads?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`);
+	async function downloadTrack(t) {
+		const key = trackKey(t);
+		trackStatus[key] = 'downloading';
+		try {
+			const res = await fetch('/api/download/trigger', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ artist: t.artist, track: t.name }),
+			});
+			const data = await res.json();
+			if (data.error) {
+				trackStatus[key] = 'failed';
+				return;
+			}
+			trackStatus[key] = 'queued';
+			// Poll job until done
+			pollJob(data.job_id, key);
+		} catch {
+			trackStatus[key] = 'failed';
+		}
+	}
+
+	async function pollJob(jobId, key) {
+		const maxPolls = 180; // 6 minutes max
+		for (let i = 0; i < maxPolls; i++) {
+			await new Promise(r => setTimeout(r, 2000));
+			try {
+				const res = await fetch(`/api/jobs/${jobId}`);
+				const job = await res.json();
+				if (job.status === 'completed') {
+					trackStatus[key] = 'completed';
+					return;
+				} else if (job.status === 'failed') {
+					trackStatus[key] = 'failed';
+					return;
+				}
+				// still running
+			} catch {
+				// network blip, keep polling
+			}
+		}
+		trackStatus[key] = 'failed';
 	}
 
 	async function downloadAllMissing() {
 		const items = activeTab === 'top' ? topTracks : similarTracks;
-		const missing = items.filter(t => !t.in_library);
+		const missing = items.filter(t => !t.in_library && !getStatus(t));
 		if (!missing.length) return;
+
+		bulkDownloading = true;
+		// Mark all as queued
+		for (const t of missing) {
+			trackStatus[trackKey(t)] = 'queued';
+		}
+
 		try {
-			await fetch('/api/download/bulk', {
+			const res = await fetch('/api/download/bulk', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					tracks: missing.map(t => ({ artist: t.artist, track: t.name }))
 				})
 			});
-			addToast(`Downloading ${missing.length} tracks`, 'success');
+			const data = await res.json();
+			if (data.job_id) {
+				addToast(`Downloading ${missing.length} tracks`, 'success');
+				// Poll bulk job for per-track updates
+				pollBulkJob(data.job_id, missing);
+			}
 		} catch (e) {
 			addToast('Bulk download failed', 'error');
+			for (const t of missing) {
+				trackStatus[trackKey(t)] = 'failed';
+			}
+		} finally {
+			bulkDownloading = false;
+		}
+	}
+
+	async function pollBulkJob(jobId, tracks) {
+		const maxPolls = 300; // 10 minutes
+		for (let i = 0; i < maxPolls; i++) {
+			await new Promise(r => setTimeout(r, 2000));
+			try {
+				const res = await fetch(`/api/jobs/${jobId}`);
+				const job = await res.json();
+
+				// Update per-track status from job.tracks
+				if (job.tracks) {
+					try {
+						const trackList = JSON.parse(job.tracks);
+						for (const tj of trackList) {
+							const key = `${tj.artist}::${tj.track}`.toLowerCase();
+							if (tj.status === 'downloaded' || tj.status === 'downloading') {
+								trackStatus[key] = 'completed';
+							} else if (tj.status === 'failed') {
+								trackStatus[key] = 'failed';
+							} else if (tj.status === 'skipped') {
+								trackStatus[key] = 'failed';
+							}
+							// pending stays as queued
+						}
+					} catch {}
+				}
+
+				if (job.status === 'completed' || job.status === 'failed') {
+					return;
+				}
+			} catch {}
 		}
 	}
 
@@ -92,10 +201,10 @@
 
 <div class="max-w-6xl">
 	<PageHeader title="Discover" color="var(--color-discover)">
-		{#if (activeTab === 'top' && topTracks.some(t => !t.in_library)) || (activeTab === 'similar' && similarTracks.some(t => !t.in_library))}
-			<Button variant="success" size="sm" onclick={downloadAllMissing}>
+		{#if missingCount > 0}
+			<Button variant="success" size="sm" onclick={downloadAllMissing} loading={bulkDownloading}>
 				<Download class="w-3.5 h-3.5" />
-				Download All Missing
+				Download {missingCount} Missing
 			</Button>
 		{/if}
 	</PageHeader>
@@ -137,27 +246,39 @@
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Track</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Artist</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Listeners</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
-							<th class="px-4 py-3"></th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Status</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-[var(--border-subtle)]">
 						{#each topTracks as t, i}
-							<tr class="hover:bg-[var(--bg-hover)] transition-colors">
+							{@const status = getStatus(t)}
+							<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 								<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
 								<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
 								<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
 								<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString()}</td>
-								<td class="px-4 py-3">
+								<td class="px-4 py-3 text-right">
 									{#if t.in_library}
 										<Badge variant="success">In Library</Badge>
+									{:else if status === 'completed'}
+										<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
+											<Check class="w-3.5 h-3.5" /> Downloaded
+										</span>
+									{:else if status === 'failed'}
+										<span class="inline-flex items-center gap-2">
+											<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
+												<X class="w-3.5 h-3.5" /> Failed
+											</span>
+											<button onclick={() => downloadTrack(t)}
+												class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
+										</span>
+									{:else if status === 'downloading' || status === 'queued'}
+										<span class="inline-flex items-center gap-1.5 text-blue-400 text-xs font-medium">
+											<Loader2 class="w-3.5 h-3.5 animate-spin" />
+											{status === 'queued' ? 'Queued' : 'Downloading'}
+										</span>
 									{:else}
-										<Badge variant="warning">Missing</Badge>
-									{/if}
-								</td>
-								<td class="px-4 py-3">
-									{#if !t.in_library}
-										<Button variant="success" size="sm" onclick={() => downloadTrack(t.artist, t.name)}>
+										<Button variant="success" size="sm" onclick={() => downloadTrack(t)}>
 											<Download class="w-3 h-3" />
 										</Button>
 									{/if}
@@ -167,7 +288,7 @@
 					</tbody>
 				</table>
 			{:else}
-				<EmptyState title="No top tracks" description="Could not load Last.fm top charts." />
+				<EmptyState title="No top tracks" description="Could not load Last.fm top charts. Check Last.fm API key in Settings." />
 			{/if}
 		</Card>
 	{:else if activeTab === 'similar'}
@@ -179,28 +300,40 @@
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Track</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Artist</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Similar to</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
-							<th class="px-4 py-3"></th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Status</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-[var(--border-subtle)]">
 						{#each similarTracks as t}
-							<tr class="hover:bg-[var(--bg-hover)] transition-colors">
+							{@const status = getStatus(t)}
+							<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 								<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
 								<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
 								<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
 									{t.source_artist} - {t.source_track}
 								</td>
-								<td class="px-4 py-3">
+								<td class="px-4 py-3 text-right">
 									{#if t.in_library}
 										<Badge variant="success">In Library</Badge>
+									{:else if status === 'completed'}
+										<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
+											<Check class="w-3.5 h-3.5" /> Downloaded
+										</span>
+									{:else if status === 'failed'}
+										<span class="inline-flex items-center gap-2">
+											<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
+												<X class="w-3.5 h-3.5" /> Failed
+											</span>
+											<button onclick={() => downloadTrack(t)}
+												class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
+										</span>
+									{:else if status === 'downloading' || status === 'queued'}
+										<span class="inline-flex items-center gap-1.5 text-blue-400 text-xs font-medium">
+											<Loader2 class="w-3.5 h-3.5 animate-spin" />
+											{status === 'queued' ? 'Queued' : 'Downloading'}
+										</span>
 									{:else}
-										<Badge variant="warning">Missing</Badge>
-									{/if}
-								</td>
-								<td class="px-4 py-3">
-									{#if !t.in_library}
-										<Button variant="success" size="sm" onclick={() => downloadTrack(t.artist, t.name)}>
+										<Button variant="success" size="sm" onclick={() => downloadTrack(t)}>
 											<Download class="w-3 h-3" />
 										</Button>
 									{/if}
