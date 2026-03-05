@@ -52,6 +52,12 @@ max_analysis_workers = 2    # Parallel analysis workers
 server_name = "Zonik"       # Server name reported to clients
 ```
 
+## Service Connections
+
+Service connections (slskd, Lidarr, Last.fm) can be configured from the web UI at **Settings > Service Connections**. Changes are saved directly to `zonik.toml`. API keys are masked in the UI for security.
+
+You can also edit `zonik.toml` directly if you prefer.
+
 ## Getting API Keys
 
 ### Last.fm

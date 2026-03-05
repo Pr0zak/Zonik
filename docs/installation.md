@@ -10,7 +10,7 @@ Run on your **Proxmox host** — it creates the CT, installs everything, and sta
 bash <(curl -sL https://raw.githubusercontent.com/Pr0zak/Zonik/main/create-ct.sh)
 ```
 
-The interactive installer will prompt for CT resources, network, music path, GPU passthrough, and API keys.
+The interactive installer will prompt for CT resources, network, music path, and GPU passthrough. Service connections (slskd, Lidarr, Last.fm) are configured via the web UI after install.
 
 ### Inside an Existing CT
 
@@ -44,7 +44,7 @@ cd frontend && npm install && npm run build && cd ..
 mkdir -p /etc/zonik
 cp zonik.toml.example /etc/zonik/zonik.toml
 ln -sf /etc/zonik/zonik.toml /opt/zonik/zonik.toml
-# Edit /etc/zonik/zonik.toml with your settings
+# Service connections (slskd, Lidarr, Last.fm) can be configured via the web UI
 
 # Database
 mkdir -p /opt/zonik/data /opt/zonik/cache/covers
@@ -96,7 +96,8 @@ cd Zonik
 # Python backend (requires uv or pip)
 uv venv && uv pip install -e .
 cp zonik.toml.example zonik.toml
-# Edit zonik.toml: set music_dir, database path, API keys
+# Edit zonik.toml: set music_dir, database path
+# API keys can be configured via the web UI at Settings
 
 # Start backend
 uv run uvicorn backend.main:app --reload --port 8000

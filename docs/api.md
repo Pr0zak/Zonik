@@ -163,6 +163,13 @@ Base URL: `/api`
 | `/api/analysis/echo-match` | POST | Vibe similarity search `{track_id, limit?}` |
 | `/api/analysis/vibe-search` | POST | Text-to-audio search `{query, limit?}` |
 
+### Config
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/config/services` | GET | Get service connection settings (keys masked) |
+| `/api/config/services` | PUT | Update service connections `{slskd_url, slskd_api_key, lidarr_url, lidarr_api_key, lastfm_api_key, lastfm_write_api_key, lastfm_write_api_secret}` |
+
 ### Schedule
 
 | Endpoint | Method | Description |
