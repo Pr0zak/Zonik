@@ -170,6 +170,9 @@ Base URL: `/api`
 | `/api/config/services` | GET | Get service connection settings (keys masked) |
 | `/api/config/services` | PUT | Update service connections and directories |
 | `/api/config/test/{service}` | POST | Test service connectivity (`lastfm`, `soulseek`, `lidarr`) |
+| `/api/config/version` | GET | Current version and git commit hash |
+| `/api/config/updates` | GET | Check GitHub for updates (5-min cache) |
+| `/api/config/upgrade` | POST | Trigger upgrade via `upgrade.sh` (returns `{job_id}`) |
 
 ### Schedule
 

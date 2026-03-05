@@ -27,7 +27,7 @@ backend/
   database.py          # SQLAlchemy engine, FTS5 setup, search helpers
   models/              # 14 SQLAlchemy models (Track, Artist, Album, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
-    config_api.py      # GET/PUT /api/config/services + POST /api/config/test/{service}
+    config_api.py      # Services config + version/updates/upgrade endpoints
   subsonic/            # Full OpenSubsonic API (auth, browsing, media, search, etc.)
   services/            # Business logic (scanner, soulseek, lastfm, artwork, etc.)
   workers/             # ARQ task functions + cron scheduler
@@ -57,13 +57,14 @@ docs/                  # Installation, configuration, API reference, development
 - Download dir and cover cache dir also web-configurable
 - Installer (`create-ct.sh`) only asks for infrastructure — no API keys
 - SPA routing: catch-all route serves index.html for client-side SvelteKit routes
+- Web UI upgrade system: check GitHub for updates, run upgrade.sh as background Job with live progress
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
 - `zonik.toml.example` — Template with empty keys (safe to commit)
 - `create-ct.sh` — Proxmox host installer (creates CT + installs app, no API key prompts)
 - `install.sh` — In-CT installer (for existing Debian 12 containers)
-- `upgrade.sh` — Pull, rebuild, restart
+- `upgrade.sh` — Pull, rebuild, restart (also triggered from web UI Settings page)
 
 ## Frontend Notes
 - Svelte 5 runes: use `$state`, `$derived` (not `{@const}` outside control blocks)
