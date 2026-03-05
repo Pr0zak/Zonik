@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { addToast } from '$lib/stores.js';
-	import { Clock, Play, Download, ChevronDown, ChevronRight, ExternalLink } from 'lucide-svelte';
+	import { Clock, Play, Download, ChevronDown, ChevronRight } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -14,7 +14,7 @@
 	let loading = $state(true);
 	let running = $state({});
 	let expandedTask = $state(null);
-	let taskResult = $state(null);
+	let taskResults = $state({}); // keyed by task_name
 	let downloading = $state(false);
 
 	const intervalOptions = [
@@ -91,14 +91,13 @@
 	async function runNow(task) {
 		running[task.task_name] = true;
 		expandedTask = task.task_name;
-		taskResult = null;
+		taskResults[task.task_name] = null; // Clear previous while running
 		try {
 			const res = await fetch(`/api/schedule/${task.task_name}/run`, { method: 'POST' });
 			const data = await res.json();
 			if (data.job_id) {
 				addToast(`${task.label} started`, 'success');
-				// Poll for results
-				await pollJobResult(data.job_id);
+				await pollJobResult(task.task_name, data.job_id);
 			} else {
 				addToast(`${task.label} started`, 'success');
 			}
@@ -109,19 +108,42 @@
 		}
 	}
 
-	async function pollJobResult(jobId) {
+	async function pollJobResult(taskName, jobId) {
 		for (let i = 0; i < 60; i++) {
 			await new Promise(r => setTimeout(r, 2000));
 			try {
 				const res = await fetch(`/api/jobs/${jobId}`);
 				const job = await res.json();
 				if (job.status === 'completed' || job.status === 'failed') {
-					taskResult = job;
-					// Refresh tasks to get updated last_run_at
+					taskResults[taskName] = job;
 					tasks = await fetch('/api/schedule').then(r => r.json());
 					return;
 				}
 			} catch {}
+		}
+	}
+
+	async function loadLastResult(taskName) {
+		// Load the most recent job for this task type
+		try {
+			const res = await fetch(`/api/jobs?type=${taskName}&limit=1`);
+			const jobs = await res.json();
+			if (jobs.length > 0) {
+				const detail = await fetch(`/api/jobs/${jobs[0].id}`).then(r => r.json());
+				taskResults[taskName] = detail;
+			}
+		} catch {}
+	}
+
+	async function toggleExpand(taskName) {
+		if (expandedTask === taskName) {
+			expandedTask = null;
+		} else {
+			expandedTask = taskName;
+			// Load last result if we don't have one cached
+			if (!taskResults[taskName]) {
+				await loadLastResult(taskName);
+			}
 		}
 	}
 
@@ -145,16 +167,6 @@
 			addToast('Failed to start downloads', 'error');
 		} finally {
 			downloading = false;
-		}
-	}
-
-	function toggleExpand(taskName) {
-		if (expandedTask === taskName) {
-			expandedTask = null;
-			taskResult = null;
-		} else {
-			expandedTask = taskName;
-			taskResult = null;
 		}
 	}
 </script>
@@ -187,7 +199,9 @@
 									{task.enabled ? 'left-[18px]' : 'left-0.5'}"></span>
 							</button>
 
-							<button onclick={() => toggleExpand(task.task_name)} class="flex-1 min-w-0 text-left">
+							<!-- svelte-ignore a11y_click_events_have_key_events -->
+							<!-- svelte-ignore a11y_no_static_element_interactions -->
+							<div onclick={() => toggleExpand(task.task_name)} class="flex-1 min-w-0 cursor-pointer">
 								<div class="flex items-center gap-1.5">
 									{#if expandedTask === task.task_name}
 										<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
@@ -202,7 +216,7 @@
 								{#if task.last_run_at}
 									<p class="text-xs text-[var(--text-muted)] font-mono mt-0.5 ml-5">Last run: {new Date(task.last_run_at).toLocaleString()}</p>
 								{/if}
-							</button>
+							</div>
 
 							<select value={task.interval_hours}
 								onchange={(e) => updateInterval(task, e.target.value)}
@@ -239,19 +253,18 @@
 										<div class="w-4 h-4 border-2 border-[var(--color-schedule)] border-t-transparent rounded-full animate-spin"></div>
 										<span class="text-sm text-[var(--text-secondary)]">Running {task.label}...</span>
 									</div>
-								{:else if taskResult}
-									{@const parsed = (() => { try { return JSON.parse(taskResult.result); } catch { return null; } })()}
-									{@const trackList = (() => { try { return JSON.parse(taskResult.tracks); } catch { return null; } })()}
+								{:else if taskResults[task.task_name]}
+									{@const job = taskResults[task.task_name]}
+									{@const parsed = (() => { try { return JSON.parse(job.result); } catch { return null; } })()}
+									{@const trackList = (() => { try { return JSON.parse(job.tracks); } catch { return null; } })()}
 									<div class="bg-[var(--bg-tertiary)] rounded-md p-4 space-y-3">
-										<!-- Status -->
 										<div class="flex items-center justify-between">
-											<Badge variant={taskResult.status === 'completed' ? 'success' : 'error'}>{taskResult.status}</Badge>
-											{#if taskResult.finished_at}
-												<span class="text-xs text-[var(--text-muted)] font-mono">{new Date(taskResult.finished_at).toLocaleString()}</span>
+											<Badge variant={job.status === 'completed' ? 'success' : 'error'}>{job.status}</Badge>
+											{#if job.finished_at}
+												<span class="text-xs text-[var(--text-muted)] font-mono">{new Date(job.finished_at).toLocaleString()}</span>
 											{/if}
 										</div>
 
-										<!-- Result summary -->
 										{#if parsed && typeof parsed === 'object'}
 											<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 												{#each Object.entries(parsed) as [key, value]}
@@ -263,7 +276,6 @@
 											</div>
 										{/if}
 
-										<!-- Track list (for lastfm_top_tracks) -->
 										{#if Array.isArray(trackList) && trackList.length > 0}
 											<div>
 												<div class="flex items-center justify-between mb-2">
@@ -295,7 +307,7 @@
 									</div>
 								{:else}
 									<div class="bg-[var(--bg-tertiary)] rounded-md p-4">
-										<p class="text-sm text-[var(--text-muted)]">Click Run to see results here.</p>
+										<p class="text-sm text-[var(--text-muted)]">No previous results. Click Run to execute this task.</p>
 									</div>
 								{/if}
 							</div>

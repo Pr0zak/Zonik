@@ -15,6 +15,7 @@
 	let similarArtists = $state([]);
 	let loading = $state(false);
 	let bulkDownloading = $state(false);
+	let topTracksLimit = $state(100);
 
 	/** Per-track download status: key = "artist::name", value = "downloading" | "queued" | "completed" | "failed" */
 	let trackStatus = $state({});
@@ -44,7 +45,7 @@
 	async function loadTopTracks() {
 		loading = true;
 		try {
-			const data = await fetch('/api/discovery/top-tracks?limit=50').then(r => r.json());
+			const data = await fetch(`/api/discovery/top-tracks?limit=${topTracksLimit}`).then(r => r.json());
 			topTracks = data.tracks || [];
 		} catch (e) {
 			addToast('Failed to load top tracks', 'error');
@@ -196,7 +197,15 @@
 		if (tab === 'artists' && !similarArtists.length) loadSimilarArtists();
 	}
 
-	onMount(() => loadTopTracks());
+	onMount(async () => {
+		// Fetch scheduled task config for top tracks limit
+		try {
+			const tasks = await fetch('/api/schedule').then(r => r.json());
+			const topTask = tasks.find(t => t.task_name === 'lastfm_top_tracks');
+			if (topTask?.count) topTracksLimit = topTask.count;
+		} catch {}
+		loadTopTracks();
+	});
 </script>
 
 <div class="max-w-6xl">
