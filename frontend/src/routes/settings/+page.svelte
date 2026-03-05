@@ -344,7 +344,7 @@
 			<div class="mt-3">
 				<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">File Naming Scheme</label>
 				<input type="text" bind:value={services.naming_scheme} oninput={markDirty}
-					placeholder="{artist}/{album}/{track_number} - {title}" class={inputClass} />
+					placeholder={'{artist}/{album}/{track_number} - {title}'} class={inputClass} />
 				<p class="mt-1 text-xs text-[var(--text-disabled)]">
 					Variables: <code class="text-[var(--color-accent-light)]">{'{artist}'}</code>, <code class="text-[var(--color-accent-light)]">{'{album}'}</code>, <code class="text-[var(--color-accent-light)]">{'{track_number}'}</code>, <code class="text-[var(--color-accent-light)]">{'{title}'}</code> — used by Rename &amp; Sort
 				</p>
