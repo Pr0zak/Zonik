@@ -1,8 +1,14 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
+	import { Clock, Play } from 'lucide-svelte';
+	import PageHeader from '../../components/ui/PageHeader.svelte';
+	import Card from '../../components/ui/Card.svelte';
+	import Button from '../../components/ui/Button.svelte';
+	import Skeleton from '../../components/ui/Skeleton.svelte';
 
 	let tasks = $state([]);
+	let loading = $state(true);
 	let running = $state({});
 
 	const intervalOptions = [
@@ -18,6 +24,8 @@
 			tasks = await fetch('/api/schedule').then(r => r.json());
 		} catch (e) {
 			console.error('Failed to load schedule:', e);
+		} finally {
+			loading = false;
 		}
 	});
 
@@ -30,7 +38,7 @@
 				body: JSON.stringify({ enabled: newEnabled }),
 			});
 			task.enabled = newEnabled;
-			tasks = [...tasks]; // trigger reactivity
+			tasks = [...tasks];
 		} catch (e) {
 			addToast('Failed to update task', 'error');
 		}
@@ -74,44 +82,60 @@
 </script>
 
 <div class="max-w-4xl">
-	<h1 class="text-2xl font-bold mb-6">Scheduled Tasks</h1>
+	<PageHeader title="Scheduled Tasks" color="var(--color-schedule)" />
 
-	<div class="bg-gray-900 rounded-xl border border-gray-800 divide-y divide-gray-800">
-		{#each tasks as task}
-			<div class="p-4 flex items-center gap-4">
-				<button on:click={() => toggleTask(task)}
-					class="w-10 h-6 rounded-full transition-colors relative flex-shrink-0
-						{task.enabled ? 'bg-accent-600' : 'bg-gray-700'}">
-					<span class="absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform
-						{task.enabled ? 'left-[18px]' : 'left-0.5'}"></span>
-				</button>
-
-				<div class="flex-1 min-w-0">
-					<p class="font-medium text-sm">{task.label}</p>
-					{#if task.last_run_at}
-						<p class="text-xs text-gray-500">Last: {new Date(task.last_run_at).toLocaleString()}</p>
-					{/if}
-				</div>
-
-				<select value={task.interval_hours}
-					on:change={(e) => updateInterval(task, e.target.value)}
-					class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
-					{#each intervalOptions as opt}
-						<option value={opt.value} selected={opt.value === task.interval_hours}>{opt.label}</option>
-					{/each}
-				</select>
-
-				<input type="time" value={task.run_at || ''}
-					on:change={(e) => updateRunAt(task, e.target.value)}
-					class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs w-24" />
-
-				<button on:click={() => runNow(task)}
-					disabled={running[task.task_name]}
-					class="px-3 py-1 bg-accent-600 hover:bg-accent-700 rounded text-xs
-						disabled:opacity-50 transition whitespace-nowrap">
-					{running[task.task_name] ? '...' : 'Run Now'}
-				</button>
+	<Card padding="p-0">
+		{#if loading}
+			<div class="divide-y divide-[var(--border-subtle)]">
+				{#each Array(5) as _}
+					<div class="p-4 flex items-center gap-4">
+						<Skeleton class="w-10 h-6 rounded-full" />
+						<Skeleton class="h-4 w-32 flex-1" />
+						<Skeleton class="h-7 w-24" />
+						<Skeleton class="h-7 w-24" />
+						<Skeleton class="h-7 w-16" />
+					</div>
+				{/each}
 			</div>
-		{/each}
-	</div>
+		{:else}
+			<div class="divide-y divide-[var(--border-subtle)]">
+				{#each tasks as task}
+					<div class="p-4 flex items-center gap-4">
+						<button on:click={() => toggleTask(task)}
+							class="w-10 h-6 rounded-full transition-colors relative flex-shrink-0
+								{task.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
+							<span class="absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow-sm
+								{task.enabled ? 'left-[18px]' : 'left-0.5'}"></span>
+						</button>
+
+						<div class="flex-1 min-w-0">
+							<p class="font-medium text-sm text-[var(--text-primary)]">{task.label}</p>
+							{#if task.last_run_at}
+								<p class="text-xs text-[var(--text-muted)] font-mono">Last: {new Date(task.last_run_at).toLocaleString()}</p>
+							{/if}
+						</div>
+
+						<select value={task.interval_hours}
+							on:change={(e) => updateInterval(task, e.target.value)}
+							class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none focus:border-[var(--color-accent)]/50">
+							{#each intervalOptions as opt}
+								<option value={opt.value} selected={opt.value === task.interval_hours}>{opt.label}</option>
+							{/each}
+						</select>
+
+						<input type="time" value={task.run_at || ''}
+							on:change={(e) => updateRunAt(task, e.target.value)}
+							class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] w-24 focus:outline-none focus:border-[var(--color-accent)]/50" />
+
+						<Button variant="primary" size="sm"
+							loading={running[task.task_name]}
+							onclick={() => runNow(task)}>
+							<Play class="w-3 h-3" />
+							Run
+						</Button>
+					</div>
+				{/each}
+			</div>
+		{/if}
+	</Card>
 </div>

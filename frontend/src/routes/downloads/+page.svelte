@@ -3,6 +3,11 @@
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import { formatSize } from '$lib/utils.js';
+	import { Download, Search, Zap, ShieldBan, Trash2 } from 'lucide-svelte';
+	import PageHeader from '../../components/ui/PageHeader.svelte';
+	import Card from '../../components/ui/Card.svelte';
+	import Button from '../../components/ui/Button.svelte';
+	import Badge from '../../components/ui/Badge.svelte';
 
 	let artist = $state('');
 	let track = $state('');
@@ -72,7 +77,7 @@
 		const key = result.username + result.filename;
 		downloading[key] = true;
 		try {
-			const data = await fetch('/api/download/trigger', {
+			await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -92,7 +97,7 @@
 
 	async function autoDownload() {
 		try {
-			const data = await fetch('/api/download/trigger', {
+			await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ artist: artist.trim(), track: track.trim() })
@@ -109,62 +114,61 @@
 </script>
 
 <div class="max-w-6xl">
-	<h1 class="text-2xl font-bold mb-6">Downloads</h1>
+	<PageHeader title="Downloads" color="var(--color-downloads)" />
 
-	<div class="bg-gray-900 rounded-xl border border-gray-800 p-6 mb-6">
-		<h2 class="text-lg font-semibold mb-4">Soulseek Search</h2>
+	<!-- Soulseek Search -->
+	<Card padding="p-6" class="mb-6">
+		<div class="flex items-center gap-2 mb-4">
+			<Search class="w-4 h-4 text-[var(--color-downloads)]" />
+			<h2 class="text-base font-semibold text-[var(--text-primary)]">Soulseek Search</h2>
+		</div>
 		<div class="flex gap-3 mb-4">
 			<input type="text" placeholder="Artist" bind:value={artist} on:keydown={handleKeydown}
-				class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
-					focus:outline-none focus:border-accent-500" />
+				class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)]
+					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 			<input type="text" placeholder="Track" bind:value={track} on:keydown={handleKeydown}
-				class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm
-					focus:outline-none focus:border-accent-500" />
-			<button on:click={searchSoulseek} disabled={searching || !artist || !track}
-				class="px-4 py-2 bg-accent-600 hover:bg-accent-700 rounded-lg text-sm font-medium
-					disabled:opacity-50 transition whitespace-nowrap">
-				{searching ? 'Searching...' : 'Search'}
-			</button>
-			<button on:click={autoDownload} disabled={!artist || !track}
-				class="px-4 py-2 bg-green-700 hover:bg-green-800 rounded-lg text-sm font-medium
-					disabled:opacity-50 transition whitespace-nowrap">
+				class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)]
+					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+			<Button variant="primary" loading={searching} disabled={!artist || !track} onclick={searchSoulseek}>
+				<Search class="w-3.5 h-3.5" />
+				Search
+			</Button>
+			<Button variant="success" disabled={!artist || !track} onclick={autoDownload}>
+				<Zap class="w-3.5 h-3.5" />
 				Auto
-			</button>
+			</Button>
 		</div>
 
 		{#if results.length}
-			<div class="border border-gray-800 rounded-lg overflow-hidden">
+			<div class="border border-[var(--border-subtle)] rounded-lg overflow-hidden">
 				<table class="w-full text-sm">
 					<thead>
-						<tr class="border-b border-gray-800 text-gray-400 text-left">
-							<th class="px-4 py-2">File</th>
-							<th class="px-4 py-2">User</th>
-							<th class="px-4 py-2">Format</th>
-							<th class="px-4 py-2">Size</th>
-							<th class="px-4 py-2">Bitrate</th>
+						<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">File</th>
+							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">User</th>
+							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Format</th>
+							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Size</th>
+							<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Bitrate</th>
 							<th class="px-4 py-2"></th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-gray-800/50">
+					<tbody class="divide-y divide-[var(--border-subtle)]">
 						{#each results as r}
 							{@const key = r.username + r.filename}
-							<tr class="hover:bg-gray-800/50">
-								<td class="px-4 py-2 max-w-xs truncate" title={r.filename}>
+							<tr class="hover:bg-[var(--bg-hover)] transition-colors">
+								<td class="px-4 py-2 max-w-xs truncate text-[var(--text-body)]" title={r.filename}>
 									{r.filename.split(/[/\\]/).pop()}
 								</td>
-								<td class="px-4 py-2 text-gray-400">{r.username}</td>
+								<td class="px-4 py-2 text-[var(--text-secondary)]">{r.username}</td>
 								<td class="px-4 py-2">
-									<span class="px-2 py-0.5 bg-gray-800 rounded text-xs uppercase">{r.extension}</span>
+									<Badge>{(r.extension || '').toUpperCase()}</Badge>
 								</td>
-								<td class="px-4 py-2 text-gray-400">{formatSize(r.size)}</td>
-								<td class="px-4 py-2 text-gray-400">{r.bitRate ? r.bitRate + ' kbps' : '-'}</td>
+								<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">{formatSize(r.size)}</td>
+								<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">{r.bitRate ? r.bitRate + ' kbps' : '-'}</td>
 								<td class="px-4 py-2">
-									<button on:click={() => downloadFile(r)}
-										disabled={downloading[key]}
-										class="px-3 py-1 bg-green-700 hover:bg-green-800 rounded text-xs
-											disabled:opacity-50 transition">
-										{downloading[key] ? '...' : 'Download'}
-									</button>
+									<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
+										<Download class="w-3 h-3" />
+									</Button>
 								</td>
 							</tr>
 						{/each}
@@ -172,55 +176,63 @@
 				</table>
 			</div>
 		{/if}
-	</div>
+	</Card>
 
-	<!-- Blacklist Section -->
-	<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
+	<!-- Blacklist -->
+	<Card padding="p-6">
 		<div class="flex items-center justify-between mb-4">
-			<h2 class="text-lg font-semibold">Download Blacklist</h2>
+			<div class="flex items-center gap-2">
+				<ShieldBan class="w-4 h-4 text-red-400" />
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download Blacklist</h2>
+			</div>
 			<button on:click={() => showBlacklist = !showBlacklist}
-				class="text-xs text-gray-400 hover:text-white transition">
+				class="text-xs text-[var(--text-muted)] hover:text-white transition-colors font-mono">
 				{showBlacklist ? 'Hide' : 'Show'} ({blacklist.length})
 			</button>
 		</div>
 
 		{#if showBlacklist}
-			<div class="flex gap-2 mb-4">
+			<div class="flex gap-2 mb-4 animate-fade-slide-in">
 				<input type="text" placeholder="Artist *" bind:value={blArtist}
-					class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500" />
+					class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				<input type="text" placeholder="Track (blank = entire artist)" bind:value={blTrack}
-					class="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500" />
+					class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				<input type="text" placeholder="Reason" bind:value={blReason}
-					class="w-48 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-accent-500" />
-				<button on:click={addBlacklistEntry} disabled={!blArtist.trim()}
-					class="px-3 py-1.5 bg-red-700 hover:bg-red-800 rounded text-xs font-medium disabled:opacity-50 transition">
+					class="w-48 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				<Button variant="danger" size="sm" disabled={!blArtist.trim()} onclick={addBlacklistEntry}>
+					<ShieldBan class="w-3 h-3" />
 					Block
-				</button>
+				</Button>
 			</div>
 
 			{#if blacklist.length}
-				<div class="space-y-1">
+				<div class="space-y-1 animate-fade-slide-in">
 					{#each blacklist as entry}
-						<div class="flex items-center justify-between px-3 py-2 bg-gray-800/50 rounded text-sm">
+						<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm">
 							<div>
-								<span class="font-medium">{entry.artist}</span>
+								<span class="font-medium text-[var(--text-primary)]">{entry.artist}</span>
 								{#if entry.track}
-									<span class="text-gray-400"> - {entry.track}</span>
+									<span class="text-[var(--text-secondary)]"> - {entry.track}</span>
 								{:else}
-									<span class="text-red-400 text-xs ml-2">(all tracks)</span>
+									<Badge variant="error" class="ml-2">all tracks</Badge>
 								{/if}
 								{#if entry.reason}
-									<span class="text-gray-500 text-xs ml-2">({entry.reason})</span>
+									<span class="text-[var(--text-muted)] text-xs ml-2">({entry.reason})</span>
 								{/if}
 							</div>
 							<button on:click={() => removeBlacklistEntry(entry.id)}
-								class="text-gray-500 hover:text-red-400 text-xs transition">Remove</button>
+								class="text-[var(--text-disabled)] hover:text-red-400 transition-colors">
+								<Trash2 class="w-3.5 h-3.5" />
+							</button>
 						</div>
 					{/each}
 				</div>
 			{:else}
-				<p class="text-gray-500 text-sm">No blacklisted artists or tracks.</p>
+				<p class="text-[var(--text-muted)] text-sm">No blacklisted artists or tracks.</p>
 			{/if}
 		{/if}
-	</div>
+	</Card>
 </div>

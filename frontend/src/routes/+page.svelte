@@ -1,9 +1,22 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { formatSize, formatDuration } from '$lib/utils.js';
+	import { formatSize } from '$lib/utils.js';
+	import { Music, Users, Disc3, HardDrive } from 'lucide-svelte';
+	import PageHeader from '../components/ui/PageHeader.svelte';
+	import Card from '../components/ui/Card.svelte';
+	import Badge from '../components/ui/Badge.svelte';
+	import Skeleton from '../components/ui/Skeleton.svelte';
+
 	let stats = $state(null);
 	let recent = $state([]);
+	let loading = $state(true);
+
+	const statCards = [
+		{ key: 'tracks', label: 'Tracks', icon: Music, color: 'var(--color-library)' },
+		{ key: 'artists', label: 'Artists', icon: Users, color: 'var(--color-discover)' },
+		{ key: 'albums', label: 'Albums', icon: Disc3, color: 'var(--color-playlists)' },
+	];
 
 	onMount(async () => {
 		try {
@@ -13,64 +26,76 @@
 			]);
 		} catch (e) {
 			console.error('Failed to load dashboard:', e);
+		} finally {
+			loading = false;
 		}
 	});
 </script>
 
 <div class="max-w-6xl">
-	<div class="mb-6">
-		<h1 class="text-2xl font-bold">Dashboard</h1>
-	</div>
+	<PageHeader title="Dashboard" color="var(--color-dashboard)" />
 
-	{#if stats}
+	{#if loading}
 		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-			<div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
-				<p class="text-2xl font-bold">{stats.tracks.toLocaleString()}</p>
-				<p class="text-sm text-gray-400">Tracks</p>
-			</div>
-			<div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
-				<p class="text-2xl font-bold">{stats.artists.toLocaleString()}</p>
-				<p class="text-sm text-gray-400">Artists</p>
-			</div>
-			<div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
-				<p class="text-2xl font-bold">{stats.albums.toLocaleString()}</p>
-				<p class="text-sm text-gray-400">Albums</p>
-			</div>
-			<div class="bg-gray-900 rounded-xl p-4 border border-gray-800">
-				<p class="text-2xl font-bold">{formatSize(stats.total_size_bytes)}</p>
-				<p class="text-sm text-gray-400">Total Size</p>
-			</div>
+			{#each Array(4) as _}
+				<Skeleton class="h-24 rounded-lg" />
+			{/each}
+		</div>
+		<Skeleton class="h-64 rounded-lg" />
+	{:else if stats}
+		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+			{#each statCards as card}
+				<Card padding="p-4">
+					<div class="flex items-center justify-between mb-2">
+						<svelte:component this={card.icon} class="w-5 h-5" style="color: {card.color}" />
+					</div>
+					<p class="text-2xl font-bold text-[var(--text-primary)]">{stats[card.key].toLocaleString()}</p>
+					<p class="text-xs text-[var(--text-muted)]">{card.label}</p>
+				</Card>
+			{/each}
+			<Card padding="p-4">
+				<div class="flex items-center justify-between mb-2">
+					<HardDrive class="w-5 h-5" style="color: var(--color-stats)" />
+				</div>
+				<p class="text-2xl font-bold text-[var(--text-primary)]">{formatSize(stats.total_size_bytes)}</p>
+				<p class="text-xs text-[var(--text-muted)]">Total Size</p>
+			</Card>
 		</div>
 
 		{#if stats.formats && Object.keys(stats.formats).length}
-			<div class="bg-gray-900 rounded-xl p-4 border border-gray-800 mb-8">
-				<h2 class="text-sm font-medium text-gray-400 mb-3">Formats</h2>
+			<Card padding="p-4" class="mb-8">
+				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Formats</h2>
 				<div class="flex flex-wrap gap-2">
 					{#each Object.entries(stats.formats) as [fmt, count]}
-						<span class="px-3 py-1 bg-gray-800 rounded-full text-sm">
-							{fmt.toUpperCase()} <span class="text-gray-400">{count}</span>
-						</span>
+						<Badge>{fmt.toUpperCase()} <span class="text-[var(--text-muted)] ml-1">{count}</span></Badge>
 					{/each}
 				</div>
-			</div>
+			</Card>
 		{/if}
-	{:else}
-		<div class="text-gray-500">Loading...</div>
 	{/if}
 
-	<div class="bg-gray-900 rounded-xl border border-gray-800">
-		<h2 class="text-sm font-medium text-gray-400 p-4 border-b border-gray-800">Recent Additions</h2>
-		{#if recent.length}
-			<div class="divide-y divide-gray-800">
+	<Card padding="p-0">
+		<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] px-4 py-3 border-b border-[var(--border-subtle)]">Recent Additions</h2>
+		{#if loading}
+			<div class="divide-y divide-[var(--border-subtle)]">
+				{#each Array(5) as _}
+					<div class="px-4 py-3 flex items-center justify-between">
+						<Skeleton class="h-4 w-48" />
+						<Skeleton class="h-3 w-20" />
+					</div>
+				{/each}
+			</div>
+		{:else if recent.length}
+			<div class="divide-y divide-[var(--border-subtle)]">
 				{#each recent as track}
-					<div class="px-4 py-3 flex items-center justify-between text-sm">
-						<span>{track.title}</span>
-						<span class="text-gray-500 text-xs">{track.created_at ? new Date(track.created_at).toLocaleDateString() : ''}</span>
+					<div class="px-4 py-3 flex items-center justify-between text-sm hover:bg-[var(--bg-hover)] transition-colors">
+						<span class="text-[var(--text-body)]">{track.title}</span>
+						<span class="text-xs text-[var(--text-muted)] font-mono">{track.created_at ? new Date(track.created_at).toLocaleDateString() : ''}</span>
 					</div>
 				{/each}
 			</div>
 		{:else}
-			<p class="p-4 text-gray-500 text-sm">No tracks yet. Scan your library to get started.</p>
+			<p class="p-4 text-[var(--text-muted)] text-sm">No tracks yet. Scan your library to get started.</p>
 		{/if}
-	</div>
+	</Card>
 </div>

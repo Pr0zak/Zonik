@@ -1,8 +1,15 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
+	import { ScrollText, ChevronDown, ChevronRight } from 'lucide-svelte';
+	import PageHeader from '../../components/ui/PageHeader.svelte';
+	import Card from '../../components/ui/Card.svelte';
+	import Badge from '../../components/ui/Badge.svelte';
+	import Skeleton from '../../components/ui/Skeleton.svelte';
+	import EmptyState from '../../components/ui/EmptyState.svelte';
 
 	let jobs = $state([]);
+	let loading = $state(true);
 	let expandedJob = $state(null);
 	let jobDetail = $state(null);
 
@@ -11,6 +18,8 @@
 			jobs = await api.getJobs();
 		} catch (e) {
 			console.error('Failed to load jobs:', e);
+		} finally {
+			loading = false;
 		}
 	});
 
@@ -28,17 +37,17 @@
 		}
 	}
 
-	function statusColor(status) {
+	function statusVariant(status) {
 		switch (status) {
-			case 'completed': return 'bg-green-900/50 text-green-400';
-			case 'failed': return 'bg-red-900/50 text-red-400';
-			case 'running': return 'bg-blue-900/50 text-blue-400';
-			case 'pending': return 'bg-yellow-900/50 text-yellow-400';
-			default: return 'bg-gray-800 text-gray-400';
+			case 'completed': return 'success';
+			case 'failed': return 'error';
+			case 'running': return 'info';
+			case 'pending': return 'warning';
+			default: return 'default';
 		}
 	}
 
-	function formatDuration(start, end) {
+	function formatJobDuration(start, end) {
 		if (!start || !end) return '-';
 		const ms = new Date(end) - new Date(start);
 		const s = Math.floor(ms / 1000);
@@ -48,55 +57,77 @@
 </script>
 
 <div class="max-w-6xl">
-	<h1 class="text-2xl font-bold mb-6">Job History</h1>
+	<PageHeader title="Job History" color="var(--color-logs)" />
 
-	<div class="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
-		{#if jobs.length}
+	<Card padding="p-0">
+		{#if loading}
+			<div class="divide-y divide-[var(--border-subtle)]">
+				{#each Array(8) as _}
+					<div class="px-4 py-3 flex items-center gap-4">
+						<Skeleton class="h-4 w-24" />
+						<Skeleton class="h-5 w-16 rounded-full" />
+						<Skeleton class="h-4 w-12" />
+						<Skeleton class="h-4 w-20 hidden md:block" />
+						<Skeleton class="h-3 w-32" />
+					</div>
+				{/each}
+			</div>
+		{:else if jobs.length}
 			<table class="w-full text-sm">
 				<thead>
-					<tr class="border-b border-gray-800 text-gray-400 text-left">
-						<th class="px-4 py-3">Type</th>
-						<th class="px-4 py-3">Status</th>
-						<th class="px-4 py-3">Progress</th>
-						<th class="px-4 py-3 hidden md:table-cell">Duration</th>
-						<th class="px-4 py-3">Started</th>
+					<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Type</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Progress</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Duration</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Started</th>
 					</tr>
 				</thead>
-				<tbody class="divide-y divide-gray-800/50">
+				<tbody class="divide-y divide-[var(--border-subtle)]">
 					{#each jobs as job}
-						<tr class="hover:bg-gray-800/50 cursor-pointer" on:click={() => toggleExpand(job)}>
-							<td class="px-4 py-3 font-medium">{job.type}</td>
-							<td class="px-4 py-3">
-								<span class="px-2 py-0.5 rounded text-xs {statusColor(job.status)}">{job.status}</span>
+						<!-- svelte-ignore a11y_click_events_have_key_events -->
+						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" on:click={() => toggleExpand(job)}>
+							<td class="px-4 py-3 font-medium text-[var(--text-body)]">
+								<div class="flex items-center gap-2">
+									{#if expandedJob === job.id}
+										<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)]" />
+									{:else}
+										<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)]" />
+									{/if}
+									{job.type}
+								</div>
 							</td>
-							<td class="px-4 py-3 text-gray-400">
+							<td class="px-4 py-3">
+								<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+							</td>
+							<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs">
 								{#if job.total}
 									{job.progress}/{job.total}
 								{:else}
 									-
 								{/if}
 							</td>
-							<td class="px-4 py-3 text-gray-400 hidden md:table-cell">
-								{formatDuration(job.started_at, job.finished_at)}
+							<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">
+								{formatJobDuration(job.started_at, job.finished_at)}
 							</td>
-							<td class="px-4 py-3 text-gray-400 text-xs">
+							<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono">
 								{job.started_at ? new Date(job.started_at).toLocaleString() : '-'}
 							</td>
 						</tr>
 						{#if expandedJob === job.id && jobDetail}
 							<tr>
-								<td colspan="5" class="px-4 py-3 bg-gray-800/30">
-									<div class="space-y-2 text-xs">
+								<td colspan="5" class="px-4 py-3 bg-[var(--bg-tertiary)]">
+									<div class="space-y-2 text-xs animate-fade-slide-in">
 										{#if jobDetail.result}
 											<div>
-												<span class="text-gray-400">Result:</span>
-												<pre class="mt-1 bg-gray-900 p-2 rounded overflow-x-auto">{jobDetail.result}</pre>
+												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Result</span>
+												<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto font-mono">{jobDetail.result}</pre>
 											</div>
 										{/if}
 										{#if jobDetail.tracks}
 											<div>
-												<span class="text-gray-400">Tracks:</span>
-												<pre class="mt-1 bg-gray-900 p-2 rounded overflow-x-auto max-h-48 overflow-y-auto">{jobDetail.tracks}</pre>
+												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Tracks</span>
+												<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-48 overflow-y-auto font-mono">{jobDetail.tracks}</pre>
 											</div>
 										{/if}
 									</div>
@@ -107,7 +138,12 @@
 				</tbody>
 			</table>
 		{:else}
-			<p class="p-6 text-gray-400">No job history yet.</p>
+			<EmptyState
+				title="No job history yet"
+				description="Jobs will appear here when you scan your library, download tracks, or run analysis."
+			>
+				{#snippet icon()}<ScrollText class="w-10 h-10" />{/snippet}
+			</EmptyState>
 		{/if}
-	</div>
+	</Card>
 </div>
