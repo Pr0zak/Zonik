@@ -25,6 +25,10 @@
 	let resultsPage = $state(0);
 	let resultsPerPage = $state(50);
 
+	// Per-result inline download status: key = username+filename → { status, jobId }
+	// status: 'queued' | 'searching' | 'downloading' | 'completed' | 'failed'
+	let resultStatuses = $state({});
+
 	const FORMAT_ORDER = { flac: 0, wav: 1, alac: 1, mp3: 2, m4a: 3, ogg: 3, opus: 3 };
 
 	function sortResults(list) {
@@ -155,6 +159,28 @@
 		return 'default';
 	}
 
+	function getResultInlineStatus(r) {
+		const key = r.username + r.filename;
+		// Check active transfers first for live progress
+		const transfer = $activeTransfers.find(tr =>
+			tr.username === r.username &&
+			(tr.filename === r.filename || tr.filename?.endsWith(r.filename.split(/[/\\]/).pop()))
+		);
+		if (transfer) {
+			const s = transfer.state;
+			if (s === 'transferring' || s === 'connected') {
+				return { status: 'downloading', progress: transfer.progress || 0, speed: transfer.speed, eta: transfer.eta_seconds, received: transfer.received_bytes, total: transfer.total_bytes };
+			}
+			if (s === 'completed') return { status: 'completed' };
+			if (s === 'failed' || s === 'denied') return { status: 'failed' };
+			return { status: 'queued' };
+		}
+		// Fall back to tracked status
+		const tracked = resultStatuses[key];
+		if (tracked) return tracked;
+		return null;
+	}
+
 	function shortFilename(filename) {
 		return filename?.split(/[/\\]/).pop() || filename;
 	}
@@ -273,6 +299,7 @@
 		searchDone = false;
 		formatFilter = 'all';
 		resultsPage = 0;
+		resultStatuses = {};
 		try {
 			// Try to split "Artist - Track" for blacklist check, otherwise send as query
 			const q = searchQuery.trim();
@@ -307,9 +334,10 @@
 	async function downloadFile(result) {
 		const key = result.username + result.filename;
 		downloading[key] = true;
+		resultStatuses[key] = { status: 'queued' };
 		try {
 			const { artist, track } = parseQuery();
-			await fetch('/api/download/trigger', {
+			const resp = await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -318,8 +346,10 @@
 					filename: result.filename,
 				})
 			}).then(r => r.json());
+			resultStatuses[key] = { status: 'searching', jobId: resp.job_id };
 			addToast('Download started', 'success');
 		} catch (e) {
+			resultStatuses[key] = { status: 'failed' };
 			addToast('Download failed: ' + e.message, 'error');
 		} finally {
 			downloading[key] = false;
@@ -357,6 +387,17 @@
 		unsubJobUpdate = onJobUpdate((wsJob) => {
 			if (wsJob.type === 'download' || wsJob.type === 'bulk_download') {
 				if (wsJob.description) wsDescriptions[wsJob.id] = wsJob.description;
+				// Update inline result statuses from job updates
+				for (const [key, rs] of Object.entries(resultStatuses)) {
+					if (rs.jobId === wsJob.id) {
+						if (wsJob.status === 'completed') resultStatuses[key] = { status: 'completed', jobId: wsJob.id };
+						else if (wsJob.status === 'failed') resultStatuses[key] = { status: 'failed', jobId: wsJob.id };
+						else if (wsJob.status === 'running') {
+							const desc = wsJob.description || '';
+							if (desc.includes('(attempt')) resultStatuses[key] = { status: 'searching', jobId: wsJob.id };
+						}
+					}
+				}
 				loadJobs();
 			}
 		});
@@ -642,7 +683,9 @@
 								{@const key = r.username + r.filename}
 								{@const fname = shortFilename(r.filename)}
 								{@const pathArtist = extractArtistFromPath(r.filename)}
-								<tr class="hover:bg-[var(--bg-hover)] transition-colors group">
+								{@const inline = getResultInlineStatus(r)}
+								<tr class="hover:bg-[var(--bg-hover)] transition-colors group
+									{inline?.status === 'completed' ? 'bg-green-500/5' : inline?.status === 'failed' ? 'bg-red-500/5' : inline?.status === 'downloading' ? 'bg-blue-500/5' : ''}">
 									<td class="px-4 py-2">
 										{#if r.slots_free}
 											<Wifi class="w-3.5 h-3.5 text-green-400" />
@@ -652,7 +695,17 @@
 									</td>
 									<td class="px-4 py-2 max-w-xs">
 										<p class="text-[var(--text-body)] truncate" title={r.filename}>{fname}</p>
-										{#if pathArtist}
+										{#if inline?.status === 'downloading' && inline.progress > 0}
+											<div class="mt-1 flex items-center gap-2">
+												<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+													<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
+														style="width: {inline.progress}%"></div>
+												</div>
+												<span class="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">
+													{inline.speed > 0 ? formatSpeed(inline.speed) : `${Math.round(inline.progress)}%`}
+												</span>
+											</div>
+										{:else if pathArtist}
 											<p class="text-xs text-[var(--text-muted)] truncate">{pathArtist}</p>
 										{/if}
 									</td>
@@ -671,9 +724,33 @@
 										{formatSize(r.size)}
 									</td>
 									<td class="px-4 py-2">
-										<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
-											<Download class="w-3 h-3" />
-										</Button>
+										{#if inline?.status === 'completed'}
+											<Badge variant="success">
+												<CircleCheck class="w-3 h-3 mr-0.5" />
+												done
+											</Badge>
+										{:else if inline?.status === 'failed'}
+											<div class="flex items-center gap-1">
+												<Badge variant="error">failed</Badge>
+												<button onclick={() => downloadFile(r)} class="p-1 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Retry">
+													<RotateCcw class="w-3 h-3" />
+												</button>
+											</div>
+										{:else if inline?.status === 'downloading'}
+											<Badge variant="info">
+												<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+												{inline.progress > 0 ? `${Math.round(inline.progress)}%` : 'dl'}
+											</Badge>
+										{:else if inline?.status === 'searching' || inline?.status === 'queued'}
+											<Badge variant="default">
+												<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+												{inline.status === 'searching' ? 'search' : 'wait'}
+											</Badge>
+										{:else}
+											<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
+												<Download class="w-3 h-3" />
+											</Button>
+										{/if}
 									</td>
 								</tr>
 							{/each}
