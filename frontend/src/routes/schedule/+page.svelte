@@ -118,13 +118,15 @@
 									{#each groupTasks as task}
 										<div class="flex items-center gap-3 py-2">
 											<div class="w-2 h-2 rounded-full flex-shrink-0 {task.enabled ? 'bg-emerald-400' : 'bg-[var(--border-interactive)]'}"></div>
-											<span class="text-sm text-[var(--text-body)] flex-1 min-w-0 truncate">{task.label}</span>
-											<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0">{formatInterval(task.interval_hours)}</span>
-											{#if task.run_at}
-												<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0">@ {task.run_at}</span>
-											{/if}
-											<span class="text-xs text-[var(--text-disabled)] font-mono flex-shrink-0 w-16 text-right">{formatLastRun(task.last_run_at)}</span>
-											<Badge variant={task.enabled ? 'success' : 'default'}>{task.enabled ? 'On' : 'Off'}</Badge>
+											<span class="text-sm text-[var(--text-body)] min-w-0 truncate">{task.label}</span>
+											<span class="text-[9px] text-[var(--text-muted)] font-mono flex-shrink-0">{formatLastRun(task.last_run_at)}</span>
+											<div class="flex items-center gap-2 ml-auto flex-shrink-0">
+												<span class="text-xs text-[var(--text-muted)] font-mono">{formatInterval(task.interval_hours)}</span>
+												{#if task.run_at}
+													<span class="text-xs text-[var(--text-muted)] font-mono">@ {task.run_at}</span>
+												{/if}
+												<Badge variant={task.enabled ? 'success' : 'default'}>{task.enabled ? 'On' : 'Off'}</Badge>
+											</div>
 										</div>
 									{/each}
 								</div>

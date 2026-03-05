@@ -46,9 +46,24 @@
 			{enabled ? 'left-[14px]' : 'left-0.5'}"></span>
 	</button>
 
-	<!-- Label -->
+	<!-- Label + Last run -->
 	{#if label}
 		<span class="text-xs text-[var(--text-secondary)] font-medium min-w-0 truncate">{label}</span>
+	{/if}
+	{#if lastRunAt}
+		<span class="text-[9px] text-[var(--text-muted)] font-mono flex-shrink-0" title="Last ran: {new Date(lastRunAt).toLocaleString()}">
+			ran {(() => {
+				const d = new Date(lastRunAt);
+				const now = new Date();
+				const diff = now - d;
+				const mins = Math.floor(diff / 60000);
+				if (mins < 60) return `${mins}m ago`;
+				const hrs = Math.floor(mins / 60);
+				if (hrs < 24) return `${hrs}h ago`;
+				const days = Math.floor(hrs / 24);
+				return `${days}d ago`;
+			})()}
+		</span>
 	{/if}
 
 	<div class="flex items-center gap-2 ml-auto flex-shrink-0">
@@ -91,20 +106,4 @@
 		</Button>
 	</div>
 
-	<!-- Last run -->
-	{#if lastRunAt}
-		<span class="text-[9px] text-[var(--text-muted)] font-mono flex-shrink-0 hidden lg:block" title="Last ran: {new Date(lastRunAt).toLocaleString()}">
-			ran {(() => {
-				const d = new Date(lastRunAt);
-				const now = new Date();
-				const diff = now - d;
-				const mins = Math.floor(diff / 60000);
-				if (mins < 60) return `${mins}m ago`;
-				const hrs = Math.floor(mins / 60);
-				if (hrs < 24) return `${hrs}h ago`;
-				const days = Math.floor(hrs / 24);
-				return `${days}d ago`;
-			})()}
-		</span>
-	{/if}
 </div>
