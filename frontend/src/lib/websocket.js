@@ -1,6 +1,8 @@
 import { activeJobs, activeTransfers } from './stores.js';
 
 let ws = null;
+let reconnectDelay = 1000;
+const MAX_RECONNECT_DELAY = 30000;
 const _jobListeners = new Set();
 
 export function onJobUpdate(callback) {
@@ -13,6 +15,10 @@ export function connectWebSocket() {
 	const url = `${protocol}//${location.host}/api/ws`;
 
 	ws = new WebSocket(url);
+
+	ws.onopen = () => {
+		reconnectDelay = 1000;
+	};
 
 	ws.onmessage = (event) => {
 		try {
@@ -40,7 +46,8 @@ export function connectWebSocket() {
 	};
 
 	ws.onclose = () => {
-		setTimeout(connectWebSocket, 3000);
+		setTimeout(connectWebSocket, reconnectDelay);
+		reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
 	};
 }
 
