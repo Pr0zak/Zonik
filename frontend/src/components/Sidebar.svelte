@@ -43,9 +43,7 @@
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-4">
 		<div class="flex items-center gap-2.5">
-			<div class="w-8 h-8 rounded-lg bg-[var(--color-accent)] flex items-center justify-center">
-				<span class="text-white font-bold text-sm">Z</span>
-			</div>
+			<img src="/favicon.svg" alt="Zonik" class="w-8 h-8 rounded-lg" />
 			<div>
 				<h1 class="text-base font-bold text-[var(--text-primary)] tracking-tight">Zonik</h1>
 				<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider">Music Backend</p>

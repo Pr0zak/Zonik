@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from pydantic import BaseModel
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -131,3 +132,95 @@ async def delete_track(track_id: str, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(Track).where(Track.id == track_id))
     await db.commit()
     return {"ok": True}
+
+
+class BulkDeleteRequest(BaseModel):
+    track_ids: list[str]
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(get_db)):
+    """Delete multiple tracks and their files."""
+    from pathlib import Path
+    from backend.config import get_settings
+    settings = get_settings()
+
+    deleted = 0
+    for track_id in req.track_ids:
+        result = await db.execute(select(Track).where(Track.id == track_id))
+        track = result.scalar_one_or_none()
+        if track:
+            file_path = Path(settings.library.music_dir) / track.file_path
+            if file_path.exists():
+                file_path.unlink()
+            await db.delete(track)
+            deleted += 1
+    await db.commit()
+    return {"deleted": deleted}
+
+
+class BulkAnalyzeRequest(BaseModel):
+    track_ids: list[str]
+
+
+@router.post("/bulk-analyze")
+async def bulk_analyze_tracks(req: BulkAnalyzeRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    """Queue specific tracks for audio analysis."""
+    import uuid
+    from datetime import datetime
+    from backend.database import async_session
+    from backend.models.analysis import TrackAnalysis
+    from backend.models.job import Job
+
+    job_id = str(uuid.uuid4())
+
+    # Verify tracks exist and collect file paths
+    track_info = []
+    for track_id in req.track_ids:
+        result = await db.execute(select(Track.id, Track.file_path).where(Track.id == track_id))
+        row = result.one_or_none()
+        if row:
+            track_info.append((row[0], row[1]))
+
+    if not track_info:
+        return {"job_id": None, "queued": 0}
+
+    async def run_analysis():
+        from backend.services.analyzer import analyze_track_async
+
+        async with async_session() as db_inner:
+            job = Job(
+                id=job_id, type="audio_analysis", card="an", status="running",
+                total=len(track_info), started_at=datetime.utcnow(),
+            )
+            db_inner.add(job)
+            await db_inner.commit()
+
+            for i, (track_id, file_path) in enumerate(track_info):
+                try:
+                    analysis = await analyze_track_async(file_path)
+                    if analysis:
+                        ta = TrackAnalysis(
+                            track_id=track_id,
+                            bpm=analysis.get("bpm"),
+                            key=analysis.get("key"),
+                            scale=analysis.get("scale"),
+                            energy=analysis.get("energy"),
+                            danceability=analysis.get("danceability"),
+                            loudness=analysis.get("loudness"),
+                        )
+                        await db_inner.merge(ta)
+
+                    job.progress = i + 1
+                    await db_inner.merge(job)
+                    await db_inner.commit()
+                except Exception:
+                    pass
+
+            job.status = "completed"
+            job.finished_at = datetime.utcnow()
+            await db_inner.merge(job)
+            await db_inner.commit()
+
+    background_tasks.add_task(run_analysis)
+    return {"job_id": job_id, "queued": len(track_info)}

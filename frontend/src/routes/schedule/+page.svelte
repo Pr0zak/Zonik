@@ -6,6 +6,7 @@
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
+	import EmptyState from '../../components/ui/EmptyState.svelte';
 
 	let tasks = $state([]);
 	let loading = $state(true);
@@ -97,10 +98,10 @@
 					</div>
 				{/each}
 			</div>
-		{:else}
+		{:else if tasks.length}
 			<div class="divide-y divide-[var(--border-subtle)]">
 				{#each tasks as task}
-					<div class="p-4 flex items-center gap-4">
+					<div class="p-4 flex items-center gap-4 hover:bg-[var(--bg-hover)] transition-colors">
 						<button on:click={() => toggleTask(task)}
 							class="w-10 h-6 rounded-full transition-colors relative flex-shrink-0
 								{task.enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
@@ -136,6 +137,13 @@
 					</div>
 				{/each}
 			</div>
+		{:else}
+			<EmptyState
+				title="No scheduled tasks"
+				description="No tasks are configured yet."
+			>
+				{#snippet icon()}<Clock class="w-10 h-10" />{/snippet}
+			</EmptyState>
 		{/if}
 	</Card>
 </div>

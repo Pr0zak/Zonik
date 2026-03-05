@@ -1,9 +1,9 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { addToast } from '$lib/stores.js';
+	import { addToast, activeJobs } from '$lib/stores.js';
 	import { formatSize } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2 } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, ListOrdered } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -21,7 +21,22 @@
 	let blReason = $state('');
 	let showBlacklist = $state(false);
 
-	onMount(loadBlacklist);
+	let recentDlJobs = $state([]);
+	let activeDlJobs = $derived($activeJobs.filter(j => j.type === 'download' || j.type === 'bulk_download'));
+	let completedDlJobs = $derived(recentDlJobs.filter(j => j.status !== 'running'));
+	let showQueue = $derived(activeDlJobs.length > 0 || completedDlJobs.length > 0);
+
+	onMount(() => {
+		loadBlacklist();
+		loadRecentJobs();
+	});
+
+	async function loadRecentJobs() {
+		try {
+			const jobs = await fetch('/api/jobs?limit=10').then(r => r.json());
+			recentDlJobs = (jobs || []).filter(j => j.type === 'download' || j.type === 'bulk_download').slice(0, 5);
+		} catch (e) { console.error(e); }
+	}
 
 	async function loadBlacklist() {
 		try {
@@ -115,6 +130,54 @@
 
 <div class="max-w-6xl">
 	<PageHeader title="Downloads" color="var(--color-downloads)" />
+
+	<!-- Download Queue -->
+	{#if showQueue}
+		<Card padding="p-6" class="mb-6">
+			<div class="flex items-center gap-2 mb-4">
+				<ListOrdered class="w-4 h-4 text-[var(--color-downloads)]" />
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Download Queue</h2>
+			</div>
+
+			{#if activeDlJobs.length}
+				<div class="space-y-3 mb-4">
+					{#each activeDlJobs as job (job.id)}
+						<div class="flex items-center gap-3 px-3 py-2.5 bg-[var(--bg-tertiary)] rounded-md animate-fade-slide-in">
+							<Badge variant="info">{job.type === 'bulk_download' ? 'bulk' : 'download'}</Badge>
+							<div class="flex-1 min-w-0">
+								{#if job.total}
+									<div class="flex items-center justify-between mb-1">
+										<span class="text-xs text-[var(--text-secondary)]">{job.progress || 0} of {job.total} tracks</span>
+										<span class="text-xs text-[var(--text-muted)] font-mono">{Math.round(((job.progress || 0) / job.total) * 100)}%</span>
+									</div>
+								{/if}
+								<div class="h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+									<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
+										style="width: {job.total ? ((job.progress || 0) / job.total) * 100 : 50}%"></div>
+								</div>
+							</div>
+							<Badge variant="info">running</Badge>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if completedDlJobs.length}
+				<div class="space-y-2">
+					{#each completedDlJobs as job (job.id)}
+						<div class="flex items-center gap-3 px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm animate-fade-slide-in">
+							<Badge>{job.type === 'bulk_download' ? 'bulk' : 'download'}</Badge>
+							<span class="flex-1 text-[var(--text-secondary)] truncate">{job.description || job.type}</span>
+							{#if job.total}
+								<span class="text-xs text-[var(--text-muted)] font-mono">{job.progress || job.total}/{job.total}</span>
+							{/if}
+							<Badge variant={job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'info'}>{job.status}</Badge>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</Card>
+	{/if}
 
 	<!-- Soulseek Search -->
 	<Card padding="p-6" class="mb-6">
@@ -211,7 +274,7 @@
 			{#if blacklist.length}
 				<div class="space-y-1 animate-fade-slide-in">
 					{#each blacklist as entry}
-						<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm">
+						<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm hover:bg-[var(--bg-hover)] transition-colors">
 							<div>
 								<span class="font-medium text-[var(--text-primary)]">{entry.artist}</span>
 								{#if entry.track}

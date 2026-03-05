@@ -1,10 +1,12 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { ScrollText, ChevronDown, ChevronRight } from 'lucide-svelte';
+	import { ScrollText, ChevronDown, ChevronRight, RotateCcw } from 'lucide-svelte';
+	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
+	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 
@@ -12,6 +14,7 @@
 	let loading = $state(true);
 	let expandedJob = $state(null);
 	let jobDetail = $state(null);
+	let retrying = $state(false);
 
 	onMount(async () => {
 		try {
@@ -34,6 +37,25 @@
 			jobDetail = await api.getJob(job.id);
 		} catch (e) {
 			jobDetail = null;
+		}
+	}
+
+	async function retryJob(jobId) {
+		retrying = true;
+		try {
+			const result = await api.retryJob(jobId);
+			if (result.error) {
+				addToast(result.error, 'error');
+			} else {
+				addToast('Retry job started', 'success');
+				expandedJob = null;
+				jobDetail = null;
+				jobs = await api.getJobs();
+			}
+		} catch (e) {
+			addToast('Failed to retry job', 'error');
+		} finally {
+			retrying = false;
 		}
 	}
 
@@ -128,6 +150,14 @@
 											<div>
 												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Tracks</span>
 												<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-48 overflow-y-auto font-mono">{jobDetail.tracks}</pre>
+											</div>
+										{/if}
+										{#if job.status === 'failed' && (job.type === 'download' || job.type === 'bulk_download')}
+											<div class="pt-2">
+												<Button variant="primary" size="sm" loading={retrying} onclick={() => retryJob(job.id)}>
+													<RotateCcw class="w-3.5 h-3.5" />
+													Retry Failed Tracks
+												</Button>
 											</div>
 										{/if}
 									</div>

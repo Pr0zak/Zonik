@@ -194,3 +194,21 @@ Base URL: `/api`
 | Endpoint | Description |
 |----------|-------------|
 | `ws:///api/ws` | Real-time job progress updates |
+
+WebSocket messages use the following format:
+
+```json
+{
+  "id": "job-uuid",
+  "type": "download",
+  "status": "running",
+  "progress": 3,
+  "total": 10
+}
+```
+
+- `type`: Job type (e.g. `download`, `scan`, `analysis`, `upgrade`)
+- `status`: One of `running`, `completed`, `failed`
+- `progress` / `total`: Numeric progress for bulk operations (e.g. 3 of 10 tracks downloaded)
+
+**Download retry behavior**: When downloading via Soulseek, `search_and_download` tries up to 5 candidates (sorted by quality score) before marking the job as failed. Each candidate attempt uses the 4-strategy search fallback.

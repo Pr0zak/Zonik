@@ -3,13 +3,14 @@
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast } from '$lib/stores.js';
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
-	import { Search, ScanLine, ArrowUpDown, Download, X } from 'lucide-svelte';
+	import { Search, ScanLine, ArrowUpDown, Download, X, CheckSquare, Square, Trash2 } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import Modal from '../../components/ui/Modal.svelte';
+	import EmptyState from '../../components/ui/EmptyState.svelte';
 
 	let tracks = $state([]);
 	let total = $state(0);
@@ -20,6 +21,53 @@
 	let order = $state('asc');
 	let scanning = $state(false);
 	let loading = $state(true);
+
+	let selectMode = $state(false);
+	let selected = $state(new Set());
+
+	function toggleSelectMode() {
+		selectMode = !selectMode;
+		if (!selectMode) selected = new Set();
+	}
+
+	function toggleSelect(trackId) {
+		const next = new Set(selected);
+		if (next.has(trackId)) next.delete(trackId);
+		else next.add(trackId);
+		selected = next;
+	}
+
+	function toggleSelectAll() {
+		if (selected.size === tracks.length) {
+			selected = new Set();
+		} else {
+			selected = new Set(tracks.map(t => t.id));
+		}
+	}
+
+	async function bulkDelete() {
+		if (!selected.size) return;
+		if (!window.confirm(`Delete ${selected.size} track(s) and their files? This cannot be undone.`)) return;
+		try {
+			const result = await api.bulkDeleteTracks([...selected]);
+			addToast(`Deleted ${result.deleted} track(s)`, 'success');
+			selected = new Set();
+			await loadTracks();
+		} catch (e) {
+			addToast('Bulk delete failed: ' + e.message, 'error');
+		}
+	}
+
+	async function bulkAnalyze() {
+		if (!selected.size) return;
+		try {
+			const result = await api.bulkAnalyzeTracks([...selected]);
+			addToast(`Queued ${result.queued} track(s) for analysis`, 'success');
+			selected = new Set();
+		} catch (e) {
+			addToast('Bulk analyze failed: ' + e.message, 'error');
+		}
+	}
 
 	let showSimilar = $state(false);
 	let similarSource = $state(null);
@@ -170,11 +218,36 @@
 			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm w-64
 				placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 		<span class="text-sm text-[var(--text-muted)] font-mono">{total.toLocaleString()}</span>
-		<Button variant="primary" size="sm" loading={scanning} onclick={scanLibrary}>
-			<ScanLine class="w-3.5 h-3.5" />
-			{scanning ? 'Scanning...' : 'Scan Library'}
+		<Button variant={selectMode ? 'primary' : 'secondary'} size="sm" onclick={toggleSelectMode}>
+			<CheckSquare class="w-3.5 h-3.5" />
+			{selectMode ? 'Cancel' : 'Select'}
 		</Button>
+		{#if !selectMode}
+			<Button variant="primary" size="sm" loading={scanning} onclick={scanLibrary}>
+				<ScanLine class="w-3.5 h-3.5" />
+				{scanning ? 'Scanning...' : 'Scan Library'}
+			</Button>
+		{/if}
 	</PageHeader>
+
+	{#if selectMode}
+		<div class="flex items-center gap-3 mb-3 px-1">
+			<span class="text-sm text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
+			<Button variant="secondary" size="sm" onclick={toggleSelectAll}>
+				{selected.size === tracks.length ? 'Deselect All' : 'Select All'}
+			</Button>
+			{#if selected.size > 0}
+				<Button variant="danger" size="sm" onclick={bulkDelete}>
+					<Trash2 class="w-3.5 h-3.5" />
+					Delete Selected
+				</Button>
+				<Button variant="primary" size="sm" onclick={bulkAnalyze}>
+					<ScanLine class="w-3.5 h-3.5" />
+					Analyze Selected
+				</Button>
+			{/if}
+		</div>
+	{/if}
 
 	<Card padding="p-0">
 		{#if loading}
@@ -188,10 +261,17 @@
 					</div>
 				{/each}
 			</div>
-		{:else}
+		{:else if tracks.length}
 			<table class="w-full text-sm">
 				<thead>
 					<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+						{#if selectMode}
+							<th class="px-4 py-3 w-10">
+								<input type="checkbox" checked={selected.size === tracks.length && tracks.length > 0}
+									on:change={toggleSelectAll}
+									class="rounded border-[var(--border-interactive)] bg-[var(--bg-primary)] text-[var(--color-accent)] cursor-pointer" />
+							</th>
+						{/if}
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors" on:click={() => toggleSort('title')}>Title{sortIndicator('title')}</th>
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors" on:click={() => toggleSort('artist')}>Artist{sortIndicator('artist')}</th>
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)] transition-colors hidden md:table-cell" on:click={() => toggleSort('album')}>Album{sortIndicator('album')}</th>
@@ -202,8 +282,15 @@
 				</thead>
 				<tbody class="divide-y divide-[var(--border-subtle)]">
 					{#each tracks as track}
-						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors group"
-							on:click={() => playTrack(track)}>
+						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors group {selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10' : ''}"
+							on:click={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
+							{#if selectMode}
+								<td class="px-4 py-3 w-10">
+									<input type="checkbox" checked={selected.has(track.id)}
+										on:click|stopPropagation={() => toggleSelect(track.id)}
+										class="rounded border-[var(--border-interactive)] bg-[var(--bg-primary)] text-[var(--color-accent)] cursor-pointer" />
+								</td>
+							{/if}
 							<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{track.title}</td>
 							<td class="px-4 py-3 text-[var(--text-secondary)]">{track.artist || '-'}</td>
 							<td class="px-4 py-3 text-[var(--text-secondary)] hidden md:table-cell">{track.album || '-'}</td>
@@ -223,6 +310,13 @@
 					{/each}
 				</tbody>
 			</table>
+		{:else}
+			<EmptyState
+				title="No tracks found"
+				description={search ? 'Try a different search term.' : 'Scan your library to import tracks.'}
+			>
+				{#snippet icon()}<Search class="w-10 h-10" />{/snippet}
+			</EmptyState>
 		{/if}
 	</Card>
 

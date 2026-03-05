@@ -23,6 +23,8 @@ export const api = {
 	},
 	getTrack: (id) => request(`/tracks/${id}`),
 	deleteTrack: (id) => request(`/tracks/${id}`, { method: 'DELETE' }),
+	bulkDeleteTracks: (ids) => request('/tracks/bulk-delete', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
+	bulkAnalyzeTracks: (ids) => request('/tracks/bulk-analyze', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
 
 	// Favorites
 	getFavorites: () => request('/favorites'),
@@ -40,6 +42,7 @@ export const api = {
 	getJobs: () => request('/jobs'),
 	getActiveJobs: () => request('/jobs/active'),
 	getJob: (id) => request(`/jobs/${id}`),
+	retryJob: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
 
 	// Discovery / Similar
 	getSimilarTracks: (artist, track, limit = 20) =>

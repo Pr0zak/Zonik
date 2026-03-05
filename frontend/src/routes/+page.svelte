@@ -7,6 +7,7 @@
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
 	import Skeleton from '../components/ui/Skeleton.svelte';
+	import EmptyState from '../components/ui/EmptyState.svelte';
 
 	let stats = $state(null);
 	let recent = $state([]);
@@ -95,7 +96,12 @@
 				{/each}
 			</div>
 		{:else}
-			<p class="p-4 text-[var(--text-muted)] text-sm">No tracks yet. Scan your library to get started.</p>
+			<EmptyState
+			title="No tracks yet"
+			description="Scan your library to get started."
+		>
+			{#snippet icon()}<Music class="w-10 h-10" />{/snippet}
+		</EmptyState>
 		{/if}
 	</Card>
 </div>
