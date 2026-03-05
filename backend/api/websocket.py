@@ -25,7 +25,7 @@ async def broadcast_job_update(job_data: dict):
             await ws.send_text(message)
         except Exception:
             disconnected.add(ws)
-    _clients -= disconnected
+    _clients.difference_update(disconnected)
 
 
 async def broadcast_log(log_data: dict):
@@ -37,7 +37,7 @@ async def broadcast_log(log_data: dict):
             await ws.send_text(message)
         except Exception:
             disconnected.add(ws)
-    _clients -= disconnected
+    _clients.difference_update(disconnected)
 
 
 @router.websocket("/ws")
