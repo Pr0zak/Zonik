@@ -48,9 +48,9 @@
 	{:else if stats}
 		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
 			{#each statCards as card}
+				{@const Icon = card.icon}
 				<Card padding="p-4">
 					<div class="flex items-center justify-between mb-2">
-						{@const Icon = card.icon}
 					<Icon class="w-5 h-5" style="color: {card.color}" />
 					</div>
 					<p class="text-2xl font-bold text-[var(--text-primary)]">{stats[card.key].toLocaleString()}</p>
