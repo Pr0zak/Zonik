@@ -180,26 +180,26 @@
 			<!-- Vibe Embeddings Card -->
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
-					<Sparkles class="w-4 h-4 text-purple-400" />
+					<Sparkles class="w-4 h-4 text-[var(--color-analysis)]" />
 					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Vibe Embeddings</span>
 				</div>
 				<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.with_embeddings} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.total_tracks}</span></p>
 				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
-					<div class="h-full bg-purple-500 rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
+					<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
 				</div>
 				{#if embeddingsJob}
 					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
 						<div class="flex items-center justify-between mb-1">
-							<span class="text-xs text-purple-400 font-medium animate-pulse">Running...</span>
+							<span class="text-xs text-[var(--color-analysis)] font-medium animate-pulse">Running...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{embeddingsJob.progress}/{embeddingsJob.total}</span>
 						</div>
 						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
-							<div class="h-full bg-purple-500 rounded-full transition-all" style="width: {progressPct(embeddingsJob)}%"></div>
+							<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {progressPct(embeddingsJob)}%"></div>
 						</div>
 					</div>
 				{:else}
 					<Button variant="secondary" size="sm" class="mt-3 w-full" onclick={startEmbeddings}>
-						<Sparkles class="w-3.5 h-3.5 text-purple-400" />
+						<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
 						Generate Embeddings
 					</Button>
 				{/if}
@@ -234,7 +234,7 @@
 
 	<Card padding="p-4" class="mb-6">
 		<div class="flex items-center gap-2 mb-1">
-			<Search class="w-4 h-4 text-purple-400" />
+			<Search class="w-4 h-4 text-[var(--color-analysis)]" />
 			<h2 class="text-base font-semibold text-[var(--text-primary)]">Vibe Search</h2>
 		</div>
 		<p class="text-sm text-[var(--text-muted)] mb-4">Search by text description (requires CLAP embeddings)</p>
@@ -246,7 +246,7 @@
 					focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 			<Button variant="secondary" loading={searching} disabled={!vibeQuery}
 				onclick={vibeSearch}>
-				<Sparkles class="w-3.5 h-3.5 text-purple-400" />
+				<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
 				Search Vibes
 			</Button>
 		</div>
