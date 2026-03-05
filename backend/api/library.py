@@ -56,15 +56,7 @@ async def scan_library(background_tasks: BackgroundTasks):
             await broadcast_job_update({"id": job_id, "type": "library_scan", "status": "running", "progress": 0, "total": 0})
 
             async def on_progress(stats, total_files):
-                # Use a separate session so we don't interfere with the scanner's transaction
-                async with async_session() as progress_db:
-                    result = await progress_db.execute(select(Job).where(Job.id == job_id))
-                    pjob = result.scalar_one_or_none()
-                    if pjob:
-                        pjob.progress = stats["scanned"]
-                        pjob.total = total_files
-                        pjob.result = json.dumps(stats)
-                        await progress_db.commit()
+                # Only broadcast via WebSocket — don't write to DB mid-scan (SQLite locks)
                 await broadcast_job_update({
                     "id": job_id, "type": "library_scan", "status": "running",
                     "progress": stats["scanned"], "total": total_files,
