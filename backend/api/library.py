@@ -62,22 +62,34 @@ async def scan_library(background_tasks: BackgroundTasks):
                     "progress": stats["scanned"], "total": total_files,
                 })
 
+            status = "completed"
+            result_json = "{}"
+            progress = 0
+            total = 0
             try:
                 stats = await do_scan(db, progress_callback=on_progress)
-                job.status = "completed"
-                job.result = json.dumps(stats)
-                job.progress = stats.get("scanned", 0)
-                job.total = stats.get("scanned", 0)
+                status = "completed"
+                result_json = json.dumps(stats)
+                progress = stats.get("scanned", 0)
+                total = progress
             except Exception as e:
-                job.status = "failed"
-                job.result = json.dumps({"error": str(e)})
+                status = "failed"
+                result_json = json.dumps({"error": str(e)})
             finally:
-                job.finished_at = datetime.utcnow()
-                await db.merge(job)
-                await db.commit()
+                # Use a fresh session to update the job — the scan session may be broken
+                async with async_session() as finish_db:
+                    result = await finish_db.execute(select(Job).where(Job.id == job_id))
+                    fjob = result.scalar_one_or_none()
+                    if fjob:
+                        fjob.status = status
+                        fjob.result = result_json
+                        fjob.progress = progress
+                        fjob.total = total
+                        fjob.finished_at = datetime.utcnow()
+                        await finish_db.commit()
                 await broadcast_job_update({
-                    "id": job_id, "type": "library_scan", "status": job.status,
-                    "progress": job.progress, "total": job.total,
+                    "id": job_id, "type": "library_scan", "status": status,
+                    "progress": progress, "total": total,
                 })
 
     background_tasks.add_task(run_scan)

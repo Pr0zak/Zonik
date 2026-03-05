@@ -190,15 +190,12 @@ def extract_cover_art(file_path: Path, cache_dir: Path) -> str | None:
 
 async def get_or_create_artist(db: AsyncSession, name: str) -> Artist:
     """Get existing artist or create new one."""
-    result = await db.execute(select(Artist).where(Artist.name == name))
-    artist = result.scalar_one_or_none()
+    artist_id = _stable_id(f"artist:{name.lower()}")
+    # Check identity map first via get(), then DB
+    artist = await db.get(Artist, artist_id)
     if artist:
         return artist
-    artist = Artist(
-        id=_stable_id(f"artist:{name.lower()}"),
-        name=name,
-        sort_name=name,
-    )
+    artist = Artist(id=artist_id, name=name, sort_name=name)
     db.add(artist)
     return artist
 
@@ -207,8 +204,8 @@ async def get_or_create_album(db: AsyncSession, title: str, artist: Artist | Non
     """Get existing album or create new one."""
     key = f"album:{title.lower()}:{artist.name.lower() if artist else 'unknown'}"
     album_id = _stable_id(key)
-    result = await db.execute(select(Album).where(Album.id == album_id))
-    album = result.scalar_one_or_none()
+    # Check identity map first via get(), then DB
+    album = await db.get(Album, album_id)
     if album:
         return album
     album = Album(
