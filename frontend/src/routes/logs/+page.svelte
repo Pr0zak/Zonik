@@ -181,6 +181,30 @@
 							<tr>
 								<td colspan="5" class="px-4 py-3 bg-[var(--bg-tertiary)]">
 									<div class="space-y-2 text-xs animate-fade-slide-in">
+										<!-- Job summary -->
+										<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Job ID</span>
+												<p class="text-[var(--text-body)] font-mono text-[10px] truncate">{jobDetail.id}</p>
+											</div>
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Progress</span>
+												<p class="text-[var(--text-body)] font-mono font-bold">{jobDetail.progress ?? 0} / {jobDetail.total ?? 0}</p>
+											</div>
+											{#if jobDetail.started_at}
+												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+													<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Started</span>
+													<p class="text-[var(--text-body)] font-mono text-[10px]">{new Date(jobDetail.started_at).toLocaleString()}</p>
+												</div>
+											{/if}
+											{#if jobDetail.finished_at}
+												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+													<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Finished</span>
+													<p class="text-[var(--text-body)] font-mono text-[10px]">{new Date(jobDetail.finished_at).toLocaleString()}</p>
+												</div>
+											{/if}
+										</div>
+
 										{#if jobDetail.result}
 											{@const parsed = (() => { try { return JSON.parse(jobDetail.result); } catch { return null; } })()}
 											<div>
@@ -198,11 +222,28 @@
 													<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto font-mono">{jobDetail.result}</pre>
 												{/if}
 											</div>
+										{:else if !jobDetail.tracks}
+											<p class="text-[var(--text-muted)] italic">No result data — job may have been interrupted by a restart.</p>
 										{/if}
 										{#if jobDetail.tracks}
+											{@const trackList = (() => { try { return JSON.parse(jobDetail.tracks); } catch { return null; } })()}
 											<div>
 												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Tracks</span>
-												<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-48 overflow-y-auto font-mono">{jobDetail.tracks}</pre>
+												{#if Array.isArray(trackList)}
+													<div class="mt-1 space-y-1 max-h-48 overflow-y-auto">
+														{#each trackList as t}
+															<div class="flex items-center gap-2 bg-[var(--bg-primary)] px-2 py-1.5 rounded-md">
+																<Badge variant={t.status === 'downloaded' ? 'success' : t.status === 'failed' ? 'error' : t.status === 'skipped' ? 'warning' : 'default'}>{t.status}</Badge>
+																<span class="text-[var(--text-body)] truncate">{t.artist} — {t.track}</span>
+																{#if t.reason}
+																	<span class="text-[var(--text-muted)] text-[10px] ml-auto">{t.reason}</span>
+																{/if}
+															</div>
+														{/each}
+													</div>
+												{:else}
+													<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-48 overflow-y-auto font-mono">{jobDetail.tracks}</pre>
+												{/if}
 											</div>
 										{/if}
 										{#if job.status === 'failed' && (job.type === 'download' || job.type === 'bulk_download')}

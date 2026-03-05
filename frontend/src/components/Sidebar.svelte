@@ -5,7 +5,7 @@
 	import { Loader2 } from 'lucide-svelte';
 	import {
 		LayoutDashboard, Library, Compass, Download, ListMusic,
-		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings
+		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings, Github
 	} from 'lucide-svelte';
 
 	const nav = [
@@ -101,6 +101,12 @@
 				</div>
 			</a>
 		{/if}
-		<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+		<div class="flex items-center justify-between">
+			<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
+				class="text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors" title="GitHub">
+				<Github class="w-3.5 h-3.5" />
+			</a>
+		</div>
 	</div>
 </aside>
