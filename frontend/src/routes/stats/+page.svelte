@@ -16,6 +16,12 @@
 		if (!max) return '0%';
 		return Math.max(2, (value / max) * 100) + '%';
 	}
+
+	let maxFmt = $derived(data ? Math.max(...Object.values(data.formats), 1) : 1);
+	let maxArt = $derived(data?.top_artists?.length ? data.top_artists[0].count : 1);
+	let maxGenre = $derived(data?.genres?.length ? data.genres[0].count : 1);
+	let maxBr = $derived(data ? Math.max(...Object.values(data.bitrates), 1) : 1);
+	let maxYear = $derived(data?.years?.length ? Math.max(...data.years.map(y => y.count)) : 1);
 </script>
 
 <div class="max-w-6xl">
@@ -80,7 +86,6 @@
 			<!-- Formats -->
 			<div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
 				<h2 class="text-sm font-semibold text-gray-400 mb-4">Formats</h2>
-				{@const maxFmt = Math.max(...Object.values(data.formats))}
 				<div class="space-y-2">
 					{#each Object.entries(data.formats).sort((a, b) => b[1] - a[1]) as [fmt, count]}
 						<div class="flex items-center gap-3 text-sm">
@@ -97,7 +102,6 @@
 			<!-- Top Artists -->
 			<div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
 				<h2 class="text-sm font-semibold text-gray-400 mb-4">Top Artists by Tracks</h2>
-				{@const maxArt = data.top_artists.length ? data.top_artists[0].count : 1}
 				<div class="space-y-2">
 					{#each data.top_artists as artist}
 						<div class="flex items-center gap-3 text-sm">
@@ -114,7 +118,6 @@
 			<!-- Genres -->
 			<div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
 				<h2 class="text-sm font-semibold text-gray-400 mb-4">Top Genres</h2>
-				{@const maxGenre = data.genres.length ? data.genres[0].count : 1}
 				<div class="space-y-2">
 					{#each data.genres as genre}
 						<div class="flex items-center gap-3 text-sm">
@@ -131,7 +134,6 @@
 			<!-- Bitrate Distribution -->
 			<div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
 				<h2 class="text-sm font-semibold text-gray-400 mb-4">Bitrate Distribution</h2>
-				{@const maxBr = Math.max(...Object.values(data.bitrates), 1)}
 				<div class="space-y-2">
 					{#each Object.entries(data.bitrates).sort() as [range, count]}
 						<div class="flex items-center gap-3 text-sm">
@@ -150,7 +152,6 @@
 		{#if data.years.length}
 			<div class="bg-gray-900 rounded-xl p-5 border border-gray-800 mb-8">
 				<h2 class="text-sm font-semibold text-gray-400 mb-4">Year Distribution</h2>
-				{@const maxYear = Math.max(...data.years.map(y => y.count))}
 				<div class="flex items-end gap-px h-32">
 					{#each data.years as yr}
 						<div class="flex-1 flex flex-col items-center justify-end h-full group relative">
