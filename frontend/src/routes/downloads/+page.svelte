@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast, activeJobs } from '$lib/stores.js';
 	import { formatSize } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, ListOrdered } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, ListOrdered, ArrowDownToLine, RefreshCw } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -26,9 +26,41 @@
 	let completedDlJobs = $derived(recentDlJobs.filter(j => j.status !== 'running'));
 	let showQueue = $derived(activeDlJobs.length > 0 || completedDlJobs.length > 0);
 
+	// slskd transfer queue
+	let slskdTransfers = $state([]);
+	let transfersLoading = $state(false);
+	let transferPollTimer = $state(null);
+
+	async function loadTransfers() {
+		transfersLoading = true;
+		try {
+			const data = await fetch('/api/download/status').then(r => r.json());
+			// Flatten: each user has files array
+			const flat = [];
+			for (const user of (data.downloads || [])) {
+				for (const file of (user.files || [])) {
+					flat.push({
+						username: user.username,
+						filename: file.filename?.split(/[/\\]/).pop() || file.filename,
+						state: file.state,
+						bytesTransferred: file.bytesTransferred || 0,
+						size: file.size || 0,
+						averageSpeed: file.averageSpeed || 0,
+					});
+				}
+			}
+			slskdTransfers = flat;
+		} catch { slskdTransfers = []; }
+		finally { transfersLoading = false; }
+	}
+
 	onMount(() => {
 		loadBlacklist();
 		loadRecentJobs();
+		loadTransfers();
+		// Poll transfers every 5s
+		transferPollTimer = setInterval(loadTransfers, 5000);
+		return () => { if (transferPollTimer) clearInterval(transferPollTimer); };
 	});
 
 	async function loadRecentJobs() {
@@ -175,6 +207,53 @@
 						</div>
 					{/each}
 				</div>
+			{/if}
+		</Card>
+	{/if}
+
+	<!-- slskd Active Transfers -->
+	{#if slskdTransfers.length > 0 || transfersLoading}
+		<Card padding="p-6" class="mb-6">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-2">
+					<ArrowDownToLine class="w-4 h-4 text-[var(--color-downloads)]" />
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Active Transfers</h2>
+					<Badge>{slskdTransfers.length}</Badge>
+				</div>
+				<button onclick={loadTransfers} class="p-1.5 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+					<RefreshCw class="w-3.5 h-3.5 {transfersLoading ? 'animate-spin' : ''}" />
+				</button>
+			</div>
+			{#if slskdTransfers.length}
+				<div class="space-y-2">
+					{#each slskdTransfers as t}
+						<div class="flex items-center gap-3 px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm">
+							<div class="flex-1 min-w-0">
+								<p class="text-[var(--text-primary)] truncate font-medium">{t.filename}</p>
+								<p class="text-xs text-[var(--text-muted)] truncate">from {t.username}</p>
+							</div>
+							{#if t.size > 0}
+								<div class="w-24 flex-shrink-0">
+									<div class="h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+										<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all"
+											style="width: {Math.min(100, (t.bytesTransferred / t.size) * 100)}%"></div>
+									</div>
+									<p class="text-[10px] text-[var(--text-muted)] mt-0.5 text-right">{Math.round((t.bytesTransferred / t.size) * 100)}%</p>
+								</div>
+							{/if}
+							{#if t.averageSpeed > 0}
+								<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0">{formatSize(t.averageSpeed)}/s</span>
+							{/if}
+							<Badge variant={
+								t.state === 'Completed' || t.state === 'Succeeded' ? 'success' :
+								t.state === 'InProgress' || t.state === 'Downloading' ? 'info' :
+								t.state === 'Queued' || t.state === 'Requested' ? 'default' : 'error'
+							}>{t.state}</Badge>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-sm text-[var(--text-muted)] text-center py-4">No active transfers</p>
 			{/if}
 		</Card>
 	{/if}
