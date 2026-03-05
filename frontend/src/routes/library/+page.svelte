@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast, activeJobs } from '$lib/stores.js';
 	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
@@ -316,11 +317,9 @@
 		similarTab = t;
 		if (t === 'lastfm') await loadSimilarLastfm(); else await loadSimilarVibe();
 	}
-	async function downloadSimilar(t) {
-		try {
-			await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name }) });
-			addToast(`Downloading: ${t.artist} - ${t.name}`, 'success');
-		} catch { addToast('Download failed', 'error'); }
+	function downloadSimilar(t) {
+		showSimilar = false;
+		goto(`/downloads?artist=${encodeURIComponent(t.artist)}&track=${encodeURIComponent(t.name)}`);
 	}
 	async function downloadAllMissing() {
 		const missing = similarTracks.filter(t => !t.in_library);

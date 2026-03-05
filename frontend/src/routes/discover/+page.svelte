@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { addToast } from '$lib/stores.js';
 	import { Compass, Download, TrendingUp, Users, Music } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -57,17 +58,8 @@
 		}
 	}
 
-	async function downloadTrack(artist, track) {
-		try {
-			await fetch('/api/download/trigger', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist, track })
-			});
-			addToast(`Downloading: ${artist} - ${track}`, 'success');
-		} catch (e) {
-			addToast('Download failed', 'error');
-		}
+	function downloadTrack(artist, track) {
+		goto(`/downloads?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`);
 	}
 
 	async function downloadAllMissing() {
