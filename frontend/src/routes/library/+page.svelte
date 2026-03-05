@@ -8,7 +8,8 @@
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
-		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock
+		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock,
+		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -28,7 +29,8 @@
 	let tab = $state('tracks');
 	let search = $state('');
 	let offset = $state(0);
-	let limit = 48;
+	let limit = $state(25);
+	const limitOptions = [25, 50, 100, 200];
 	let loading = $state(true);
 	let viewMode = $state('grid');
 
@@ -82,6 +84,76 @@
 			addToast('Task started', 'success');
 		} catch { addToast('Failed to run task', 'error'); }
 		finally { schedRunning[name] = false; }
+	}
+
+	// Cleanup state
+	let cleanupTab = $state(null); // 'orphans' | 'duplicates' | 'organize'
+	let cleanupLoading = $state(false);
+	let cleanupPreview = $state(null);
+	let cleanupExecuting = $state(false);
+
+	async function previewCleanup(type) {
+		cleanupTab = type;
+		cleanupLoading = true;
+		cleanupPreview = null;
+		try {
+			const res = await fetch(`/api/library/cleanup/${type}/preview`, { method: 'POST' });
+			cleanupPreview = await res.json();
+		} catch (e) {
+			addToast('Preview failed', 'error');
+		} finally {
+			cleanupLoading = false;
+		}
+	}
+
+	async function executeOrphans() {
+		cleanupExecuting = true;
+		try {
+			const res = await fetch('/api/library/cleanup/orphans', { method: 'POST' });
+			const result = await res.json();
+			addToast(`Removed ${result.removed} orphaned tracks`, 'success');
+			cleanupPreview = null;
+			cleanupTab = null;
+			loadData();
+		} catch { addToast('Cleanup failed', 'error'); }
+		finally { cleanupExecuting = false; }
+	}
+
+	async function executeDuplicates(deleteFiles = false) {
+		if (!cleanupPreview?.groups) return;
+		const removeIds = cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id));
+		if (!removeIds.length) return;
+		cleanupExecuting = true;
+		try {
+			const res = await fetch('/api/library/cleanup/duplicates', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ remove_ids: removeIds, delete_files: deleteFiles }),
+			});
+			const result = await res.json();
+			addToast(`Removed ${result.removed} duplicates${deleteFiles ? `, deleted ${result.files_deleted} files` : ''}`, 'success');
+			cleanupPreview = null;
+			cleanupTab = null;
+			loadData();
+		} catch { addToast('Dedup failed', 'error'); }
+		finally { cleanupExecuting = false; }
+	}
+
+	async function executeOrganize() {
+		cleanupExecuting = true;
+		try {
+			const res = await fetch('/api/library/cleanup/organize', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({}),
+			});
+			const result = await res.json();
+			addToast(`Organized ${result.moved} files${result.errors ? `, ${result.errors} errors` : ''}`, 'success');
+			cleanupPreview = null;
+			cleanupTab = null;
+			loadData();
+		} catch { addToast('Organize failed', 'error'); }
+		finally { cleanupExecuting = false; }
 	}
 
 	// Select mode (tracks only)
@@ -872,13 +944,154 @@
 				<ScheduleControl taskName="library_scan" label="Library Scan" enabled={schedTasks.library_scan.enabled} intervalHours={schedTasks.library_scan.interval_hours} runAt={schedTasks.library_scan.run_at} lastRunAt={schedTasks.library_scan.last_run_at} running={schedRunning.library_scan} onToggle={() => toggleSched('library_scan')} onUpdate={(u) => updateSched('library_scan', u)} onRun={() => runSched('library_scan')} />
 			{/if}
 			{#if schedTasks.library_cleanup}
-				<ScheduleControl taskName="library_cleanup" label="Library Cleanup" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
+				<ScheduleControl taskName="library_cleanup" label="Orphan Cleanup (scheduled)" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
 			{/if}
 		</Card>
 	{/if}
 
+	<!-- Library Cleanup Tools -->
+	<Card padding="p-4" class="mt-4">
+		<div class="flex items-center gap-2 mb-3">
+			<Trash2 class="w-4 h-4 text-[var(--text-muted)]" />
+			<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Cleanup Tools</span>
+		</div>
+		<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'orphans' ? 'border-red-500/50 bg-red-500/10' : 'border-[var(--border-primary)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]'}" onclick={() => previewCleanup('orphans')}>
+				<div class="flex items-center gap-2 mb-1">
+					<FileSearch class="w-4 h-4 text-red-400" />
+					<span class="text-sm font-medium text-[var(--text-primary)]">Orphan Cleanup</span>
+				</div>
+				<p class="text-xs text-[var(--text-muted)]">Remove DB entries for files that no longer exist on disk.</p>
+			</button>
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'duplicates' ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--border-primary)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]'}" onclick={() => previewCleanup('duplicates')}>
+				<div class="flex items-center gap-2 mb-1">
+					<Copy class="w-4 h-4 text-amber-400" />
+					<span class="text-sm font-medium text-[var(--text-primary)]">Deduplication</span>
+				</div>
+				<p class="text-xs text-[var(--text-muted)]">Find duplicate tracks and keep the best quality version.</p>
+			</button>
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-blue-500/50 bg-blue-500/10' : 'border-[var(--border-primary)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]'}" onclick={() => previewCleanup('organize')}>
+				<div class="flex items-center gap-2 mb-1">
+					<FolderTree class="w-4 h-4 text-blue-400" />
+					<span class="text-sm font-medium text-[var(--text-primary)]">Rename & Sort</span>
+				</div>
+				<p class="text-xs text-[var(--text-muted)]">Organize files into Artist/Album/Track folder structure.</p>
+			</button>
+		</div>
+
+		{#if cleanupLoading}
+			<div class="flex items-center gap-2 p-4 text-[var(--text-muted)]">
+				<Loader2 class="w-4 h-4 animate-spin" />
+				<span class="text-sm">Scanning library...</span>
+			</div>
+		{:else if cleanupTab === 'orphans' && cleanupPreview}
+			<div class="border border-[var(--border-primary)] rounded-lg p-3">
+				<div class="flex items-center justify-between mb-2">
+					<span class="text-sm font-medium text-[var(--text-primary)]">
+						{cleanupPreview.count} orphaned track{cleanupPreview.count !== 1 ? 's' : ''} found
+					</span>
+					{#if cleanupPreview.count > 0}
+						<Button variant="danger" size="sm" disabled={cleanupExecuting} onclick={executeOrphans}>
+							{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+							Remove All
+						</Button>
+					{/if}
+				</div>
+				{#if cleanupPreview.orphans?.length}
+					<div class="max-h-64 overflow-y-auto space-y-1">
+						{#each cleanupPreview.orphans as orphan}
+							<div class="text-xs text-[var(--text-muted)] font-mono truncate py-1 border-b border-[var(--border-primary)] last:border-0">
+								{orphan.file_path}
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-sm text-emerald-400">No orphaned tracks found. Library is clean.</p>
+				{/if}
+			</div>
+		{:else if cleanupTab === 'duplicates' && cleanupPreview}
+			<div class="border border-[var(--border-primary)] rounded-lg p-3">
+				<div class="flex items-center justify-between mb-2">
+					<span class="text-sm font-medium text-[var(--text-primary)]">
+						{cleanupPreview.total_groups} duplicate group{cleanupPreview.total_groups !== 1 ? 's' : ''} ({cleanupPreview.total_duplicates} extra file{cleanupPreview.total_duplicates !== 1 ? 's' : ''})
+					</span>
+					{#if cleanupPreview.total_duplicates > 0}
+						<div class="flex gap-2">
+							<Button variant="warning" size="sm" disabled={cleanupExecuting} onclick={() => executeDuplicates(false)}>
+								{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+								Remove from DB
+							</Button>
+							<Button variant="danger" size="sm" disabled={cleanupExecuting} onclick={() => executeDuplicates(true)}>
+								Remove + Delete Files
+							</Button>
+						</div>
+					{/if}
+				</div>
+				{#if cleanupPreview.groups?.length}
+					<div class="max-h-80 overflow-y-auto space-y-3">
+						{#each cleanupPreview.groups as group}
+							<div class="border border-[var(--border-primary)] rounded p-2">
+								<p class="text-sm font-medium text-[var(--text-primary)] mb-1">{group.artist} — {group.title}</p>
+								<div class="text-xs space-y-1">
+									<div class="flex items-center gap-2 text-emerald-400">
+										<span class="font-mono">KEEP</span>
+										<span class="text-[var(--text-muted)]">{group.keep.file_path}</span>
+										<Badge>{group.keep.format?.toUpperCase()}</Badge>
+										{#if group.keep.bitrate}<Badge variant="info">{Math.round(group.keep.bitrate / 1000)}k</Badge>{/if}
+									</div>
+									{#each group.remove as rem}
+										<div class="flex items-center gap-2 text-red-400">
+											<span class="font-mono">DROP</span>
+											<span class="text-[var(--text-muted)]">{rem.file_path}</span>
+											<Badge>{rem.format?.toUpperCase()}</Badge>
+											{#if rem.bitrate}<Badge variant="info">{Math.round(rem.bitrate / 1000)}k</Badge>{/if}
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-sm text-emerald-400">No duplicates found.</p>
+				{/if}
+			</div>
+		{:else if cleanupTab === 'organize' && cleanupPreview}
+			<div class="border border-[var(--border-primary)] rounded-lg p-3">
+				<div class="flex items-center justify-between mb-2">
+					<span class="text-sm font-medium text-[var(--text-primary)]">
+						{cleanupPreview.count} file{cleanupPreview.count !== 1 ? 's' : ''} to reorganize
+					</span>
+					{#if cleanupPreview.count > 0}
+						<Button variant="primary" size="sm" disabled={cleanupExecuting} onclick={executeOrganize}>
+							{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+							Organize All
+						</Button>
+					{/if}
+				</div>
+				{#if cleanupPreview.count > 0}
+					<div class="flex items-center gap-2 mb-2 p-2 rounded bg-amber-500/10 border border-amber-500/30">
+						<AlertTriangle class="w-4 h-4 text-amber-400 flex-shrink-0" />
+						<span class="text-xs text-amber-300">This will move files on disk. A library scan is required afterwards.</span>
+					</div>
+				{/if}
+				{#if cleanupPreview.moves?.length}
+					<div class="max-h-80 overflow-y-auto space-y-1">
+						{#each cleanupPreview.moves as move}
+							<div class="text-xs py-1 border-b border-[var(--border-primary)] last:border-0">
+								<div class="text-red-400 font-mono truncate">- {move.current_path}</div>
+								<div class="text-emerald-400 font-mono truncate">+ {move.target_path}</div>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-sm text-emerald-400">All files are already properly organized.</p>
+				{/if}
+			</div>
+		{/if}
+	</Card>
+
 	<!-- Pagination -->
-	{#if currentTotal > limit}
+	{#if currentTotal > 0}
 		<div class="flex justify-center items-center gap-3 mt-4">
 			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
 				<ChevronLeft class="w-4 h-4" /> Prev
@@ -889,6 +1102,11 @@
 			<Button variant="secondary" size="sm" disabled={offset + limit >= currentTotal} onclick={nextPage}>
 				Next <ChevronRight class="w-4 h-4" />
 			</Button>
+			<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
+				{#each limitOptions as opt}
+					<option value={opt}>{opt}/page</option>
+				{/each}
+			</select>
 		</div>
 	{/if}
 </div>

@@ -232,6 +232,65 @@ async def list_albums(
     }
 
 
+# --- Cleanup Endpoints ---
+
+@router.post("/cleanup/orphans/preview")
+async def preview_orphans(db: AsyncSession = Depends(get_db)):
+    """Preview orphaned tracks (files missing from disk)."""
+    from backend.services.cleanup import find_orphaned_tracks
+    orphans = await find_orphaned_tracks(db)
+    return {"orphans": orphans, "count": len(orphans)}
+
+
+@router.post("/cleanup/orphans")
+async def remove_orphans(db: AsyncSession = Depends(get_db)):
+    """Remove orphaned tracks from database."""
+    from backend.services.cleanup import remove_orphaned_tracks
+    return await remove_orphaned_tracks(db)
+
+
+@router.post("/cleanup/duplicates/preview")
+async def preview_duplicates(db: AsyncSession = Depends(get_db)):
+    """Preview duplicate tracks."""
+    from backend.services.cleanup import find_duplicates
+    groups = await find_duplicates(db)
+    total_dupes = sum(len(g["remove"]) for g in groups)
+    return {"groups": groups, "total_groups": len(groups), "total_duplicates": total_dupes}
+
+
+@router.post("/cleanup/duplicates")
+async def remove_dupes(
+    request: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove specified duplicate tracks. Body: {remove_ids: [...], delete_files: bool}"""
+    from backend.services.cleanup import remove_duplicates
+    remove_ids = request.get("remove_ids", [])
+    delete_files = request.get("delete_files", False)
+    if not remove_ids:
+        return {"error": "No track IDs provided"}
+    return await remove_duplicates(db, remove_ids, delete_files)
+
+
+@router.post("/cleanup/organize/preview")
+async def preview_organize_files(db: AsyncSession = Depends(get_db)):
+    """Preview file rename/sort operations."""
+    from backend.services.cleanup import preview_organize
+    moves = await preview_organize(db)
+    return {"moves": moves, "count": len(moves)}
+
+
+@router.post("/cleanup/organize")
+async def organize_files(
+    request: dict | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute file rename/sort. Optional body: {move_ids: [...]}"""
+    from backend.services.cleanup import execute_organize
+    move_ids = request.get("move_ids") if request else None
+    return await execute_organize(db, move_ids)
+
+
 @router.get("/genres")
 async def list_genres(db: AsyncSession = Depends(get_db)):
     result = await db.execute(

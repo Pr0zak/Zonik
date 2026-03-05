@@ -94,7 +94,9 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             job.result = json.dumps(result)
 
         elif task_name == "library_cleanup":
-            job.result = json.dumps({"status": "cleanup_placeholder"})
+            from backend.services.cleanup import remove_orphaned_tracks
+            result = await remove_orphaned_tracks(db)
+            job.result = json.dumps(result)
 
         job.status = "completed"
     except Exception as e:
