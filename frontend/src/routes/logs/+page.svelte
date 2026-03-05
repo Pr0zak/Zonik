@@ -39,7 +39,7 @@
 
 	onMount(async () => {
 		try {
-			jobs = await api.getJobs();
+			jobs = await api.getJobs({ limit: 200 });
 		} catch (e) {
 			console.error('Failed to load jobs:', e);
 		} finally {
@@ -60,7 +60,7 @@
 
 		refreshInterval = setInterval(async () => {
 			try {
-				const newJobs = await api.getJobs();
+				const newJobs = await api.getJobs({ limit: 200 });
 				if (JSON.stringify(newJobs.map(j => j.id + j.status)) !== JSON.stringify(jobs.map(j => j.id + j.status))) {
 					jobs = newJobs;
 				}
