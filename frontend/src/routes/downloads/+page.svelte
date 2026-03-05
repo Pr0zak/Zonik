@@ -214,10 +214,10 @@
 					try {
 						const detail = await api.getJob(j.id);
 						if (detail?.tracks) jobDetails[j.id] = JSON.parse(detail.tracks);
-					} catch {}
+					} catch (e) { console.error('Job detail load failed:', e); }
 				}
 			}
-		} catch (e) { console.error(e); }
+		} catch (e) { console.error('Download history load failed:', e); }
 		finally { jobsLoading = false; }
 	}
 
@@ -228,7 +228,7 @@
 			try {
 				const detail = await api.getJob(jobId);
 				if (detail?.tracks) jobDetails[jobId] = JSON.parse(detail.tracks);
-			} catch {}
+			} catch (e) { console.error('Job detail load failed:', e); }
 		}
 	}
 

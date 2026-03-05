@@ -99,7 +99,7 @@
 	$effect(() => {
 		if ($currentTrack && audio && $currentTrack.id !== lastTrackId) {
 			lastTrackId = $currentTrack.id;
-			audio.src = `/rest/stream?id=${$currentTrack.id}&u=admin&p=admin&v=1.16.1&c=zonik-web`;
+			audio.src = `/rest/stream?id=${$currentTrack.id}&v=1.16.1&c=zonik-web`;
 			audio.play();
 			$isPlaying = true;
 		}
@@ -122,7 +122,7 @@
 		<div class="flex items-center gap-3 w-72 min-w-0">
 			<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex-shrink-0 overflow-hidden">
 				{#if $currentTrack.id}
-					<img src="/rest/getCoverArt?id={$currentTrack.id}&size=80&u=admin&p=admin&v=1.16.1&c=zonik-web"
+					<img src="/rest/getCoverArt?id={$currentTrack.id}&size=80"
 						alt="" class="w-full h-full object-cover"
 						onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
 					<div class="w-full h-full items-center justify-center hidden">

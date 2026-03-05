@@ -147,7 +147,7 @@
 		try {
 			const tasks = await fetch('/api/schedule').then(r => r.json());
 			for (const t of tasks) schedTasks[t.task_name] = t;
-		} catch {}
+		} catch (e) { console.error('Schedule load failed:', e); }
 	});
 </script>
 

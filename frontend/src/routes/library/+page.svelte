@@ -416,11 +416,11 @@
 		try {
 			const active = await api.getActiveJobs();
 			if (active.some(j => j.type === 'library_scan')) scanTriggered = true;
-		} catch {}
+		} catch (e) { console.error('Active jobs check failed:', e); }
 		try {
 			const tasks = await fetch('/api/schedule').then(r => r.json());
 			for (const t of tasks) schedTasks[t.task_name] = t;
-		} catch {}
+		} catch (e) { console.error('Schedule load failed:', e); }
 	});
 
 	function switchTab(newTab) {
@@ -507,7 +507,7 @@
 		try {
 			const data = await api.getSimilarTracks(similarSource.artist, similarSource.title);
 			similarTracks = data.tracks || [];
-		} catch { similarTracks = []; } finally { similarLoading = false; }
+		} catch (e) { console.error('Similar tracks failed:', e); similarTracks = []; } finally { similarLoading = false; }
 	}
 	async function loadSimilarVibe() {
 		if (!similarSource?.id) { similarTracks = []; similarLoading = false; return; }
@@ -517,7 +517,7 @@
 			similarTracks = (data.tracks || []).map(t => ({
 				name: t.title, artist: t.artist, in_library: true, track_id: t.id, match: t.similarity,
 			}));
-		} catch { similarTracks = []; } finally { similarLoading = false; }
+		} catch (e) { console.error('Vibe match failed:', e); similarTracks = []; } finally { similarLoading = false; }
 	}
 	async function switchSimilarTab(t) {
 		similarTab = t;
@@ -546,7 +546,7 @@
 			]);
 			artistAlbums = albumsRes.albums;
 			artistTracks = tracksRes.tracks;
-		} catch { artistAlbums = []; artistTracks = []; }
+		} catch (e) { console.error('Artist detail failed:', e); artistAlbums = []; artistTracks = []; addToast('Failed to load artist details', 'error'); }
 	}
 
 	// Album detail — filter tracks

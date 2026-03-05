@@ -76,7 +76,7 @@
 
 			// Parse result for stats
 			let result = {};
-			try { result = JSON.parse(detail.result); } catch {}
+			try { result = JSON.parse(detail.result); } catch (e) { console.error('Parse result failed:', e); }
 
 			// Convert job track format to display format
 			const displayTracks = trackList.map(t => ({

@@ -41,7 +41,7 @@
 	});
 
 	async function refreshStats() {
-		try { stats = await fetch('/api/analysis/stats').then(r => r.json()); } catch {}
+		try { stats = await fetch('/api/analysis/stats').then(r => r.json()); } catch (e) { console.error('Stats refresh failed:', e); }
 	}
 
 	onMount(async () => {
@@ -55,7 +55,7 @@
 		try {
 			const tasks = await fetch('/api/schedule').then(r => r.json());
 			for (const t of tasks) schedTasks[t.task_name] = t;
-		} catch {}
+		} catch (e) { console.error('Schedule load failed:', e); }
 	});
 
 	async function startAnalysis() {
