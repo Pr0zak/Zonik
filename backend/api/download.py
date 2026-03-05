@@ -206,8 +206,18 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 native_client = get_client()
 
                 if req.username and req.filename and native_client:
-                    # Direct download — single candidate, try once
+                    # Direct download — try requested source first, then fall back to search
                     candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
+                    try:
+                        from backend.soulseek.search import search_multi_strategy_native
+                        fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track)
+                        # Add fallbacks excluding the already-requested source
+                        for fb in fallbacks:
+                            if fb["username"] != req.username:
+                                candidates.append(fb)
+                        candidates = candidates[:5]  # Limit total attempts
+                    except Exception:
+                        pass  # Search failed, just try the direct source
                 elif native_client:
                     # Auto-download — get candidates from search
                     from backend.soulseek.search import search_multi_strategy_native
@@ -250,6 +260,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         log.warning(f"[download] Transfer queued: {dl_username} / {short_name}")
                     except Exception as e:
                         log.warning(f"[download] Failed to connect to {dl_username}: {e}")
+                        last_error = f"Connection failed: {e}"
                         await native_client.reputation.record_failure(dl_username)
                         continue
 
