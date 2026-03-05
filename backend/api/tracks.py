@@ -6,7 +6,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.database import get_db
+from backend.database import get_db, search_fts
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
@@ -28,8 +28,21 @@ async def list_tracks(
 ):
     query = select(Track).options(selectinload(Track.artist), selectinload(Track.album))
 
+    # Use FTS5 for search (searches title, artist, album) with ILIKE fallback
+    fts_ids = None
     if search:
-        query = query.where(Track.title.ilike(f"%{search}%"))
+        fts_ids = await search_fts(db, search, limit=500)
+        if fts_ids:
+            query = query.where(Track.id.in_(fts_ids))
+        else:
+            # Fallback: substring match on title, artist name, or album title
+            like = f"%{search}%"
+            query = query.where(
+                Track.title.ilike(like)
+                | Track.artist_id.in_(
+                    select(Artist.id).where(Artist.name.ilike(like))
+                )
+            )
     if genre:
         query = query.where(Track.genre == genre)
     if artist_id:
@@ -46,7 +59,16 @@ async def list_tracks(
 
     count_q = select(func.count(Track.id))
     if search:
-        count_q = count_q.where(Track.title.ilike(f"%{search}%"))
+        if fts_ids:
+            count_q = count_q.where(Track.id.in_(fts_ids))
+        else:
+            like = f"%{search}%"
+            count_q = count_q.where(
+                Track.title.ilike(like)
+                | Track.artist_id.in_(
+                    select(Artist.id).where(Artist.name.ilike(like))
+                )
+            )
     if genre:
         count_q = count_q.where(Track.genre == genre)
     if artist_id:
