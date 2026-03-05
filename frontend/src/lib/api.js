@@ -75,7 +75,7 @@ export const api = {
 	cancelTransfer: (username, filename) =>
 		request('/download/cancel-transfer', { method: 'POST', body: JSON.stringify({ username, filename }) }),
 	getDownloadHistory: (offset = 0, limit = 20) =>
-		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`),
+		request(`/jobs?type=download,bulk_download&status=completed,failed&offset=${offset}&limit=${limit}`),
 	clearDownloadHistory: () =>
 		request('/jobs/clear?type=download,bulk_download', { method: 'DELETE' }),
 

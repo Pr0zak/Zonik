@@ -1,7 +1,8 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast, activeTransfers } from '$lib/stores.js';
+	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
 	import { Download, Search, Zap, ShieldBan, Trash2, ArrowDownToLine, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -188,6 +189,8 @@
 		if (e.key === 'Enter') searchSoulseek();
 	}
 
+	let unsubJobUpdate;
+
 	onMount(() => {
 		loadBlacklist();
 		loadHistory();
@@ -195,6 +198,17 @@
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
 		}).catch(() => {});
+		// Auto-refresh history when a download job completes or fails
+		unsubJobUpdate = onJobUpdate((job) => {
+			if ((job.type === 'download' || job.type === 'bulk_download') &&
+				(job.status === 'completed' || job.status === 'failed')) {
+				loadHistory();
+			}
+		});
+	});
+
+	onDestroy(() => {
+		if (unsubJobUpdate) unsubJobUpdate();
 	});
 </script>
 

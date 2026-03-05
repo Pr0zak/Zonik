@@ -1,6 +1,12 @@
 import { activeJobs, activeTransfers } from './stores.js';
 
 let ws = null;
+const _jobListeners = new Set();
+
+export function onJobUpdate(callback) {
+	_jobListeners.add(callback);
+	return () => _jobListeners.delete(callback);
+}
 
 export function connectWebSocket() {
 	const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -14,15 +20,19 @@ export function connectWebSocket() {
 			if (data.type === 'transfer_progress') {
 				activeTransfers.set(data.transfers || []);
 			} else if (data.type === 'job_update') {
+				const job = data.job;
 				activeJobs.update(jobs => {
-					const idx = jobs.findIndex(j => j.id === data.job.id);
+					const idx = jobs.findIndex(j => j.id === job.id);
 					if (idx >= 0) {
-						jobs[idx] = data.job;
+						jobs[idx] = job;
 					} else {
-						jobs.push(data.job);
+						jobs.push(job);
 					}
 					return jobs.filter(j => j.status === 'running' || j.status === 'pending');
 				});
+				for (const cb of _jobListeners) {
+					try { cb(job); } catch {}
+				}
 			}
 		} catch (e) {
 			console.error('WebSocket message parse error:', e);
