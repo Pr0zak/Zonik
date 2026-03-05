@@ -82,17 +82,17 @@ class ServiceConfig(BaseModel):
 
 @router.get("/services")
 async def get_service_config():
-    """Get current service connection settings (keys are masked)."""
+    """Get current service connection settings."""
     settings = get_settings()
     return {
         "slskd_url": settings.soulseek.slskd_url,
-        "slskd_api_key": _mask(settings.soulseek.slskd_api_key),
+        "slskd_api_key": settings.soulseek.slskd_api_key,
         "download_dir": settings.soulseek.download_dir,
         "lidarr_url": settings.lidarr.url,
-        "lidarr_api_key": _mask(settings.lidarr.api_key),
-        "lastfm_api_key": _mask(settings.lastfm.api_key),
-        "lastfm_write_api_key": _mask(settings.lastfm.write_api_key),
-        "lastfm_write_api_secret": _mask(settings.lastfm.write_api_secret),
+        "lidarr_api_key": settings.lidarr.api_key,
+        "lastfm_api_key": settings.lastfm.api_key,
+        "lastfm_write_api_key": settings.lastfm.write_api_key,
+        "lastfm_write_api_secret": settings.lastfm.write_api_secret,
         "cover_cache_dir": settings.library.cover_cache_dir,
     }
 
@@ -103,30 +103,27 @@ async def update_service_config(req: ServiceConfig):
     raw = _read_raw_config()
     settings = get_settings()
 
-    # Only update fields that were actually provided (non-empty)
-    # For keys: if the value looks masked (ends with ***), keep the existing value
+    # Update fields — full keys are sent from frontend, just save them
     soulseek = raw.get("soulseek", {})
-    if req.slskd_url or req.slskd_url == "":
-        soulseek["slskd_url"] = req.slskd_url
-    if req.slskd_api_key and "***" not in req.slskd_api_key:
+    soulseek["slskd_url"] = req.slskd_url
+    if req.slskd_api_key:
         soulseek["slskd_api_key"] = req.slskd_api_key
     if req.download_dir:
         soulseek["download_dir"] = req.download_dir
     raw["soulseek"] = {**settings.soulseek.model_dump(), **soulseek}
 
     lidarr = raw.get("lidarr", {})
-    if req.lidarr_url or req.lidarr_url == "":
-        lidarr["url"] = req.lidarr_url
-    if req.lidarr_api_key and "***" not in req.lidarr_api_key:
+    lidarr["url"] = req.lidarr_url
+    if req.lidarr_api_key:
         lidarr["api_key"] = req.lidarr_api_key
     raw["lidarr"] = {**settings.lidarr.model_dump(), **lidarr}
 
     lastfm = raw.get("lastfm", {})
-    if req.lastfm_api_key and "***" not in req.lastfm_api_key:
+    if req.lastfm_api_key:
         lastfm["api_key"] = req.lastfm_api_key
-    if req.lastfm_write_api_key and "***" not in req.lastfm_write_api_key:
+    if req.lastfm_write_api_key:
         lastfm["write_api_key"] = req.lastfm_write_api_key
-    if req.lastfm_write_api_secret and "***" not in req.lastfm_write_api_secret:
+    if req.lastfm_write_api_secret:
         lastfm["write_api_secret"] = req.lastfm_write_api_secret
     raw["lastfm"] = {**settings.lastfm.model_dump(), **lastfm}
 

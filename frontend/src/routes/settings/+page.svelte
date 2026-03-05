@@ -17,7 +17,7 @@
 	});
 	let saving = $state(false);
 	let dirty = $state(false);
-	let showKeys = $state(false);
+	let showField = $state({});
 
 	// Update system state
 	let versionInfo = $state(null);
@@ -224,18 +224,11 @@
 		<div class="bg-gray-900 rounded-xl border border-gray-800 p-6">
 			<div class="flex items-center justify-between mb-4">
 				<h2 class="text-lg font-semibold">Service Connections</h2>
-				<div class="flex items-center gap-2">
-					<button on:click={() => showKeys = !showKeys}
-						class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs font-medium transition"
-						title={showKeys ? 'Hide API keys' : 'Show API keys'}>
-						{showKeys ? 'Hide Keys' : 'Show Keys'}
-					</button>
-					<button on:click={saveServices} disabled={saving || !dirty}
-						class="px-4 py-1.5 bg-accent-600 hover:bg-accent-700 disabled:opacity-50
-							rounded text-xs font-medium transition">
-						{saving ? 'Saving...' : 'Save'}
-					</button>
-				</div>
+				<button on:click={saveServices} disabled={saving || !dirty}
+					class="px-4 py-1.5 bg-accent-600 hover:bg-accent-700 disabled:opacity-50
+						rounded text-xs font-medium transition">
+					{saving ? 'Saving...' : 'Save'}
+				</button>
 			</div>
 
 			<div class="space-y-5">
@@ -258,10 +251,17 @@
 						</div>
 						<div>
 							<label class="block text-xs text-gray-500 mb-1">API Key</label>
-							<input type={showKeys ? 'text' : 'password'} bind:value={services.slskd_api_key} on:input={markDirty}
-								placeholder="slskd API key"
-								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
-									focus:outline-none focus:border-accent-500" />
+							<div class="relative">
+								<input type={showField.slskd ? 'text' : 'password'} bind:value={services.slskd_api_key} on:input={markDirty}
+									placeholder="slskd API key"
+									class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 pr-8 text-sm
+										focus:outline-none focus:border-accent-500" />
+								<button type="button" on:click={() => { showField.slskd = !showField.slskd; showField = {...showField}; }}
+									class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+									title={showField.slskd ? 'Hide' : 'Show'}>
+									{showField.slskd ? '◉' : '○'}
+								</button>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -285,10 +285,17 @@
 						</div>
 						<div>
 							<label class="block text-xs text-gray-500 mb-1">API Key</label>
-							<input type={showKeys ? 'text' : 'password'} bind:value={services.lidarr_api_key} on:input={markDirty}
-								placeholder="Lidarr API key"
-								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
-									focus:outline-none focus:border-accent-500" />
+							<div class="relative">
+								<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} on:input={markDirty}
+									placeholder="Lidarr API key"
+									class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 pr-8 text-sm
+										focus:outline-none focus:border-accent-500" />
+								<button type="button" on:click={() => { showField.lidarr = !showField.lidarr; showField = {...showField}; }}
+									class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+									title={showField.lidarr ? 'Hide' : 'Show'}>
+									{showField.lidarr ? '◉' : '○'}
+								</button>
+							</div>
 						</div>
 					</div>
 				</div>
@@ -305,24 +312,45 @@
 					<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
 						<div>
 							<label class="block text-xs text-gray-500 mb-1">Read API Key</label>
-							<input type={showKeys ? 'text' : 'password'} bind:value={services.lastfm_api_key} on:input={markDirty}
-								placeholder="Last.fm API key"
-								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
-									focus:outline-none focus:border-accent-500" />
+							<div class="relative">
+								<input type={showField.lastfm_read ? 'text' : 'password'} bind:value={services.lastfm_api_key} on:input={markDirty}
+									placeholder="Last.fm API key"
+									class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 pr-8 text-sm
+										focus:outline-none focus:border-accent-500" />
+								<button type="button" on:click={() => { showField.lastfm_read = !showField.lastfm_read; showField = {...showField}; }}
+									class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+									title={showField.lastfm_read ? 'Hide' : 'Show'}>
+									{showField.lastfm_read ? '◉' : '○'}
+								</button>
+							</div>
 						</div>
 						<div>
 							<label class="block text-xs text-gray-500 mb-1">Write API Key</label>
-							<input type={showKeys ? 'text' : 'password'} bind:value={services.lastfm_write_api_key} on:input={markDirty}
-								placeholder="Write API key"
-								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
-									focus:outline-none focus:border-accent-500" />
+							<div class="relative">
+								<input type={showField.lastfm_write ? 'text' : 'password'} bind:value={services.lastfm_write_api_key} on:input={markDirty}
+									placeholder="Write API key"
+									class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 pr-8 text-sm
+										focus:outline-none focus:border-accent-500" />
+								<button type="button" on:click={() => { showField.lastfm_write = !showField.lastfm_write; showField = {...showField}; }}
+									class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+									title={showField.lastfm_write ? 'Hide' : 'Show'}>
+									{showField.lastfm_write ? '◉' : '○'}
+								</button>
+							</div>
 						</div>
 						<div>
 							<label class="block text-xs text-gray-500 mb-1">Write API Secret</label>
-							<input type={showKeys ? 'text' : 'password'} bind:value={services.lastfm_write_api_secret} on:input={markDirty}
-								placeholder="Write API secret"
-								class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm
-									focus:outline-none focus:border-accent-500" />
+							<div class="relative">
+								<input type={showField.lastfm_secret ? 'text' : 'password'} bind:value={services.lastfm_write_api_secret} on:input={markDirty}
+									placeholder="Write API secret"
+									class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-1.5 pr-8 text-sm
+										focus:outline-none focus:border-accent-500" />
+								<button type="button" on:click={() => { showField.lastfm_secret = !showField.lastfm_secret; showField = {...showField}; }}
+									class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+									title={showField.lastfm_secret ? 'Hide' : 'Show'}>
+									{showField.lastfm_secret ? '◉' : '○'}
+								</button>
+							</div>
 						</div>
 					</div>
 				</div>
