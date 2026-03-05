@@ -12,11 +12,13 @@
 	});
 </script>
 
-<div class="h-screen flex flex-col">
+<div class="h-screen flex flex-col bg-[var(--bg-primary)]">
 	<div class="flex flex-1 overflow-hidden">
 		<Sidebar />
 		<main class="flex-1 overflow-y-auto p-6">
-			{@render children()}
+			<div class="animate-fade-in">
+				{@render children()}
+			</div>
 		</main>
 	</div>
 	<Player />

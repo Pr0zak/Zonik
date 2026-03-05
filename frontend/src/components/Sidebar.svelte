@@ -2,20 +2,29 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { sidebarOpen, updateAvailable } from '$lib/stores.js';
+	import {
+		LayoutDashboard, Library, Compass, Download, ListMusic,
+		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings
+	} from 'lucide-svelte';
 
 	const nav = [
-		{ href: '/', label: 'Dashboard', icon: '⌂' },
-		{ href: '/library', label: 'Library', icon: '♫' },
-		{ href: '/discover', label: 'Discover', icon: '✦' },
-		{ href: '/downloads', label: 'Downloads', icon: '↓' },
-		{ href: '/playlists', label: 'Playlists', icon: '≡' },
-		{ href: '/favorites', label: 'Favorites', icon: '★' },
-		{ href: '/analysis', label: 'Analysis', icon: '~' },
-		{ href: '/stats', label: 'Stats', icon: '◩' },
-		{ href: '/schedule', label: 'Schedule', icon: '⏱' },
-		{ href: '/logs', label: 'Logs', icon: '▤' },
-		{ href: '/settings', label: 'Settings', icon: '⚙' },
+		{ href: '/', label: 'Dashboard', icon: LayoutDashboard, color: 'var(--color-dashboard)' },
+		{ href: '/library', label: 'Library', icon: Library, color: 'var(--color-library)' },
+		{ href: '/discover', label: 'Discover', icon: Compass, color: 'var(--color-discover)' },
+		{ href: '/downloads', label: 'Downloads', icon: Download, color: 'var(--color-downloads)' },
+		{ href: '/playlists', label: 'Playlists', icon: ListMusic, color: 'var(--color-playlists)' },
+		{ href: '/favorites', label: 'Favorites', icon: Heart, color: 'var(--color-favorites)' },
+		{ href: '/analysis', label: 'Analysis', icon: AudioWaveform, color: 'var(--color-analysis)' },
+		{ href: '/stats', label: 'Stats', icon: BarChart3, color: 'var(--color-stats)' },
+		{ href: '/schedule', label: 'Schedule', icon: Clock, color: 'var(--color-schedule)' },
+		{ href: '/logs', label: 'Logs', icon: ScrollText, color: 'var(--color-logs)' },
+		{ href: '/settings', label: 'Settings', icon: Settings, color: 'var(--color-settings)' },
 	];
+
+	function isActive(pathname, href) {
+		if (href === '/') return pathname === '/';
+		return pathname.startsWith(href);
+	}
 
 	onMount(async () => {
 		try {
@@ -27,24 +36,59 @@
 	});
 </script>
 
-<aside class="w-56 bg-gray-900 border-r border-gray-800 flex flex-col h-full shrink-0"
+<aside class="w-64 bg-[var(--bg-primary)] flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)]"
 	class:hidden={!$sidebarOpen}>
-	<div class="p-4 border-b border-gray-800">
-		<h1 class="text-xl font-bold text-accent-500">Zonik</h1>
+
+	<!-- Logo -->
+	<div class="px-5 pt-6 pb-4">
+		<div class="flex items-center gap-2.5">
+			<div class="w-8 h-8 rounded-lg bg-[var(--color-accent)] flex items-center justify-center">
+				<span class="text-white font-bold text-sm">Z</span>
+			</div>
+			<div>
+				<h1 class="text-base font-bold text-[var(--text-primary)] tracking-tight">Zonik</h1>
+				<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider">Music Backend</p>
+			</div>
+		</div>
 	</div>
-	<nav class="flex-1 p-2 space-y-0.5 overflow-y-auto">
-		{#each nav as item}
+
+	<!-- Navigation -->
+	<div class="px-3 mb-2">
+		<div class="flex items-center gap-2 px-2 mb-2">
+			<div class="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]"></div>
+			<span class="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--text-disabled)]">Navigation</span>
+		</div>
+	</div>
+
+	<nav class="flex-1 px-3 space-y-0.5 overflow-y-auto">
+		{#each nav as item, i}
+			{@const active = isActive($page.url.pathname, item.href)}
 			<a href={item.href}
-				class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
-					{$page.url.pathname === item.href
-						? 'bg-accent-700/20 text-accent-400'
-						: 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}">
-				<span class="text-base w-5 text-center">{item.icon}</span>
-				<span class="flex-1">{item.label}</span>
+				class="group flex items-center gap-3 px-3 py-2 text-sm transition-all duration-200 border-l-2 rounded-r-md
+					{active
+						? 'text-white bg-[var(--bg-primary)]'
+						: 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5 border-transparent hover:border-white/20'}"
+				style={active ? `border-color: ${item.color}` : ''}
+			>
+				<span class="text-[10px] font-mono font-bold tabular-nums w-4 text-right"
+					style={active ? `color: ${item.color}` : ''}
+					class:text-[var(--text-disabled)]={!active}>
+					{String(i + 1).padStart(2, '0')}
+				</span>
+				<svelte:component this={item.icon}
+					class="w-4 h-4 shrink-0 transition-colors"
+					style={active ? `color: ${item.color}` : ''}
+				/>
+				<span class="flex-1 font-medium">{item.label}</span>
 				{#if item.href === '/settings' && $updateAvailable}
-					<span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" title="Update available"></span>
+					<span class="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" title="Update available"></span>
 				{/if}
 			</a>
 		{/each}
 	</nav>
+
+	<!-- Footer -->
+	<div class="px-5 py-4 border-t border-[var(--border-subtle)]">
+		<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+	</div>
 </aside>

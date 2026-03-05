@@ -1,6 +1,7 @@
 <script>
 	import { currentTrack, isPlaying } from '$lib/stores.js';
 	import { formatDuration } from '$lib/utils.js';
+	import { Play, Pause, Music } from 'lucide-svelte';
 
 	let audio;
 	let currentTime = 0;
@@ -30,38 +31,44 @@
 	}
 </script>
 
-<div class="h-16 bg-gray-900 border-t border-gray-800 flex items-center px-4 gap-4 shrink-0">
+<div class="h-16 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 gap-4 shrink-0">
 	{#if $currentTrack}
 		<div class="flex items-center gap-3 w-64 min-w-0">
-			<div class="w-10 h-10 bg-gray-800 rounded flex-shrink-0"></div>
+			<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
+				<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+			</div>
 			<div class="min-w-0">
-				<p class="text-sm font-medium truncate">{$currentTrack.title}</p>
-				<p class="text-xs text-gray-400 truncate">{$currentTrack.artist || 'Unknown'}</p>
+				<p class="text-sm font-medium text-[var(--text-primary)] truncate">{$currentTrack.title}</p>
+				<p class="text-xs text-[var(--text-secondary)] truncate">{$currentTrack.artist || 'Unknown'}</p>
 			</div>
 		</div>
 
 		<div class="flex-1 flex flex-col items-center gap-1">
 			<div class="flex items-center gap-4">
 				<button on:click={togglePlay}
-					class="w-8 h-8 rounded-full bg-white text-black flex items-center justify-center text-sm hover:scale-105 transition">
-					{$isPlaying ? '⏸' : '▶'}
+					class="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
+					{#if $isPlaying}
+						<Pause class="w-4 h-4" />
+					{:else}
+						<Play class="w-4 h-4 ml-0.5" />
+					{/if}
 				</button>
 			</div>
-			<div class="w-full max-w-md flex items-center gap-2 text-xs text-gray-400">
-				<span>{formatDuration(currentTime)}</span>
+			<div class="w-full max-w-md flex items-center gap-2 text-xs text-[var(--text-muted)]">
+				<span class="font-mono tabular-nums">{formatDuration(currentTime)}</span>
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div class="flex-1 h-1 bg-gray-700 rounded-full cursor-pointer" on:click={seek}>
-					<div class="h-full bg-accent-500 rounded-full transition-all"
+				<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full cursor-pointer group" on:click={seek}>
+					<div class="h-full bg-[var(--color-accent)] rounded-full transition-all"
 						style="width: {duration ? (currentTime / duration * 100) : 0}%"></div>
 				</div>
-				<span>{formatDuration(duration)}</span>
+				<span class="font-mono tabular-nums">{formatDuration(duration)}</span>
 			</div>
 		</div>
 
 		<div class="w-32"></div>
 	{:else}
-		<p class="text-sm text-gray-500 mx-auto">No track selected</p>
+		<p class="text-sm text-[var(--text-disabled)] mx-auto">No track selected</p>
 	{/if}
 </div>
 
