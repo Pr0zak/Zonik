@@ -16,7 +16,16 @@ from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
 
+from backend.models.user import User
+
 router = APIRouter()
+
+
+async def _resolve_user_id(username: str, db: AsyncSession) -> str:
+    """Resolve username to user ID."""
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalar_one_or_none()
+    return user.id if user else username
 
 
 class StarRequest(BaseModel):
@@ -27,6 +36,7 @@ class StarRequest(BaseModel):
 
 @router.get("")
 async def list_favorites(user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+    user_id = await _resolve_user_id(user_id, db)
     result = await db.execute(
         select(Favorite)
         .options(
@@ -67,6 +77,7 @@ async def list_favorites(user_id: str = "admin", db: AsyncSession = Depends(get_
 @router.get("/ids")
 async def favorite_ids(user_id: str = "admin", db: AsyncSession = Depends(get_db)):
     """Return sets of favorited track/album/artist IDs for quick lookup."""
+    user_id = await _resolve_user_id(user_id, db)
     result = await db.execute(
         select(Favorite.track_id, Favorite.album_id, Favorite.artist_id)
         .where(Favorite.user_id == user_id)
@@ -81,6 +92,7 @@ async def favorite_ids(user_id: str = "admin", db: AsyncSession = Depends(get_db
 
 @router.post("/star")
 async def star(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+    user_id = await _resolve_user_id(user_id, db)
     # Check for existing favorite to avoid duplicate
     query = select(Favorite).where(Favorite.user_id == user_id)
     if req.track_id:
@@ -108,6 +120,7 @@ async def star(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depe
 
 @router.post("/unstar")
 async def unstar(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+    user_id = await _resolve_user_id(user_id, db)
     query = delete(Favorite).where(Favorite.user_id == user_id)
     if req.track_id:
         query = query.where(Favorite.track_id == req.track_id)
@@ -130,6 +143,7 @@ async def import_favorites(req: ImportRequest, user_id: str = "admin", db: Async
 
     Matches tracks by file_path (relative) or by title+artist.
     """
+    user_id = await _resolve_user_id(user_id, db)
     imported = 0
     skipped = 0
     not_found = 0

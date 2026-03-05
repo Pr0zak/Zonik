@@ -207,6 +207,14 @@ async def _run_kimahub_favorites_sync(db: AsyncSession) -> dict:
     except Exception as e:
         return {"error": f"Failed to connect to KimaHub DB: {str(e)}"}
 
+    # Resolve admin user ID
+    from backend.models.user import User
+    user_result = await db.execute(select(User).where(User.username == "admin"))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        return {"error": "admin user not found"}
+    admin_id = user.id
+
     for row in rows:
         file_path = row["filePath"]
         # Generate Zonik track ID from file path
@@ -220,7 +228,7 @@ async def _run_kimahub_favorites_sync(db: AsyncSession) -> dict:
         # Check if already favorited
         existing = (await db.execute(
             select(Favorite).where(
-                Favorite.user_id == "admin",
+                Favorite.user_id == admin_id,
                 Favorite.track_id == track.id,
             )
         )).scalar_one_or_none()
@@ -231,7 +239,7 @@ async def _run_kimahub_favorites_sync(db: AsyncSession) -> dict:
 
         fav = Favorite(
             id=str(uuid.uuid4()),
-            user_id="admin",
+            user_id=admin_id,
             track_id=track.id,
             starred_at=datetime.utcnow(),
         )
