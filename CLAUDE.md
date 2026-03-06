@@ -4,7 +4,7 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) + ARQ/Redis
-- **Frontend**: SvelteKit 5 + Tailwind CSS (dark theme, 12 routes)
+- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js (dark theme, 12 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
 - **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
 - **Discovery**: Last.fm API (similar tracks/artists, top charts, scrobbling)
@@ -137,7 +137,11 @@ docs/                  # Installation, configuration, API reference, development
 - Soulseek stats: /api/download/soulseek-stats returns connection, uptime, reconnects, peers, shares, listen port, active searches, transfers, bandwidth, speed, reputation — shown on Dashboard + Stats page
 - Soulseek stats history: background collector snapshots stats every 5 minutes into soulseek_snapshots table (auto-pruned after 7 days)
 - Soulseek stats charts: /api/download/soulseek-stats/history?hours=24 powers 4 Chart.js line charts (peers, transfers, speed, bandwidth) with 6h/24h/3d/7d range selector
-- Scheduled audio_analysis: per-track try/except so individual track failures (e.g. unsupported .opus codec) don't mark entire job as failed
+- Scheduled audio_analysis: per-track try/except so individual track failures don't mark entire job as failed
+- Essentia segfault guard: .opus files skipped before reaching MonoLoader (C++ segfault kills process, uncatchable by Python)
+- Essentia supported formats: ESSENTIA_SUPPORTED_EXTENSIONS allowlist in analyzer.py (.mp3, .flac, .wav, .ogg, .m4a, .aac, .wma, .aiff, .alac)
+- Audio analysis performance: ProcessPoolExecutor (true multi-core parallelism), nice 15 priority, DB commits every 10 tracks, WS broadcasts every 10 tracks
+- Analysis progress UI: shows (already_analyzed + job_progress) / total_tracks to align with stats card
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
