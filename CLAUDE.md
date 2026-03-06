@@ -119,7 +119,9 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek client: persistent singleton in FastAPI lifespan, feature-flagged via `use_native` config toggle
 - Native Soulseek: protocol layer (struct.pack/unpack), server connection with auto-reconnect (exp backoff), peer connection racing (direct vs indirect), file transfer state machine, zlib-compressed search responses
 - Native Soulseek: `services/soulseek.py` is a facade — routes to native or slskd based on `use_native` flag, zero changes needed in download.py callers
-- Native Soulseek: peer reputation tracking (Redis or in-memory fallback), 3 failures = 24h block, adjusts quality scoring
+- Native Soulseek: peer reputation tracking (Redis or in-memory fallback), per-failure 30min cooldown, 3+ failures = 24h block, adjusts quality scoring
+- Native Soulseek: multi-source parallel downloads (configurable 1-5 sources, "first" or "best" strategy), record_success on completion
+- Search results include on_cooldown flag per peer; cooldown peers sorted last and shown dimmed with clock icon
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
@@ -153,7 +155,10 @@ docs/                  # Installation, configuration, API reference, development
 - Health check: disabled services return "warning" status which doesn't degrade overall status (only "error" degrades)
 - Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
 - Favorites paginated server-side: /api/favorites returns {items, total} with offset/limit
-- Upgrade restarts kill background tasks (enrichment, analysis); stuck "running" jobs must be manually set to "failed" in DB
+- Upgrade restarts kill background tasks (enrichment, analysis); startup lifespan marks stuck running/pending jobs as failed
+- Library tracks: analyzed filter (yes/no/all), sortable analyzed column, waveform icon per track (pink=analyzed, dim=not)
+- Download completion details: filename (linked to library search), format badge, file size, source username, strategy info
+- Failed download jobs include failed_sources list; frontend marks those peers as on_cooldown in search results
 - Player bar: shows cover art (subsonic getCoverArt), track title + artist + album; progress bar uses $state + ontimeupdate for Svelte 5 reactivity
 
 ## Important Files
