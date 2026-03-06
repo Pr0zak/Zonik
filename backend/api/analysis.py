@@ -83,15 +83,13 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                                 loudness=analysis.get("loudness"),
                             )
                             await db.merge(ta)
-
-                        job.progress = i + 1
-                        await db.merge(job)
-                        await db.commit()
                     except Exception as e:
                         log.warning("Analysis failed for track %s: %s", track_id, e)
 
-                    if (i + 1) % 5 == 0 or i + 1 == total:
-                        await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": i + 1, "total": total})
+                    job.progress = i + 1
+                    await db.merge(job)
+                    await db.commit()
+                    await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": i + 1, "total": total})
 
                 job.status = "completed"
             except Exception as e:
@@ -144,15 +142,13 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
                                 embedding=emb_bytes,
                             )
                             await db.merge(te)
-
-                        job.progress = i + 1
-                        await db.merge(job)
-                        await db.commit()
                     except Exception as e:
                         log.warning("Embedding failed for track %s: %s", track_id, e)
 
-                    if (i + 1) % 5 == 0 or i + 1 == total:
-                        await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": i + 1, "total": total})
+                    job.progress = i + 1
+                    await db.merge(job)
+                    await db.commit()
+                    await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": i + 1, "total": total})
 
                 job.status = "completed"
             except Exception as e:
