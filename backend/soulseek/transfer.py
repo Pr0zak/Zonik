@@ -299,6 +299,23 @@ class TransferManager:
             writer.close()
             return
 
+        # Read first data and inspect for FLAC header
+        try:
+            first_data = await asyncio.wait_for(reader.read(65536), timeout=60)
+        except asyncio.TimeoutError:
+            log.warning(f"[transfer] No file data from {transfer.username} after token echo")
+            self.update_state(transfer, TransferState.FAILED, error="No file data")
+            writer.close()
+            return
+        if not first_data:
+            log.warning(f"[transfer] Connection closed after token echo from {transfer.username}")
+            self.update_state(transfer, TransferState.FAILED, error="Connection closed after echo")
+            writer.close()
+            return
+        log.info(f"[transfer] First data ({len(first_data)}B) from {transfer.username}: {first_data[:64].hex()}")
+        has_flac = first_data[:4] == b'fLaC'
+        log.info(f"[transfer] fLaC header present: {has_flac}, first 4 bytes as text: {first_data[:4]}")
+
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
         save_path = Path(self.download_dir) / short_name
@@ -307,11 +324,14 @@ class TransferManager:
 
         try:
             async with aiofiles.open(save_path, "wb") as f:
+                # Write the first data chunk we already read
+                await f.write(first_data)
+                transfer.received_bytes += len(first_data)
+
                 while True:
                     try:
                         chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
                     except asyncio.TimeoutError:
-                        # If we have most of the data, peer likely finished
                         if transfer.received_bytes > 0 and (
                             transfer.total_bytes == 0 or
                             transfer.received_bytes >= transfer.total_bytes * 0.95
@@ -327,7 +347,6 @@ class TransferManager:
                     if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
                         break
 
-            # Consider complete if we got all data or close enough (peer may report slightly inflated size)
             if transfer.received_bytes > 0 and (
                 transfer.total_bytes == 0 or
                 transfer.received_bytes >= transfer.total_bytes * 0.99
