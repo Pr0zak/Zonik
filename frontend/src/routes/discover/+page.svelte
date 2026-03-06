@@ -304,10 +304,38 @@
 	async function runSched(name) {
 		schedRunning[name] = true;
 		try {
-			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
-			addToast('Task started', 'success');
-		} catch { addToast('Failed to run task', 'error'); }
-		finally { schedRunning[name] = false; }
+			const res = await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
+			const data = await res.json();
+			addToast('Task started — check Logs for progress', 'success');
+			if (data.job_id) {
+				pollSchedJob(name, data.job_id);
+			}
+		} catch { addToast('Failed to run task', 'error'); schedRunning[name] = false; }
+	}
+
+	async function pollSchedJob(name, jobId) {
+		for (let i = 0; i < 300; i++) {
+			await new Promise(r => setTimeout(r, 3000));
+			try {
+				const job = await fetch(`/api/jobs/${jobId}`).then(r => r.json());
+				if (job.status === 'completed') {
+					schedRunning[name] = false;
+					schedTasks[name] = { ...schedTasks[name], last_run_at: new Date().toISOString() };
+					addToast(`${name.includes('top') ? 'Top Charts' : 'Similar Tracks'} scan completed`, 'success');
+					// Reload the tab data
+					if (name === 'lastfm_top_tracks') scanTopTracks();
+					else if (name === 'discover_similar') scanSimilarTracks();
+					else if (name === 'discover_artists') scanSimilarArtists();
+					return;
+				}
+				if (job.status === 'failed') {
+					schedRunning[name] = false;
+					addToast('Task failed', 'error');
+					return;
+				}
+			} catch {}
+		}
+		schedRunning[name] = false;
 	}
 
 	async function toggleAutoDownload(name) {
