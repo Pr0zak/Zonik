@@ -638,6 +638,10 @@
 									<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
 										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
 								</div>
+							{:else if job.status === 'running'}
+								<div class="h-1 bg-[var(--border-interactive)] overflow-hidden">
+									<div class="h-full bg-[var(--color-downloads)] animate-indeterminate w-1/3"></div>
+								</div>
 							{/if}
 							<!-- Expanded bulk track details -->
 							{#if expandedJob === job.id && jobDetails[job.id]}

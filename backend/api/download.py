@@ -474,6 +474,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
                             track_statuses[idx]["reason"] = reason
                         else:
                             result = await search_and_download(t.get("artist", ""), t.get("track", ""))
+                            log.info(f"[bulk] search_and_download returned: {result}")
                             ok = result.get("ok") or result.get("status") == "downloading"
                             if ok:
                                 track_statuses[idx]["status"] = "downloaded"
@@ -481,6 +482,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
                                 fn = result.get("filename", "")
                                 track_statuses[idx]["filename"] = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if fn else ""
                                 track_statuses[idx]["file_size"] = result.get("size", 0)
+                                log.info(f"[bulk] track_statuses[{idx}] = {track_statuses[idx]}")
                             else:
                                 track_statuses[idx]["status"] = "failed"
                                 track_statuses[idx]["error"] = result.get("message", "")
@@ -497,9 +499,11 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             tasks = [download_one(i, t) for i, t in enumerate(req.tracks)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
+            log.info(f"[bulk] Final track_statuses: {track_statuses}")
             job.status = "completed"
             job.finished_at = datetime.utcnow()
             job.tracks = json.dumps(track_statuses)
+            log.info(f"[bulk] Final job.tracks JSON: {job.tracks}")
             await db.merge(job)
             await db.commit()
             await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "completed", "progress": len(req.tracks), "total": len(req.tracks)})

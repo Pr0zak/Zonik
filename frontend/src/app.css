@@ -138,6 +138,15 @@
 	animation: slide-up 0.3s ease-out;
 }
 
+@keyframes indeterminate {
+	0% { transform: translateX(-100%); }
+	100% { transform: translateX(300%); }
+}
+
+.animate-indeterminate {
+	animation: indeterminate 1.5s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
