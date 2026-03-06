@@ -162,6 +162,14 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             desc = f"{req.artist} — {req.track}"
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
 
+            def _file_size(path):
+                """Get file size in bytes, or 0 if unavailable."""
+                try:
+                    import os
+                    return os.path.getsize(path) if path else 0
+                except Exception:
+                    return 0
+
             async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60):
                 """Poll transfer until terminal state. Returns (status, save_path, error)."""
                 import time
@@ -305,9 +313,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         if winner:
                             cand, save_path = winner
                             short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                            fsize = _file_size(save_path)
                             job.status = "completed"
-                            job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "sources_tried": len(batch), "strategy": "first"})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short}])
+                            job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize}])
                         else:
                             job.status = "failed"
                             job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "strategy": "first"})
@@ -346,9 +355,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                                     pass
 
                             short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                            fsize = _file_size(best_path)
                             job.status = "completed"
-                            job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best"})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short}])
+                            job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize}])
                         else:
                             job.status = "failed"
                             job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "strategy": "best"})
@@ -384,9 +394,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                         if status == "completed":
+                            fsize = _file_size(save_path)
                             job.status = "completed"
-                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "attempt": i + 1})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name}])
+                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize}])
                             break
                         elif status == "cancelled":
                             job.status = "failed"

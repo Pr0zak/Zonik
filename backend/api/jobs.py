@@ -57,8 +57,9 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
     query = base.order_by(Job.started_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     jobs = result.scalars().all()
-    items = [
-        {
+    items = []
+    for j in jobs:
+        item = {
             "id": j.id,
             "type": j.type,
             "card": j.card,
@@ -69,8 +70,11 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
             "started_at": j.started_at.isoformat() if j.started_at else None,
             "finished_at": j.finished_at.isoformat() if j.finished_at else None,
         }
-        for j in jobs
-    ]
+        # Include result/tracks detail for download jobs
+        if j.type in ("download", "bulk_download"):
+            item["result"] = j.result
+            item["tracks"] = j.tracks
+        items.append(item)
     return {"items": items, "total": total}
 
 

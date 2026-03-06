@@ -117,6 +117,22 @@
 		})
 	);
 
+	function parseJobResult(job) {
+		if (!job.result) return null;
+		try { return JSON.parse(job.result); } catch { return null; }
+	}
+
+	function parseJobTracks(job) {
+		if (!job.tracks) return null;
+		try { return JSON.parse(job.tracks); } catch { return null; }
+	}
+
+	function fileExtension(filename) {
+		if (!filename) return '';
+		const ext = filename.split('.').pop()?.toLowerCase() || '';
+		return ext;
+	}
+
 	let hasCleanable = $derived(jobs.some(j => j.status === 'completed' || j.status === 'failed'));
 
 	function getTransferForJob(job) {
@@ -476,35 +492,77 @@
 					{#each visibleJobs as job (job.id)}
 						{@const transfer = getTransferForJob(job)}
 						{@const status = friendlyStatus(job, transfer)}
+						{@const jobResult = parseJobResult(job)}
+						{@const jobTracks = parseJobTracks(job)}
 						<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
-									<div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-										{#if transfer?.username}
-											<span>from {transfer.username}</span>
+									{#if job.status === 'completed' && (jobResult || jobTracks?.[0])}
+										{@const t = jobTracks?.[0]}
+										{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
+										{@const ext = fileExtension(fname)}
+										{@const fsize = t?.file_size || jobResult?.file_size || 0}
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
+											{#if fname}
+												<a href="/library?search={encodeURIComponent(fname.replace(/\.\w+$/, ''))}"
+													class="text-[var(--text-secondary)] font-medium truncate max-w-[300px] hover:text-[var(--color-accent)] transition-colors"
+													title={jobResult?.filename || fname}>{fname}</a>
+											{/if}
+											{#if ext}
+												<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>{ext.toUpperCase()}</Badge>
+											{/if}
+											{#if fsize > 0}
+												<span class="font-mono">{formatSize(fsize)}</span>
+											{/if}
+											{#if t?.username || jobResult?.username}
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+												<span>from {t?.username || jobResult?.username}</span>
+											{/if}
+											{#if jobResult?.strategy}
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+												<span>{jobResult.sources_tried || 1} source{(jobResult.sources_tried || 1) > 1 ? 's' : ''}</span>
+											{:else if jobResult?.attempt > 1}
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+												<span>attempt {jobResult.attempt}</span>
+											{/if}
 											<span class="text-[var(--text-disabled)]">&middot;</span>
-										{:else if job.status === 'running' && jobDetails[job.id]?.[0]?.username}
-											<span>from {jobDetails[job.id][0].username}</span>
-											<span class="text-[var(--text-disabled)]">&middot;</span>
-										{/if}
-										{#if transfer && transfer.speed > 0}
-											<span class="font-mono">{formatSpeed(transfer.speed)}</span>
-											<span class="text-[var(--text-disabled)]">&middot;</span>
-										{/if}
-										{#if transfer?.eta_seconds > 0}
-											<span class="font-mono">{formatETA(transfer.eta_seconds)}</span>
-											<span class="text-[var(--text-disabled)]">&middot;</span>
-										{/if}
-										{#if transfer && transfer.total_bytes > 0}
-											<span class="font-mono hidden sm:inline">{formatSize(transfer.received_bytes)} / {formatSize(transfer.total_bytes)}</span>
-										{:else if job.total > 1}
-											<span>{job.progress || 0}/{job.total} tracks</span>
-										{/if}
-										{#if job.status !== 'running'}
-											<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : job.started_at ? new Date(job.started_at).toLocaleString() : ''}</span>
-										{/if}
-									</div>
+											<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : ''}</span>
+										</div>
+									{:else}
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+											{#if transfer?.username}
+												<span>from {transfer.username}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+											{:else if job.status === 'running' && jobDetails[job.id]?.[0]?.username}
+												<span>from {jobDetails[job.id][0].username}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+											{/if}
+											{#if transfer && transfer.speed > 0}
+												<span class="font-mono">{formatSpeed(transfer.speed)}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+											{/if}
+											{#if transfer?.eta_seconds > 0}
+												<span class="font-mono">{formatETA(transfer.eta_seconds)}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+											{/if}
+											{#if transfer && transfer.total_bytes > 0}
+												<span class="font-mono hidden sm:inline">{formatSize(transfer.received_bytes)} / {formatSize(transfer.total_bytes)}</span>
+											{:else if job.total > 1}
+												<span>{job.progress || 0}/{job.total} tracks</span>
+											{/if}
+											{#if job.status === 'failed' && jobResult?.message}
+												<span class="text-red-400 truncate max-w-[300px]">{jobResult.message}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+											{:else if job.status === 'failed' && jobResult?.error}
+												<span class="text-red-400 truncate max-w-[300px]">{jobResult.error}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+											{/if}
+											{#if job.status !== 'running'}
+												<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : job.started_at ? new Date(job.started_at).toLocaleString() : ''}</span>
+											{/if}
+										</div>
+									{/if}
 								</div>
 								{#if job.status === 'running'}
 									<button onclick={() => cancelJob(job.id)}
