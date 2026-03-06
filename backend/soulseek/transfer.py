@@ -251,23 +251,21 @@ class TransferManager:
             self.update_state(transfer, TransferState.FAILED, error=f"Connect failed: {e}")
             return
 
-        # Send pierce firewall with the relay token
-        writer.write(build_pierce_firewall_raw(token))
+        # Send pierce firewall with the RELAY token (so peer can match the connection)
+        pf_msg = build_pierce_firewall_raw(token)
+        writer.write(pf_msg)
         await writer.drain()
 
-        # Start file transfer — we are the downloader, so WE send token + offset
+        # Send transfer token (identifies which file) + file offset (resume position)
+        xfer_token = transfer.token or token
+        offset_bytes = struct.pack("<Q", transfer.received_bytes)
+        log.info(f"[transfer] Handshake: relay={token.hex()}, xfer={xfer_token.hex()}, offset={transfer.received_bytes}")
+        writer.write(xfer_token)
+        writer.write(offset_bytes)
+        await writer.drain()
+
         log.info(f"[transfer] Starting file transfer from {transfer.username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
-
-        # Send transfer token (4 bytes) — tells peer which file we want
-        if transfer.token:
-            writer.write(transfer.token)
-        else:
-            writer.write(token)
-
-        # Send file offset (resume position)
-        writer.write(struct.pack("<Q", transfer.received_bytes))
-        await writer.drain()
 
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
