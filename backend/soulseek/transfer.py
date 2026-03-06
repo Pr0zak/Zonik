@@ -191,6 +191,16 @@ class TransferManager:
         writer.write(struct.pack("<Q", transfer.received_bytes))
         await writer.drain()
 
+        # Read and discard the 4-byte token echo from the uploader
+        try:
+            token_echo = await asyncio.wait_for(reader.readexactly(4), timeout=60)
+            log.info(f"[transfer] Token echo from {username}: {token_echo.hex()}")
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
+            log.warning(f"[transfer] No token echo from {username}: {e}")
+            self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
+            writer.close()
+            return
+
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
         save_path = Path(self.download_dir) / short_name
@@ -279,20 +289,15 @@ class TransferManager:
         self.update_state(transfer, TransferState.TRANSFERRING)
         log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
 
-        # Read first chunk to inspect protocol
+        # Read and discard the 4-byte token echo from the uploader
         try:
-            first_chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
-        except asyncio.TimeoutError:
-            log.warning(f"[transfer] No data from {transfer.username} (60s timeout)")
-            self.update_state(transfer, TransferState.FAILED, error="No data received")
+            token_echo = await asyncio.wait_for(reader.readexactly(4), timeout=60)
+            log.info(f"[transfer] Token echo from {transfer.username}: {token_echo.hex()}")
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
+            log.warning(f"[transfer] No token echo from {transfer.username}: {e}")
+            self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
             writer.close()
             return
-        if not first_chunk:
-            log.warning(f"[transfer] Connection closed immediately by {transfer.username}")
-            self.update_state(transfer, TransferState.FAILED, error="Connection closed")
-            writer.close()
-            return
-        log.info(f"[transfer] First {min(len(first_chunk), 32)} bytes from {transfer.username}: {first_chunk[:32].hex()}")
 
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
@@ -302,9 +307,6 @@ class TransferManager:
 
         try:
             async with aiofiles.open(save_path, "wb") as f:
-                # Write first chunk
-                await f.write(first_chunk)
-                transfer.received_bytes += len(first_chunk)
                 while True:
                     try:
                         chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
