@@ -23,7 +23,7 @@ async def ping(request: Request):
 async def get_license(request: Request):
     return subsonic_response({
         "license": {
-            "valid": "true",
+            "valid": True,
             "email": "zonik@localhost",
         }
     }, _get_format(request))
