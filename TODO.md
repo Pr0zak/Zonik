@@ -1,5 +1,48 @@
 # Zonik TODO
 
+## Medium Priority
+
+### Remix & Alternate Version Discovery
+Search for remixes, dubs, edits, and other alternate versions of tracks already in the library, and download them to expand the collection.
+
+**Concept:**
+- For each track in library (or favorites), search Last.fm and Soulseek for alternate versions
+- Match patterns: "Track Name (Remix)", "Track Name (Dub Mix)", "Track Name (Extended)", "Track Name (Radio Edit)", "Track Name (Instrumental)", "Track Name (Acoustic)", "Track Name (Live)", etc.
+- Avoid re-downloading the vanilla version or versions already in library
+
+**Backend:**
+- New discovery endpoint: `GET /api/discovery/remixes?track_id=<id>&limit=20`
+  - Takes a library track, searches Last.fm + Soulseek for alternate versions
+  - Returns list with `{artist, name, version_type, in_library}` annotations
+- New scheduled task `discover_remixes` — batch process favorites or entire library
+  - Configurable: favorites only vs full library
+  - Stores missing remixes in job.tracks for download
+- Search strategy:
+  1. Last.fm `track.search` with "Artist - Track remix" / "Artist - Track dub" queries
+  2. Soulseek search with title + version keywords (remix, dub, extended, etc.)
+  3. Deduplicate results by normalized artist+title
+- Version type detection via regex on title suffixes:
+  - `(.*Remix.*)`, `(.*Dub.*)`, `(.*Mix.*)`, `(.*Extended.*)`, `(.*Edit.*)`, `(.*Instrumental.*)`, `(.*Acoustic.*)`, `(.*Live.*)`, `(.*VIP.*)`, `(.*Bootleg.*)`
+
+**Frontend:**
+- Discover page: new "Remixes" tab or sub-section
+- Per-track "Find Remixes" button in library context menu (3-dot menu)
+- Results table: Track, Artist, Version Type, Status (in library / download)
+- Bulk download missing remixes
+
+**Auto-download option:**
+- ScheduleTask.config `{auto_download: true}` like existing discover tasks
+
+**Implementation order:**
+1. Add version detection regex utility in `backend/services/discovery.py`
+2. Add `/api/discovery/remixes` endpoint
+3. Add `discover_remixes` scheduled task
+4. Add "Find Remixes" to library context menu
+5. Add Remixes tab/section to Discover page
+6. Add ScheduleControl + auto-download toggle
+
+---
+
 ## Low Priority
 
 ### Christmas Auto-Playlist
