@@ -328,8 +328,8 @@ async def lastfm_callback(token: str, request: Request):
     session = data.get("session", {})
     if session.get("key"):
         # Persist session key to config
-        from backend.api.config_api import _read_config, _write_config
-        raw = _read_config()
+        from backend.api.config_api import _read_raw_config, _write_config
+        raw = _read_raw_config()
         if "lastfm" not in raw:
             raw["lastfm"] = {}
         raw["lastfm"]["session_key"] = session["key"]
