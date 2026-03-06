@@ -115,7 +115,7 @@ def format_track(track, starred: bool = False) -> dict:
         "track": track.track_number,
         "year": track.year,
         "genre": track.genre,
-        "coverArt": track.cover_art_path or (track.album.cover_art_path if track.album else None),
+        "coverArt": track.id if (track.cover_art_path or (track.album and track.album.cover_art_path)) else None,
         "size": track.file_size,
         "contentType": track.mime_type or "audio/mpeg",
         "suffix": track.suffix,
@@ -155,7 +155,7 @@ def format_album(album, tracks=None, starred: bool = False) -> dict:
         "name": album.title,
         "artist": album.artist.name if album.artist else None,
         "artistId": album.artist_id,
-        "coverArt": album.cover_art_path,
+        "coverArt": album.id if album.cover_art_path else None,
         "songCount": album.track_count or 0,
         "duration": 0,
         "year": album.year,
@@ -174,7 +174,7 @@ def format_artist(artist, albums=None, starred: bool = False) -> dict:
     data = {
         "id": artist.id,
         "name": artist.name,
-        "coverArt": artist.image_url,
+        "coverArt": artist.id if artist.image_url else None,
         "albumCount": len(albums) if albums else 0,
     }
     if starred:
