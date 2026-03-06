@@ -16,8 +16,21 @@ from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.favorite import Favorite
 from backend.models.playlist import Playlist, PlaylistTrack
+from backend.api.websocket import broadcast_job_update
 
 log = logging.getLogger(__name__)
+
+# Friendly labels for task names (used in WebSocket broadcasts)
+_TASK_LABELS = {
+    "lastfm_top_tracks": "Top Charts Scan",
+    "discover_similar": "Similar Tracks Scan",
+    "discover_artists": "Similar Artists Scan",
+    "library_scan": "Library Scan",
+    "enrichment": "Enrichment",
+    "audio_analysis": "Audio Analysis",
+    "library_cleanup": "Library Cleanup",
+    "kimahub_favorites_sync": "KimaHub Sync",
+}
 
 
 async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
@@ -42,6 +55,8 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
     )
     db.add(job)
     await db.commit()
+    desc = _TASK_LABELS.get(task_name, task_name)
+    await broadcast_job_update({"id": job_id, "type": task_name, "status": "running", "progress": 0, "total": 1, "description": desc})
 
     try:
         if task_name == "library_scan":
@@ -124,6 +139,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
 
         await db.merge(job)
         await db.commit()
+        await broadcast_job_update({"id": job_id, "type": task_name, "status": job.status, "progress": 1, "total": 1, "description": desc})
 
         # Auto-download missing tracks if configured
         if (
@@ -143,17 +159,45 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
 async def _auto_download_missing(missing: list[dict], source: str):
     """Trigger bulk download of missing tracks found by discovery."""
     from backend.services.soulseek import search_and_download
+    from backend.database import async_session
 
-    log.info(f"Auto-downloading {len(missing)} missing tracks from {source}")
-    for t in missing:
+    total = len(missing)
+    log.info(f"Auto-downloading {total} missing tracks from {source}")
+    job_id = str(uuid.uuid4())
+    desc = f"Auto-download ({total} tracks)"
+
+    # Create a tracking job for the auto-download phase
+    async with async_session() as db:
+        dl_job = Job(id=job_id, type="bulk_download", card="dl", status="running", started_at=datetime.utcnow())
+        db.add(dl_job)
+        await db.commit()
+    await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": total, "description": desc})
+
+    completed = 0
+    failed = 0
+    for i, t in enumerate(missing):
         artist = t.get("artist", "")
         track = t.get("track", "")
         if not artist or not track:
             continue
         try:
             await search_and_download(artist, track)
+            completed += 1
         except Exception as e:
+            failed += 1
             log.warning(f"Auto-download failed for {artist} - {track}: {e}")
+        await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": i + 1, "total": total, "description": f"{desc} — {artist} - {track}"})
+
+    # Finalize
+    status = "completed" if completed > 0 else "failed"
+    async with async_session() as db:
+        dl_job = await db.get(Job, job_id)
+        if dl_job:
+            dl_job.status = status
+            dl_job.finished_at = datetime.utcnow()
+            dl_job.result = json.dumps({"completed": completed, "failed": failed, "total": total})
+            await db.commit()
+    await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": status, "progress": total, "total": total, "description": desc})
 
 
 async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
