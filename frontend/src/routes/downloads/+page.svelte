@@ -109,7 +109,9 @@
 	const PAGE_LIMIT = 20;
 	const AUTO_HIDE_MS = 5 * 60 * 1000;
 
-	let hiddenJobIds = $state(new Set());
+	let hiddenJobIds = $state(new Set(
+		JSON.parse(localStorage.getItem('hiddenDownloadJobs') || '[]')
+	));
 
 	let visibleJobs = $derived(
 		jobs.filter(j => {
@@ -496,6 +498,7 @@
 					<button onclick={() => {
 						const cleared = jobs.filter(j => j.status === 'completed' || j.status === 'failed').map(j => j.id);
 						hiddenJobIds = new Set([...hiddenJobIds, ...cleared]);
+						localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
 						expandedJob = null;
 					}} class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors">
 						<Eraser class="w-3.5 h-3.5" />
