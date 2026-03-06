@@ -1,5 +1,5 @@
 <script>
-	import { Clock, Play } from 'lucide-svelte';
+	import { Clock, Play, Download } from 'lucide-svelte';
 	import Button from './Button.svelte';
 
 	let {
@@ -13,9 +13,11 @@
 		lastRunAt = null,
 		countLabel = 'Limit',
 		running = false,
+		autoDownload = null,
 		onToggle = () => {},
 		onUpdate = () => {},
 		onRun = () => {},
+		onToggleAutoDownload = null,
 	} = $props();
 
 	const intervalOptions = [
@@ -63,6 +65,17 @@
 				return `${days}d ago`;
 			})()}
 		</span>
+	{/if}
+
+	<!-- Auto-download toggle (inline) -->
+	{#if onToggleAutoDownload}
+		<button onclick={onToggleAutoDownload}
+			class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors flex-shrink-0
+				{autoDownload ? 'bg-green-500/15 text-green-400' : 'bg-[var(--bg-hover)] text-[var(--text-disabled)] hover:text-[var(--text-muted)]'}"
+			title="{autoDownload ? 'Auto-download enabled — missing tracks will be downloaded after scan' : 'Enable auto-download of missing tracks after scan'}">
+			<Download class="w-3 h-3" />
+			Auto
+		</button>
 	{/if}
 
 	<div class="flex items-center gap-2 ml-auto flex-shrink-0">

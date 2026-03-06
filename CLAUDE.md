@@ -148,6 +148,9 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek: handles TRANSFER_RESPONSE rejections from peers — marks transfer as DENIED
 - Native Soulseek: parses QUEUE_UPLOAD (code 43) and PLACE_IN_QUEUE_REQUEST (code 51) from peers
 - Native Soulseek: transient connection errors (timeout, refused, OSError) don't penalize peer reputation
+- Native Soulseek file transfer protocol: PierceFirewall(relay_token) → peer sends FileTransferInit(4-byte token) → we send FileOffset(8 bytes) → peer streams file data
+- Native Soulseek: relay token (from ConnectToPeer) ≠ transfer token (from TRANSFER_REQUEST) — pierce_firewall uses relay token, FileTransferInit carries transfer token
+- Native Soulseek: parallel download poll_transfer uses check_cancel=False to avoid concurrent DB session access (SQLite single-writer constraint)
 - Soulseek stats: /api/download/soulseek-stats returns connection, uptime, reconnects, peers, shares, listen port, active searches, transfers, bandwidth, speed, reputation — shown on Dashboard + Stats page
 - Soulseek stats history: background collector snapshots stats every 5 minutes into soulseek_snapshots table (auto-pruned after 7 days)
 - Soulseek stats charts: /api/download/soulseek-stats/history?hours=24 powers 4 Chart.js line charts (peers, transfers, speed, bandwidth) with 6h/24h/3d/7d range selector

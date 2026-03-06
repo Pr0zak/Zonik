@@ -691,44 +691,15 @@
 				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
 			</div>
 			{#if schedTasks.lastfm_top_tracks}
-				<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} />
+				<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} autoDownload={schedTasks.lastfm_top_tracks.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('lastfm_top_tracks')} />
 			{/if}
 			{#if schedTasks.discover_similar}
-				<ScheduleControl taskName="discover_similar" label="Similar Tracks Scan" enabled={schedTasks.discover_similar.enabled} intervalHours={schedTasks.discover_similar.interval_hours} runAt={schedTasks.discover_similar.run_at} count={schedTasks.discover_similar.count} lastRunAt={schedTasks.discover_similar.last_run_at} running={schedRunning.discover_similar} onToggle={() => toggleSched('discover_similar')} onUpdate={(u) => updateSched('discover_similar', u)} onRun={() => runSched('discover_similar')} />
+				<ScheduleControl taskName="discover_similar" label="Similar Tracks Scan" enabled={schedTasks.discover_similar.enabled} intervalHours={schedTasks.discover_similar.interval_hours} runAt={schedTasks.discover_similar.run_at} count={schedTasks.discover_similar.count} lastRunAt={schedTasks.discover_similar.last_run_at} running={schedRunning.discover_similar} onToggle={() => toggleSched('discover_similar')} onUpdate={(u) => updateSched('discover_similar', u)} onRun={() => runSched('discover_similar')} autoDownload={schedTasks.discover_similar.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('discover_similar')} />
 			{/if}
 			{#if schedTasks.discover_artists}
 				<ScheduleControl taskName="discover_artists" label="Similar Artists Scan" enabled={schedTasks.discover_artists.enabled} intervalHours={schedTasks.discover_artists.interval_hours} runAt={schedTasks.discover_artists.run_at} count={schedTasks.discover_artists.count} lastRunAt={schedTasks.discover_artists.last_run_at} running={schedRunning.discover_artists} onToggle={() => toggleSched('discover_artists')} onUpdate={(u) => updateSched('discover_artists', u)} onRun={() => runSched('discover_artists')} />
 			{/if}
 
-			<!-- Auto-download toggles -->
-			<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
-				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-download missing tracks</span>
-				<div class="mt-2 space-y-2">
-					{#if schedTasks.lastfm_top_tracks}
-						<label class="flex items-center gap-2 cursor-pointer">
-							<button onclick={() => toggleAutoDownload('lastfm_top_tracks')}
-								class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
-									{schedTasks.lastfm_top_tracks.config?.auto_download ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
-								<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
-									{schedTasks.lastfm_top_tracks.config?.auto_download ? 'left-[14px]' : 'left-0.5'}"></span>
-							</button>
-							<span class="text-xs text-[var(--text-secondary)]">Top Charts</span>
-						</label>
-					{/if}
-					{#if schedTasks.discover_similar}
-						<label class="flex items-center gap-2 cursor-pointer">
-							<button onclick={() => toggleAutoDownload('discover_similar')}
-								class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
-									{schedTasks.discover_similar.config?.auto_download ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
-								<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
-									{schedTasks.discover_similar.config?.auto_download ? 'left-[14px]' : 'left-0.5'}"></span>
-							</button>
-							<span class="text-xs text-[var(--text-secondary)]">Similar Tracks</span>
-						</label>
-					{/if}
-				</div>
-				<p class="text-[10px] text-[var(--text-disabled)] mt-1">When enabled, missing tracks found by scheduled scans will be automatically downloaded via Soulseek.</p>
-			</div>
 		</Card>
 	{/if}
 </div>
