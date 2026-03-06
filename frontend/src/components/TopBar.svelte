@@ -173,7 +173,8 @@
 				</div>
 				{#if runningJobs.length}
 					{#each runningJobs as job}
-						<div class="px-3 py-2.5 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors">
+						<button onclick={() => { showNotifications = false; goto(`/logs?job=${job.id}`); }}
+							class="w-full text-left px-3 py-2.5 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer">
 							<div class="flex items-center gap-2">
 								<span class="inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-downloads)] animate-pulse flex-shrink-0"></span>
 								<p class="text-sm text-[var(--text-primary)] truncate flex-1">{job.description || job.type}</p>
@@ -185,7 +186,7 @@
 								</div>
 								<p class="text-[10px] text-[var(--text-muted)] mt-1">{job.progress || 0}/{job.total}</p>
 							{/if}
-						</div>
+						</button>
 					{/each}
 				{:else}
 					<div class="px-3 py-6 text-center">

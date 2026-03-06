@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
 	import { ScrollText, ChevronDown, ChevronRight, ChevronLeft, RotateCcw, XCircle } from 'lucide-svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
@@ -50,6 +51,14 @@
 
 	onMount(async () => {
 		await loadJobs();
+
+		// Auto-expand job from URL param (?job=<id>)
+		const jobParam = new URLSearchParams(window.location.search).get('job');
+		if (jobParam) {
+			expandedJob = jobParam;
+			try { jobDetail = await api.getJob(jobParam); } catch {}
+			window.history.replaceState({}, '', '/logs');
+		}
 
 		unsubJobs = activeJobs.subscribe(active => {
 			if (!active.length) return;

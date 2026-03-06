@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -215,6 +215,15 @@
 		return r.message;
 	}
 
+	function testDotColor(service) {
+		const r = testResults[service];
+		if (!r) return '';
+		if (r.status === 'ok') return 'bg-emerald-400';
+		if (r.status === 'error') return 'bg-red-400';
+		if (r.status === 'testing') return 'bg-amber-400 animate-pulse';
+		return '';
+	}
+
 	function toggleField(field) {
 		showField[field] = !showField[field];
 		showField = { ...showField };
@@ -401,9 +410,17 @@
 	<PageHeader title="Settings" color="var(--color-settings)" />
 
 	<div class="space-y-6">
-		<!-- Library -->
+		<!-- 1. Library & Storage -->
 		<Card padding="p-4">
-			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-4">Library</h2>
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-library) 15%, transparent)">
+						<Music class="w-4 h-4" style="color: var(--color-library)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Library & Storage</h2>
+				</div>
+			</div>
+
 			<div class="space-y-3 text-sm">
 				<div class="flex items-center justify-between">
 					<span class="text-[var(--text-secondary)]">Music Directory</span>
@@ -418,6 +435,7 @@
 					{/each}
 				{/if}
 			</div>
+
 			<div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">Download Directory</label>
@@ -430,6 +448,7 @@
 						placeholder="/opt/zonik/cache/covers" class={inputClass} />
 				</div>
 			</div>
+
 			<div class="mt-3">
 				<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">File Naming Scheme</label>
 				<input type="text" bind:value={services.naming_scheme} oninput={markDirty}
@@ -438,12 +457,268 @@
 					Variables: <code class="text-[var(--color-accent-light)]">{'{artist}'}</code>, <code class="text-[var(--color-accent-light)]">{'{album}'}</code>, <code class="text-[var(--color-accent-light)]">{'{track_number}'}</code>, <code class="text-[var(--color-accent-light)]">{'{title}'}</code> — used by Rename &amp; Sort
 				</p>
 			</div>
+
+			<div class="mt-4 flex items-center justify-between">
+				<div>
+					<span class="text-sm text-[var(--text-secondary)]">Share Library</span>
+					<p class="text-xs text-[var(--text-disabled)]">Share your music library with Soulseek peers so others can browse and download from you</p>
+				</div>
+				<button type="button" onclick={() => { services.slsk_share_library = !services.slsk_share_library; markDirty(); }}
+					class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.slsk_share_library ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
+					role="switch" aria-checked={services.slsk_share_library}>
+					<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.slsk_share_library ? 'translate-x-4' : 'translate-x-0.5'}"></span>
+				</button>
+			</div>
 		</Card>
 
-		<!-- Users -->
+		<!-- 2. Soulseek -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">User Management</h2>
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-downloads) 15%, transparent)">
+						<Download class="w-4 h-4" style="color: var(--color-downloads)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Soulseek</h2>
+					{#if testDotColor('soulseek')}
+						<span class="w-2 h-2 rounded-full {testDotColor('soulseek')}"></span>
+					{/if}
+				</div>
+				<Button variant="secondary" size="sm" onclick={() => testConnection('soulseek')}>
+					{testBtnLabel('soulseek', 'Test Connection')}
+				</Button>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Username</label>
+					<input type="text" bind:value={services.slsk_username} oninput={markDirty}
+						placeholder="Soulseek username" class={inputClass} />
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Password</label>
+					<div class="relative">
+						<input type={showField.slsk_pass ? 'text' : 'password'} bind:value={services.slsk_password} oninput={markDirty}
+							placeholder="Soulseek password" class="{inputClass} pr-8" />
+						<button type="button" onclick={() => toggleField('slsk_pass')}
+							class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+							{#if showField.slsk_pass}
+								<EyeOff class="w-4 h-4" />
+							{:else}
+								<Eye class="w-4 h-4" />
+							{/if}
+						</button>
+					</div>
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Listen Port</label>
+					<input type="number" bind:value={services.slsk_listen_port} oninput={markDirty}
+						placeholder="2234" class={inputClass} />
+				</div>
+			</div>
+
+			<div class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider mt-4 mb-2">Download Settings</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Download Queue</label>
+					<select bind:value={services.slsk_max_concurrent_downloads} onchange={markDirty} class={inputClass}>
+						<option value={1}>1 at a time</option>
+						<option value={2}>2 concurrent</option>
+						<option value={3}>3 concurrent</option>
+						<option value={4}>4 concurrent</option>
+						<option value={6}>6 concurrent</option>
+						<option value={8}>8 concurrent</option>
+						<option value={10}>10 concurrent</option>
+					</select>
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Sources per Track</label>
+					<select bind:value={services.slsk_parallel_sources} onchange={markDirty} class={inputClass}>
+						<option value={1}>1 (sequential)</option>
+						<option value={2}>2 sources</option>
+						<option value={3}>3 sources</option>
+						<option value={4}>4 sources</option>
+						<option value={5}>5 sources</option>
+					</select>
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Source Strategy</label>
+					<select bind:value={services.slsk_source_strategy} onchange={markDirty} class={inputClass}>
+						<option value="first">First completed</option>
+						<option value="best">Best quality</option>
+					</select>
+				</div>
+			</div>
+		</Card>
+
+		<!-- 3. Last.fm -->
+		<Card padding="p-4">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, #d51007 15%, transparent)">
+						<Radio class="w-4 h-4" style="color: #d51007" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Last.fm</h2>
+					{#if testDotColor('lastfm')}
+						<span class="w-2 h-2 rounded-full {testDotColor('lastfm')}"></span>
+					{/if}
+				</div>
+				<Button variant="secondary" size="sm" onclick={() => testConnection('lastfm')}>
+					{testBtnLabel('lastfm', 'Test Connection')}
+				</Button>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+				{#each [
+					{ key: 'lastfm_read', bind: 'lastfm_api_key', label: 'Read API Key', placeholder: 'Last.fm API key' },
+					{ key: 'lastfm_write', bind: 'lastfm_write_api_key', label: 'Write API Key', placeholder: 'Write API key' },
+					{ key: 'lastfm_secret', bind: 'lastfm_write_api_secret', label: 'Write API Secret', placeholder: 'Write API secret' },
+				] as field}
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">{field.label}</label>
+						<div class="relative">
+							<input type={showField[field.key] ? 'text' : 'password'} bind:value={services[field.bind]} oninput={markDirty}
+								placeholder={field.placeholder} class="{inputClass} pr-8" />
+							<button type="button" onclick={() => toggleField(field.key)}
+								class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+								{#if showField[field.key]}
+									<EyeOff class="w-4 h-4" />
+								{:else}
+									<Eye class="w-4 h-4" />
+								{/if}
+							</button>
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			<!-- Authentication -->
+			<div class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider mt-4 mb-2">Authentication</div>
+			<div class="flex items-center gap-3 flex-wrap">
+				{#if lastfmSession.authenticated}
+					<Badge variant="success">Authenticated as {lastfmSession.username}</Badge>
+				{:else}
+					<Badge variant="default">Not authenticated — scrobbling & favorites sync disabled</Badge>
+				{/if}
+				<button onclick={startLastfmAuth} disabled={lastfmAuthLoading}
+					class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
+					<ExternalLink class="w-3 h-3" />
+					{lastfmSession.authenticated ? 'Re-authenticate' : 'Authenticate with Last.fm'}
+				</button>
+			</div>
+			{#if !lastfmSession.authenticated}
+				<div class="flex items-center gap-2 mt-2">
+					<input type="text" bind:value={lastfmToken} placeholder="Paste token from Last.fm callback URL"
+						class="{inputClass} flex-1 text-xs" />
+					<button onclick={submitLastfmToken} disabled={!lastfmToken.trim()}
+						class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors disabled:opacity-50">
+						<LogIn class="w-3 h-3" />
+						Submit Token
+					</button>
+				</div>
+				<p class="text-[11px] text-[var(--text-disabled)] mt-1">Click Authenticate, authorize on Last.fm, then copy the <code>token</code> parameter from the redirect URL and paste it above.</p>
+			{/if}
+
+			<!-- Last.fm Favorites Sync Schedule -->
+			{#if schedTasks.lastfm_sync}
+				<div class="mt-4 pt-4 border-t border-[var(--border-subtle)]">
+					<ScheduleControl taskName="lastfm_sync" label="Last.fm Favorites Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
+				</div>
+			{/if}
+		</Card>
+
+		<!-- 4. Lidarr -->
+		<Card padding="p-4">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-discover) 15%, transparent)">
+						<HardDrive class="w-4 h-4" style="color: var(--color-discover)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Lidarr</h2>
+					<button type="button" onclick={() => { services.lidarr_enabled = !services.lidarr_enabled; markDirty(); }}
+						class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.lidarr_enabled ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
+						role="switch" aria-checked={services.lidarr_enabled}>
+						<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.lidarr_enabled ? 'translate-x-4' : 'translate-x-0.5'}"></span>
+					</button>
+					{#if testDotColor('lidarr')}
+						<span class="w-2 h-2 rounded-full {testDotColor('lidarr')}"></span>
+					{/if}
+				</div>
+				{#if services.lidarr_enabled}
+					<Button variant="secondary" size="sm" onclick={() => testConnection('lidarr')}>
+						{testBtnLabel('lidarr', 'Test Connection')}
+					</Button>
+				{/if}
+			</div>
+
+			{#if services.lidarr_enabled}
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">URL</label>
+						<input type="text" bind:value={services.lidarr_url} oninput={markDirty}
+							placeholder="http://host:8686" class={inputClass} />
+					</div>
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
+						<div class="relative">
+							<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} oninput={markDirty}
+								placeholder="Lidarr API key" class="{inputClass} pr-8" />
+							<button type="button" onclick={() => toggleField('lidarr')}
+								class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+								{#if showField.lidarr}
+									<EyeOff class="w-4 h-4" />
+								{:else}
+									<Eye class="w-4 h-4" />
+								{/if}
+							</button>
+						</div>
+					</div>
+				</div>
+			{:else}
+				<p class="text-sm text-[var(--text-disabled)]">Secondary download source. Enable to configure.</p>
+			{/if}
+		</Card>
+
+		<!-- 5. Subsonic -->
+		<div class="bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-xl p-4">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-settings) 15%, transparent)">
+						<Server class="w-4 h-4" style="color: var(--color-settings)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Subsonic</h2>
+					{#if testDotColor('subsonic')}
+						<span class="w-2 h-2 rounded-full {testDotColor('subsonic')}"></span>
+					{/if}
+				</div>
+				<Button variant="secondary" size="sm" onclick={() => testConnection('subsonic')}>
+					{testBtnLabel('subsonic', 'Test Connection')}
+				</Button>
+			</div>
+			<div class="space-y-3 text-sm">
+				{#each [
+					['Server Name', 'Zonik'],
+					['API Version', '1.16.1 (OpenSubsonic)'],
+					['Default User', 'admin / admin'],
+					['Endpoint', '/rest/*'],
+				] as [label, val]}
+					<div class="flex items-center justify-between">
+						<span class="text-[var(--text-secondary)]">{label}</span>
+						<code class="text-[var(--color-accent-light)] text-xs font-mono">{val}</code>
+					</div>
+				{/each}
+			</div>
+		</div>
+
+		<!-- 6. Users & Access -->
+		<Card padding="p-4">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-playlists) 15%, transparent)">
+						<Users class="w-4 h-4" style="color: var(--color-playlists)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Users & Access</h2>
+				</div>
 			</div>
 
 			<div class="space-y-3">
@@ -523,10 +798,15 @@
 			</div>
 		</Card>
 
-		<!-- Database Backups -->
+		<!-- 7. Database -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Database</h2>
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-stats) 15%, transparent)">
+						<Database class="w-4 h-4" style="color: var(--color-stats)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Database</h2>
+				</div>
 				<Button variant="secondary" size="sm" loading={creatingBackup} onclick={createBackup}>
 					<Database class="w-3.5 h-3.5" />
 					Create Backup
@@ -554,251 +834,20 @@
 			{/if}
 		</Card>
 
-		<!-- Service Connections -->
+		<!-- 8. About & Updates -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Service Connections</h2>
-				<Button variant="primary" size="sm" loading={saving} disabled={!dirty} onclick={saveServices}>
-					Save
-				</Button>
-			</div>
-
-			<div class="space-y-5">
-				<!-- Soulseek -->
-				<div>
-					<div class="flex items-center justify-between mb-2">
-						<h3 class="text-sm font-medium text-[var(--text-primary)]">Soulseek</h3>
-						<button onclick={() => testConnection('soulseek')}
-							class="transition-colors">
-							<Badge variant={testBadgeVariant('soulseek')}>{testBtnLabel('soulseek', 'Test')}</Badge>
-						</button>
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-settings) 15%, transparent)">
+						<Info class="w-4 h-4" style="color: var(--color-settings)" />
 					</div>
-					<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Username</label>
-							<input type="text" bind:value={services.slsk_username} oninput={markDirty}
-								placeholder="Soulseek username" class={inputClass} />
-						</div>
-						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Password</label>
-							<div class="relative">
-								<input type={showField.slsk_pass ? 'text' : 'password'} bind:value={services.slsk_password} oninput={markDirty}
-									placeholder="Soulseek password" class="{inputClass} pr-8" />
-								<button type="button" onclick={() => toggleField('slsk_pass')}
-									class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
-									{#if showField.slsk_pass}
-										<EyeOff class="w-4 h-4" />
-									{:else}
-										<Eye class="w-4 h-4" />
-									{/if}
-								</button>
-							</div>
-						</div>
-						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Listen Port</label>
-							<input type="number" bind:value={services.slsk_listen_port} oninput={markDirty}
-								placeholder="2234" class={inputClass} />
-						</div>
-					</div>
-					<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Download Queue</label>
-							<select bind:value={services.slsk_max_concurrent_downloads} onchange={markDirty} class={inputClass}>
-								<option value={1}>1 at a time</option>
-								<option value={2}>2 concurrent</option>
-								<option value={3}>3 concurrent</option>
-								<option value={4}>4 concurrent</option>
-								<option value={6}>6 concurrent</option>
-								<option value={8}>8 concurrent</option>
-								<option value={10}>10 concurrent</option>
-							</select>
-						</div>
-						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Sources per Track</label>
-							<select bind:value={services.slsk_parallel_sources} onchange={markDirty} class={inputClass}>
-								<option value={1}>1 (sequential)</option>
-								<option value={2}>2 sources</option>
-								<option value={3}>3 sources</option>
-								<option value={4}>4 sources</option>
-								<option value={5}>5 sources</option>
-							</select>
-						</div>
-						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Source Strategy</label>
-							<select bind:value={services.slsk_source_strategy} onchange={markDirty} class={inputClass}>
-								<option value="first">First completed</option>
-								<option value="best">Best quality</option>
-							</select>
-						</div>
-					</div>
-					<div class="mt-3 flex items-center justify-between">
-						<div>
-							<span class="text-xs text-[var(--text-muted)]">Share Library</span>
-							<p class="text-xs text-[var(--text-disabled)]">Share your music files with other peers on the network</p>
-						</div>
-						<button type="button" onclick={() => { services.slsk_share_library = !services.slsk_share_library; markDirty(); }}
-							class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.slsk_share_library ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
-							role="switch" aria-checked={services.slsk_share_library}>
-							<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.slsk_share_library ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-						</button>
-					</div>
-				</div>
-
-				<!-- Lidarr -->
-				<div class="pt-4 border-t border-[var(--border-subtle)]">
-					<div class="flex items-center justify-between mb-2">
-						<div class="flex items-center gap-3">
-							<h3 class="text-sm font-medium text-[var(--text-primary)]">Lidarr</h3>
-							<button type="button" onclick={() => { services.lidarr_enabled = !services.lidarr_enabled; markDirty(); }}
-								class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.lidarr_enabled ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
-								role="switch" aria-checked={services.lidarr_enabled}>
-								<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.lidarr_enabled ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-							</button>
-						</div>
-						{#if services.lidarr_enabled}
-							<button onclick={() => testConnection('lidarr')}
-								class="transition-colors">
-								<Badge variant={testBadgeVariant('lidarr')}>{testBtnLabel('lidarr', 'Test')}</Badge>
-							</button>
-						{/if}
-					</div>
-					{#if services.lidarr_enabled}
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">URL</label>
-								<input type="text" bind:value={services.lidarr_url} oninput={markDirty}
-									placeholder="http://host:8686" class={inputClass} />
-							</div>
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
-								<div class="relative">
-									<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} oninput={markDirty}
-										placeholder="Lidarr API key" class="{inputClass} pr-8" />
-									<button type="button" onclick={() => toggleField('lidarr')}
-										class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
-										{#if showField.lidarr}
-											<EyeOff class="w-4 h-4" />
-										{:else}
-											<Eye class="w-4 h-4" />
-										{/if}
-									</button>
-								</div>
-							</div>
-						</div>
-					{:else}
-						<p class="text-xs text-[var(--text-disabled)]">Secondary download source. Enable to configure.</p>
-					{/if}
-				</div>
-
-				<!-- Last.fm -->
-				<div class="pt-4 border-t border-[var(--border-subtle)]">
-					<div class="flex items-center justify-between mb-2">
-						<h3 class="text-sm font-medium text-[var(--text-primary)]">Last.fm</h3>
-						<button onclick={() => testConnection('lastfm')}
-							class="transition-colors">
-							<Badge variant={testBadgeVariant('lastfm')}>{testBtnLabel('lastfm', 'Test')}</Badge>
-						</button>
-					</div>
-					<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-						{#each [
-							{ key: 'lastfm_read', bind: 'lastfm_api_key', label: 'Read API Key', placeholder: 'Last.fm API key' },
-							{ key: 'lastfm_write', bind: 'lastfm_write_api_key', label: 'Write API Key', placeholder: 'Write API key' },
-							{ key: 'lastfm_secret', bind: 'lastfm_write_api_secret', label: 'Write API Secret', placeholder: 'Write API secret' },
-						] as field}
-							<div>
-								<label class="block text-xs text-[var(--text-muted)] mb-1">{field.label}</label>
-								<div class="relative">
-									<input type={showField[field.key] ? 'text' : 'password'} bind:value={services[field.bind]} oninput={markDirty}
-										placeholder={field.placeholder} class="{inputClass} pr-8" />
-									<button type="button" onclick={() => toggleField(field.key)}
-										class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
-										{#if showField[field.key]}
-											<EyeOff class="w-4 h-4" />
-										{:else}
-											<Eye class="w-4 h-4" />
-										{/if}
-									</button>
-								</div>
-							</div>
-						{/each}
-					</div>
-
-					<!-- Last.fm Authentication -->
-					<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
-						<div class="flex items-center gap-3 flex-wrap">
-							{#if lastfmSession.authenticated}
-								<Badge variant="success">Authenticated as {lastfmSession.username}</Badge>
-							{:else}
-								<Badge variant="default">Not authenticated — scrobbling & favorites sync disabled</Badge>
-							{/if}
-							<button onclick={startLastfmAuth} disabled={lastfmAuthLoading}
-								class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
-								<ExternalLink class="w-3 h-3" />
-								{lastfmSession.authenticated ? 'Re-authenticate' : 'Authenticate with Last.fm'}
-							</button>
-						</div>
-						{#if !lastfmSession.authenticated}
-							<div class="flex items-center gap-2 mt-2">
-								<input type="text" bind:value={lastfmToken} placeholder="Paste token from Last.fm callback URL"
-									class="{inputClass} flex-1 text-xs" />
-								<button onclick={submitLastfmToken} disabled={!lastfmToken.trim()}
-									class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors disabled:opacity-50">
-									<LogIn class="w-3 h-3" />
-									Submit Token
-								</button>
-							</div>
-							<p class="text-[11px] text-[var(--text-disabled)] mt-1">Click Authenticate, authorize on Last.fm, then copy the <code>token</code> parameter from the redirect URL and paste it above.</p>
-						{/if}
-					</div>
-				</div>
-			</div>
-		</Card>
-
-		<!-- Sync Schedules -->
-		{#if schedTasks.lastfm_sync}
-			<Card padding="p-4">
-				<div class="flex items-center gap-2 mb-2">
-					<Clock class="w-4 h-4 text-[var(--text-muted)]" />
-					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Sync Schedule</span>
-				</div>
-				{#if schedTasks.lastfm_sync}
-					<ScheduleControl taskName="lastfm_sync" label="Last.fm Favorites Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
-				{/if}
-			</Card>
-		{/if}
-
-		<!-- Subsonic -->
-		<Card padding="p-4">
-			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Subsonic</h2>
-				<button onclick={() => testConnection('subsonic')} class="transition-colors">
-					<Badge variant={testBadgeVariant('subsonic')}>{testBtnLabel('subsonic', 'Test')}</Badge>
-				</button>
-			</div>
-			<div class="space-y-3 text-sm">
-				{#each [
-					['Server Name', 'Zonik'],
-					['API Version', '1.16.1 (OpenSubsonic)'],
-					['Default User', 'admin / admin'],
-					['Endpoint', '/rest/*'],
-				] as [label, val]}
-					<div class="flex items-center justify-between">
-						<span class="text-[var(--text-secondary)]">{label}</span>
-						<code class="text-[var(--color-accent-light)] text-xs font-mono">{val}</code>
-					</div>
-				{/each}
-			</div>
-		</Card>
-
-		<!-- Updates -->
-		<Card padding="p-4">
-			<div class="flex items-center justify-between mb-4">
-				<div>
+					<div>
 						<h2 class="text-base font-semibold text-[var(--text-primary)]">About & Updates</h2>
 						{#if versionInfo}
 							<p class="text-xs text-[var(--text-muted)] mt-0.5">Zonik v{versionInfo.version} <span class="font-mono">({versionInfo.commit})</span></p>
 						{/if}
 					</div>
+				</div>
 				{#if updateInfo?.update_available}
 					<Badge variant="warning">Update Available</Badge>
 				{:else if updateInfo && !updateInfo.error}
@@ -873,7 +922,7 @@
 							{@const logLines = (() => { try { return JSON.parse(upgradeJob.log); } catch { return []; } })()}
 							<div class="bg-[var(--bg-primary)] rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs text-[var(--text-muted)] space-y-0.5 border border-[var(--border-subtle)]">
 								{#each logLines as line}
-									<div class:text-emerald-400={line.includes('✓') || line.includes('upgraded')}
+									<div class:text-emerald-400={line.includes('\u2713') || line.includes('upgraded')}
 										 class:text-red-400={line.includes('Error') || line.includes('error')}
 										 class:text-amber-400={line.startsWith('[')}>
 										{line}
@@ -893,3 +942,11 @@
 		</Card>
 	</div>
 </div>
+
+<!-- Sticky save bar -->
+{#if dirty}
+	<div class="sticky bottom-0 left-0 right-0 bg-[var(--bg-secondary)]/95 backdrop-blur border-t border-[var(--border-subtle)] px-4 py-3 flex items-center justify-between z-10">
+		<span class="text-xs text-[var(--text-muted)]">Unsaved changes</span>
+		<Button variant="primary" size="sm" loading={saving} onclick={saveServices}>Save Changes</Button>
+	</div>
+{/if}

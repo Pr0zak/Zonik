@@ -51,7 +51,7 @@
 
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-5">
-		<h1 class="text-2xl font-bold tracking-tight"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
+		<h1 class="text-3xl font-bold tracking-[0.15em]"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
 		<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 

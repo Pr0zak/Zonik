@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -35,6 +35,10 @@
 	let searchDone = $state(false);
 	let showOnlyMissing = $state(false);
 
+	// Sort state
+	let sortColumn = $state(null);
+	let sortDir = $state(null);
+
 	// Shared
 	let bulkDownloading = $state(false);
 	let trackStatus = $state({...$discoverTrackStatus});
@@ -67,6 +71,83 @@
 	let filteredSearchResults = $derived(
 		showOnlyMissing ? searchResults.filter(t => !t.in_library) : searchResults
 	);
+
+	// --- Sort logic ---
+
+	function toggleSort(column) {
+		if (sortColumn === column) {
+			if (sortDir === 'asc') {
+				sortDir = 'desc';
+			} else if (sortDir === 'desc') {
+				sortColumn = null;
+				sortDir = null;
+			}
+		} else {
+			sortColumn = column;
+			sortDir = 'asc';
+		}
+	}
+
+	function sortTracks(tracks) {
+		if (!sortColumn || !sortDir) return tracks;
+		const sorted = [...tracks];
+		const dir = sortDir === 'asc' ? 1 : -1;
+		sorted.sort((a, b) => {
+			let va, vb;
+			if (sortColumn === 'name') {
+				va = (a.name || '').toLowerCase();
+				vb = (b.name || '').toLowerCase();
+			} else if (sortColumn === 'artist') {
+				va = (a.artist || '').toLowerCase();
+				vb = (b.artist || '').toLowerCase();
+			} else if (sortColumn === 'listeners') {
+				va = a.listeners || 0;
+				vb = b.listeners || 0;
+				return (va - vb) * dir;
+			} else if (sortColumn === 'status') {
+				// in_library first, then by download status
+				const statusOrder = (t) => {
+					if (t.in_library) return 0;
+					const s = getStatus(t);
+					if (s === 'completed') return 1;
+					if (s === 'downloading' || s === 'queued') return 2;
+					if (s === 'failed') return 3;
+					return 4;
+				};
+				va = statusOrder(a);
+				vb = statusOrder(b);
+				return (va - vb) * dir;
+			} else if (sortColumn === 'source_artist') {
+				va = (a.source_artist || '').toLowerCase();
+				vb = (b.source_artist || '').toLowerCase();
+			} else {
+				return 0;
+			}
+			if (va < vb) return -1 * dir;
+			if (va > vb) return 1 * dir;
+			return 0;
+		});
+		return sorted;
+	}
+
+	function sortIndicator(column) {
+		if (sortColumn !== column) return '';
+		return sortDir === 'asc' ? '▲' : '▼';
+	}
+
+	// Clear sort when switching tabs
+	function switchTab(tab) {
+		activeTab = tab;
+		sortColumn = null;
+		sortDir = null;
+		if (tab === 'top' && !topTracks.length && !topLoading) scanTopTracks();
+		if (tab === 'similar' && !similarTracks.length && !similarLoading) scanSimilarTracks();
+		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
+	}
+
+	let sortedTopTracks = $derived(sortTracks(topTracks));
+	let sortedSimilarTracks = $derived(sortTracks(similarTracks));
+	let sortedSearchResults = $derived(sortTracks(filteredSearchResults));
 
 	async function discoverSearch() {
 		if (!searchQuery.trim()) return;
@@ -282,13 +363,6 @@
 		return `${d}d ago`;
 	}
 
-	function switchTab(tab) {
-		activeTab = tab;
-		if (tab === 'top' && !topTracks.length && !topLoading) scanTopTracks();
-		if (tab === 'similar' && !similarTracks.length && !similarLoading) scanSimilarTracks();
-		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
-	}
-
 	// --- Schedule helpers ---
 	async function toggleSched(name) {
 		const t = schedTasks[name];
@@ -422,7 +496,7 @@
 							<div class="text-xs text-[var(--text-muted)] font-mono hidden sm:block">
 								{tracks.length} total
 								{#if lastScanned}
-									<span class="mx-1">·</span> scanned {formatAge(lastScanned)}
+									<span class="mx-1">&middot;</span> scanned {formatAge(lastScanned)}
 								{/if}
 							</div>
 							{#if activeTab === 'search'}
@@ -474,16 +548,28 @@
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
-								<th class="px-4 py-3 w-8 font-medium text-xs uppercase tracking-wider">#</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Track</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Artist</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Listeners</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Status</th>
+							<tr class="border-b border-[var(--border-subtle)] text-left">
+								<th class="px-4 py-3 w-8 font-medium text-xs uppercase tracking-wider text-[var(--text-muted)]">#</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('name')}>
+									Track {sortIndicator('name')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('artist')}>
+									Artist {sortIndicator('artist')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('listeners')}>
+									Listeners {sortIndicator('listeners')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('status')}>
+									Status {sortIndicator('status')}
+								</th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-[var(--border-subtle)]">
-							{#each topTracks as t, i}
+							{#each sortedTopTracks as t, i}
 								{@const status = getStatus(t)}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
@@ -544,15 +630,27 @@
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Track</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Artist</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Similar to</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Status</th>
+							<tr class="border-b border-[var(--border-subtle)] text-left">
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('name')}>
+									Track {sortIndicator('name')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('artist')}>
+									Artist {sortIndicator('artist')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'source_artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('source_artist')}>
+									Similar to {sortIndicator('source_artist')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('status')}>
+									Status {sortIndicator('status')}
+								</th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-[var(--border-subtle)]">
-							{#each similarTracks as t}
+							{#each sortedSimilarTracks as t}
 								{@const status = getStatus(t)}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
@@ -612,19 +710,28 @@
 						{/each}
 					</div>
 				</Card>
-			{:else if filteredSearchResults.length}
+			{:else if sortedSearchResults.length}
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Track</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Artist</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Listeners</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Status</th>
+							<tr class="border-b border-[var(--border-subtle)] text-left">
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('name')}>
+									Track {sortIndicator('name')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('artist')}>
+									Artist {sortIndicator('artist')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									onclick={() => toggleSort('listeners')}>
+									Listeners {sortIndicator('listeners')}
+								</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right text-[var(--text-muted)]">Status</th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-[var(--border-subtle)]">
-							{#each filteredSearchResults as t}
+							{#each sortedSearchResults as t}
 								{@const status = getStatus(t)}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
