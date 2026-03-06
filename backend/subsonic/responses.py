@@ -136,7 +136,7 @@ def format_track(track, starred: bool = False) -> dict:
         data["musicBrainzId"] = track.musicbrainz_id
     # OpenSubsonic extensions
     if track.analysis:
-        data["bpm"] = track.analysis.bpm
+        data["bpm"] = int(round(track.analysis.bpm))
     if track.replay_gain_track is not None:
         data["replayGain"] = {
             "trackGain": track.replay_gain_track,
