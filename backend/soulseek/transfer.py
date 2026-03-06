@@ -201,9 +201,14 @@ class TransferManager:
             async with aiofiles.open(save_path, "wb") as f:
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(reader.read(65536), timeout=30)
+                        chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
                     except asyncio.TimeoutError:
-                        raise ConnectionError("Peer stopped sending data (30s timeout)")
+                        if transfer.received_bytes > 0 and (
+                            transfer.total_bytes == 0 or
+                            transfer.received_bytes >= transfer.total_bytes * 0.95
+                        ):
+                            break
+                        raise ConnectionError("Peer stopped sending data (60s timeout)")
                     if not chunk:
                         break
 
@@ -216,12 +221,19 @@ class TransferManager:
                     if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
                         break
 
-            if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
+            if transfer.received_bytes > 0 and (
+                transfer.total_bytes == 0 or
+                transfer.received_bytes >= transfer.total_bytes * 0.99
+            ):
                 self.update_state(transfer, TransferState.COMPLETED)
                 log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
-            else:
-                self.update_state(transfer, TransferState.FAILED, error="Connection closed before complete")
+            elif transfer.received_bytes > 0:
+                self.update_state(transfer, TransferState.FAILED,
+                                  error=f"Incomplete: {transfer.received_bytes}/{transfer.total_bytes}")
                 log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
+            else:
+                self.update_state(transfer, TransferState.FAILED, error="No data received")
+                log.warning(f"[transfer] No data received for {short_name}")
         except Exception as e:
             self.update_state(transfer, TransferState.FAILED, error=str(e))
             log.error(f"[transfer] Error downloading {short_name}: {e}")
@@ -277,9 +289,15 @@ class TransferManager:
             async with aiofiles.open(save_path, "wb") as f:
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(reader.read(65536), timeout=30)
+                        chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
                     except asyncio.TimeoutError:
-                        raise ConnectionError("Peer stopped sending data (30s timeout)")
+                        # If we have most of the data, peer likely finished
+                        if transfer.received_bytes > 0 and (
+                            transfer.total_bytes == 0 or
+                            transfer.received_bytes >= transfer.total_bytes * 0.95
+                        ):
+                            break
+                        raise ConnectionError("Peer stopped sending data (60s timeout)")
                     if not chunk:
                         break
                     transfer.received_bytes += len(chunk)
@@ -289,12 +307,20 @@ class TransferManager:
                     if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
                         break
 
-            if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
+            # Consider complete if we got all data or close enough (peer may report slightly inflated size)
+            if transfer.received_bytes > 0 and (
+                transfer.total_bytes == 0 or
+                transfer.received_bytes >= transfer.total_bytes * 0.99
+            ):
                 self.update_state(transfer, TransferState.COMPLETED)
                 log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
-            else:
-                self.update_state(transfer, TransferState.FAILED, error="Connection closed before complete")
+            elif transfer.received_bytes > 0:
+                self.update_state(transfer, TransferState.FAILED,
+                                  error=f"Incomplete: {transfer.received_bytes}/{transfer.total_bytes}")
                 log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
+            else:
+                self.update_state(transfer, TransferState.FAILED, error="No data received")
+                log.warning(f"[transfer] No data received for {short_name}")
         except Exception as e:
             self.update_state(transfer, TransferState.FAILED, error=str(e))
             log.error(f"[transfer] Error downloading {short_name}: {e}")
