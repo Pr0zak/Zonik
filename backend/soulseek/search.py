@@ -97,6 +97,10 @@ async def pick_best_results_native(
             elif search_result.avg_speed > 500000:  # >500KB/s
                 score += 4
 
+            # Reputation: boost successful sources, penalize unreliable ones
+            if reputation:
+                score += await reputation.get_score_adjustment(search_result.username)
+
             if score > 0:
                 scored.append((score, {
                     "username": search_result.username,
