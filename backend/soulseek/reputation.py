@@ -9,8 +9,9 @@ log = logging.getLogger(__name__)
 # In-memory fallback when Redis is unavailable
 _memory_store: dict[str, dict] = {}
 
-FAILURE_THRESHOLD = 3  # Failures before blocking
-BLOCK_DURATION = 24 * 3600  # 24 hours
+FAILURE_THRESHOLD = 3  # Failures before long block
+BLOCK_DURATION = 24 * 3600  # 24 hours (long block after threshold)
+COOLDOWN_DURATION = 30 * 60  # 30 minutes (short cooldown per failure)
 
 
 class PeerReputation:
@@ -37,11 +38,15 @@ class PeerReputation:
 
     async def record_failure(self, username: str) -> None:
         key = f"slsk:rep:{username}"
+        now = time.time()
         if self._redis:
             try:
                 failures = await self._redis.hincrby(key, "failures", 1)
                 if failures >= FAILURE_THRESHOLD:
-                    await self._redis.hset(key, "blocked_until", str(int(time.time()) + BLOCK_DURATION))
+                    cooldown = BLOCK_DURATION
+                else:
+                    cooldown = COOLDOWN_DURATION
+                await self._redis.hset(key, "blocked_until", str(int(now + cooldown)))
                 await self._redis.expire(key, 7 * 86400)
                 return
             except Exception:
@@ -51,7 +56,9 @@ class PeerReputation:
         failures = _memory_store[username].get("failures", 0) + 1
         _memory_store[username]["failures"] = failures
         if failures >= FAILURE_THRESHOLD:
-            _memory_store[username]["blocked_until"] = time.time() + BLOCK_DURATION
+            _memory_store[username]["blocked_until"] = now + BLOCK_DURATION
+        else:
+            _memory_store[username]["blocked_until"] = now + COOLDOWN_DURATION
 
     async def is_blocked(self, username: str) -> bool:
         key = f"slsk:rep:{username}"

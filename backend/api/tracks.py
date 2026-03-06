@@ -14,6 +14,7 @@ from backend.database import get_db, search_fts
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
+from backend.models.analysis import TrackAnalysis
 
 router = APIRouter()
 
@@ -28,8 +29,12 @@ async def list_tracks(
     genre: str | None = None,
     artist_id: str | None = None,
     album_id: str | None = None,
+    analyzed: str | None = None,  # "yes", "no", or None (all)
     db: AsyncSession = Depends(get_db),
 ):
+    # Subquery for analyzed track IDs
+    analyzed_ids_sq = select(TrackAnalysis.track_id)
+
     query = select(Track).options(selectinload(Track.artist), selectinload(Track.album))
 
     # Use FTS5 for search (searches title, artist, album) with ILIKE fallback
@@ -53,13 +58,36 @@ async def list_tracks(
         query = query.where(Track.artist_id == artist_id)
     if album_id:
         query = query.where(Track.album_id == album_id)
+    if analyzed == "no":
+        query = query.where(Track.id.notin_(analyzed_ids_sq))
+    elif analyzed == "yes":
+        query = query.where(Track.id.in_(analyzed_ids_sq))
 
-    sort_col = getattr(Track, sort, Track.title)
-    query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
+    # Sorting
+    if sort == "analyzed":
+        # Unanalyzed first (NULL analysis = 0, analyzed = 1)
+        has_analysis = select(TrackAnalysis.track_id).where(TrackAnalysis.track_id == Track.id).exists()
+        if order == "asc":
+            query = query.order_by(has_analysis.asc(), Track.title.asc())
+        else:
+            query = query.order_by(has_analysis.desc(), Track.title.asc())
+    else:
+        sort_col = getattr(Track, sort, Track.title)
+        query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
     query = query.offset(offset).limit(limit)
 
     result = await db.execute(query)
     tracks = result.scalars().all()
+
+    # Batch-fetch analyzed status for these tracks
+    track_ids = [t.id for t in tracks]
+    if track_ids:
+        analyzed_result = await db.execute(
+            select(TrackAnalysis.track_id).where(TrackAnalysis.track_id.in_(track_ids))
+        )
+        analyzed_set = set(analyzed_result.scalars().all())
+    else:
+        analyzed_set = set()
 
     count_q = select(func.count(Track.id))
     if search:
@@ -79,6 +107,10 @@ async def list_tracks(
         count_q = count_q.where(Track.artist_id == artist_id)
     if album_id:
         count_q = count_q.where(Track.album_id == album_id)
+    if analyzed == "no":
+        count_q = count_q.where(Track.id.notin_(analyzed_ids_sq))
+    elif analyzed == "yes":
+        count_q = count_q.where(Track.id.in_(analyzed_ids_sq))
     total = (await db.execute(count_q)).scalar() or 0
 
     return {
@@ -100,6 +132,7 @@ async def list_tracks(
                 "play_count": t.play_count,
                 "cover_art": t.album_id or t.id,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
+                "analyzed": t.id in analyzed_set,
             }
             for t in tracks
         ],

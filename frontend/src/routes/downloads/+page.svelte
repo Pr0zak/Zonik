@@ -5,7 +5,7 @@
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -28,6 +28,8 @@
 	// Per-result inline download status: key = username+filename → { status, jobId }
 	// status: 'queued' | 'searching' | 'downloading' | 'completed' | 'failed'
 	let resultStatuses = $state({});
+	// Usernames that recently failed (on cooldown)
+	let failedSources = $state(new Set());
 
 	const FORMAT_ORDER = { flac: 0, wav: 1, alac: 1, mp3: 2, m4a: 3, ogg: 3, opus: 3 };
 
@@ -401,14 +403,31 @@
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
 		}).catch(() => {});
-		unsubJobUpdate = onJobUpdate((wsJob) => {
+		unsubJobUpdate = onJobUpdate(async (wsJob) => {
 			if (wsJob.type === 'download' || wsJob.type === 'bulk_download') {
 				if (wsJob.description) wsDescriptions[wsJob.id] = wsJob.description;
 				// Update inline result statuses from job updates
 				for (const [key, rs] of Object.entries(resultStatuses)) {
 					if (rs.jobId === wsJob.id) {
 						if (wsJob.status === 'completed') resultStatuses[key] = { status: 'completed', jobId: wsJob.id };
-						else if (wsJob.status === 'failed') resultStatuses[key] = { status: 'failed', jobId: wsJob.id };
+						else if (wsJob.status === 'failed') {
+							resultStatuses[key] = { status: 'failed', jobId: wsJob.id };
+							// Fetch job detail to get failed_sources for cooldown marking
+							try {
+								const detail = await api.getJob(wsJob.id);
+								if (detail?.result) {
+									const res = JSON.parse(detail.result);
+									if (res.failed_sources?.length) {
+										const updated = new Set(failedSources);
+										for (const u of res.failed_sources) updated.add(u);
+										failedSources = updated;
+										// Also mark those sources' results as on_cooldown
+										results = results.map(r => res.failed_sources.includes(r.username)
+											? { ...r, on_cooldown: true } : r);
+									}
+								}
+							} catch {}
+						}
 						else if (wsJob.status === 'running') {
 							const desc = wsJob.description || '';
 							if (desc.includes('(attempt')) resultStatuses[key] = { status: 'searching', jobId: wsJob.id };
@@ -744,7 +763,7 @@
 								{@const pathArtist = extractArtistFromPath(r.filename)}
 								{@const inline = getResultInlineStatus(r)}
 								<tr class="hover:bg-[var(--bg-hover)] transition-colors group
-									{inline?.status === 'completed' ? 'bg-green-500/5' : inline?.status === 'failed' ? 'bg-red-500/5' : inline?.status === 'downloading' ? 'bg-blue-500/5' : ''}">
+									{inline?.status === 'completed' ? 'bg-green-500/5' : inline?.status === 'failed' ? 'bg-red-500/5' : inline?.status === 'downloading' ? 'bg-blue-500/5' : r.on_cooldown ? 'opacity-60' : ''}">
 									<td class="px-4 py-2">
 										{#if r.slots_free}
 											<Wifi class="w-3.5 h-3.5 text-green-400" />
@@ -769,7 +788,12 @@
 										{/if}
 									</td>
 									<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">
-										<span class="truncate block max-w-[120px]" title={r.username}>{r.username}</span>
+										<span class="truncate block max-w-[120px] {r.on_cooldown ? 'opacity-50' : ''}" title={r.on_cooldown ? `${r.username} (on cooldown)` : r.username}>
+											{r.username}
+											{#if r.on_cooldown}
+												<Clock class="w-3 h-3 inline text-orange-400 ml-0.5" />
+											{/if}
+										</span>
 									</td>
 									<td class="px-4 py-2">
 										<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>

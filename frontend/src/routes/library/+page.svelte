@@ -39,6 +39,7 @@
 	let trackTotal = $state(0);
 	let sort = $state('title');
 	let order = $state('asc');
+	let analyzedFilter = $state(''); // '', 'yes', 'no'
 
 	// Artists state
 	let artists = $state([]);
@@ -386,7 +387,7 @@
 		loading = true;
 		try {
 			if (tab === 'tracks') {
-				const result = await api.getTracks({ offset, limit, sort, order, search: search || undefined });
+				const result = await api.getTracks({ offset, limit, sort, order, search: search || undefined, analyzed: analyzedFilter || undefined });
 				tracks = result.tracks;
 				trackTotal = result.total;
 			} else if (tab === 'artists') {
@@ -719,6 +720,16 @@
 					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 		</div>
 
+		<!-- Analyzed filter (tracks tab only) -->
+		{#if tab === 'tracks'}
+			<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2"
+				value={analyzedFilter} onchange={(e) => { analyzedFilter = e.target.value; offset = 0; loadData(); }}>
+				<option value="">All Tracks</option>
+				<option value="no">Not Analyzed</option>
+				<option value="yes">Analyzed</option>
+			</select>
+		{/if}
+
 		<!-- Per-page select -->
 		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
 			{#each limitOptions as opt}
@@ -815,6 +826,11 @@
 											<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-black/60 text-white/80">{track.format}</span>
 										</div>
 									{/if}
+									{#if !track.analyzed}
+										<div class="absolute bottom-1.5 left-1.5" title="Not analyzed">
+											<AudioWaveform class="w-3.5 h-3.5 text-white/40" />
+										</div>
+									{/if}
 									{#if selectMode}
 										<div class="absolute top-1.5 left-1.5">
 											<div class="w-5 h-5 rounded border-2 flex items-center justify-center
@@ -859,6 +875,9 @@
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
+									<AudioWaveform class="w-3.5 h-3.5 inline" /> {sort === 'analyzed' ? (order === 'asc' ? '↑' : '↓') : ''}
+								</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16">Time</th>
 								<th class="px-3 py-2.5 w-10"></th>
 							</tr>
@@ -889,6 +908,9 @@
 									<td class="px-3 py-2 text-[var(--text-secondary)] hidden md:table-cell truncate max-w-[200px]">{track.artist || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] hidden lg:table-cell truncate max-w-[200px]">{track.album || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
+									<td class="px-3 py-2 hidden lg:table-cell text-center" title={track.analyzed ? 'Analyzed' : 'Not analyzed'}>
+										<AudioWaveform class="w-3.5 h-3.5 inline {track.analyzed ? 'text-pink-400' : 'text-[var(--text-disabled)] opacity-30'}" />
+									</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{formatDuration(track.duration)}</td>
 									<td class="px-3 py-2 w-20">
 										<div class="flex items-center gap-0.5">
