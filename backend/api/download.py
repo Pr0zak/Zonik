@@ -175,7 +175,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 except Exception:
                     return 0
 
-            async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60):
+            async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
                 """Poll transfer until terminal state. Returns (status, save_path, error)."""
                 import time
                 last_bytes = 0
@@ -183,9 +183,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 queue_start = time.monotonic()
                 for _ in range(timeout_polls):
                     await asyncio.sleep(2)
-                    await db.refresh(job)
-                    if job.status == "failed":
-                        return "cancelled", None, "Cancelled by user"
+                    if check_cancel:
+                        await db.refresh(job)
+                        if job.status == "failed":
+                            return "cancelled", None, "Cancelled by user"
                     transfer = client.transfers.get_transfer(username, filename)
                     if not transfer:
                         return "failed", None, "Transfer removed"
@@ -276,7 +277,8 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         except Exception as e:
                             await native_client.reputation.record_failure(dl_username)
                             return candidate, "failed", None, str(e)
-                        status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                        # check_cancel=False: parallel sources share the outer db session
+                        status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename, check_cancel=False)
                         if status == "completed":
                             await native_client.reputation.record_success(dl_username)
                             return candidate, "completed", save_path, None
