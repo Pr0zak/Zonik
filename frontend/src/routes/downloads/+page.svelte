@@ -527,7 +527,7 @@
 										{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
 										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
 											{#if fname}
-												{@const searchTerm = t?.track || fname.replace(/\.\w+$/, '')}
+												{@const searchTerm = t?.track ? (t?.artist ? `${t.artist} ${t.track}` : t.track) : fname.replace(/\.\w+$/, '')}
 												<a href="/library?search={encodeURIComponent(searchTerm)}"
 													class="text-[var(--text-secondary)] font-medium truncate max-w-[300px] hover:text-[var(--color-accent)] transition-colors"
 													title={jobResult?.filename || fname}>{fname}</a>

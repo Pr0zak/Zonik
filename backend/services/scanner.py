@@ -76,6 +76,8 @@ def _get_int_tag(audio, keys: list[str], default=None) -> int | None:
 
 def parse_audio_file(file_path: Path, music_dir: Path) -> dict | None:
     """Parse tags from an audio file, return a dict of track fields."""
+    if file_path.stat().st_size == 0:
+        return None  # Skip empty/corrupt files silently
     try:
         audio = mutagen.File(str(file_path), easy=True)
         if audio is None:
@@ -365,6 +367,10 @@ async def import_downloaded_file(
     src = Path(save_path)
     if not src.exists():
         log.warning(f"[import] File not found: {save_path}")
+        return None
+    if src.stat().st_size == 0:
+        log.warning(f"[import] Empty file (0 bytes), skipping: {save_path}")
+        src.unlink(missing_ok=True)
         return None
 
     settings = get_settings()
