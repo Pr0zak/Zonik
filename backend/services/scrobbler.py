@@ -20,7 +20,7 @@ async def forward_scrobble(artist: str, track: str, album: str = ""):
     await scrobble_track(artist, track, int(time.time()), session_key, album)
 
 
-async def sync_loved_tracks(session_key: str, username: str = "") -> dict:
+async def sync_loved_tracks(session_key: str, username: str = "", on_progress=None) -> dict:
     """Sync Zonik favorites → Last.fm loved tracks (incremental)."""
     from backend.database import async_session
     from backend.models.favorite import Favorite
@@ -46,16 +46,22 @@ async def sync_loved_tracks(session_key: str, username: str = "") -> dict:
         )
         favorites = result.scalars().all()
 
+    total = len(favorites)
     synced = 0
     skipped = 0
     errors = 0
+    processed = 0
     for fav in favorites:
         if not fav.track or not fav.track.artist:
+            processed += 1
             continue
         artist_name = fav.track.artist.name
         title = fav.track.title
         if (artist_name.lower(), title.lower()) in already_loved:
             skipped += 1
+            processed += 1
+            if on_progress:
+                await on_progress(processed, total)
             continue
         try:
             resp = await love_track(artist_name, title, session_key)
@@ -67,5 +73,8 @@ async def sync_loved_tracks(session_key: str, username: str = "") -> dict:
         except Exception as e:
             errors += 1
             log.warning(f"Error loving {artist_name} - {title}: {e}")
+        processed += 1
+        if on_progress:
+            await on_progress(processed, total)
 
-    return {"synced": synced, "skipped": skipped, "errors": errors, "total": len(favorites)}
+    return {"synced": synced, "skipped": skipped, "errors": errors, "total": total}

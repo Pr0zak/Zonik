@@ -380,11 +380,21 @@ async def _run_lastfm_loved_sync(db: AsyncSession, job: Job):
     settings = get_settings()
     session_key = settings.lastfm.session_key
     if not session_key:
+        job.total = 1
+        job.progress = 1
         job.result = json.dumps({"error": "No Last.fm session key. Authenticate via Settings > Last.fm."})
-        return
+        raise Exception("No Last.fm session key. Authenticate via Settings > Last.fm.")
 
     username = settings.lastfm.username
-    result = await sync_loved_tracks(session_key, username=username)
+
+    async def on_progress(current, total):
+        await broadcast_job_update({
+            "id": job.id, "type": "lastfm_sync", "status": "running",
+            "progress": current, "total": total,
+            "description": "Last.fm Favorites Sync",
+        })
+
+    result = await sync_loved_tracks(session_key, username=username, on_progress=on_progress)
     job.total = result["total"]
     job.progress = result["synced"] + result["skipped"]
     job.result = json.dumps(result)
