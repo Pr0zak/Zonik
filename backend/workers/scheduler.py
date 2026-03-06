@@ -166,9 +166,19 @@ async def _auto_download_missing(missing: list[dict], source: str):
     job_id = str(uuid.uuid4())
     desc = f"Auto-download ({total} tracks)"
 
+    # Build track statuses list
+    track_statuses = [
+        {"artist": t.get("artist", ""), "track": t.get("track", ""), "status": "pending"}
+        for t in missing
+    ]
+
     # Create a tracking job for the auto-download phase
     async with async_session() as db:
-        dl_job = Job(id=job_id, type="bulk_download", card="dl", status="running", started_at=datetime.utcnow())
+        dl_job = Job(
+            id=job_id, type="bulk_download", card="dl", status="running",
+            total=total, started_at=datetime.utcnow(),
+            tracks=json.dumps(track_statuses),
+        )
         db.add(dl_job)
         await db.commit()
     await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": total, "description": desc})
@@ -183,14 +193,27 @@ async def _auto_download_missing(missing: list[dict], source: str):
         artist = t.get("artist", "")
         track = t.get("track", "")
         if not artist or not track:
+            track_statuses[i]["status"] = "skipped"
             continue
         async with sem:
             try:
                 await search_and_download(artist, track)
+                track_statuses[i]["status"] = "downloaded"
                 completed += 1
             except Exception as e:
+                track_statuses[i]["status"] = "failed"
+                track_statuses[i]["error"] = str(e)
                 failed += 1
                 log.warning(f"Auto-download failed for {artist} - {track}: {e}")
+
+        # Update job progress in DB every 5 tracks
+        if (i + 1) % 5 == 0 or i == total - 1:
+            async with async_session() as db:
+                dl_job = await db.get(Job, job_id)
+                if dl_job:
+                    dl_job.progress = i + 1
+                    dl_job.tracks = json.dumps(track_statuses)
+                    await db.commit()
         await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": i + 1, "total": total, "description": f"{desc} — {artist} - {track}"})
 
     # Finalize
@@ -200,6 +223,8 @@ async def _auto_download_missing(missing: list[dict], source: str):
         if dl_job:
             dl_job.status = status
             dl_job.finished_at = datetime.utcnow()
+            dl_job.progress = total
+            dl_job.tracks = json.dumps(track_statuses)
             dl_job.result = json.dumps({"completed": completed, "failed": failed, "total": total})
             await db.commit()
     await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": status, "progress": total, "total": total, "description": desc})
