@@ -102,6 +102,7 @@
 	let jobsOffset = $state(0);
 	let jobsLoading = $state(false);
 	let expandedJob = $state(null);
+	let jobStatusFilter = $state('all');
 	let jobDetails = $state({});
 	const PAGE_LIMIT = 20;
 	const AUTO_HIDE_MS = 5 * 60 * 1000;
@@ -117,7 +118,11 @@
 			if (hiddenJobIds.has(j.id)) return false;
 			if (j.status === 'completed' && j.finished_at) {
 				const age = Date.now() - new Date(j.finished_at).getTime();
-				return age < AUTO_HIDE_MS;
+				if (age >= AUTO_HIDE_MS) return false;
+			}
+			if (jobStatusFilter !== 'all') {
+				const friendly = j.status === 'pending' ? 'queued' : j.status;
+				if (friendly !== jobStatusFilter) return false;
 			}
 			return true;
 		}).sort((a, b) => {
@@ -146,6 +151,14 @@
 		const ext = filename.split('.').pop()?.toLowerCase() || '';
 		return ext;
 	}
+
+	let jobStatusCounts = $derived({
+		all: jobs.filter(j => !hiddenJobIds.has(j.id)).length,
+		queued: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'pending').length,
+		running: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'running').length,
+		completed: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'completed').length,
+		failed: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'failed').length,
+	});
 
 	let hasCleanable = $derived(jobs.some(j => j.status === 'completed' || j.status === 'failed'));
 
@@ -483,9 +496,9 @@
 	</div>
 
 	<!-- Downloads (unified: active + history) -->
-	{#if visibleJobs.length || jobsLoading}
+	{#if jobs.length || jobsLoading}
 		<Card padding="p-4" class="mb-6">
-			<div class="flex items-center justify-between mb-4">
+			<div class="flex items-center justify-between mb-3">
 				<div class="flex items-center gap-2">
 					<Download class="w-4 h-4 text-[var(--color-downloads)]" />
 					<h2 class="text-base font-semibold text-[var(--text-primary)]">Downloads</h2>
@@ -501,6 +514,28 @@
 						Clear
 					</button>
 				{/if}
+			</div>
+			<div class="flex gap-1 mb-4">
+				{#each [
+					{ key: 'all', label: 'All' },
+					{ key: 'queued', label: 'Queued' },
+					{ key: 'running', label: 'Running' },
+					{ key: 'completed', label: 'Done' },
+					{ key: 'failed', label: 'Failed' },
+				] as tab}
+					{#if jobStatusCounts[tab.key] > 0 || tab.key === 'all'}
+						<button onclick={() => jobStatusFilter = tab.key}
+							class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+								{jobStatusFilter === tab.key
+									? 'bg-[var(--color-downloads)] text-white'
+									: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'}">
+							{tab.label}
+							{#if jobStatusCounts[tab.key] > 0 && tab.key !== 'all'}
+								<span class="ml-0.5 opacity-60">{jobStatusCounts[tab.key]}</span>
+							{/if}
+						</button>
+					{/if}
+				{/each}
 			</div>
 
 			{#if jobsLoading && !jobs.length}
