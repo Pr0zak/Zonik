@@ -204,6 +204,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
             try:
                 native_client = get_client()
+                from backend.config import get_settings as _get_settings
+                dl_settings = _get_settings()
+                parallel_sources = dl_settings.soulseek.parallel_sources
+                source_strategy = dl_settings.soulseek.source_strategy
 
                 if req.username and req.filename and native_client:
                     # Direct download — try requested source first, then fall back to search
@@ -236,59 +240,169 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                     job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
-                # Try candidates with transfer-level retry
-                last_error = ""
-                for i, candidate in enumerate(candidates):
-                    dl_username = candidate["username"]
-                    dl_filename = candidate["filename"]
-                    short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
+                # Filter out blocked peers
+                if candidates and native_client:
+                    candidates = [c for c in candidates if not await native_client.reputation.is_blocked(c["username"])]
 
-                    if await native_client.reputation.is_blocked(dl_username):
-                        continue
-
-                    attempt_label = f"attempt {i+1}/{len(candidates)}"
+                if candidates and native_client and parallel_sources > 1:
+                    # === Multi-source parallel download ===
+                    batch = candidates[:parallel_sources]
+                    usernames_str = ", ".join(c["username"] for c in batch)
                     job.tracks = json.dumps([{
                         "artist": req.artist, "track": req.track, "status": "downloading",
-                        "username": dl_username, "filename": short_name,
+                        "sources": len(batch),
                     }])
                     await db.merge(job)
                     await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
+                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
 
-                    try:
-                        await native_client.download(dl_username, dl_filename)
-                        log.warning(f"[download] Transfer queued: {dl_username} / {short_name}")
-                    except Exception as e:
-                        log.warning(f"[download] Failed to connect to {dl_username}: {e}")
-                        last_error = f"Connection failed: {e}"
-                        await native_client.reputation.record_failure(dl_username)
-                        continue
+                    # Start all downloads concurrently
+                    async def try_source(candidate):
+                        """Attempt download from one source. Returns (candidate, status, save_path, error)."""
+                        dl_username = candidate["username"]
+                        dl_filename = candidate["filename"]
+                        try:
+                            await native_client.download(dl_username, dl_filename)
+                            log.info(f"[download] Multi-source queued: {dl_username}")
+                        except Exception as e:
+                            await native_client.reputation.record_failure(dl_username)
+                            return candidate, "failed", None, str(e)
+                        status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                        if status == "completed":
+                            return candidate, "completed", save_path, None
+                        else:
+                            await native_client.reputation.record_failure(dl_username)
+                            return candidate, status, None, error
 
-                    status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
-                    log.warning(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
+                    if source_strategy == "first":
+                        # Race — keep first completed, cancel the rest
+                        tasks_map = {}
+                        for c in batch:
+                            task = asyncio.create_task(try_source(c))
+                            tasks_map[task] = c
 
-                    if status == "completed":
-                        job.status = "completed"
-                        job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "attempt": i + 1})
-                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name}])
-                        break
-                    elif status == "cancelled":
-                        job.status = "failed"
-                        job.result = json.dumps({"error": "Cancelled by user"})
-                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
-                        break
+                        winner = None
+                        pending = set(tasks_map.keys())
+                        while pending:
+                            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                            for task in done:
+                                cand, status, save_path, error = task.result()
+                                if status == "completed" and not winner:
+                                    winner = (cand, save_path)
+                                elif status == "completed" and winner:
+                                    # Duplicate completed — remove the extra file
+                                    if save_path:
+                                        try:
+                                            from pathlib import Path
+                                            Path(save_path).unlink(missing_ok=True)
+                                        except Exception:
+                                            pass
+                            if winner:
+                                for t in pending:
+                                    t.cancel()
+                                break
+
+                        if winner:
+                            cand, save_path = winner
+                            short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                            job.status = "completed"
+                            job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "sources_tried": len(batch), "strategy": "first"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short}])
+                        else:
+                            job.status = "failed"
+                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "strategy": "first"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+
                     else:
-                        # Transfer failed — record error, try next candidate
-                        await native_client.reputation.record_failure(dl_username)
-                        last_error = error or status
+                        # "best" strategy — wait for all, keep highest quality
+                        results_all = await asyncio.gather(*[try_source(c) for c in batch], return_exceptions=True)
+                        completed = []
+                        for r in results_all:
+                            if isinstance(r, Exception):
+                                continue
+                            cand, status, save_path, error = r
+                            if status == "completed" and save_path:
+                                completed.append((cand, save_path))
 
-                else:
-                    # All candidates exhausted
-                    if candidates and job.status != "failed":
-                        job.status = "failed"
-                        err_detail = last_error or "unknown"
-                        job.result = json.dumps({"message": f"All {len(candidates)} sources failed", "last_error": err_detail})
-                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                        if completed:
+                            def _quality_score(item):
+                                cand, path = item
+                                ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+                                fmt_scores = {"flac": 20, "wav": 18, "alac": 18, "mp3": 5, "m4a": 3, "ogg": 3, "opus": 3}
+                                score = fmt_scores.get(ext, 0)
+                                score += cand.get("bitRate", 0) or 0
+                                score += (cand.get("size", 0) or 0) // (1024 * 1024)
+                                return score
+
+                            completed.sort(key=_quality_score, reverse=True)
+                            best_cand, best_path = completed[0]
+
+                            # Delete the losers
+                            for cand, path in completed[1:]:
+                                try:
+                                    from pathlib import Path
+                                    Path(path).unlink(missing_ok=True)
+                                except Exception:
+                                    pass
+
+                            short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                            job.status = "completed"
+                            job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short}])
+                        else:
+                            job.status = "failed"
+                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "strategy": "best"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+
+                elif candidates and native_client:
+                    # === Sequential download (parallel_sources == 1, original behavior) ===
+                    last_error = ""
+                    for i, candidate in enumerate(candidates):
+                        dl_username = candidate["username"]
+                        dl_filename = candidate["filename"]
+                        short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
+
+                        attempt_label = f"attempt {i+1}/{len(candidates)}"
+                        job.tracks = json.dumps([{
+                            "artist": req.artist, "track": req.track, "status": "downloading",
+                            "username": dl_username, "filename": short_name,
+                        }])
+                        await db.merge(job)
+                        await db.commit()
+                        await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
+
+                        try:
+                            await native_client.download(dl_username, dl_filename)
+                            log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
+                        except Exception as e:
+                            log.warning(f"[download] Failed to connect to {dl_username}: {e}")
+                            last_error = f"Connection failed: {e}"
+                            await native_client.reputation.record_failure(dl_username)
+                            continue
+
+                        status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                        log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
+
+                        if status == "completed":
+                            job.status = "completed"
+                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "attempt": i + 1})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name}])
+                            break
+                        elif status == "cancelled":
+                            job.status = "failed"
+                            job.result = json.dumps({"error": "Cancelled by user"})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                            break
+                        else:
+                            await native_client.reputation.record_failure(dl_username)
+                            last_error = error or status
+
+                    else:
+                        if candidates and job.status != "failed":
+                            job.status = "failed"
+                            err_detail = last_error or "unknown"
+                            job.result = json.dumps({"message": f"All {len(candidates)} sources failed", "last_error": err_detail})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
             except Exception as e:
                 log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)

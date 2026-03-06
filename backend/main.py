@@ -15,6 +15,7 @@ from backend.api.config_api import _get_version
 from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
+from backend.models.job import Job
 from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users
 from backend.subsonic import router as subsonic_router
 
@@ -34,6 +35,19 @@ async def lifespan(app: FastAPI):
             )
             session.add(user)
             await session.commit()
+
+    # Mark any stuck "running" jobs as failed (killed by restart)
+    async with async_session() as session:
+        from sqlalchemy import update
+        from datetime import datetime
+        stuck = await session.execute(
+            update(Job)
+            .where(Job.status.in_(["running", "pending"]))
+            .values(status="failed", finished_at=datetime.utcnow())
+        )
+        if stuck.rowcount:
+            await session.commit()
+            logging.getLogger(__name__).info(f"Marked {stuck.rowcount} stuck jobs as failed on startup")
 
     # Start native Soulseek client if credentials configured
     if settings.soulseek.username:

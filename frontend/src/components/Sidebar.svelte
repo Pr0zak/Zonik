@@ -50,17 +50,9 @@
 	fixed inset-y-0 left-0 z-50 md:static md:z-auto">
 
 	<!-- Logo -->
-	<div class="px-5 pt-6 pb-4">
-		<div class="flex items-center justify-between">
-			<div>
-				<h1 class="text-base font-bold tracking-tight"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
-				<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider">Music Backend</p>
-			</div>
-			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
-				class="text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors" title="GitHub">
-				<Github class="w-4 h-4" />
-			</a>
-		</div>
+	<div class="px-5 pt-6 pb-5">
+		<h1 class="text-2xl font-bold tracking-tight"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
+		<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 
 	<nav class="flex-1 px-3 space-y-0.5 overflow-y-auto">
@@ -117,6 +109,12 @@
 				</div>
 			</a>
 		{/if}
-		<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+		<div class="flex items-center justify-between">
+			<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
+				class="flex items-center gap-1.5 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors group" title="View on GitHub">
+				<Github class="w-3.5 h-3.5 group-hover:text-white transition-colors" />
+			</a>
+		</div>
 	</div>
 </aside>

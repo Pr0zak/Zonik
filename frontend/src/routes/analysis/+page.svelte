@@ -16,6 +16,9 @@
 	let searching = $state(false);
 	let schedTasks = $state({});
 	let schedRunning = $state({});
+	let startingAnalysis = $state(false);
+	let startingEmbeddings = $state(false);
+	let startingEnrichment = $state(false);
 
 	// Derive running state from activeJobs store
 	let analysisJob = $derived($activeJobs.find(j => j.type === 'audio_analysis'));
@@ -58,30 +61,60 @@
 		} catch (e) { console.error('Schedule load failed:', e); }
 	});
 
+	async function pollForJob(type, timeout = 10000) {
+		const start = Date.now();
+		while (Date.now() - start < timeout) {
+			await new Promise(r => setTimeout(r, 1000));
+			try {
+				const jobs = await fetch('/api/jobs/active').then(r => r.json());
+				const found = jobs.find(j => j.type === type);
+				if (found) {
+					activeJobs.update(current => {
+						if (!current.find(j => j.id === found.id)) current.push(found);
+						return current;
+					});
+					return;
+				}
+			} catch {}
+		}
+	}
+
 	async function startAnalysis() {
+		startingAnalysis = true;
 		try {
 			await fetch('/api/analysis/start', { method: 'POST' }).then(r => r.json());
 			addToast('Audio analysis started', 'success');
+			pollForJob('audio_analysis');
 		} catch (e) {
 			addToast('Failed to start analysis', 'error');
+		} finally {
+			setTimeout(() => startingAnalysis = false, 3000);
 		}
 	}
 
 	async function startEmbeddings() {
+		startingEmbeddings = true;
 		try {
 			await fetch('/api/analysis/embeddings/start', { method: 'POST' }).then(r => r.json());
 			addToast('Vibe embedding generation started', 'success');
+			pollForJob('vibe_embeddings');
 		} catch (e) {
 			addToast('Failed to start embeddings', 'error');
+		} finally {
+			setTimeout(() => startingEmbeddings = false, 3000);
 		}
 	}
 
 	async function startEnrichment() {
+		startingEnrichment = true;
 		try {
 			await fetch('/api/analysis/enrich', { method: 'POST' }).then(r => r.json());
 			addToast('Metadata enrichment started', 'success');
+			pollForJob('enrichment');
 		} catch (e) {
 			addToast('Failed to start enrichment', 'error');
+		} finally {
+			setTimeout(() => startingEnrichment = false, 3000);
 		}
 	}
 
@@ -170,9 +203,9 @@
 						</div>
 					</div>
 				{:else}
-					<Button variant="primary" size="sm" class="mt-3 w-full" onclick={startAnalysis}>
+					<Button variant="primary" size="sm" class="mt-3 w-full" onclick={startAnalysis} loading={startingAnalysis}>
 						<AudioWaveform class="w-3.5 h-3.5" />
-						Run Analysis
+						{startingAnalysis ? 'Starting...' : 'Run Analysis'}
 					</Button>
 				{/if}
 			</Card>
@@ -198,9 +231,9 @@
 						</div>
 					</div>
 				{:else}
-					<Button variant="secondary" size="sm" class="mt-3 w-full" onclick={startEmbeddings}>
+					<Button variant="secondary" size="sm" class="mt-3 w-full" onclick={startEmbeddings} loading={startingEmbeddings}>
 						<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
-						Generate Embeddings
+						{startingEmbeddings ? 'Starting...' : 'Generate Embeddings'}
 					</Button>
 				{/if}
 			</Card>
@@ -223,9 +256,9 @@
 						</div>
 					</div>
 				{:else}
-					<Button variant="success" size="sm" class="mt-2 w-full" onclick={startEnrichment}>
+					<Button variant="success" size="sm" class="mt-2 w-full" onclick={startEnrichment} loading={startingEnrichment}>
 						<Database class="w-3.5 h-3.5" />
-						Enrich Metadata
+						{startingEnrichment ? 'Starting...' : 'Enrich Metadata'}
 					</Button>
 				{/if}
 			</Card>

@@ -80,6 +80,8 @@ class ServiceConfig(BaseModel):
     slsk_username: str = ""
     slsk_password: str = ""
     slsk_listen_port: int = 2234
+    slsk_parallel_sources: int = 1
+    slsk_source_strategy: str = "first"
     # Lidarr
     lidarr_enabled: bool = False
     lidarr_url: str = ""
@@ -101,6 +103,8 @@ async def get_service_config():
         "slsk_username": settings.soulseek.username,
         "slsk_password": settings.soulseek.password,
         "slsk_listen_port": settings.soulseek.listen_port,
+        "slsk_parallel_sources": settings.soulseek.parallel_sources,
+        "slsk_source_strategy": settings.soulseek.source_strategy,
         "lidarr_enabled": settings.lidarr.enabled,
         "lidarr_url": settings.lidarr.url,
         "lidarr_api_key": settings.lidarr.api_key,
@@ -127,6 +131,9 @@ async def update_service_config(req: ServiceConfig):
         soulseek["password"] = req.slsk_password
     soulseek["listen_port"] = req.slsk_listen_port
     soulseek["use_native"] = True  # Always native
+    soulseek["parallel_sources"] = max(1, min(req.slsk_parallel_sources, 5))
+    if req.slsk_source_strategy in ("first", "best"):
+        soulseek["source_strategy"] = req.slsk_source_strategy
     raw["soulseek"] = {**settings.soulseek.model_dump(), **soulseek}
 
     lidarr = raw.get("lidarr", {})

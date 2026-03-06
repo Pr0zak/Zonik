@@ -41,6 +41,9 @@ class SoulseekConfig(BaseModel):
     server_host: str = "server.slsknet.org"
     server_port: int = 2242
     use_native: bool = False
+    # Multi-source download settings
+    parallel_sources: int = 1  # How many peers to download from simultaneously (1 = sequential)
+    source_strategy: str = "first"  # "first" = keep first completed, "best" = wait for all and keep best quality
 
 
 class LidarrConfig(BaseModel):
