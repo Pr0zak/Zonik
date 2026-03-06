@@ -39,7 +39,7 @@
 			icon: ListMusic,
 			href: '/playlists',
 			color: 'var(--color-playlists)',
-			tasks: ['playlist_weekly_top', 'playlist_weekly_discover', 'playlist_favorites'],
+			tasks: ['playlist_weekly_top', 'playlist_weekly_discover', 'playlist_favorites', 'playlist_unfavorites'],
 		},
 		{
 			label: 'Settings',

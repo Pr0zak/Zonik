@@ -76,6 +76,9 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         elif task_name == "playlist_favorites":
             await _run_favorites_playlist(db)
 
+        elif task_name == "playlist_unfavorites":
+            await _run_unfavorites_playlist(db)
+
         elif task_name == "audio_analysis":
             from backend.services.analyzer import analyze_track_async
             from backend.models.analysis import TrackAnalysis
@@ -356,5 +359,34 @@ async def _run_favorites_playlist(db: AsyncSession):
     db.add(playlist)
     await db.flush()
     for i, tid in enumerate(favorites):
+        db.add(PlaylistTrack(id=str(uuid.uuid4()), playlist_id=playlist.id, track_id=tid, position=i))
+    await db.commit()
+
+
+async def _run_unfavorites_playlist(db: AsyncSession):
+    """Create/replace Unfavorites playlist from all tracks NOT starred."""
+    from sqlalchemy import delete
+
+    existing = (await db.execute(select(Playlist).where(Playlist.name == "Unfavorites"))).scalar_one_or_none()
+    if existing:
+        await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
+        await db.execute(delete(Playlist).where(Playlist.id == existing.id))
+
+    fav_ids = (await db.execute(
+        select(Favorite.track_id).where(Favorite.track_id.isnot(None))
+    )).scalars().all()
+
+    query = select(Track.id).order_by(Track.title)
+    if fav_ids:
+        query = query.where(Track.id.notin_(fav_ids))
+    unfav_tracks = (await db.execute(query)).scalars().all()
+
+    if not unfav_tracks:
+        return
+
+    playlist = Playlist(id=str(uuid.uuid4()), name="Unfavorites", is_public=True)
+    db.add(playlist)
+    await db.flush()
+    for i, tid in enumerate(unfav_tracks):
         db.add(PlaylistTrack(id=str(uuid.uuid4()), playlist_id=playlist.id, track_id=tid, position=i))
     await db.commit()

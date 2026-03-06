@@ -340,7 +340,7 @@
 	{/if}
 
 	<!-- Schedule -->
-	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites}
+	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites || schedTasks.playlist_unfavorites}
 		<Card padding="p-4" class="mt-6">
 			<div class="flex items-center gap-2 mb-2">
 				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
@@ -354,6 +354,9 @@
 			{/if}
 			{#if schedTasks.playlist_favorites}
 				<ScheduleControl taskName="playlist_favorites" label="Favorites Playlist" enabled={schedTasks.playlist_favorites.enabled} intervalHours={schedTasks.playlist_favorites.interval_hours} runAt={schedTasks.playlist_favorites.run_at} lastRunAt={schedTasks.playlist_favorites.last_run_at} running={schedRunning.playlist_favorites} onToggle={() => toggleSched('playlist_favorites')} onUpdate={(u) => updateSched('playlist_favorites', u)} onRun={() => runSched('playlist_favorites')} />
+			{/if}
+			{#if schedTasks.playlist_unfavorites}
+				<ScheduleControl taskName="playlist_unfavorites" label="Unfavorites Playlist" enabled={schedTasks.playlist_unfavorites.enabled} intervalHours={schedTasks.playlist_unfavorites.interval_hours} runAt={schedTasks.playlist_unfavorites.run_at} lastRunAt={schedTasks.playlist_unfavorites.last_run_at} running={schedRunning.playlist_unfavorites} onToggle={() => toggleSched('playlist_unfavorites')} onUpdate={(u) => updateSched('playlist_unfavorites', u)} onRun={() => runSched('playlist_unfavorites')} />
 			{/if}
 		</Card>
 	{/if}
