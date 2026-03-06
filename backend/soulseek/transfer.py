@@ -178,7 +178,7 @@ class TransferManager:
             writer.close()
             return
 
-        log.info(f"[transfer] Starting file transfer from {username}: {transfer.filename}")
+        log.info(f"[transfer] Inbound file transfer from {username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
 
         # Send transfer token (4 bytes) — tells peer which file we want
@@ -190,6 +190,24 @@ class TransferManager:
         # Send file offset (resume position)
         writer.write(struct.pack("<Q", transfer.received_bytes))
         await writer.drain()
+
+        # Read file size from uploader (8 bytes, uint64 LE)
+        try:
+            size_data = await asyncio.wait_for(reader.readexactly(8), timeout=30)
+            file_size = struct.unpack("<Q", size_data)[0]
+            log.info(f"[transfer] Peer reports file size: {file_size} for {transfer.filename}")
+            if file_size > 0 and transfer.total_bytes == 0:
+                transfer.total_bytes = file_size
+        except asyncio.TimeoutError:
+            log.warning(f"[transfer] Peer didn't send file size (30s timeout) for {username}")
+            self.update_state(transfer, TransferState.FAILED, error="Peer didn't send file size")
+            writer.close()
+            return
+        except (asyncio.IncompleteReadError, ConnectionError) as e:
+            log.warning(f"[transfer] Connection closed before file size from {username}: {e}")
+            self.update_state(transfer, TransferState.FAILED, error=f"Connection closed: {e}")
+            writer.close()
+            return
 
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
@@ -264,8 +282,25 @@ class TransferManager:
         writer.write(offset_bytes)
         await writer.drain()
 
-        log.info(f"[transfer] Starting file transfer from {transfer.username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
+
+        # Read file size from uploader (8 bytes, uint64 LE) — protocol requires this before file data
+        try:
+            size_data = await asyncio.wait_for(reader.readexactly(8), timeout=30)
+            file_size = struct.unpack("<Q", size_data)[0]
+            log.info(f"[transfer] Peer reports file size: {file_size} for {transfer.filename}")
+            if file_size > 0 and transfer.total_bytes == 0:
+                transfer.total_bytes = file_size
+        except asyncio.TimeoutError:
+            log.warning(f"[transfer] Peer didn't send file size (30s timeout) for {transfer.username}")
+            self.update_state(transfer, TransferState.FAILED, error="Peer didn't send file size")
+            writer.close()
+            return
+        except (asyncio.IncompleteReadError, ConnectionError) as e:
+            log.warning(f"[transfer] Connection closed before file size from {transfer.username}: {e}")
+            self.update_state(transfer, TransferState.FAILED, error=f"Connection closed: {e}")
+            writer.close()
+            return
 
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
