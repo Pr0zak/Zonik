@@ -725,6 +725,13 @@
 				<List class="w-4 h-4" />
 			</button>
 		</div>
+
+		<!-- Select mode toggle (tracks tab only) -->
+		{#if tab === 'tracks' && !selectMode}
+			<Button variant="secondary" size="sm" onclick={toggleSelectMode}>
+				<CheckSquare class="w-3.5 h-3.5" /> Select
+			</Button>
+		{/if}
 	</div>
 
 	<!-- Mobile search -->
@@ -888,14 +895,7 @@
 				</Card>
 			{/if}
 
-			{#if !selectMode}
-				<div class="flex justify-end mt-2">
-					<Button variant="secondary" size="sm" onclick={toggleSelectMode}>
-						<CheckSquare class="w-3.5 h-3.5" /> Select
-					</Button>
-				</div>
-			{/if}
-		{:else}
+			{:else}
 			<EmptyState title="No tracks found" description={search ? 'Try a different search term.' : 'Scan your library to import tracks.'}>
 				{#snippet icon()}<Music class="w-10 h-10" />{/snippet}
 			</EmptyState>
