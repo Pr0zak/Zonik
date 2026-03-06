@@ -157,77 +157,57 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
 
 
 async def _auto_download_missing(missing: list[dict], source: str):
-    """Trigger bulk download of missing tracks found by discovery."""
-    from backend.services.soulseek import search_and_download
+    """Trigger individual download jobs for each missing track."""
+    import asyncio
     from backend.database import async_session
+    from backend.api.download import _do_download_inner, _get_semaphore, DownloadRequest
 
     total = len(missing)
     log.info(f"Auto-downloading {total} missing tracks from {source}")
-    job_id = str(uuid.uuid4())
-    desc = f"Auto-download ({total} tracks)"
 
-    # Build track statuses list
-    track_statuses = [
-        {"artist": t.get("artist", ""), "track": t.get("track", ""), "status": "pending"}
-        for t in missing
-    ]
-
-    # Create a tracking job for the auto-download phase
-    async with async_session() as db:
-        dl_job = Job(
-            id=job_id, type="bulk_download", card="dl", status="running",
-            total=total, started_at=datetime.utcnow(),
-            tracks=json.dumps(track_statuses),
-        )
-        db.add(dl_job)
-        await db.commit()
-    await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": total, "description": desc})
-
-    # Use global download semaphore to respect queue limits
-    from backend.api.download import _get_semaphore
     sem = _get_semaphore()
 
-    completed = 0
-    failed = 0
-    for i, t in enumerate(missing):
+    async def download_one(t: dict):
         artist = t.get("artist", "")
         track = t.get("track", "")
         if not artist or not track:
-            track_statuses[i]["status"] = "skipped"
-            continue
-        async with sem:
-            try:
-                await search_and_download(artist, track)
-                track_statuses[i]["status"] = "downloaded"
-                completed += 1
-            except Exception as e:
-                track_statuses[i]["status"] = "failed"
-                track_statuses[i]["error"] = str(e)
-                failed += 1
-                log.warning(f"Auto-download failed for {artist} - {track}: {e}")
+            return
+        job_id = str(uuid.uuid4())
+        desc = f"{artist} — {track}"
+        req = DownloadRequest(artist=artist, track=track)
 
-        # Update job progress in DB every 5 tracks
-        if (i + 1) % 5 == 0 or i == total - 1:
-            async with async_session() as db:
-                dl_job = await db.get(Job, job_id)
-                if dl_job:
-                    dl_job.progress = i + 1
-                    dl_job.tracks = json.dumps(track_statuses)
+        async with async_session() as db:
+            # If queue is full, show as queued
+            if sem.locked():
+                job = Job(
+                    id=job_id, type="download", card="dl", status="pending",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
+                )
+                db.add(job)
+                await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
+                async with sem:
+                    job.status = "running"
+                    await db.merge(job)
                     await db.commit()
-        await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": i + 1, "total": total, "description": f"{desc} — {artist} - {track}"})
+                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                    await _do_download_inner(db, job, job_id, desc, req)
+            else:
+                job = Job(
+                    id=job_id, type="download", card="dl", status="running",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
+                )
+                db.add(job)
+                await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                async with sem:
+                    await _do_download_inner(db, job, job_id, desc, req)
 
-    # Finalize
-    status = "completed" if completed > 0 else "failed"
-    async with async_session() as db:
-        dl_job = await db.get(Job, job_id)
-        if dl_job:
-            dl_job.status = status
-            dl_job.finished_at = datetime.utcnow()
-            dl_job.progress = total
-            dl_job.tracks = json.dumps(track_statuses)
-            dl_job.result = json.dumps({"completed": completed, "failed": failed, "total": total})
-            await db.commit()
-    await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": status, "progress": total, "total": total, "description": desc})
+    # Fire all downloads concurrently — semaphore handles the queue limit
+    tasks = [asyncio.create_task(download_one(t)) for t in missing]
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
