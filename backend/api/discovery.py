@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -289,18 +289,21 @@ async def artist_info(artist: str):
 # --- Last.fm Authentication ---
 
 @router.get("/lastfm/auth-url")
-async def lastfm_auth_url():
+async def lastfm_auth_url(request: Request):
     """Get the Last.fm auth URL for the user to visit."""
     settings = get_settings()
     api_key = settings.lastfm.write_api_key
     if not api_key:
         return {"error": "Last.fm write API key not configured"}
-    return {"url": f"https://www.last.fm/api/auth/?api_key={api_key}"}
+    # Build callback URL so Last.fm redirects back automatically
+    cb = f"{request.base_url}api/discovery/lastfm/callback"
+    return {"url": f"https://www.last.fm/api/auth/?api_key={api_key}&cb={cb}"}
 
 
 @router.get("/lastfm/callback")
-async def lastfm_callback(token: str):
+async def lastfm_callback(token: str, request: Request):
     """Exchange a Last.fm auth token for a session key."""
+    from fastapi.responses import RedirectResponse
     settings = get_settings()
     api_key = settings.lastfm.write_api_key
     secret = settings.lastfm.write_api_secret
@@ -332,8 +335,14 @@ async def lastfm_callback(token: str):
         raw["lastfm"]["session_key"] = session["key"]
         raw["lastfm"]["username"] = session.get("name", "")
         _write_config(raw)
+        # If browser redirect (from Last.fm cb), redirect to settings page
+        if request.headers.get("accept", "").startswith("text/html"):
+            return RedirectResponse(url="/settings?lastfm_auth=ok")
         return {
             "session_key": session["key"],
             "username": session.get("name", ""),
         }
+    # If browser redirect with error, redirect with error param
+    if request.headers.get("accept", "").startswith("text/html"):
+        return RedirectResponse(url="/settings?lastfm_auth=failed")
     return {"error": data.get("message", "Authentication failed")}

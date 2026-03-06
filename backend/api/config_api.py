@@ -119,6 +119,8 @@ async def get_service_config():
         "lastfm_api_key": settings.lastfm.api_key,
         "lastfm_write_api_key": settings.lastfm.write_api_key,
         "lastfm_write_api_secret": settings.lastfm.write_api_secret,
+        "lastfm_session_key": settings.lastfm.session_key,
+        "lastfm_username": settings.lastfm.username,
     }
 
 

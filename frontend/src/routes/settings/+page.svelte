@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -41,6 +41,9 @@
 	let upgrading = $state(false);
 
 	let schedTasks = $state({});
+	let lastfmSession = $state({ username: '', authenticated: false });
+	let lastfmAuthLoading = $state(false);
+	let lastfmToken = $state('');
 	let schedRunning = $state({});
 	let backups = $state([]);
 	let creatingBackup = $state(false);
@@ -53,13 +56,35 @@
 	onMount(() => {
 		// Load each section independently so one failure doesn't block the page
 		fetch('/api/library/stats').then(r => r.json()).then(d => stats = d).catch(() => {});
-		fetch('/api/config/services').then(r => r.json()).then(d => services = d).catch(() => {});
+		fetch('/api/config/services').then(r => r.json()).then(d => {
+			services = d;
+			if (d.lastfm_session_key) {
+				lastfmSession = { username: d.lastfm_username || 'Authenticated', authenticated: true };
+			}
+		}).catch(() => {});
 		fetch('/api/config/version').then(r => r.json()).then(d => versionInfo = d).catch(() => {});
 		fetch('/api/users').then(r => r.json()).then(d => users = d).catch(() => {});
 		fetch('/api/config/backups').then(r => r.json()).then(d => backups = d).catch(() => {});
 		fetch('/api/schedule').then(r => r.json()).then(tasks => {
 			for (const t of tasks) schedTasks[t.task_name] = t;
 		}).catch(() => {});
+
+		// Handle Last.fm OAuth redirect
+		const params = new URLSearchParams(window.location.search);
+		if (params.get('lastfm_auth') === 'ok') {
+			addToast('Last.fm authenticated successfully!', 'success');
+			window.history.replaceState({}, '', '/settings');
+			// Re-fetch to pick up new session
+			fetch('/api/config/services').then(r => r.json()).then(d => {
+				services = d;
+				if (d.lastfm_session_key) {
+					lastfmSession = { username: d.lastfm_username || 'Authenticated', authenticated: true };
+				}
+			}).catch(() => {});
+		} else if (params.get('lastfm_auth') === 'failed') {
+			addToast('Last.fm authentication failed', 'error');
+			window.history.replaceState({}, '', '/settings');
+		}
 	});
 
 	async function checkForUpdates() {
@@ -335,6 +360,41 @@
 	}
 
 	// inputClass imported from $lib/utils.js
+
+	async function startLastfmAuth() {
+		lastfmAuthLoading = true;
+		try {
+			const res = await fetch('/api/discovery/lastfm/auth-url');
+			const data = await res.json();
+			if (data.error) {
+				addToast(data.error, 'error');
+			} else {
+				window.open(data.url, '_blank');
+				addToast('Authorize on Last.fm, then paste the token below', 'info');
+			}
+		} catch (e) {
+			addToast('Failed to get auth URL', 'error');
+		} finally {
+			lastfmAuthLoading = false;
+		}
+	}
+
+	async function submitLastfmToken() {
+		if (!lastfmToken.trim()) return;
+		try {
+			const res = await fetch(`/api/discovery/lastfm/callback?token=${encodeURIComponent(lastfmToken.trim())}`);
+			const data = await res.json();
+			if (data.error) {
+				addToast(`Last.fm auth failed: ${data.error}`, 'error');
+			} else {
+				lastfmSession = { username: data.username || 'Authenticated', authenticated: true };
+				lastfmToken = '';
+				addToast(`Authenticated as ${data.username}`, 'success');
+			}
+		} catch (e) {
+			addToast('Failed to exchange token', 'error');
+		}
+	}
 </script>
 
 <div class="max-w-4xl">
@@ -661,6 +721,34 @@
 								</div>
 							</div>
 						{/each}
+					</div>
+
+					<!-- Last.fm Authentication -->
+					<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+						<div class="flex items-center gap-3 flex-wrap">
+							{#if lastfmSession.authenticated}
+								<Badge variant="success">Authenticated as {lastfmSession.username}</Badge>
+							{:else}
+								<Badge variant="default">Not authenticated — scrobbling & favorites sync disabled</Badge>
+							{/if}
+							<button onclick={startLastfmAuth} disabled={lastfmAuthLoading}
+								class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
+								<ExternalLink class="w-3 h-3" />
+								{lastfmSession.authenticated ? 'Re-authenticate' : 'Authenticate with Last.fm'}
+							</button>
+						</div>
+						{#if !lastfmSession.authenticated}
+							<div class="flex items-center gap-2 mt-2">
+								<input type="text" bind:value={lastfmToken} placeholder="Paste token from Last.fm callback URL"
+									class="{inputClass} flex-1 text-xs" />
+								<button onclick={submitLastfmToken} disabled={!lastfmToken.trim()}
+									class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors disabled:opacity-50">
+									<LogIn class="w-3 h-3" />
+									Submit Token
+								</button>
+							</div>
+							<p class="text-[11px] text-[var(--text-disabled)] mt-1">Click Authenticate, authorize on Last.fm, then copy the <code>token</code> parameter from the redirect URL and paste it above.</p>
+						{/if}
 					</div>
 				</div>
 			</div>
