@@ -25,6 +25,10 @@ from backend.subsonic import router as subsonic_router
 STATS_INTERVAL = 300  # 5 minutes
 STATS_RETENTION_HOURS = 168  # 7 days
 
+# Configure logging for backend modules (uvicorn only configures its own loggers)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logging.getLogger("backend.soulseek").setLevel(logging.INFO)
+
 
 async def _collect_soulseek_stats_loop():
     """Periodically snapshot Soulseek stats for charting."""
