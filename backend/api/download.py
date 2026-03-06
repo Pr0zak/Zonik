@@ -374,6 +374,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 elif candidates and native_client:
                     # === Sequential download (parallel_sources == 1, original behavior) ===
                     last_error = ""
+                    source_errors = []  # [(username, error), ...]
                     for i, candidate in enumerate(candidates):
                         dl_username = candidate["username"]
                         dl_filename = candidate["filename"]
@@ -394,6 +395,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         except Exception as e:
                             log.warning(f"[download] Failed to connect to {dl_username}: {e}")
                             last_error = f"Connection failed: {e}"
+                            source_errors.append({"user": dl_username, "error": last_error})
                             await native_client.reputation.record_failure(dl_username)
                             continue
 
@@ -405,7 +407,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                             fsize = _file_size(save_path)
                             track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
                             job.status = "completed"
-                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "track_id": track_id})
+                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
                             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
                             break
                         elif status == "cancelled":
@@ -416,14 +418,20 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         else:
                             await native_client.reputation.record_failure(dl_username)
                             last_error = error or status
+                            source_errors.append({"user": dl_username, "error": last_error})
 
                     else:
                         if candidates and job.status != "failed":
                             failed_users = [c["username"] for c in candidates]
                             job.status = "failed"
                             err_detail = last_error or "unknown"
-                            job.result = json.dumps({"message": f"All {len(candidates)} sources failed", "last_error": err_detail, "failed_sources": failed_users})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                            job.result = json.dumps({
+                                "message": f"All {len(candidates)} sources failed",
+                                "last_error": err_detail,
+                                "failed_sources": failed_users,
+                                "source_errors": source_errors,
+                            })
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": err_detail}])
 
             except Exception as e:
                 log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)

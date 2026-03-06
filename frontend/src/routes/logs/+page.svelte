@@ -317,11 +317,16 @@
 												{#if Array.isArray(trackList)}
 													<div class="mt-1 space-y-1 max-h-48 overflow-y-auto">
 														{#each trackList as t}
-															<div class="flex items-center gap-2 bg-[var(--bg-primary)] px-2 py-1.5 rounded-md">
+															<div class="flex items-center gap-2 bg-[var(--bg-primary)] px-2 py-1.5 rounded-md flex-wrap">
 																<Badge variant={t.status === 'downloaded' ? 'success' : t.status === 'failed' ? 'error' : t.status === 'skipped' ? 'warning' : 'default'}>{t.status}</Badge>
 																<span class="text-[var(--text-body)] truncate">{t.artist} — {t.track}</span>
-																{#if t.reason}
-																	<span class="text-[var(--text-muted)] text-[10px] ml-auto">{t.reason}</span>
+																{#if t.username}
+																	<span class="text-[var(--text-muted)] text-[10px]">from {t.username}</span>
+																{/if}
+																{#if t.error}
+																	<span class="text-red-400 text-[10px] ml-auto" title={t.error}>{t.error}</span>
+																{:else if t.reason}
+																	<span class="text-orange-400 text-[10px] ml-auto">{t.reason}</span>
 																{/if}
 															</div>
 														{/each}

@@ -553,7 +553,7 @@
 											<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : ''}</span>
 										</div>
 									{:else}
-										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] flex-wrap">
 											{#if transfer?.username}
 												<span>from {transfer.username}</span>
 												<span class="text-[var(--text-disabled)]">&middot;</span>
@@ -574,11 +574,18 @@
 											{:else if job.total > 1}
 												<span>{job.progress || 0}/{job.total} tracks</span>
 											{/if}
-											{#if job.status === 'failed' && jobResult?.message}
-												<span class="text-red-400 truncate max-w-[300px]">{jobResult.message}</span>
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-											{:else if job.status === 'failed' && jobResult?.error}
-												<span class="text-red-400 truncate max-w-[300px]">{jobResult.error}</span>
+											{#if job.status === 'failed'}
+												{#if jobResult?.last_error}
+													<span class="text-red-400">{jobResult.last_error}</span>
+												{:else if jobResult?.message}
+													<span class="text-red-400">{jobResult.message}</span>
+												{:else if jobResult?.error}
+													<span class="text-red-400">{jobResult.error}</span>
+												{/if}
+												{#if jobResult?.failed_sources?.length}
+													<span class="text-[var(--text-disabled)]">&middot;</span>
+													<span class="text-orange-400" title={jobResult.failed_sources.join(', ')}>{jobResult.failed_sources.length} source{jobResult.failed_sources.length > 1 ? 's' : ''} tried</span>
+												{/if}
 												<span class="text-[var(--text-disabled)]">&middot;</span>
 											{/if}
 											{#if job.status !== 'running'}
@@ -628,7 +635,7 @@
 									{/if}
 									{status}
 								</Badge>
-								{#if job.total > 1}
+								{#if job.total > 1 || (job.status === 'failed' && jobResult?.source_errors?.length)}
 									<button onclick={() => toggleJobDetail(job.id)}
 										class="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0">
 										{#if expandedJob === job.id}
@@ -655,27 +662,48 @@
 									<div class="h-full bg-[var(--color-downloads)] animate-indeterminate w-1/3"></div>
 								</div>
 							{/if}
-							<!-- Expanded bulk track details -->
-							{#if expandedJob === job.id && jobDetails[job.id]}
-								<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
-									{#each jobDetails[job.id] as t, i}
-										<div class="flex items-center gap-2 text-xs py-1">
-											<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
-											<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
-												{t.artist} — {t.track}
-											</span>
-											{#if t.username}
-												<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
-											{/if}
-											<Badge variant={
-												t.status === 'downloaded' ? 'success' :
-												t.status === 'downloading' || t.status === 'transferring' ? 'info' :
-												t.status === 'pending' ? 'default' :
-												t.status === 'skipped' ? 'warning' : 'error'
-											}>{t.status}</Badge>
-										</div>
-									{/each}
-								</div>
+							<!-- Expanded details -->
+							{#if expandedJob === job.id}
+								{#if jobResult?.source_errors?.length}
+									<!-- Per-source error breakdown (single download) -->
+									<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
+										<p class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-1">Sources tried</p>
+										{#each jobResult.source_errors as se, i}
+											<div class="flex items-center gap-2 text-xs py-1">
+												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
+												<span class="text-[var(--text-body)] truncate max-w-[160px]">{se.user}</span>
+												<span class="text-red-400 flex-1 truncate" title={se.error}>{se.error}</span>
+												<Badge variant="error">failed</Badge>
+											</div>
+										{/each}
+									</div>
+								{:else if jobDetails[job.id]}
+									<!-- Bulk track details -->
+									<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
+										{#each jobDetails[job.id] as t, i}
+											<div class="flex items-center gap-2 text-xs py-1 flex-wrap">
+												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
+												<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
+													{t.artist} — {t.track}
+												</span>
+												{#if t.username}
+													<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
+												{/if}
+												{#if t.error}
+													<span class="text-red-400 truncate max-w-[200px]" title={t.error}>{t.error}</span>
+												{:else if t.reason}
+													<span class="text-orange-400 truncate max-w-[200px]" title={t.reason}>{t.reason}</span>
+												{/if}
+												<Badge variant={
+													t.status === 'downloaded' ? 'success' :
+													t.status === 'downloading' || t.status === 'transferring' ? 'info' :
+													t.status === 'pending' ? 'default' :
+													t.status === 'skipped' ? 'warning' : 'error'
+												}>{t.status}</Badge>
+											</div>
+										{/each}
+									</div>
+								{/if}
 							{/if}
 						</div>
 					{/each}
