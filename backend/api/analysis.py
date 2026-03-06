@@ -69,6 +69,7 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
             await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": 0, "total": total})
 
             try:
+                import asyncio as _aio
                 for i, (track_id, file_path) in enumerate(tracks):
                     try:
                         analysis = await analyze_track_async(file_path)
@@ -86,10 +87,16 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                     except Exception as e:
                         log.warning("Analysis failed for track %s: %s", track_id, e)
 
-                    job.progress = i + 1
-                    await db.merge(job)
-                    await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": i + 1, "total": total})
+                    progress = i + 1
+                    # Batch DB commits every 10 tracks, WS updates every 5
+                    if progress % 10 == 0 or progress == total:
+                        job.progress = progress
+                        await db.merge(job)
+                        await db.commit()
+                    if progress % 5 == 0 or progress == total:
+                        await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": progress, "total": total})
+                    # Yield to event loop so HTTP requests aren't starved
+                    await _aio.sleep(0)
 
                 job.status = "completed"
             except Exception as e:
@@ -133,6 +140,7 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
             await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": 0, "total": total})
 
             try:
+                import asyncio as _aio
                 for i, (track_id, file_path) in enumerate(tracks):
                     try:
                         emb_bytes = await generate_embedding_async(file_path)
@@ -145,10 +153,14 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
                     except Exception as e:
                         log.warning("Embedding failed for track %s: %s", track_id, e)
 
-                    job.progress = i + 1
-                    await db.merge(job)
-                    await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": i + 1, "total": total})
+                    progress = i + 1
+                    if progress % 10 == 0 or progress == total:
+                        job.progress = progress
+                        await db.merge(job)
+                        await db.commit()
+                    if progress % 5 == 0 or progress == total:
+                        await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": progress, "total": total})
+                    await _aio.sleep(0)
 
                 job.status = "completed"
             except Exception as e:
