@@ -9,7 +9,7 @@
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock,
-		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle, X
+		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -312,6 +312,7 @@
 	let remixSource = $state(null);
 	let remixes = $state([]);
 	let remixLoading = $state(false);
+	let remixDownloadStatus = $state({}); // { "artist|name": "downloading"|"done"|"failed" }
 
 	// Track action menu
 	let menuTrack = $state(null);
@@ -567,6 +568,7 @@
 		showRemixes = true;
 		remixes = [];
 		remixLoading = true;
+		remixDownloadStatus = {};
 		try {
 			const data = await api.getRemixes(track.artist, track.title);
 			remixes = data.remixes || [];
@@ -1666,6 +1668,7 @@
 		{:else if remixes.length}
 			<div class="space-y-1 max-h-96 overflow-y-auto">
 				{#each remixes as remix}
+					{@const rkey = `${remix.artist}|${remix.name}`}
 					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--bg-hover)] transition-colors group">
 						<div class="flex-1 min-w-0">
 							<p class="text-sm text-[var(--text-primary)] truncate">{remix.name}</p>
@@ -1676,13 +1679,30 @@
 						</Badge>
 						{#if remix.in_library}
 							<Badge variant="success">In Library</Badge>
+						{:else if remixDownloadStatus[rkey] === 'downloading'}
+							<Badge variant="info"><Loader2 class="w-3 h-3 animate-spin inline" /> Downloading</Badge>
+						{:else if remixDownloadStatus[rkey] === 'done'}
+							<Badge variant="success"><Check class="w-3 h-3 inline" /> Queued</Badge>
+						{:else if remixDownloadStatus[rkey] === 'failed'}
+							<Button variant="danger" size="sm"
+								onclick={async () => {
+									remixDownloadStatus[rkey] = 'downloading';
+									try {
+										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name }) });
+										remixDownloadStatus[rkey] = 'done';
+									} catch { remixDownloadStatus[rkey] = 'failed'; addToast('Download failed', 'error'); }
+								}}>
+								<RotateCcw class="w-3 h-3" /> Retry
+							</Button>
 						{:else}
 							<Button variant="success" size="sm"
 								onclick={async () => {
+									remixDownloadStatus[rkey] = 'downloading';
 									try {
 										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name }) });
+										remixDownloadStatus[rkey] = 'done';
 										addToast(`Downloading ${remix.name}`, 'success');
-									} catch { addToast('Download failed', 'error'); }
+									} catch { remixDownloadStatus[rkey] = 'failed'; addToast('Download failed', 'error'); }
 								}}>
 								<Download class="w-3 h-3" /> Get
 							</Button>
