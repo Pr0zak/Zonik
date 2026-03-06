@@ -20,6 +20,20 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 - SSH to Proxmox: `ssh root@pve5` (CT 228 on pve5)
 - Upgrade production: `ssh root@pve5 "pct exec 228 -- bash -c 'cd /opt/zonik && bash upgrade.sh'"`
 
+## Slash Commands (.claude/commands/ — local, gitignored)
+- `/deploy` — push + upgrade CT 228 (with syntax/build checks)
+- `/commit-deploy <msg>` — stage + commit + push + upgrade in one flow
+- `/verify` — syntax check all modified Python + Svelte error check + frontend build
+- `/ct-status` — services, CPU, memory, disk, running jobs, analysis coverage
+- `/ct-logs [web|worker|pattern]` — check production logs (filterable by service or grep pattern)
+- `/ct-jobs [running|failed|type]` — check job status on production
+- `/ct-fix-jobs` — mark stuck running/pending jobs as failed after crash/upgrade
+- `/ct-restart [web|worker|all]` — restart Zonik services on CT 228
+- `/ct-db "SQL"` — read-only SQL query on production database
+- `/ct-soulseek` — P2P client status: connection, transfers, reputation, recent downloads
+- `/ct-migrate` — run Alembic migrations on production
+- `/diagnose "issue"` — full investigation: services, logs, resources, API, DB
+
 ## Project Structure
 ```
 backend/
