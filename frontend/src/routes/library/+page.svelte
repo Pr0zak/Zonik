@@ -1226,6 +1226,10 @@
 			{/if}
 			{#if schedTasks.library_cleanup}
 				<ScheduleControl taskName="library_cleanup" label="Orphan Cleanup (scheduled)" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
+				<div class="flex items-center gap-2 mt-1.5 ml-1">
+					<AlertTriangle class="w-3 h-3 text-amber-400/70" />
+					<span class="text-[11px] text-amber-400/70">Destructive — removes orphaned database entries for files no longer on disk</span>
+				</div>
 			{/if}
 		</Card>
 	{/if}

@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { addToast } from '$lib/stores.js';
-	import { Clock, ExternalLink, Music, AudioWaveform, Compass, ListMusic, Settings } from 'lucide-svelte';
+	import { Clock, ExternalLink, Music, AudioWaveform, Compass, ListMusic, Settings, AlertTriangle } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
@@ -49,6 +49,8 @@
 			tasks: ['lastfm_sync'],
 		},
 	];
+
+	const DANGER_TASKS = new Set(['library_cleanup']);
 
 	let taskMap = $derived(Object.fromEntries(tasks.map(t => [t.task_name, t])));
 
@@ -116,16 +118,23 @@
 							<div class="px-4 pb-3">
 								<div class="divide-y divide-[var(--border-subtle)]">
 									{#each groupTasks as task}
-										<div class="flex items-center gap-3 py-2">
-											<div class="w-2 h-2 rounded-full flex-shrink-0 {task.enabled ? 'bg-emerald-400' : 'bg-[var(--border-interactive)]'}"></div>
-											<span class="text-sm text-[var(--text-body)] min-w-0 truncate">{task.label}</span>
+										<div class="flex items-center gap-3 py-2 {DANGER_TASKS.has(task.task_name) ? 'opacity-75' : ''}">
+											<div class="w-2 h-2 rounded-full flex-shrink-0 {task.enabled ? (DANGER_TASKS.has(task.task_name) ? 'bg-amber-400' : 'bg-emerald-400') : 'bg-[var(--border-interactive)]'}"></div>
+											<span class="text-sm min-w-0 truncate {DANGER_TASKS.has(task.task_name) ? 'text-amber-400/80' : 'text-[var(--text-body)]'}">{task.label}</span>
+											{#if DANGER_TASKS.has(task.task_name)}
+												<AlertTriangle class="w-3.5 h-3.5 text-amber-400/70 flex-shrink-0" />
+											{/if}
 											<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0">{formatLastRun(task.last_run_at)}</span>
 											<div class="flex items-center gap-2 ml-auto flex-shrink-0">
 												<span class="text-xs text-[var(--text-muted)] font-mono">{formatInterval(task.interval_hours)}</span>
 												{#if task.run_at}
 													<span class="text-xs text-[var(--text-muted)] font-mono">@ {task.run_at}</span>
 												{/if}
-												<Badge variant={task.enabled ? 'success' : 'default'}>{task.enabled ? 'On' : 'Off'}</Badge>
+												{#if DANGER_TASKS.has(task.task_name) && task.enabled}
+														<Badge variant="warning">On</Badge>
+													{:else}
+														<Badge variant={task.enabled ? 'success' : 'default'}>{task.enabled ? 'On' : 'Off'}</Badge>
+													{/if}
 											</div>
 										</div>
 									{/each}
