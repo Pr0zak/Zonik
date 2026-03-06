@@ -1,14 +1,21 @@
-# Zonik
+<p align="center">
+  <img src="docs/logo.svg" alt="Zonik" width="320">
+</p>
 
-Self-hosted music backend with OpenSubsonic API. Track-focused library management with smart discovery, Soulseek downloads, audio analysis, and vibe-based recommendations.
+<p align="center">
+  Self-hosted music backend with OpenSubsonic API.<br>
+  Track-focused library management with smart discovery, Soulseek downloads, audio analysis, and vibe-based recommendations.
+</p>
 
-Built to serve [Symfonium](https://symfonium.app/) on Android via the OpenSubsonic protocol.
+<p align="center">
+  Built to serve <a href="https://symfonium.app/">Symfonium</a> on Android via the OpenSubsonic protocol.
+</p>
 
 ## Features
 
 - **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for Symfonium compatibility
 - **Track-focused** - Download individual tracks, not full discographies
-- **Soulseek downloads** - Multi-strategy search with quality scoring via slskd
+- **Soulseek downloads** - Native P2P client with multi-strategy search and quality scoring
 - **Last.fm integration** - Discovery, scrobbling, loved track sync
 - **Audio analysis** - BPM, key, energy, danceability via Essentia
 - **Vibe embeddings** - CLAP-based 512-dim audio embeddings for similarity search
@@ -99,7 +106,7 @@ See [API Reference](docs/api.md) for the full list.
 | Audio Analysis | Essentia |
 | Vibe Embeddings | CLAP |
 | Metadata | MusicBrainz + Last.fm |
-| Downloads | slskd (Soulseek) |
+| Downloads | Native Soulseek P2P client |
 
 ## License
 
