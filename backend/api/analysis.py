@@ -95,8 +95,8 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                         await db.commit()
                     if progress % 5 == 0 or progress == total:
                         await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": progress, "total": total})
-                    # Yield to event loop so HTTP requests aren't starved
-                    await _aio.sleep(0)
+                    # Pause between tracks so CPU-bound Essentia doesn't starve HTTP
+                    await _aio.sleep(0.2)
 
                 job.status = "completed"
             except Exception as e:
@@ -160,7 +160,7 @@ async def start_embeddings(background_tasks: BackgroundTasks, force: bool = Fals
                         await db.commit()
                     if progress % 5 == 0 or progress == total:
                         await broadcast_job_update({"id": job_id, "type": "vibe_embeddings", "status": "running", "progress": progress, "total": total})
-                    await _aio.sleep(0)
+                    await _aio.sleep(0.2)
 
                 job.status = "completed"
             except Exception as e:
