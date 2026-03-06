@@ -161,33 +161,31 @@ class TransferManager:
     ) -> None:
         """Handle an inbound file transfer connection.
 
-        Protocol: peer sends pierce_firewall(relay_token), then transfer_token (4 bytes raw).
-        We match to transfer by transfer_token, send file offset (8 bytes),
-        then receive file data until complete.
+        Protocol (we are the downloader):
+        1. Connection established (pierce_firewall already parsed)
+        2. We SEND transfer_token (4 bytes) — tells peer which file
+        3. We SEND file_offset (8 bytes) — resume position
+        4. Peer sends file data
         """
-        # Read the actual transfer token from peer (4 bytes, sent after pierce_firewall)
-        try:
-            transfer_token = await asyncio.wait_for(reader.readexactly(4), timeout=10)
-            log.info(f"[transfer] Received transfer token from {username}: {transfer_token.hex()}")
-        except Exception as e:
-            log.warning(f"[transfer] Failed to read transfer token from {username}: {e}")
-            writer.close()
-            return
-
-        # Match transfer by the actual transfer token
-        transfer = self.get_transfer_by_token(username, transfer_token)
+        # Find the transfer — try token, then username
+        transfer = self.get_transfer_by_token(username, token)
         if not transfer:
-            transfer = self.find_transfer_by_token(transfer_token)
+            transfer = self.find_transfer_by_token(token)
         if not transfer:
-            # Fall back to username-based matching
             transfer = self.find_active_transfer_for_user(username)
         if not transfer:
-            log.warning(f"[transfer] No transfer found for token {transfer_token.hex()} from {username}")
+            log.warning(f"[transfer] No transfer found for {username} (token {token.hex()})")
             writer.close()
             return
 
         log.info(f"[transfer] Starting file transfer from {username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
+
+        # Send transfer token (4 bytes) — tells peer which file we want
+        if transfer.token:
+            writer.write(transfer.token)
+        else:
+            writer.write(token)
 
         # Send file offset (resume position)
         writer.write(struct.pack("<Q", transfer.received_bytes))
@@ -257,21 +255,15 @@ class TransferManager:
         writer.write(build_pierce_firewall_raw(token))
         await writer.drain()
 
-        # Wait for peer's token echo (4 bytes) — confirms file transfer connection
-        try:
-            token_echo = await asyncio.wait_for(reader.readexactly(4), timeout=10)
-            log.info(f"[transfer] Token echo received from {transfer.username}")
-        except Exception as e:
-            log.warning(f"[transfer] No token echo from {transfer.username}: {e}")
-            self.update_state(transfer, TransferState.FAILED, error=f"No token echo: {e}")
-            writer.close()
-            if self.on_complete:
-                await self.on_complete(transfer)
-            return
-
-        # Start receiving file data
+        # Start file transfer — we are the downloader, so WE send token + offset
         log.info(f"[transfer] Starting file transfer from {transfer.username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
+
+        # Send transfer token (4 bytes) — tells peer which file we want
+        if transfer.token:
+            writer.write(transfer.token)
+        else:
+            writer.write(token)
 
         # Send file offset (resume position)
         writer.write(struct.pack("<Q", transfer.received_bytes))
