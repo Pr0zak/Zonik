@@ -208,13 +208,27 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
 
             max_retries = 3
 
+            cancelled = False
+
+            async def check_cancelled():
+                nonlocal cancelled
+                if cancelled:
+                    return True
+                await db.refresh(new_job, ["status"])
+                if new_job.status == "failed":
+                    cancelled = True
+                    return True
+                return False
+
             async def poll_transfer(client, username, filename, timeout=150):
                 """Poll transfer until done. Returns (save_path, error)."""
                 queue_start = _time.monotonic()
                 last_bytes = 0
                 stall_start = None
-                for _ in range(timeout):
+                for poll_i in range(timeout):
                     await asyncio.sleep(2)
+                    if poll_i % 5 == 0 and await check_cancelled():
+                        return None, "Cancelled by user"
                     transfer = client.transfers.get_transfer(username, filename)
                     if not transfer:
                         return None, "Transfer removed"
@@ -237,6 +251,10 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
 
             async def download_one(idx: int, t: dict):
                 async with semaphore:
+                    if await check_cancelled():
+                        track_statuses[idx]["status"] = "skipped"
+                        track_statuses[idx]["reason"] = "Cancelled"
+                        return
                     artist = t.get("artist", "")
                     track = t.get("track", "")
                     try:
@@ -311,8 +329,10 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
             tasks = [download_one(i, t) for i, t in enumerate(failed_tracks)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            any_ok = any(s["status"] == "downloaded" for s in track_statuses)
-            new_job.status = "completed" if any_ok else "failed"
+            await db.refresh(new_job, ["status"])
+            if new_job.status != "failed":
+                any_ok = any(s["status"] == "downloaded" for s in track_statuses)
+                new_job.status = "completed" if any_ok else "failed"
             new_job.finished_at = datetime.utcnow()
             new_job.tracks = json.dumps(track_statuses)
             await db.merge(new_job)
