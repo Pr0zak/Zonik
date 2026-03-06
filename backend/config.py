@@ -45,6 +45,7 @@ class SoulseekConfig(BaseModel):
     # Multi-source download settings
     parallel_sources: int = 1  # How many peers to download from simultaneously (1 = sequential)
     source_strategy: str = "first"  # "first" = keep first completed, "best" = wait for all and keep best quality
+    share_library: bool = True  # Share real library with peers (false = report empty shares)
 
 
 class LidarrConfig(BaseModel):
@@ -72,10 +73,6 @@ class SubsonicConfig(BaseModel):
     server_name: str = "Zonik"
 
 
-class KimahubConfig(BaseModel):
-    db_url: str = ""  # postgresql://kima:pass@host:5432/kima
-
-
 class Settings(BaseModel):
     server: ServerConfig = ServerConfig()
     library: LibraryConfig = LibraryConfig()
@@ -86,7 +83,6 @@ class Settings(BaseModel):
     lastfm: LastfmConfig = LastfmConfig()
     analysis: AnalysisConfig = AnalysisConfig()
     subsonic: SubsonicConfig = SubsonicConfig()
-    kimahub: KimahubConfig = KimahubConfig()
 
 
 CONFIG_PATHS = [

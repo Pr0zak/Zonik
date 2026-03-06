@@ -46,7 +46,7 @@
 			icon: Settings,
 			href: '/settings',
 			color: 'var(--color-settings)',
-			tasks: ['lastfm_sync', 'kimahub_favorites_sync'],
+			tasks: ['lastfm_sync'],
 		},
 	];
 

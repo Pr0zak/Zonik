@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 
 AUDIO_EXTENSIONS = {".flac", ".mp3", ".m4a", ".ogg", ".opus", ".wav", ".wma", ".aac"}
 
+# Higher = better quality format
+FORMAT_QUALITY = {"flac": 10, "wav": 9, "alac": 8, "aiff": 8, "m4a": 5, "ogg": 4, "opus": 4, "mp3": 3, "aac": 3, "wma": 2}
+
 MIME_MAP = {
     ".flac": "audio/flac",
     ".mp3": "audio/mpeg",
@@ -355,6 +358,47 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
     return stats
 
 
+def _normalize_title(s: str) -> str:
+    """Normalize a title for matching (lowercase, strip parentheticals, non-alphanum)."""
+    import re
+    if not s:
+        return ""
+    s = s.lower().strip()
+    s = re.sub(r"\s*\(.*?\)\s*", " ", s)
+    s = re.sub(r"\s*\[.*?\]\s*", " ", s)
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _quality_rank(fmt: str, file_size: int) -> tuple[int, int]:
+    """Return (format_rank, file_size) for quality comparison."""
+    return (FORMAT_QUALITY.get(fmt, 0), file_size)
+
+
+async def _find_existing_track(db: AsyncSession, title: str, artist_name: str) -> Track | None:
+    """Find an existing library track with the same normalized title and artist."""
+    if not title:
+        return None
+    norm_title = _normalize_title(title)
+    norm_artist = _normalize_title(artist_name)
+    if not norm_title:
+        return None
+
+    # Search by exact artist+title first
+    if norm_artist:
+        result = await db.execute(
+            select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                Track.title.isnot(None),
+            )
+        )
+        for track in result.scalars().all():
+            if _normalize_title(track.title) == norm_title:
+                artist_obj = await db.get(Artist, track.artist_id) if track.artist_id else None
+                if artist_obj and _normalize_title(artist_obj.name) == norm_artist:
+                    return track
+    return None
+
+
 async def import_downloaded_file(
     db: AsyncSession,
     save_path: str,
@@ -362,8 +406,14 @@ async def import_downloaded_file(
 ) -> str | None:
     """Move a downloaded file into the music library and index it.
 
+    If a track with the same title+artist already exists and the new file
+    is higher quality, replaces the old file (upgrade). Otherwise imports
+    as a new track.
+
     Returns the track ID on success, or None on failure.
     """
+    import shutil
+
     src = Path(save_path)
     if not src.exists():
         log.warning(f"[import] File not found: {save_path}")
@@ -383,8 +433,131 @@ async def import_downloaded_file(
         log.warning(f"[import] Could not parse audio tags: {save_path}")
         return None
 
+    new_fmt = parsed["format"] or ""
+    new_size = parsed["file_size"] or src.stat().st_size
+
+    # --- Check for existing track (upgrade detection) ---
+    existing = await _find_existing_track(db, parsed["title"], parsed["artist_name"] or artist_hint)
+    if existing:
+        old_quality = _quality_rank(existing.format or "", existing.file_size or 0)
+        new_quality = _quality_rank(new_fmt, new_size)
+        if new_quality > old_quality:
+            # Upgrade — replace the old file
+            old_path = music_dir / existing.file_path if existing.file_path else None
+            folder_name = parsed["artist_name"] or artist_hint or "Unknown Artist"
+            folder_name = "".join(c for c in folder_name if c not in '<>:"/\\|?*').strip() or "Unknown Artist"
+            dest_dir = music_dir / folder_name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = dest_dir / src.name
+
+            if dest.exists() and dest != src:
+                stem, ext = dest.stem, dest.suffix
+                for i in range(1, 100):
+                    dest = dest_dir / f"{stem} ({i}){ext}"
+                    if not dest.exists():
+                        break
+
+            try:
+                shutil.move(str(src), str(dest))
+            except Exception as e:
+                log.warning(f"[import] Failed to move {src} → {dest}: {e}")
+                return None
+
+            # Delete old file
+            if old_path and old_path.exists():
+                try:
+                    old_path.unlink()
+                    log.info(f"[import] Upgrade: removed old {old_path.name} ({existing.format}, {existing.file_size or 0} bytes)")
+                except Exception as e:
+                    log.warning(f"[import] Could not delete old file {old_path}: {e}")
+
+            # Re-parse from new location and update existing track
+            parsed = parse_audio_file(dest, music_dir)
+            if not parsed:
+                return None
+
+            rel_path = parsed["file_path"]
+            new_track_id = _stable_id(rel_path)
+
+            # Update the existing track record with new file info
+            existing.file_path = rel_path
+            existing.file_size = parsed["file_size"]
+            existing.format = parsed["format"]
+            existing.bitrate = parsed["bitrate"]
+            existing.sample_rate = parsed["sample_rate"]
+            existing.bit_depth = parsed["bit_depth"]
+            existing.mime_type = parsed["mime_type"]
+            existing.duration_seconds = parsed["duration_seconds"]
+
+            # If the track ID changed (different file path), we need to update it
+            if new_track_id != existing.id:
+                # Delete old FTS entry
+                from backend.database import update_fts_index
+                try:
+                    await db.execute(
+                        select(Track).where(Track.id == existing.id)
+                    )
+                except Exception:
+                    pass
+                # Create new track with new ID, copy relationships
+                new_track = Track(
+                    id=new_track_id,
+                    title=existing.title,
+                    artist_id=existing.artist_id,
+                    album_id=existing.album_id,
+                    track_number=existing.track_number,
+                    disc_number=existing.disc_number,
+                    duration_seconds=parsed["duration_seconds"],
+                    file_path=rel_path,
+                    file_size=parsed["file_size"],
+                    format=parsed["format"],
+                    bitrate=parsed["bitrate"],
+                    sample_rate=parsed["sample_rate"],
+                    bit_depth=parsed["bit_depth"],
+                    mime_type=parsed["mime_type"],
+                    genre=existing.genre,
+                    year=existing.year,
+                    musicbrainz_id=existing.musicbrainz_id,
+                    cover_art_path=existing.cover_art_path,
+                    replay_gain_track=parsed["replay_gain_track"],
+                    replay_gain_album=parsed["replay_gain_album"],
+                    play_count=existing.play_count,
+                )
+                # Migrate favorites to new track ID
+                from backend.models.favorite import Favorite
+                favs = (await db.execute(
+                    select(Favorite).where(Favorite.track_id == existing.id)
+                )).scalars().all()
+                for fav in favs:
+                    fav.track_id = new_track_id
+
+                await db.delete(existing)
+                await db.flush()
+                db.add(new_track)
+                await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
+                await db.commit()
+                log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
+                return new_track_id
+            else:
+                from backend.database import update_fts_index
+                await update_fts_index(db, existing.id, existing.title, parsed["artist_name"], parsed["album_title"])
+                await db.commit()
+                log.info(f"[import] Upgraded in-place: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
+                return existing.id
+        else:
+            # Not an upgrade — check if it's a different version (remix etc)
+            # by comparing normalized titles more strictly (with parentheticals)
+            existing_title = (existing.title or "").lower().strip()
+            new_title = (parsed["title"] or "").lower().strip()
+            if existing_title == new_title:
+                # Exact same title, not an upgrade — skip (duplicate)
+                log.info(f"[import] Duplicate skipped (library has equal/better): {parsed['title']}")
+                src.unlink(missing_ok=True)
+                return None
+            # Different version (remix, acoustic, live, etc.) — fall through to normal import
+
+    # --- Normal import (new track) ---
     folder_name = parsed["artist_name"] or artist_hint or "Unknown Artist"
-    # Sanitize folder name
     folder_name = "".join(c for c in folder_name if c not in '<>:"/\\|?*').strip()
     if not folder_name:
         folder_name = "Unknown Artist"
@@ -402,7 +575,6 @@ async def import_downloaded_file(
                 break
 
     try:
-        import shutil
         shutil.move(str(src), str(dest))
     except Exception as e:
         log.warning(f"[import] Failed to move {src} → {dest}: {e}")
@@ -460,3 +632,31 @@ async def import_downloaded_file(
     await db.commit()
     log.info(f"[import] Indexed: {parsed['artist_name']} — {parsed['title']} → {rel_path}")
     return track_id
+
+
+def cleanup_download_dir():
+    """Remove zero-byte files and non-audio files from the download directory."""
+    settings = get_settings()
+    dl_dir = Path(settings.library.download_dir)
+    if not dl_dir.exists():
+        return
+
+    removed = 0
+    for f in dl_dir.iterdir():
+        if not f.is_file():
+            continue
+        # Remove zero-byte files (failed transfers)
+        if f.stat().st_size == 0:
+            f.unlink(missing_ok=True)
+            log.info(f"[cleanup] Removed zero-byte file: {f.name}")
+            removed += 1
+            continue
+        # Remove non-audio files (skip known subdirs)
+        ext = f.suffix.lower()
+        if ext not in AUDIO_EXTENSIONS:
+            f.unlink(missing_ok=True)
+            log.info(f"[cleanup] Removed non-audio file: {f.name}")
+            removed += 1
+
+    if removed:
+        log.info(f"[cleanup] Removed {removed} files from downloads dir")

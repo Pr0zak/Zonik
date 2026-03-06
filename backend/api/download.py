@@ -512,6 +512,12 @@ async def _do_download_inner(db, job, job_id, desc, req):
         await db.merge(job)
         await db.commit()
         await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": desc})
+        # Clean up zero-byte and non-audio leftovers in download dir
+        try:
+            from backend.services.scanner import cleanup_download_dir
+            cleanup_download_dir()
+        except Exception as e:
+            log.debug(f"[download] Cleanup skipped: {e}")
 
 @router.post("/bulk")
 async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTasks):
@@ -659,6 +665,12 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             await db.merge(job)
             await db.commit()
             await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": job.status, "progress": len(req.tracks), "total": len(req.tracks)})
+            # Clean up zero-byte and non-audio leftovers
+            try:
+                from backend.services.scanner import cleanup_download_dir
+                cleanup_download_dir()
+            except Exception:
+                pass
 
     background_tasks.add_task(do_bulk)
     return {"job_id": job_id, "total": len(req.tracks)}

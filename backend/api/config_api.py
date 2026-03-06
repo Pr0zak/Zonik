@@ -87,6 +87,7 @@ class ServiceConfig(BaseModel):
     slsk_max_concurrent_downloads: int = 4
     slsk_parallel_sources: int = 1
     slsk_source_strategy: str = "first"
+    slsk_share_library: bool = True
     # Lidarr
     lidarr_enabled: bool = False
     lidarr_url: str = ""
@@ -111,6 +112,7 @@ async def get_service_config():
         "slsk_max_concurrent_downloads": settings.soulseek.max_concurrent_downloads,
         "slsk_parallel_sources": settings.soulseek.parallel_sources,
         "slsk_source_strategy": settings.soulseek.source_strategy,
+        "slsk_share_library": settings.soulseek.share_library,
         "lidarr_enabled": settings.lidarr.enabled,
         "lidarr_url": settings.lidarr.url,
         "lidarr_api_key": settings.lidarr.api_key,
@@ -141,6 +143,7 @@ async def update_service_config(req: ServiceConfig):
     soulseek["parallel_sources"] = max(1, min(req.slsk_parallel_sources, 5))
     if req.slsk_source_strategy in ("first", "best"):
         soulseek["source_strategy"] = req.slsk_source_strategy
+    soulseek["share_library"] = req.slsk_share_library
     raw["soulseek"] = {**settings.soulseek.model_dump(), **soulseek}
 
     lidarr = raw.get("lidarr", {})

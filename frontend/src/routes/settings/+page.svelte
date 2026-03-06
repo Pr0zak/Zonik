@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -21,6 +21,7 @@
 		slsk_max_concurrent_downloads: 4,
 		slsk_parallel_sources: 1,
 		slsk_source_strategy: 'first',
+		slsk_share_library: true,
 		lidarr_enabled: false,
 		lidarr_url: '',
 		lidarr_api_key: '',
@@ -258,6 +259,41 @@
 		}
 	}
 
+	async function generateApiKey(userId) {
+		try {
+			const resp = await fetch(`/api/users/${userId}/api-key`, { method: 'POST' });
+			if (!resp.ok) {
+				addToast('Failed to generate API key', 'error');
+				return;
+			}
+			const data = await resp.json();
+			addToast('API key generated — copy it now', 'success');
+			await loadUsers();
+		} catch (e) {
+			addToast('Failed to generate API key: ' + e.message, 'error');
+		}
+	}
+
+	async function revokeApiKey(userId) {
+		if (!confirm('Revoke this API key? Symfonium will need a new one.')) return;
+		try {
+			const resp = await fetch(`/api/users/${userId}/api-key`, { method: 'DELETE' });
+			if (!resp.ok) {
+				addToast('Failed to revoke API key', 'error');
+				return;
+			}
+			addToast('API key revoked', 'success');
+			await loadUsers();
+		} catch (e) {
+			addToast('Failed to revoke API key: ' + e.message, 'error');
+		}
+	}
+
+	function copyApiKey(key) {
+		navigator.clipboard.writeText(key);
+		addToast('API key copied to clipboard', 'success');
+	}
+
 	async function createBackup() {
 		creatingBackup = true;
 		try {
@@ -352,23 +388,54 @@
 
 			<div class="space-y-3">
 				{#each users as user}
-					<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md">
-						<div class="flex items-center gap-3">
-							<span class="font-medium text-[var(--text-primary)]">{user.username}</span>
-							{#if user.is_admin}
-								<Badge variant="info">Admin</Badge>
-							{/if}
-						</div>
-						<div class="flex items-center gap-2">
-							<Button variant="ghost" size="sm" onclick={() => { changingPw = changingPw === user.id ? null : user.id; }}>
-								<Key class="w-3.5 h-3.5" />
-							</Button>
-							{#if !user.is_admin}
-								<Button variant="ghost" size="sm" onclick={() => deleteUser(user.id)}>
-									<Trash2 class="w-3.5 h-3.5 text-red-400" />
+					<div class="bg-[var(--bg-tertiary)] rounded-md px-3 py-2">
+						<div class="flex items-center justify-between">
+							<div class="flex items-center gap-3">
+								<span class="font-medium text-[var(--text-primary)]">{user.username}</span>
+								{#if user.is_admin}
+									<Badge variant="info">Admin</Badge>
+								{/if}
+								{#if user.has_api_key}
+									<Badge variant="success">API Key</Badge>
+								{/if}
+							</div>
+							<div class="flex items-center gap-2">
+								<Button variant="ghost" size="sm" onclick={() => { changingPw = changingPw === user.id ? null : user.id; }} title="Change password">
+									<Key class="w-3.5 h-3.5" />
 								</Button>
-							{/if}
+								{#if user.has_api_key}
+									<Button variant="ghost" size="sm" onclick={() => copyApiKey(user.subsonic_api_key)} title="Copy API key">
+										<Copy class="w-3.5 h-3.5" />
+									</Button>
+									<Button variant="ghost" size="sm" onclick={() => revokeApiKey(user.id)} title="Revoke API key">
+										<Shield class="w-3.5 h-3.5 text-red-400" />
+									</Button>
+								{:else}
+									<Button variant="ghost" size="sm" onclick={() => generateApiKey(user.id)} title="Generate API key for Symfonium">
+										<Shield class="w-3.5 h-3.5" />
+									</Button>
+								{/if}
+								{#if !user.is_admin}
+									<Button variant="ghost" size="sm" onclick={() => deleteUser(user.id)}>
+										<Trash2 class="w-3.5 h-3.5 text-red-400" />
+									</Button>
+								{/if}
+							</div>
 						</div>
+						{#if user.has_api_key}
+							<div class="mt-1.5 flex items-center gap-2">
+								<code class="text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-primary)] px-2 py-0.5 rounded">
+									{showField['apikey_' + user.id] ? user.subsonic_api_key : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}
+								</code>
+								<button class="text-[var(--text-disabled)] hover:text-[var(--text-muted)]" onclick={() => toggleField('apikey_' + user.id)}>
+									{#if showField['apikey_' + user.id]}
+										<EyeOff class="w-3 h-3" />
+									{:else}
+										<Eye class="w-3 h-3" />
+									{/if}
+								</button>
+							</div>
+						{/if}
 					</div>
 					{#if changingPw === user.id}
 						<div class="ml-3 flex gap-2 animate-fade-slide-in">
@@ -504,11 +571,21 @@
 							</select>
 						</div>
 					</div>
-					<p class="mt-2 text-xs text-[var(--text-disabled)]">Connects directly to the Soulseek P2P network. Multi-source tries multiple peers at once for higher success rates.</p>
+					<div class="mt-3 flex items-center justify-between">
+						<div>
+							<span class="text-xs text-[var(--text-muted)]">Share Library</span>
+							<p class="text-xs text-[var(--text-disabled)]">Share your music files with other peers on the network</p>
+						</div>
+						<button type="button" onclick={() => { services.slsk_share_library = !services.slsk_share_library; markDirty(); }}
+							class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.slsk_share_library ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
+							role="switch" aria-checked={services.slsk_share_library}>
+							<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.slsk_share_library ? 'translate-x-4' : 'translate-x-0.5'}"></span>
+						</button>
+					</div>
 				</div>
 
 				<!-- Lidarr -->
-				<div>
+				<div class="pt-4 border-t border-[var(--border-subtle)]">
 					<div class="flex items-center justify-between mb-2">
 						<div class="flex items-center gap-3">
 							<h3 class="text-sm font-medium text-[var(--text-primary)]">Lidarr</h3>
@@ -554,7 +631,7 @@
 				</div>
 
 				<!-- Last.fm -->
-				<div>
+				<div class="pt-4 border-t border-[var(--border-subtle)]">
 					<div class="flex items-center justify-between mb-2">
 						<h3 class="text-sm font-medium text-[var(--text-primary)]">Last.fm</h3>
 						<button onclick={() => testConnection('lastfm')}
@@ -590,7 +667,7 @@
 		</Card>
 
 		<!-- Sync Schedules -->
-		{#if schedTasks.lastfm_sync || schedTasks.kimahub_favorites_sync}
+		{#if schedTasks.lastfm_sync}
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
 					<Clock class="w-4 h-4 text-[var(--text-muted)]" />
@@ -598,9 +675,6 @@
 				</div>
 				{#if schedTasks.lastfm_sync}
 					<ScheduleControl taskName="lastfm_sync" label="Last.fm Scrobble Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
-				{/if}
-				{#if schedTasks.kimahub_favorites_sync}
-					<ScheduleControl taskName="kimahub_favorites_sync" label="KimaHub Favorites" enabled={schedTasks.kimahub_favorites_sync.enabled} intervalHours={schedTasks.kimahub_favorites_sync.interval_hours} runAt={schedTasks.kimahub_favorites_sync.run_at} lastRunAt={schedTasks.kimahub_favorites_sync.last_run_at} running={schedRunning.kimahub_favorites_sync} onToggle={() => toggleSched('kimahub_favorites_sync')} onUpdate={(u) => updateSched('kimahub_favorites_sync', u)} onRun={() => runSched('kimahub_favorites_sync')} />
 				{/if}
 			</Card>
 		{/if}
@@ -628,24 +702,15 @@
 			</div>
 		</Card>
 
-		<!-- About -->
-		<Card padding="p-4">
-			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-4">About</h2>
-			<div class="space-y-2 text-sm text-[var(--text-secondary)]">
-				{#if versionInfo}
-					<p class="text-[var(--text-primary)]">Zonik v{versionInfo.version} <span class="font-mono text-xs text-[var(--text-muted)]">({versionInfo.commit})</span></p>
-				{:else}
-					<p class="text-[var(--text-primary)]">Zonik</p>
-				{/if}
-				<p>Self-hosted music backend with OpenSubsonic API</p>
-				<p class="text-[var(--text-muted)]">FastAPI + SQLite + SvelteKit</p>
-			</div>
-		</Card>
-
 		<!-- Updates -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-base font-semibold text-[var(--text-primary)]">Updates</h2>
+				<div>
+						<h2 class="text-base font-semibold text-[var(--text-primary)]">About & Updates</h2>
+						{#if versionInfo}
+							<p class="text-xs text-[var(--text-muted)] mt-0.5">Zonik v{versionInfo.version} <span class="font-mono">({versionInfo.commit})</span></p>
+						{/if}
+					</div>
 				{#if updateInfo?.update_available}
 					<Badge variant="warning">Update Available</Badge>
 				{:else if updateInfo && !updateInfo.error}

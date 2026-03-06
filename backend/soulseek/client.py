@@ -85,7 +85,10 @@ class SoulseekClient:
             from backend.config import get_settings
             from backend.soulseek.shares import refresh_shares
             settings = get_settings()
-            num_dirs, num_files = refresh_shares(settings.library.music_dir)
+            num_dirs, num_files = refresh_shares(
+                settings.library.music_dir,
+                share_library=settings.soulseek.share_library,
+            )
             log.info(f"[client] Shares refreshed: {num_files} files in {num_dirs} dirs")
         except Exception as e:
             log.warning(f"[client] Failed to refresh shares: {e}")

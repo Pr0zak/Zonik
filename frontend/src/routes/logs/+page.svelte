@@ -28,7 +28,7 @@
 		{ key: 'downloads', label: 'Downloads', types: ['download', 'bulk_download'] },
 		{ key: 'library', label: 'Library', types: ['library_scan', 'library_cleanup'] },
 		{ key: 'analysis', label: 'Analysis', types: ['audio_analysis', 'enrichment'] },
-		{ key: 'discovery', label: 'Discovery', types: ['lastfm_top_tracks', 'discover_similar', 'discover_artists', 'lastfm_sync', 'kimahub_favorites_sync'] },
+		{ key: 'discovery', label: 'Discovery', types: ['lastfm_top_tracks', 'discover_similar', 'discover_artists', 'lastfm_sync'] },
 		{ key: 'playlists', label: 'Playlists', types: ['playlist_weekly_top', 'playlist_weekly_discover', 'playlist_favorites'] },
 	];
 

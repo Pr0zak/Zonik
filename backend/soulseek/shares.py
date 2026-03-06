@@ -28,12 +28,27 @@ def get_shared_file_list_response() -> bytes | None:
     return _cached_response
 
 
-def refresh_shares(music_dir: str) -> tuple[int, int]:
+def refresh_shares(music_dir: str, share_library: bool = True) -> tuple[int, int]:
     """Scan the music directory and cache the shared file list.
 
+    If share_library is False, reports empty shares (leecher mode).
     Returns (num_dirs, num_files).
     """
     global _cached_response, _cached_dirs, _cached_files
+
+    if not share_library:
+        # Build empty share response
+        inner = MessageBuilder()
+        inner.uint32(0)  # 0 directories
+        compressed = zlib.compress(inner.build_no_prefix())
+        msg = MessageBuilder()
+        msg.uint32(PeerMessageCode.SHARED_FILE_LIST_RESPONSE)
+        msg.raw(compressed)
+        _cached_response = msg.build()
+        _cached_dirs = 0
+        _cached_files = 0
+        log.info("[shares] Library sharing disabled — reporting empty shares")
+        return 0, 0
 
     music_path = Path(music_dir)
     if not music_path.exists():

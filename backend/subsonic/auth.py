@@ -40,18 +40,12 @@ async def authenticate_subsonic(request: Request) -> User:
 
     if token and salt:
         # Token auth: token = md5(password + salt)
-        expected = hashlib.md5(
-            (user.password_hash + salt).encode() if not _is_bcrypt(user.password_hash)
-            else (salt).encode()
-        ).hexdigest()
-        # For token auth with bcrypt passwords, we need to store the plain password too
-        # or use a different approach. For now, check against known password.
-        # Subsonic token = md5(password + salt), but we only have bcrypt hash.
-        # We'll need to verify differently - store an enc_password field or
-        # use the Subsonic approach of checking the token.
-        # For simplicity, we'll accept any valid user with token auth for now.
-        # TODO: Implement proper token verification with stored subsonic password
-        pass  # Accept token auth for known users
+        # Verify against stored subsonic_api_key (plaintext key for token auth)
+        if not user.subsonic_api_key:
+            raise HTTPException(401, "No API key configured for this user. Set one in Settings > Users.")
+        expected = hashlib.md5((user.subsonic_api_key + salt).encode()).hexdigest()
+        if token.lower() != expected.lower():
+            raise HTTPException(401, "Invalid token")
     elif password:
         # Password auth: either hex-encoded or plain
         plain_password = password

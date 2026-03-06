@@ -110,6 +110,8 @@
 		JSON.parse(localStorage.getItem('hiddenDownloadJobs') || '[]')
 	));
 
+	const STATUS_PRIORITY = { pending: 0, running: 1, completed: 2, failed: 3 };
+
 	let visibleJobs = $derived(
 		jobs.filter(j => {
 			if (hiddenJobIds.has(j.id)) return false;
@@ -118,6 +120,14 @@
 				return age < AUTO_HIDE_MS;
 			}
 			return true;
+		}).sort((a, b) => {
+			const pa = STATUS_PRIORITY[a.status] ?? 1;
+			const pb = STATUS_PRIORITY[b.status] ?? 1;
+			if (pa !== pb) return pa - pb;
+			// Within same status group, sort by most recent first
+			const ta = a.started_at || a.created_at || '';
+			const tb = b.started_at || b.created_at || '';
+			return tb.localeCompare(ta);
 		})
 	);
 

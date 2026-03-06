@@ -4,7 +4,7 @@
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack } from '$lib/stores.js';
-	import { formatDuration, formatSize, debounce } from '$lib/utils.js';
+	import { formatDuration, formatSize, formatRelativeTime, debounce } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
@@ -468,7 +468,7 @@
 
 	function toggleSort(col) {
 		if (sort === col) order = order === 'asc' ? 'desc' : 'asc';
-		else { sort = col; order = 'asc'; }
+		else { sort = col; order = (col === 'created_at' || col === 'play_count') ? 'desc' : 'asc'; }
 		loadData();
 	}
 
@@ -503,6 +503,23 @@
 			addToast(`Queued ${result.queued} track(s) for analysis`, 'success');
 			selected = new Set();
 		} catch (e) { addToast('Bulk analyze failed: ' + e.message, 'error'); }
+	}
+
+	async function bulkFindUpgrades() {
+		if (!selected.size) return;
+		const selectedTracks = tracks.filter(t => selected.has(t.id));
+		const items = selectedTracks.map(t => ({ artist: t.artist || '', track: t.title || '' }));
+		try {
+			const resp = await fetch('/api/download/bulk', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ tracks: items }),
+			});
+			const data = await resp.json();
+			addToast(`Searching upgrades for ${items.length} track(s)`, 'success');
+			selected = new Set();
+			selectMode = false;
+		} catch (e) { addToast('Find upgrades failed: ' + e.message, 'error'); }
 	}
 
 	// Similar tracks
@@ -788,6 +805,9 @@
 				<Button variant="primary" size="sm" onclick={bulkAnalyze}>
 					<ScanLine class="w-3.5 h-3.5" /> Analyze
 				</Button>
+				<Button variant="success" size="sm" onclick={bulkFindUpgrades}>
+					<Download class="w-3.5 h-3.5" /> Find Upgrades
+				</Button>
 			{/if}
 			<div class="flex-1"></div>
 			<Button variant="secondary" size="sm" onclick={toggleSelectMode}>Cancel</Button>
@@ -882,6 +902,7 @@
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-20 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('created_at')}>Added {sort === 'created_at' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
 									<AudioWaveform class="w-3.5 h-3.5 inline" /> {sort === 'analyzed' ? (order === 'asc' ? '↑' : '↓') : ''}
 								</th>
@@ -915,6 +936,7 @@
 									<td class="px-3 py-2 text-[var(--text-secondary)] hidden md:table-cell truncate max-w-[200px]">{track.artist || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] hidden lg:table-cell truncate max-w-[200px]">{track.album || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
+									<td class="px-3 py-2 text-[var(--text-muted)] text-xs hidden xl:table-cell" title={track.created_at ? new Date(track.created_at).toLocaleString() : ''}>{track.created_at ? formatRelativeTime(track.created_at) : '-'}</td>
 									<td class="px-3 py-2 hidden lg:table-cell text-center" title={track.analyzed ? 'Analyzed' : 'Not analyzed'}>
 										<AudioWaveform class="w-3.5 h-3.5 inline {track.analyzed ? 'text-pink-400' : 'text-[var(--text-disabled)] opacity-30'}" />
 									</td>
@@ -1411,6 +1433,10 @@
 			<Heart class="w-3.5 h-3.5 {favTrackIds.has(menuTrack.id) ? 'text-red-400' : ''}"
 				fill={favTrackIds.has(menuTrack.id) ? 'currentColor' : 'none'} />
 			{favTrackIds.has(menuTrack.id) ? 'Unfavorite' : 'Favorite'}
+		</button>
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => { const t = menuTrack; closeMenu(); goto(`/downloads?artist=${encodeURIComponent(t.artist || '')}&track=${encodeURIComponent(t.title || '')}`); }}>
+			<Download class="w-3.5 h-3.5 text-green-400" /> Find Upgrade
 		</button>
 		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
 			onclick={() => blacklistArtist(menuTrack)}>
