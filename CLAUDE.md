@@ -96,8 +96,10 @@ docs/                  # Installation, configuration, API reference, development
 - Artist/Album IDs = MD5 of normalized name key
 - SQLite with FTS5 for search, populated during library scan
 - All async (aiosqlite, httpx, arq)
-- Subsonic auth via token or password; token = md5(api_key + salt), requires per-user API key (not bcrypt hash)
-- Subsonic API key: generated via POST /api/users/{id}/api-key, stored as plaintext for md5 token auth; search3 empty query = Symfonium fast sync
+- Subsonic auth: three methods — apiKey param (Symfonium), token+salt (md5(api_key + salt)), or password (plain/enc:hex)
+- Subsonic API key: generated via POST /api/users/{id}/api-key, stored plaintext; apiKey param looks up user directly (no username needed)
+- Subsonic response compat: coverArt must be entity ID (not file path), isDir/isVideo must be JSON booleans (not strings), bpm must be int (not float), artist/album must always be present (empty string, not omitted)
+- search3 empty query = Symfonium fast sync
 - Stream transcoding via ffmpeg (maxBitRate, format, timeOffset)
 - Download blacklist system (block artists or specific tracks)
 - Cover art: Deezer > Cover Art Archive > iTunes > Last.fm fallback
