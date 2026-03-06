@@ -169,6 +169,20 @@
 		if (!job || !job.total) return 0;
 		return Math.round((job.progress / job.total) * 100);
 	}
+
+	// Show progress relative to total library size (aligns with stats card)
+	function analysisProgress(job) {
+		if (!stats || !job) return { done: 0, total: 0, pct: 0 };
+		const done = (stats.analyzed || 0) + (job.progress || 0);
+		const total = stats.total_tracks || 0;
+		return { done, total, pct: total > 0 ? Math.round(done / total * 100) : 0 };
+	}
+	function embeddingsProgress(job) {
+		if (!stats || !job) return { done: 0, total: 0, pct: 0 };
+		const done = (stats.with_embeddings || 0) + (job.progress || 0);
+		const total = stats.total_tracks || 0;
+		return { done, total, pct: total > 0 ? Math.round(done / total * 100) : 0 };
+	}
 </script>
 
 <div class="max-w-6xl">
@@ -193,13 +207,14 @@
 					<div class="h-full bg-[var(--color-accent)] rounded-full transition-all" style="width: {stats.analysis_pct}%"></div>
 				</div>
 				{#if analysisJob}
+					{@const ap = analysisProgress(analysisJob)}
 					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-[var(--color-info)] font-medium animate-pulse">Running...</span>
-							<span class="text-xs text-[var(--text-muted)] font-mono">{analysisJob.progress}/{analysisJob.total}</span>
+							<span class="text-xs text-[var(--text-muted)] font-mono">{ap.done}/{ap.total}</span>
 						</div>
 						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
-							<div class="h-full bg-[var(--color-info)] rounded-full transition-all" style="width: {progressPct(analysisJob)}%"></div>
+							<div class="h-full bg-[var(--color-info)] rounded-full transition-all" style="width: {ap.pct}%"></div>
 						</div>
 					</div>
 				{:else}
@@ -221,13 +236,14 @@
 					<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
 				</div>
 				{#if embeddingsJob}
+					{@const ep = embeddingsProgress(embeddingsJob)}
 					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-[var(--color-analysis)] font-medium animate-pulse">Running...</span>
-							<span class="text-xs text-[var(--text-muted)] font-mono">{embeddingsJob.progress}/{embeddingsJob.total}</span>
+							<span class="text-xs text-[var(--text-muted)] font-mono">{ep.done}/{ep.total}</span>
 						</div>
 						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
-							<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {progressPct(embeddingsJob)}%"></div>
+							<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {ep.pct}%"></div>
 						</div>
 					</div>
 				{:else}
