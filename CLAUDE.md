@@ -32,7 +32,7 @@ backend/
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner
-    download.py        # Soulseek search/trigger/bulk + blacklist
+    download.py        # Soulseek search/trigger/bulk + blacklist + stats + reputation reset
     discovery.py       # Last.fm charts, similar tracks/artists
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management (task labels + descriptions)
@@ -49,20 +49,21 @@ backend/
     listener.py        # Inbound peer listener (TCP server)
     transfer.py        # Download state machine + file I/O via aiofiles
     search.py          # Multi-strategy search using native client
-    reputation.py      # Redis-backed peer failure tracking
+    reputation.py      # Peer failure tracking (in-memory + Redis), reset_all support
+    shares.py          # Library file sharing — scan music dir, build compressed file list for peers
   services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, etc.)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
   src/routes/          # SvelteKit pages (12 routes)
-    +page.svelte       # Dashboard (stats, last scan, version, health)
+    +page.svelte       # Dashboard (stats, last scan, version, health, Soulseek P2P)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner
     discover/          # Last.fm charts + inline download (per-track status, bulk download), similar artists
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
-    stats/             # Library statistics
+    stats/             # Library statistics + Soulseek P2P stats + reputation reset
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
@@ -119,9 +120,12 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek client: persistent singleton in FastAPI lifespan, feature-flagged via `use_native` config toggle
 - Native Soulseek: protocol layer (struct.pack/unpack), server connection with auto-reconnect (exp backoff), peer connection racing (direct vs indirect), file transfer state machine, zlib-compressed search responses
 - Native Soulseek: `services/soulseek.py` is a facade — routes to native or slskd based on `use_native` flag, zero changes needed in download.py callers
-- Native Soulseek: peer reputation tracking (Redis or in-memory fallback), per-failure 30min cooldown, 3+ failures = 24h block, adjusts quality scoring
-- Native Soulseek: multi-source parallel downloads (configurable 1-5 sources, "first" or "best" strategy), record_success on completion
-- Search results include on_cooldown flag per peer; cooldown peers sorted last and shown dimmed with clock icon
+- Native Soulseek: peer reputation tracking (in-memory with Redis fallback), scores adjust search result sorting (no visible cooldown badges)
+- Native Soulseek: POST /api/download/reset-reputation clears all peer rep data; button on Stats page
+- Native Soulseek: multi-source parallel downloads (configurable 1-5 sources, "first" or "best" strategy), per-source error tracking in job results
+- Native Soulseek: library sharing — scans music dir on startup + after scan, reports real file counts to server, responds to SharedFileListRequest from peers
+- Native Soulseek: transfer key normalization — path separators canonicalized (backslash→forward slash) to fix filename matching between search results and peer transfer offers
+- Soulseek stats: /api/download/soulseek-stats returns connection, peers, shares, transfers — shown on Dashboard + Stats page
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
@@ -140,7 +144,7 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek transfers: don't remove immediately on complete — let poll_transfer see final state; cleanup loop removes after 60s
 - Native Soulseek downloads: split queue_timeout (120s, waiting for peer) vs stall_timeout (60s, no data during transfer)
 - Native Soulseek downloads: auto-fallback — when direct download fails, searches for up to 4 additional peers
-- Native Soulseek transfers: fuzzy filename matching in get_transfer (basename fallback for path separator differences)
+- Native Soulseek transfers: fuzzy filename matching in get_transfer (normalized keys + basename fallback for requested/queued/connected states)
 - Pagination: library defaults to 24 per page (multiples of 12 for even grid rows: 24/48/96/192); other lists default 25/page (25/50/100/200); Jobs API returns {items, total}
 - Library cleanup tools: three separate operations (orphan removal, deduplication, file organization) each with preview/dry-run before execution
 - Cleanup dedup: per-track checkboxes (select/deselect all), file sizes displayed, only selected tracks removed
@@ -156,9 +160,11 @@ docs/                  # Installation, configuration, API reference, development
 - Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
 - Favorites paginated server-side: /api/favorites returns {items, total} with offset/limit
 - Upgrade restarts kill background tasks (enrichment, analysis); startup lifespan marks stuck running/pending jobs as failed
+- ARQ WorkerSettings.redis_settings must be a RedisSettings instance (class attribute), NOT a staticmethod — ARQ accesses .host directly
 - Library tracks: analyzed filter (yes/no/all), sortable analyzed column, waveform icon per track (pink=analyzed, dim=not)
 - Download completion details: filename (linked to library search), format badge, file size, source username, strategy info
-- Failed download jobs include failed_sources list; frontend marks those peers as on_cooldown in search results
+- Failed download jobs include failed_sources list + source_errors array with per-source {user, error} detail
+- Downloads page: failed jobs expandable to show per-source error breakdown (username + error message)
 - Player bar: shows cover art (subsonic getCoverArt), track title + artist + album; progress bar uses $state + ontimeupdate for Svelte 5 reactivity
 
 ## Important Files
