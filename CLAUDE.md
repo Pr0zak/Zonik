@@ -26,13 +26,13 @@ backend/
   main.py              # FastAPI app, lifespan, router registration
   config.py            # Settings from zonik.toml (Pydantic models)
   database.py          # SQLAlchemy engine, FTS5 setup, search helpers
-  models/              # 14 SQLAlchemy models (Track, Artist, Album, etc.)
+  models/              # 15 SQLAlchemy models (Track, Artist, Album, SoulseekSnapshot, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner
-    download.py        # Soulseek search/trigger/bulk + blacklist + stats + reputation reset
+    download.py        # Soulseek search/trigger/bulk + blacklist + stats + stats history + reputation reset
     discovery.py       # Last.fm charts, similar tracks/artists
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management (task labels + descriptions)
@@ -51,6 +51,8 @@ backend/
     search.py          # Multi-strategy search using native client
     reputation.py      # Peer failure tracking (in-memory + Redis), reset_all support
     shares.py          # Library file sharing — scan music dir, build compressed file list for peers
+  models/
+    stats.py           # SoulseekSnapshot model — periodic P2P stat snapshots for charting
   services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, etc.)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
@@ -63,7 +65,7 @@ frontend/
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
-    stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset)
+    stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset) + P2P history charts (Chart.js)
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
@@ -133,6 +135,9 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek: parses QUEUE_UPLOAD (code 43) and PLACE_IN_QUEUE_REQUEST (code 51) from peers
 - Native Soulseek: transient connection errors (timeout, refused, OSError) don't penalize peer reputation
 - Soulseek stats: /api/download/soulseek-stats returns connection, uptime, reconnects, peers, shares, listen port, active searches, transfers, bandwidth, speed, reputation — shown on Dashboard + Stats page
+- Soulseek stats history: background collector snapshots stats every 5 minutes into soulseek_snapshots table (auto-pruned after 7 days)
+- Soulseek stats charts: /api/download/soulseek-stats/history?hours=24 powers 4 Chart.js line charts (peers, transfers, speed, bandwidth) with 6h/24h/3d/7d range selector
+- Scheduled audio_analysis: per-track try/except so individual track failures (e.g. unsupported .opus codec) don't mark entire job as failed
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress

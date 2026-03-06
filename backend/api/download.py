@@ -712,6 +712,36 @@ async def soulseek_stats():
     }
 
 
+@router.get("/soulseek-stats/history")
+async def soulseek_stats_history(hours: int = 24, db: AsyncSession = Depends(get_db)):
+    """Get historical Soulseek stats for charting."""
+    from backend.models.stats import SoulseekSnapshot
+    from datetime import timedelta
+
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    result = await db.execute(
+        select(SoulseekSnapshot)
+        .where(SoulseekSnapshot.timestamp >= cutoff)
+        .order_by(SoulseekSnapshot.timestamp)
+    )
+    snapshots = result.scalars().all()
+    return [
+        {
+            "timestamp": s.timestamp.isoformat(),
+            "connected": s.connected,
+            "peers": s.peers,
+            "active_transfers": s.active_transfers,
+            "completed_transfers": s.completed_transfers,
+            "failed_transfers": s.failed_transfers,
+            "queued_transfers": s.queued_transfers,
+            "bytes_transferred": s.bytes_transferred,
+            "speed": s.speed,
+            "active_searches": s.active_searches,
+        }
+        for s in snapshots
+    ]
+
+
 @router.post("/reset-reputation")
 async def reset_reputation():
     """Clear all peer reputation data (cooldowns + scores)."""

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import bcrypt
@@ -18,6 +20,63 @@ from backend.models.user import User
 from backend.models.job import Job
 from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users
 from backend.subsonic import router as subsonic_router
+
+
+STATS_INTERVAL = 300  # 5 minutes
+STATS_RETENTION_HOURS = 168  # 7 days
+
+
+async def _collect_soulseek_stats_loop():
+    """Periodically snapshot Soulseek stats for charting."""
+    import time
+    from backend.models.stats import SoulseekSnapshot
+    from datetime import timedelta
+
+    _log = logging.getLogger(__name__)
+    await asyncio.sleep(30)  # wait for client to initialize
+
+    while True:
+        try:
+            from backend.soulseek import get_client
+            client = get_client()
+            if client and client.logged_in:
+                transfers = client.transfers.get_all_transfers()
+                active = sum(1 for t in transfers if t.get("state") in ("transferring", "connected"))
+                queued = sum(1 for t in transfers if t.get("state") in ("requested", "queued"))
+                completed = sum(1 for t in transfers if t.get("state") == "completed")
+                failed = sum(1 for t in transfers if t.get("state") in ("failed", "denied"))
+                total_bytes = sum(t.get("received_bytes", 0) for t in transfers)
+                agg_speed = sum(t.get("speed", 0) for t in transfers if t.get("state") == "transferring")
+
+                async with async_session() as session:
+                    session.add(SoulseekSnapshot(
+                        timestamp=datetime.utcnow(),
+                        connected=True,
+                        peers=len(client.peers),
+                        active_transfers=active,
+                        completed_transfers=completed,
+                        failed_transfers=failed,
+                        queued_transfers=queued,
+                        bytes_transferred=total_bytes,
+                        speed=round(agg_speed),
+                        active_searches=len(client._search_events),
+                    ))
+                    # Prune old snapshots
+                    cutoff = datetime.utcnow() - timedelta(hours=STATS_RETENTION_HOURS)
+                    from sqlalchemy import delete
+                    await session.execute(
+                        delete(SoulseekSnapshot).where(SoulseekSnapshot.timestamp < cutoff)
+                    )
+                    await session.commit()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            _log.debug(f"Stats collection error: {e}")
+
+        try:
+            await asyncio.sleep(STATS_INTERVAL)
+        except asyncio.CancelledError:
+            return
 
 
 @asynccontextmanager
@@ -56,7 +115,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.error(f"Failed to start native Soulseek client: {e}")
 
+    # Start Soulseek stats collector (every 5 minutes)
+    stats_task = asyncio.create_task(_collect_soulseek_stats_loop())
+
     yield
+
+    stats_task.cancel()
+    try:
+        await stats_task
+    except asyncio.CancelledError:
+        pass
 
     # Stop native Soulseek client
     try:

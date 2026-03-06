@@ -86,11 +86,18 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             tracks = (await db.execute(
                 select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids))
             )).all()
+            failed_count = 0
             for track_id, file_path in tracks:
-                analysis = await analyze_track_async(file_path)
-                if analysis:
-                    await db.merge(TrackAnalysis(track_id=track_id, **analysis))
+                try:
+                    analysis = await analyze_track_async(file_path)
+                    if analysis:
+                        await db.merge(TrackAnalysis(track_id=track_id, **analysis))
+                except Exception as e:
+                    failed_count += 1
+                    log.warning(f"[scheduler] Analysis failed for {file_path}: {e}")
             await db.commit()
+            if failed_count:
+                job.result = json.dumps({"analyzed": len(tracks) - failed_count, "failed": failed_count})
 
         elif task_name == "kimahub_favorites_sync":
             result = await _run_kimahub_favorites_sync(db)

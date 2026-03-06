@@ -11,9 +11,11 @@ from backend.models.play_queue import PlayQueue
 from backend.models.bookmark import Bookmark
 from backend.models.schedule import ScheduleTask
 from backend.models.blacklist import DownloadBlacklist
+from backend.models.stats import SoulseekSnapshot
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
     "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User",
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
+    "SoulseekSnapshot",
 ]

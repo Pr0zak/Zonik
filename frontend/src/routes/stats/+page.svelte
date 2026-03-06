@@ -1,15 +1,252 @@
 <script>
 	import { onMount } from 'svelte';
 	import { formatSize, formatDuration } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp } from 'lucide-svelte';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
+	import { Chart, registerables } from 'chart.js';
+
+	Chart.register(...registerables);
 
 	let data = $state(null);
 	let slsk = $state(null);
+	let history = $state(null);
+	let historyHours = $state(24);
 	let loading = $state(true);
+
+	let peersChartEl = $state(null);
+	let transfersChartEl = $state(null);
+	let speedChartEl = $state(null);
+	let bandwidthChartEl = $state(null);
+	let peersChart = null;
+	let transfersChart = null;
+	let speedChart = null;
+	let bandwidthChart = null;
+
+	const chartDefaults = {
+		responsive: true,
+		maintainAspectRatio: false,
+		animation: { duration: 300 },
+		interaction: { mode: 'index', intersect: false },
+		plugins: {
+			legend: {
+				labels: { color: '#9ca3af', font: { size: 11, family: 'Inter' }, boxWidth: 12, padding: 8 },
+			},
+			tooltip: {
+				backgroundColor: '#1a1a1a',
+				borderColor: '#333',
+				borderWidth: 1,
+				titleColor: '#e5e5e5',
+				bodyColor: '#9ca3af',
+				titleFont: { size: 11, family: 'Inter' },
+				bodyFont: { size: 11, family: 'Inter' },
+				padding: 8,
+			},
+		},
+		scales: {
+			x: {
+				ticks: { color: '#6b7280', font: { size: 10, family: 'Inter' }, maxRotation: 0, maxTicksLimit: 8 },
+				grid: { color: 'rgba(255,255,255,0.04)' },
+				border: { color: 'rgba(255,255,255,0.08)' },
+			},
+			y: {
+				beginAtZero: true,
+				ticks: { color: '#6b7280', font: { size: 10, family: 'Inter' } },
+				grid: { color: 'rgba(255,255,255,0.04)' },
+				border: { color: 'rgba(255,255,255,0.08)' },
+			},
+		},
+	};
+
+	function formatTimestamp(iso) {
+		const d = new Date(iso + 'Z');
+		return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function formatDateTimestamp(iso) {
+		const d = new Date(iso + 'Z');
+		return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function destroyCharts() {
+		peersChart?.destroy(); peersChart = null;
+		transfersChart?.destroy(); transfersChart = null;
+		speedChart?.destroy(); speedChart = null;
+		bandwidthChart?.destroy(); bandwidthChart = null;
+	}
+
+	function buildCharts() {
+		if (!history?.length) return;
+		destroyCharts();
+
+		const labels = history.map(s => historyHours > 48 ? formatDateTimestamp(s.timestamp) : formatTimestamp(s.timestamp));
+
+		// Peers chart
+		if (peersChartEl) {
+			peersChart = new Chart(peersChartEl, {
+				type: 'line',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Peers',
+						data: history.map(s => s.peers),
+						borderColor: '#3b82f6',
+						backgroundColor: 'rgba(59,130,246,0.1)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}, {
+						label: 'Searches',
+						data: history.map(s => s.active_searches),
+						borderColor: '#a855f7',
+						backgroundColor: 'rgba(168,85,247,0.05)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}],
+				},
+				options: { ...chartDefaults },
+			});
+		}
+
+		// Transfers chart
+		if (transfersChartEl) {
+			transfersChart = new Chart(transfersChartEl, {
+				type: 'line',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Active',
+						data: history.map(s => s.active_transfers),
+						borderColor: '#3b82f6',
+						backgroundColor: 'rgba(59,130,246,0.1)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}, {
+						label: 'Queued',
+						data: history.map(s => s.queued_transfers),
+						borderColor: '#f59e0b',
+						backgroundColor: 'rgba(245,158,11,0.05)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}, {
+						label: 'Completed',
+						data: history.map(s => s.completed_transfers),
+						borderColor: '#10b981',
+						backgroundColor: 'rgba(16,185,129,0.05)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}, {
+						label: 'Failed',
+						data: history.map(s => s.failed_transfers),
+						borderColor: '#ef4444',
+						backgroundColor: 'rgba(239,68,68,0.05)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}],
+				},
+				options: { ...chartDefaults },
+			});
+		}
+
+		// Speed chart
+		if (speedChartEl) {
+			speedChart = new Chart(speedChartEl, {
+				type: 'line',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Speed',
+						data: history.map(s => s.speed),
+						borderColor: '#f59e0b',
+						backgroundColor: 'rgba(245,158,11,0.1)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}],
+				},
+				options: {
+					...chartDefaults,
+					scales: {
+						...chartDefaults.scales,
+						y: {
+							...chartDefaults.scales.y,
+							ticks: {
+								...chartDefaults.scales.y.ticks,
+								callback: (v) => {
+									if (v >= 1048576) return (v / 1048576).toFixed(1) + ' MB/s';
+									if (v >= 1024) return (v / 1024).toFixed(0) + ' KB/s';
+									return v + ' B/s';
+								},
+							},
+						},
+					},
+				},
+			});
+		}
+
+		// Bandwidth chart
+		if (bandwidthChartEl) {
+			bandwidthChart = new Chart(bandwidthChartEl, {
+				type: 'line',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Bytes Transferred',
+						data: history.map(s => s.bytes_transferred),
+						borderColor: '#06b6d4',
+						backgroundColor: 'rgba(6,182,212,0.1)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						borderWidth: 1.5,
+					}],
+				},
+				options: {
+					...chartDefaults,
+					scales: {
+						...chartDefaults.scales,
+						y: {
+							...chartDefaults.scales.y,
+							ticks: {
+								...chartDefaults.scales.y.ticks,
+								callback: (v) => {
+									if (v >= 1073741824) return (v / 1073741824).toFixed(1) + ' GB';
+									if (v >= 1048576) return (v / 1048576).toFixed(0) + ' MB';
+									if (v >= 1024) return (v / 1024).toFixed(0) + ' KB';
+									return v + ' B';
+								},
+							},
+						},
+					},
+				},
+			});
+		}
+	}
+
+	async function loadHistory() {
+		try {
+			history = await fetch(`/api/download/soulseek-stats/history?hours=${historyHours}`).then(r => r.json());
+			// Wait for DOM to update with canvas elements
+			await new Promise(r => setTimeout(r, 0));
+			buildCharts();
+		} catch (e) {
+			console.error('Failed to load stats history:', e);
+		}
+	}
 
 	onMount(async () => {
 		try {
@@ -17,11 +254,14 @@
 				fetch('/api/library/stats/detailed').then(r => r.json()),
 				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
 			]);
+			await loadHistory();
 		} catch (e) {
 			console.error('Failed to load stats:', e);
 		} finally {
 			loading = false;
 		}
+
+		return () => destroyCharts();
 	});
 
 	function barWidth(value, max) {
@@ -364,6 +604,65 @@
 								</div>
 							{/each}
 						</div>
+					</div>
+				{/if}
+			</Card>
+
+			<!-- Soulseek History Charts -->
+			<Card padding="p-4" class="mb-8">
+				<div class="flex items-center justify-between mb-4">
+					<div class="flex items-center gap-2">
+						<TrendingUp class="w-4 h-4 text-[var(--color-stats)]" />
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">P2P History</h2>
+					</div>
+					<div class="flex gap-1">
+						{#each [
+							{ v: 6, l: '6h' },
+							{ v: 24, l: '24h' },
+							{ v: 72, l: '3d' },
+							{ v: 168, l: '7d' },
+						] as opt}
+							<button
+								class="px-2.5 py-1 text-xs rounded transition-colors {historyHours === opt.v ? 'bg-[var(--color-stats)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--bg-tertiary)]'}"
+								onclick={() => { historyHours = opt.v; loadHistory(); }}
+							>
+								{opt.l}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				{#if history?.length > 1}
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+						<div>
+							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Peers & Searches</h3>
+							<div class="h-48">
+								<canvas bind:this={peersChartEl}></canvas>
+							</div>
+						</div>
+						<div>
+							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Transfers</h3>
+							<div class="h-48">
+								<canvas bind:this={transfersChartEl}></canvas>
+							</div>
+						</div>
+						<div>
+							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Transfer Speed</h3>
+							<div class="h-48">
+								<canvas bind:this={speedChartEl}></canvas>
+							</div>
+						</div>
+						<div>
+							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Bandwidth</h3>
+							<div class="h-48">
+								<canvas bind:this={bandwidthChartEl}></canvas>
+							</div>
+						</div>
+					</div>
+				{:else}
+					<div class="text-center py-12 text-[var(--text-muted)] text-sm">
+						<TrendingUp class="w-8 h-8 mx-auto mb-2 opacity-30" />
+						<p>No history data yet. Stats are collected every 5 minutes.</p>
 					</div>
 				{/if}
 			</Card>
