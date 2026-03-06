@@ -107,7 +107,7 @@ docs/                  # Installation, configuration, API reference, development
 - Soulseek retry with candidate fallback: search_and_download tries up to 5 candidates before failing
 - Config: zonik.toml (gitignored), zonik.toml.example (committed with empty keys)
 - Service connections (slskd, Lidarr, Last.fm) configurable via web UI Settings page
-- Settings page: color-coded test buttons, per-field eye toggles for API keys
+- Settings page: 8 sections (Library, Soulseek, Last.fm, Lidarr, Subsonic, Users, Database, Updates), each with icon badge header and proper Button test buttons
 - Download dir, cover cache dir, and file naming scheme are web-configurable
 - Installer (`create-ct.sh`) only asks for infrastructure — no API keys
 - SPA routing: catch-all route serves index.html for client-side SvelteKit routes
@@ -173,7 +173,7 @@ docs/                  # Installation, configuration, API reference, development
 - Discover page: top tracks limit fetched from scheduled task config (default 100); per-track inline download with status (spinner/check/failed+retry)
 - Discovery library matching: joins Artist table, matches exact artist + title (case-insensitive) — not loose ILIKE %title%
 - Logs page: category filter tabs (All/Downloads/Library/Analysis/Discovery/Playlists), expanded job detail with colored status badges
-- TopBar: global search (typeahead library + P2P), sync button (library scan), notification bell (active jobs with progress), settings gear
+- TopBar: global search (typeahead library + P2P), sync button (library scan), notification bell (active jobs with progress, clickable → /logs?job=id), settings gear
 - Downloads page: single fuzzy search field (auto-splits "Artist - Track"), paginated P2P results (25/50/100 per page), downloads section above results
 - Library page: reads `?search=` URL param on mount for TopBar navigation integration
 - Favorites: total count displayed in PageHeader
@@ -213,7 +213,14 @@ docs/                  # Installation, configuration, API reference, development
 - User API keys: per-user subsonic_api_key for Symfonium token auth; generate/revoke/copy/eye-toggle in Settings > User Management
 - Last.fm favorites sync: scheduled task pushes Zonik starred tracks → Last.fm loved tracks (incremental, skips already-loved)
 - Last.fm auth: callback saves session_key + username to zonik.toml; session_key and username in [lastfm] config
-- Settings page: About merged into Updates card; share library toggle in Soulseek section
+- Settings page: 8 separate Card sections with icon badges; sticky save bar; Share Library moved to Library section; Last.fm Sync moved into Last.fm card; Subsonic styled as info-only
+- Discover page: sortable column headers (click to sort asc/desc/clear, ▲/▼ indicators) on all track tables
+- Notification bell: clicking a job navigates to /logs?job=id with auto-expand
+- Logs page: reads ?job= URL param to auto-expand specific job on load
+- Library cleanup tools: "Danger Zone" section with amber border, DESTRUCTIVE/CAUTION tags on tool cards
+- Schedule page: danger tasks (library_cleanup) shown with amber dot, AlertTriangle icon, warning badge
+- Logo: text-3xl font-bold tracking-[0.15em] (bigger + wider letter spacing)
+- Last.fm OAuth: auth button in Settings, auto-redirect callback with ?lastfm_auth=ok, token paste fallback
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
