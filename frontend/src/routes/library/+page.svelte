@@ -405,8 +405,20 @@
 		}
 	}
 
+	// React to URL search param changes (TopBar navigation, even if already on /library)
+	$effect(() => {
+		const searchParam = $page.url.searchParams.get('search');
+		if (searchParam && searchParam !== search) {
+			search = searchParam;
+			viewMode = 'list';
+			tab = 'tracks';
+			offset = 0;
+			loadData();
+		}
+	});
+
 	onMount(async () => {
-		// Handle search param from TopBar navigation
+		// Handle search param on initial mount
 		const searchParam = $page.url.searchParams.get('search');
 		if (searchParam) {
 			search = searchParam;

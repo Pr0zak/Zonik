@@ -41,9 +41,8 @@
 
 	function goToTrack(track) {
 		showResults = false;
-		const searchTerm = track.artist ? `${track.artist} ${track.title}` : track.title;
 		query = '';
-		goto(`/library?search=${encodeURIComponent(searchTerm)}`);
+		goto(`/library?search=${encodeURIComponent(track.title)}`);
 	}
 
 	function goToDownloads() {
