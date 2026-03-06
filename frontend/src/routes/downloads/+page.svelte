@@ -5,7 +5,7 @@
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -176,6 +176,7 @@
 		if (status === 'completed') return 'success';
 		if (status === 'failed') return 'error';
 		if (status === 'downloading') return 'info';
+		if (status === 'queued') return 'warning';
 		return 'default';
 	}
 
@@ -230,7 +231,7 @@
 			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
 			jobs = data.items || data;
 			for (const j of jobs) {
-				if ((j.status === 'running' || !jobDetails[j.id])) {
+				if ((j.status === 'running' || j.status === 'pending' || !jobDetails[j.id])) {
 					try {
 						const detail = await api.getJob(j.id);
 						if (detail?.tracks) jobDetails[j.id] = JSON.parse(detail.tracks);
@@ -504,7 +505,7 @@
 						<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden group/job">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
-									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
+									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}</p>
 									{#if job.status === 'completed' && (jobResult || jobTracks?.[0])}
 										{@const t = jobTracks?.[0]}
 										{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
@@ -611,6 +612,8 @@
 								<Badge variant={statusVariant(status)}>
 									{#if status === 'searching' || status === 'downloading'}
 										<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+									{:else if status === 'queued'}
+										<Clock class="w-3 h-3 mr-0.5 inline-block" />
 									{/if}
 									{status}
 								</Badge>
