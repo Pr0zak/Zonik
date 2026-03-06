@@ -1,6 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
-	import { addToast } from '$lib/stores.js';
+	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -28,9 +28,20 @@
 	let similarArtists = $state([]);
 	let artistsLoading = $state(false);
 
+	// Search state
+	let searchQuery = $state('');
+	let searchResults = $state([]);
+	let searchLoading = $state(false);
+	let searchDone = $state(false);
+	let showOnlyMissing = $state(false);
+
 	// Shared
 	let bulkDownloading = $state(false);
-	let trackStatus = $state({});
+	let trackStatus = $state({...$discoverTrackStatus});
+	// Sync track statuses to store for persistence across navigation
+	$effect(() => {
+		discoverTrackStatus.set({...trackStatus});
+	});
 	let schedTasks = $state({});
 	let schedRunning = $state({});
 
@@ -38,6 +49,7 @@
 		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
+		{ key: 'search', label: 'Search', icon: Search },
 	];
 
 	function trackKey(t) {
@@ -49,7 +61,28 @@
 	}
 
 	function currentTracks() {
-		return activeTab === 'top' ? topTracks : activeTab === 'similar' ? similarTracks : [];
+		return activeTab === 'top' ? topTracks : activeTab === 'similar' ? similarTracks : activeTab === 'search' ? searchResults : [];
+	}
+
+	let filteredSearchResults = $derived(
+		showOnlyMissing ? searchResults.filter(t => !t.in_library) : searchResults
+	);
+
+	async function discoverSearch() {
+		if (!searchQuery.trim()) return;
+		searchLoading = true;
+		searchDone = false;
+		searchResults = [];
+		try {
+			const data = await fetch(`/api/discovery/search?q=${encodeURIComponent(searchQuery.trim())}&limit=50`).then(r => r.json());
+			searchResults = data.tracks || [];
+			searchDone = true;
+			if (!searchResults.length) addToast('No results found on Last.fm', 'warning');
+		} catch (e) {
+			addToast('Search failed', 'error');
+		} finally {
+			searchLoading = false;
+		}
 	}
 
 	let missingCount = $derived(
@@ -296,12 +329,29 @@
 		{/each}
 	</div>
 
+	<!-- Search tab: search bar -->
+	{#if activeTab === 'search'}
+		<div class="flex gap-3 mb-4">
+			<div class="flex-1 relative">
+				<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
+				<input type="text" placeholder="Search Last.fm for tracks or artists..." bind:value={searchQuery}
+					onkeydown={(e) => e.key === 'Enter' && discoverSearch()}
+					class="w-full bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
+						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-discover)]/50 focus:ring-[var(--color-discover)]/20" />
+			</div>
+			<Button variant="primary" loading={searchLoading} disabled={!searchQuery.trim()} onclick={discoverSearch}>
+				<Search class="w-3.5 h-3.5" />
+				Search
+			</Button>
+		</div>
+	{/if}
+
 	<!-- Summary bar + actions -->
-	{#if activeTab === 'top' || activeTab === 'similar'}
+	{#if activeTab === 'top' || activeTab === 'similar' || (activeTab === 'search' && searchResults.length)}
 		{@const tracks = currentTracks()}
-		{@const lastScanned = activeTab === 'top' ? topLastScanned : similarLastScanned}
-		{@const isLoading = activeTab === 'top' ? topLoading : similarLoading}
-		{@const scanFn = activeTab === 'top' ? scanTopTracks : scanSimilarTracks}
+		{@const lastScanned = activeTab === 'top' ? topLastScanned : activeTab === 'similar' ? similarLastScanned : null}
+		{@const isLoading = activeTab === 'top' ? topLoading : activeTab === 'similar' ? similarLoading : searchLoading}
+		{@const scanFn = activeTab === 'top' ? scanTopTracks : activeTab === 'similar' ? scanSimilarTracks : null}
 
 		{#if tracks.length || isLoading}
 			<Card padding="p-4">
@@ -323,15 +373,23 @@
 									<span class="mx-1">·</span> scanned {formatAge(lastScanned)}
 								{/if}
 							</div>
+							{#if activeTab === 'search'}
+								<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] cursor-pointer ml-2">
+									<input type="checkbox" bind:checked={showOnlyMissing} class="rounded cursor-pointer" />
+									Only missing
+								</label>
+							{/if}
 						{/if}
 					</div>
 
 					<!-- Actions -->
 					<div class="flex items-center gap-2">
-						<Button variant="default" size="sm" onclick={scanFn} loading={isLoading}>
-							<Search class="w-3.5 h-3.5" />
-							{activeTab === 'top' ? 'Check Chart' : 'Discover'}
-						</Button>
+						{#if scanFn}
+							<Button variant="default" size="sm" onclick={scanFn} loading={isLoading}>
+								<Search class="w-3.5 h-3.5" />
+								{activeTab === 'top' ? 'Check Chart' : 'Discover'}
+							</Button>
+						{/if}
 						{#if missingCount > 0}
 							<Button variant="success" size="sm" onclick={downloadAllMissing} loading={bulkDownloading}>
 								<Download class="w-3.5 h-3.5" />
@@ -486,6 +544,78 @@
 			{:else}
 				<Card>
 					<EmptyState title="No similar tracks" description="Click 'Discover' to find tracks similar to your favorites, or star some tracks first." />
+				</Card>
+			{/if}
+
+		{:else if activeTab === 'search'}
+			{#if searchLoading && !searchResults.length}
+				<Card padding="p-0">
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each Array(10) as _}
+							<div class="px-4 py-3 flex items-center gap-4">
+								<Skeleton class="h-4 w-40" />
+								<Skeleton class="h-4 w-28" />
+								<Skeleton class="h-5 w-16 rounded-full" />
+							</div>
+						{/each}
+					</div>
+				</Card>
+			{:else if filteredSearchResults.length}
+				<Card padding="p-0">
+					<table class="w-full text-sm">
+						<thead>
+							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Track</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Artist</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Listeners</th>
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right">Status</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-[var(--border-subtle)]">
+							{#each filteredSearchResults as t}
+								{@const status = getStatus(t)}
+								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
+									<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
+									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
+									<td class="px-4 py-3 text-right">
+										{#if t.in_library}
+											<Badge variant="success">In Library</Badge>
+										{:else if status === 'completed'}
+											<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
+												<Check class="w-3.5 h-3.5" /> Downloaded
+											</span>
+										{:else if status === 'failed'}
+											<span class="inline-flex items-center gap-2">
+												<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
+													<X class="w-3.5 h-3.5" /> Failed
+												</span>
+												<button onclick={() => downloadTrack(t)}
+													class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
+											</span>
+										{:else if status === 'downloading' || status === 'queued'}
+											<span class="inline-flex items-center gap-1 text-[var(--color-accent)] text-xs">
+												<Loader2 class="w-3.5 h-3.5 animate-spin" />
+											</span>
+										{:else}
+											<button onclick={() => downloadTrack(t)}
+												class="inline-flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--color-discover)] transition-colors">
+												<Download class="w-3.5 h-3.5" /> Download
+											</button>
+										{/if}
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</Card>
+			{:else if searchDone}
+				<Card>
+					<EmptyState title="No results" description="Try a different search term." />
+				</Card>
+			{:else}
+				<Card>
+					<EmptyState title="Search Last.fm" description="Search for tracks or artists to find music not in your library." />
 				</Card>
 			{/if}
 

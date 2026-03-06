@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
             await session.commit()
 
     # Mark any stuck "running" jobs as failed (killed by restart)
+    log = logging.getLogger(__name__)
     async with async_session() as session:
         from sqlalchemy import update
         from datetime import datetime
@@ -47,16 +48,13 @@ async def lifespan(app: FastAPI):
         )
         if stuck.rowcount:
             await session.commit()
-            logging.getLogger(__name__).info(f"Marked {stuck.rowcount} stuck jobs as failed on startup")
-
-    # Start native Soulseek client if credentials configured
+            log.info(f"Marked {stuck.rowcount} stuck jobs as failed on startup")
     if settings.soulseek.username:
         try:
             from backend.soulseek import start_client
             await start_client()
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Failed to start native Soulseek client: {e}")
+            log.error(f"Failed to start native Soulseek client: {e}")
 
     yield
 
@@ -65,7 +63,7 @@ async def lifespan(app: FastAPI):
         from backend.soulseek import stop_client
         await stop_client()
     except Exception as e:
-        logging.getLogger(__name__).debug("Soulseek client shutdown error: %s", e)
+        log.debug("Soulseek client shutdown error: %s", e)
 
 
 settings = get_settings()

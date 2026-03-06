@@ -113,7 +113,7 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
 
         # Mark cooled-down / blocked peers
         for r in results:
-            r["on_cooldown"] = await native_client.reputation.is_blocked(r["username"])
+            r["on_cooldown"] = await client.reputation.is_blocked(r["username"])
 
         # Sort: FLAC first, then by size descending, slots_free preferred, cooldown peers last
         format_order = {"flac": 0, "wav": 1, "alac": 1, "mp3": 2, "m4a": 3, "ogg": 3, "opus": 3}

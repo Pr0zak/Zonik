@@ -588,6 +588,12 @@
 									</button>
 								{/if}
 								{#if job.status === 'failed'}
+									{#if jobTracks?.[0]?.artist && jobTracks?.[0]?.track}
+										<button onclick={() => { searchQuery = `${jobTracks[0].artist} - ${jobTracks[0].track}`; searchSoulseek(); }}
+											class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for new sources">
+											<Search class="w-3.5 h-3.5" />
+										</button>
+									{/if}
 									<button onclick={() => retryJob(job.id)}
 										class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry">
 										<RotateCcw class="w-3.5 h-3.5" />

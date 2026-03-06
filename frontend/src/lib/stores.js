@@ -10,6 +10,7 @@ export const showShortcuts = writable(false);
 export const activeTransfers = writable([]);
 export const trackQueue = writable([]);
 export const queueIndex = writable(-1);
+export const discoverTrackStatus = writable({});
 
 export function playTrack(track, queue = null) {
 	currentTrack.set(track);

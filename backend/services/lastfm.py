@@ -108,6 +108,41 @@ async def get_top_tracks(limit: int = 50, page: int = 1) -> list[dict]:
     ]
 
 
+async def search_tracks(query: str, limit: int = 30) -> list[dict]:
+    """Search for tracks on Last.fm."""
+    data = await lastfm_api("track.search", {"track": query, "limit": str(limit)})
+    if not data or "results" not in data:
+        return []
+    matches = data["results"].get("trackmatches", {}).get("track", [])
+    return [
+        {
+            "name": t.get("name", ""),
+            "artist": t.get("artist", ""),
+            "listeners": int(t.get("listeners", 0)),
+            "url": t.get("url", ""),
+        }
+        for t in matches
+        if t.get("name") and t.get("artist")
+    ]
+
+
+async def get_artist_top_tracks(artist: str, limit: int = 20) -> list[dict]:
+    """Get top tracks for an artist from Last.fm."""
+    data = await lastfm_api("artist.getTopTracks", {"artist": artist, "limit": str(limit)})
+    if not data or "toptracks" not in data:
+        return []
+    tracks = data["toptracks"].get("track", [])
+    return [
+        {
+            "name": t.get("name", ""),
+            "artist": t.get("artist", {}).get("name", artist),
+            "playcount": int(t.get("playcount", 0)),
+            "listeners": int(t.get("listeners", 0)),
+        }
+        for t in tracks
+    ]
+
+
 async def get_similar_tracks(artist: str, track: str, limit: int = 20) -> list[dict]:
     """Get tracks similar to a given track."""
     data = await lastfm_api("track.getSimilar", {

@@ -167,6 +167,69 @@ async def similar_artists(
     }
 
 
+@router.get("/search")
+async def discovery_search(
+    q: str = Query("", min_length=1),
+    limit: int = Query(30, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search Last.fm for tracks and annotate with library presence."""
+    from sqlalchemy import or_, and_, func as sqfunc
+
+    # Try "Artist - Track" split first for artist top tracks
+    parts = [p.strip() for p in q.split(" - ", 1)]
+    if len(parts) == 2 and parts[0] and parts[1]:
+        # Search for specific track + similar
+        tracks = await lastfm.search_tracks(q, limit=limit)
+    else:
+        # General search — combine track search + artist top tracks
+        tracks = await lastfm.search_tracks(q, limit=limit)
+        # Also try as artist name for top tracks
+        artist_tracks = await lastfm.get_artist_top_tracks(q, limit=min(limit, 20))
+        # Merge, avoiding duplicates
+        seen = {normalize_text(f"{t['artist']} {t['name']}") for t in tracks}
+        for t in artist_tracks:
+            key = normalize_text(f"{t['artist']} {t['name']}")
+            if key not in seen:
+                seen.add(key)
+                tracks.append(t)
+
+    tracks = tracks[:limit]
+
+    # Batch library match
+    if tracks:
+        conditions = [
+            and_(
+                sqfunc.lower(Track.title) == t["name"].lower(),
+                sqfunc.lower(Artist.name) == t["artist"].lower(),
+            )
+            for t in tracks
+        ]
+        lib_result = await db.execute(
+            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(or_(*conditions))
+        )
+        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+
+        for t in tracks:
+            key = (t["name"].lower(), t["artist"].lower())
+            matched_id = lib_map.get(key)
+            t["in_library"] = matched_id is not None
+            t["track_id"] = matched_id
+    else:
+        for t in tracks:
+            t["in_library"] = False
+            t["track_id"] = None
+
+    return {
+        "tracks": tracks,
+        "total": len(tracks),
+        "in_library": sum(1 for t in tracks if t.get("in_library")),
+        "missing": sum(1 for t in tracks if not t.get("in_library")),
+    }
+
+
 @router.get("/top-albums")
 async def discover_albums(
     artist: str,
