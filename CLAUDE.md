@@ -63,7 +63,7 @@ frontend/
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
-    stats/             # Library statistics + Soulseek P2P stats + reputation reset
+    stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset)
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
@@ -121,11 +121,18 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek: protocol layer (struct.pack/unpack), server connection with auto-reconnect (exp backoff), peer connection racing (direct vs indirect), file transfer state machine, zlib-compressed search responses
 - Native Soulseek: `services/soulseek.py` is a facade — routes to native or slskd based on `use_native` flag, zero changes needed in download.py callers
 - Native Soulseek: peer reputation tracking (in-memory with Redis fallback), scores adjust search result sorting (no visible cooldown badges)
-- Native Soulseek: POST /api/download/reset-reputation clears all peer rep data; button on Stats page
+- Native Soulseek: POST /api/download/reset-reputation clears all peer rep data; button on Stats page; get_summary() for per-peer scores
 - Native Soulseek: multi-source parallel downloads (configurable 1-5 sources, "first" or "best" strategy), per-source error tracking in job results
 - Native Soulseek: library sharing — scans music dir on startup + after scan, reports real file counts to server, responds to SharedFileListRequest from peers
 - Native Soulseek: transfer key normalization — path separators canonicalized (backslash→forward slash) to fix filename matching between search results and peer transfer offers
-- Soulseek stats: /api/download/soulseek-stats returns connection, peers, shares, transfers — shown on Dashboard + Stats page
+- Native Soulseek: server keepalive pings every 2 minutes (SET_STATUS online) to prevent idle connection drops
+- Native Soulseek: search scoring includes queue_length penalty (>100: -10, >50: -6, >20: -3, >5: -1)
+- Native Soulseek: sends TRANSFER_RESPONSE rejection when transfer not found (peer can retry elsewhere immediately)
+- Native Soulseek: handles incoming QUEUE_UPLOAD from peers — responds with UPLOAD_DENIED (proper protocol compliance)
+- Native Soulseek: handles TRANSFER_RESPONSE rejections from peers — marks transfer as DENIED
+- Native Soulseek: parses QUEUE_UPLOAD (code 43) and PLACE_IN_QUEUE_REQUEST (code 51) from peers
+- Native Soulseek: transient connection errors (timeout, refused, OSError) don't penalize peer reputation
+- Soulseek stats: /api/download/soulseek-stats returns connection, uptime, reconnects, peers, shares, listen port, active searches, transfers, bandwidth, speed, reputation — shown on Dashboard + Stats page
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
@@ -142,9 +149,10 @@ docs/                  # Installation, configuration, API reference, development
 - Favorites: total count displayed in PageHeader
 - Sidebar footer: GitHub icon links to github.com/Pr0zak/Zonik
 - Native Soulseek transfers: don't remove immediately on complete — let poll_transfer see final state; cleanup loop removes after 60s
+- Native Soulseek transfers: state-aware cleanup — 3min for requested/queued, 2min for connected-no-data, 5min for transferring
 - Native Soulseek downloads: split queue_timeout (120s, waiting for peer) vs stall_timeout (60s, no data during transfer)
 - Native Soulseek downloads: auto-fallback — when direct download fails, searches for up to 4 additional peers
-- Native Soulseek transfers: fuzzy filename matching in get_transfer (normalized keys + basename fallback for requested/queued/connected states)
+- Native Soulseek transfers: fuzzy filename matching in get_transfer (normalized keys + basename fallback + file size validation within 1MB tolerance)
 - Pagination: library defaults to 24 per page (multiples of 12 for even grid rows: 24/48/96/192); other lists default 25/page (25/50/100/200); Jobs API returns {items, total}
 - Library cleanup tools: three separate operations (orphan removal, deduplication, file organization) each with preview/dry-run before execution
 - Cleanup dedup: per-track checkboxes (select/deselect all), file sizes displayed, only selected tracks removed
@@ -157,6 +165,7 @@ docs/                  # Installation, configuration, API reference, development
 - Auto-run after scan: analysis/enrichment tasks can be auto-triggered after library scan via ScheduleTask.config JSON {auto_after_scan: true}
 - Auto-download: discover tasks can auto-download missing tracks via ScheduleTask.config JSON {auto_download: true}
 - Health check: disabled services return "warning" status which doesn't degrade overall status (only "error" degrades)
+- Playlist scheduled tasks: playlist_favorites (starred tracks), playlist_unfavorites (non-starred tracks), playlist_weekly_top, playlist_weekly_discover
 - Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
 - Favorites paginated server-side: /api/favorites returns {items, total} with offset/limit
 - Upgrade restarts kill background tasks (enrichment, analysis); startup lifespan marks stuck running/pending jobs as failed
