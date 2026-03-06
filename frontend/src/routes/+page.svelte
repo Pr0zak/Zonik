@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { formatSize } from '$lib/utils.js';
-	import { Music, Users, Disc3, HardDrive, Clock, RefreshCw } from 'lucide-svelte';
+	import { Music, Users, Disc3, HardDrive, Clock, RefreshCw, Wifi, Share2 } from 'lucide-svelte';
 	import PageHeader from '../components/ui/PageHeader.svelte';
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
@@ -12,6 +12,7 @@
 	let health = $state(null);
 	let version = $state(null);
 	let lastScan = $state(null);
+	let slsk = $state(null);
 	let loading = $state(true);
 
 	const statCards = [
@@ -34,11 +35,12 @@
 
 	onMount(async () => {
 		try {
-			[stats, health, version, lastScan] = await Promise.all([
+			[stats, health, version, lastScan, slsk] = await Promise.all([
 				api.getStats(),
 				fetch('/api/config/health').then(r => r.json()).catch(() => null),
 				fetch('/api/config/version').then(r => r.json()).catch(() => null),
 				fetch('/api/jobs?limit=50').then(r => r.json()).then(data => (data.items || data).find(j => j.type === 'library_scan' && j.status === 'completed')).catch(() => null),
+				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
 			]);
 		} catch (e) {
 			console.error('Failed to load dashboard:', e);
@@ -116,6 +118,45 @@
 				</Card>
 			{/if}
 		</div>
+
+		<!-- Soulseek P2P -->
+		{#if slsk}
+			<Card padding="p-4" class="mb-8">
+				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Soulseek P2P</h2>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+					<div class="flex items-center gap-3">
+						<Wifi class="w-4 h-4 flex-shrink-0 {slsk.connected ? 'text-emerald-400' : 'text-red-400'}" />
+						<div>
+							<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.connected ? 'Online' : 'Offline'}</p>
+							{#if slsk.username}
+								<p class="text-[10px] text-[var(--text-muted)] truncate">{slsk.username}</p>
+							{/if}
+						</div>
+					</div>
+					<div class="flex items-center gap-3">
+						<Users class="w-4 h-4 flex-shrink-0 text-[var(--color-downloads)]" />
+						<div>
+							<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.peers} peers</p>
+							<p class="text-[10px] text-[var(--text-muted)]">connected</p>
+						</div>
+					</div>
+					<div class="flex items-center gap-3">
+						<Share2 class="w-4 h-4 flex-shrink-0 text-[var(--color-discover)]" />
+						<div>
+							<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.shared_files.toLocaleString()} files</p>
+							<p class="text-[10px] text-[var(--text-muted)]">{slsk.shared_folders} folders</p>
+						</div>
+					</div>
+					<div class="flex items-center gap-3">
+						<HardDrive class="w-4 h-4 flex-shrink-0 text-[var(--color-downloads)]" />
+						<div>
+							<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.active_transfers} active</p>
+							<p class="text-[10px] text-[var(--text-muted)]">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
+						</div>
+					</div>
+				</div>
+			</Card>
+		{/if}
 
 		{#if health}
 			<Card padding="p-4" class="mb-8">
