@@ -205,9 +205,18 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
                         else:
                             result = await search_and_download(t.get("artist", ""), t.get("track", ""))
                             ok = result.get("ok") or result.get("status") == "downloading"
-                            track_statuses[idx]["status"] = "downloaded" if ok else "failed"
+                            if ok:
+                                track_statuses[idx]["status"] = "downloaded"
+                                track_statuses[idx]["username"] = result.get("username", "")
+                                fn = result.get("filename", "")
+                                track_statuses[idx]["filename"] = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if fn else ""
+                                track_statuses[idx]["file_size"] = result.get("size", 0)
+                            else:
+                                track_statuses[idx]["status"] = "failed"
+                                track_statuses[idx]["error"] = result.get("message", "")
                     except Exception as e:
                         track_statuses[idx]["status"] = "failed"
+                        track_statuses[idx]["error"] = str(e)
 
                     new_job.progress = sum(1 for s in track_statuses if s["status"] != "pending")
                     new_job.tracks = json.dumps(track_statuses)
