@@ -125,6 +125,19 @@ class TransferManager:
                 return t
         return None
 
+    def find_active_transfer_for_user(self, username: str) -> Transfer | None:
+        """Find an active (CONNECTED) transfer for a user. Used for server-mediated file transfers
+        where the relay token differs from the transfer token."""
+        # Prefer CONNECTED state (just accepted TRANSFER_REQUEST)
+        for t in self.transfers.values():
+            if t.username == username and t.state == TransferState.CONNECTED:
+                return t
+        # Fall back to QUEUED/REQUESTED
+        for t in self.transfers.values():
+            if t.username == username and t.state in (TransferState.REQUESTED, TransferState.QUEUED):
+                return t
+        return None
+
     def create_transfer(self, username: str, filename: str) -> Transfer:
         key = self._normalize_key(username, filename)
         transfer = Transfer(username=username, filename=filename)
@@ -227,14 +240,56 @@ class TransferManager:
             self.update_state(transfer, TransferState.FAILED, error=f"Connect failed: {e}")
             return
 
-        # Send pierce firewall
+        # Send pierce firewall with the relay token
         writer.write(build_pierce_firewall_raw(token))
         await writer.drain()
 
-        # Now handle the transfer — send offset, receive file data
-        await self.handle_file_transfer_connection(
-            transfer.username, token, reader, writer
-        )
+        # Start receiving file data directly (we already have the transfer object)
+        log.info(f"[transfer] Starting file transfer from {transfer.username}: {transfer.filename}")
+        self.update_state(transfer, TransferState.TRANSFERRING)
+
+        # Send file offset (resume position)
+        writer.write(struct.pack("<Q", transfer.received_bytes))
+        await writer.drain()
+
+        # Determine save path
+        short_name = transfer.filename.rsplit("\\", 1)[-1]
+        save_path = Path(self.download_dir) / short_name
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        transfer.save_path = str(save_path)
+
+        try:
+            async with aiofiles.open(save_path, "wb") as f:
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(65536), timeout=30)
+                    except asyncio.TimeoutError:
+                        raise ConnectionError("Peer stopped sending data (30s timeout)")
+                    if not chunk:
+                        break
+                    transfer.received_bytes += len(chunk)
+                    await f.write(chunk)
+                    if self.on_progress:
+                        await self.on_progress(transfer)
+                    if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
+                        break
+
+            if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
+                self.update_state(transfer, TransferState.COMPLETED)
+                log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
+            else:
+                self.update_state(transfer, TransferState.FAILED, error="Connection closed before complete")
+                log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
+        except Exception as e:
+            self.update_state(transfer, TransferState.FAILED, error=str(e))
+            log.error(f"[transfer] Error downloading {short_name}: {e}")
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+            if self.on_complete:
+                await self.on_complete(transfer)
 
     def get_all_transfers(self) -> list[dict]:
         return [t.to_dict() for t in self.transfers.values()]

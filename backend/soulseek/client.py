@@ -274,13 +274,16 @@ class SoulseekClient:
                     asyncio.create_task(self._accept_indirect_peer(username, host, port, token))
 
             elif conn_type == ConnectionType.FILE_TRANSFER:
+                # Server relay token differs from transfer token — match by username
                 transfer = self.transfers.get_transfer_by_token(username, token)
                 if not transfer:
                     transfer = self.transfers.find_transfer_by_token(token)
+                if not transfer:
+                    transfer = self.transfers.find_active_transfer_for_user(username)
                 if transfer:
                     log.info(f"[client] Server-mediated file transfer to {username} at {host}:{port}")
                     asyncio.create_task(
-                        self.transfers.handle_outbound_file_transfer(transfer, host, port, token)
+                        self.transfers.handle_outbound_file_transfer(transfer, host, port, transfer.token or token)
                     )
                 else:
                     log.warning(f"[client] connect_to_peer FILE_TRANSFER but no matching transfer for {username}")
