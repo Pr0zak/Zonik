@@ -9,6 +9,11 @@ from backend.config import get_settings
 log = logging.getLogger(__name__)
 
 
+# Formats Essentia MonoLoader can decode (via FFmpeg/libav internally).
+# .opus causes a segfault in Essentia's C++ AudioLoader — skip it entirely.
+ESSENTIA_SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".aiff", ".alac"}
+
+
 def analyze_track(file_path: str) -> dict | None:
     """Analyze an audio file with Essentia. Returns analysis dict or None.
 
@@ -21,6 +26,11 @@ def analyze_track(file_path: str) -> dict | None:
     abs_path = Path(settings.library.music_dir) / file_path
     if not abs_path.exists():
         log.warning(f"File not found for analysis: {abs_path}")
+        return None
+
+    ext = abs_path.suffix.lower()
+    if ext not in ESSENTIA_SUPPORTED_EXTENSIONS:
+        log.debug(f"Skipping unsupported format for analysis: {ext} ({file_path})")
         return None
 
     try:
