@@ -293,6 +293,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                             tasks_map[task] = c
 
                         winner = None
+                        source_errors = []
                         pending = set(tasks_map.keys())
                         while pending:
                             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -308,6 +309,8 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                                             Path(save_path).unlink(missing_ok=True)
                                         except Exception:
                                             pass
+                                else:
+                                    source_errors.append({"user": cand["username"], "error": error or status})
                             if winner:
                                 for t in pending:
                                     t.cancel()
@@ -323,20 +326,25 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
                         else:
                             failed_users = [c["username"] for c in batch]
+                            last_err = source_errors[-1]["error"] if source_errors else "unknown"
                             job.status = "failed"
-                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "strategy": "first", "failed_sources": failed_users})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "first", "failed_sources": failed_users, "source_errors": source_errors})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
 
                     else:
                         # "best" strategy — wait for all, keep highest quality
                         results_all = await asyncio.gather(*[try_source(c) for c in batch], return_exceptions=True)
                         completed = []
+                        source_errors = []
                         for r in results_all:
                             if isinstance(r, Exception):
+                                source_errors.append({"user": "unknown", "error": str(r)})
                                 continue
                             cand, status, save_path, error = r
                             if status == "completed" and save_path:
                                 completed.append((cand, save_path))
+                            else:
+                                source_errors.append({"user": cand["username"], "error": error or status})
 
                         if completed:
                             def _quality_score(item):
@@ -367,9 +375,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
                         else:
                             failed_users = [c["username"] for c in batch]
+                            last_err = source_errors[-1]["error"] if source_errors else "unknown"
                             job.status = "failed"
-                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "strategy": "best", "failed_sources": failed_users})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "best", "failed_sources": failed_users, "source_errors": source_errors})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
 
                 elif candidates and native_client:
                     # === Sequential download (parallel_sources == 1, original behavior) ===

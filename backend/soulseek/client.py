@@ -310,7 +310,8 @@ class SoulseekClient:
                     self.transfers.update_state(transfer, TransferState.CONNECTED)
                     await peer.send_transfer_response(msg["token"], True)
                 else:
-                    log.warning(f"[client] No transfer for upload request: {msg['filename']}")
+                    active = [f"{t.filename}" for t in self.transfers.transfers.values() if t.username == peer.username]
+                    log.warning(f"[client] No transfer for upload request from {peer.username}: {msg['filename']} (active transfers for user: {active or 'none'})")
 
         elif kind == "place_in_queue_response":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])

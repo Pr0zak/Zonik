@@ -89,15 +89,20 @@ class TransferManager:
     def start(self) -> None:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
+    @staticmethod
+    def _normalize_key(username: str, filename: str) -> str:
+        """Normalize transfer key — canonicalize path separators."""
+        return f"{username}:{filename.replace(chr(92), '/')}"
+
     def get_transfer(self, username: str, filename: str) -> Transfer | None:
-        # Exact match first
-        t = self.transfers.get(f"{username}:{filename}")
+        # Exact match first (normalized)
+        t = self.transfers.get(self._normalize_key(username, filename))
         if t:
             return t
-        # Fuzzy fallback: match by username + basename (handles path separator differences)
+        # Fuzzy fallback: match by username + basename
         basename = filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
         for t in self.transfers.values():
-            if t.username == username and t.state in ("requested", "queued"):
+            if t.username == username and t.state in ("requested", "queued", "connected"):
                 t_basename = t.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
                 if t_basename == basename:
                     return t
@@ -110,13 +115,13 @@ class TransferManager:
         return None
 
     def create_transfer(self, username: str, filename: str) -> Transfer:
-        key = f"{username}:{filename}"
+        key = self._normalize_key(username, filename)
         transfer = Transfer(username=username, filename=filename)
         self.transfers[key] = transfer
         return transfer
 
     def remove_transfer(self, username: str, filename: str) -> None:
-        self.transfers.pop(f"{username}:{filename}", None)
+        self.transfers.pop(self._normalize_key(username, filename), None)
 
     def update_state(self, transfer: Transfer, state: str, **kwargs) -> None:
         transfer.state = state
