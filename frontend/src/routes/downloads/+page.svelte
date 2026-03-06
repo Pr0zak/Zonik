@@ -109,8 +109,11 @@
 	const PAGE_LIMIT = 20;
 	const AUTO_HIDE_MS = 5 * 60 * 1000;
 
+	let hiddenJobIds = $state(new Set());
+
 	let visibleJobs = $derived(
 		jobs.filter(j => {
+			if (hiddenJobIds.has(j.id)) return false;
 			if (j.status === 'completed' && j.finished_at) {
 				const age = Date.now() - new Date(j.finished_at).getTime();
 				return age < AUTO_HIDE_MS;
@@ -488,15 +491,10 @@
 					<h2 class="text-base font-semibold text-[var(--text-primary)]">Downloads</h2>
 				</div>
 				{#if hasCleanable}
-					<button onclick={async () => {
-						if (!window.confirm('Clear completed/failed downloads?')) return;
-						try {
-							await api.clearDownloadHistory();
-							await loadJobs();
-							jobDetails = {};
-							expandedJob = null;
-							addToast('Cleared', 'success');
-						} catch { addToast('Failed to clear', 'error'); }
+					<button onclick={() => {
+						const cleared = jobs.filter(j => j.status === 'completed' || j.status === 'failed').map(j => j.id);
+						hiddenJobIds = new Set([...hiddenJobIds, ...cleared]);
+						expandedJob = null;
 					}} class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors">
 						<Eraser class="w-3.5 h-3.5" />
 						Clear
