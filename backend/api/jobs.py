@@ -311,12 +311,13 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
             tasks = [download_one(i, t) for i, t in enumerate(failed_tracks)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            new_job.status = "completed"
+            any_ok = any(s["status"] == "downloaded" for s in track_statuses)
+            new_job.status = "completed" if any_ok else "failed"
             new_job.finished_at = datetime.utcnow()
             new_job.tracks = json.dumps(track_statuses)
             await db.merge(new_job)
             await db.commit()
-            await broadcast_job_update({"id": new_job_id, "type": "bulk_download", "status": "completed", "progress": len(failed_tracks), "total": len(failed_tracks)})
+            await broadcast_job_update({"id": new_job_id, "type": "bulk_download", "status": new_job.status, "progress": len(failed_tracks), "total": len(failed_tracks)})
 
     background_tasks.add_task(do_retry)
     return {"job_id": new_job_id}

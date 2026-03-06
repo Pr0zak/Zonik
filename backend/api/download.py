@@ -579,12 +579,13 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             tasks = [download_one(i, t) for i, t in enumerate(req.tracks)]
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            job.status = "completed"
+            any_ok = any(s["status"] == "downloaded" for s in track_statuses)
+            job.status = "completed" if any_ok else "failed"
             job.finished_at = datetime.utcnow()
             job.tracks = json.dumps(track_statuses)
             await db.merge(job)
             await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "completed", "progress": len(req.tracks), "total": len(req.tracks)})
+            await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": job.status, "progress": len(req.tracks), "total": len(req.tracks)})
 
     background_tasks.add_task(do_bulk)
     return {"job_id": job_id, "total": len(req.tracks)}
