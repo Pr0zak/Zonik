@@ -1234,33 +1234,37 @@
 		</Card>
 	{/if}
 
-	<!-- Library Cleanup Tools -->
-	<Card padding="p-4" class="mt-4">
-		<div class="flex items-center gap-2 mb-3">
-			<Trash2 class="w-4 h-4 text-[var(--text-muted)]" />
-			<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Cleanup Tools</span>
+	<!-- Library Cleanup Tools — Danger Zone -->
+	<Card padding="p-4" class="mt-4 border border-amber-500/20">
+		<div class="flex items-center gap-2 mb-1">
+			<AlertTriangle class="w-4 h-4 text-amber-400" />
+			<span class="text-xs text-amber-400/80 font-mono uppercase tracking-wider">Danger Zone</span>
 		</div>
+		<p class="text-[11px] text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'orphans' ? 'border-red-500/50 bg-red-500/10' : 'border-[var(--border-primary)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]'}" onclick={() => previewCleanup('orphans')}>
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'orphans' ? 'border-red-500/50 bg-red-500/10' : 'border-red-500/20 bg-[var(--bg-secondary)] hover:bg-red-500/5'}" onclick={() => previewCleanup('orphans')}>
 				<div class="flex items-center gap-2 mb-1">
 					<FileSearch class="w-4 h-4 text-red-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Orphan Cleanup</span>
+					<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 font-mono">DESTRUCTIVE</span>
 				</div>
-				<p class="text-xs text-[var(--text-muted)]">Remove DB entries for files that no longer exist on disk.</p>
+				<p class="text-xs text-[var(--text-muted)]">Remove database entries for files that no longer exist on disk.</p>
 			</button>
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'duplicates' ? 'border-amber-500/50 bg-amber-500/10' : 'border-[var(--border-primary)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]'}" onclick={() => previewCleanup('duplicates')}>
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'duplicates' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('duplicates')}>
 				<div class="flex items-center gap-2 mb-1">
 					<Copy class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Deduplication</span>
+					<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-mono">CAUTION</span>
 				</div>
-				<p class="text-xs text-[var(--text-muted)]">Find duplicate tracks and keep the best quality version.</p>
+				<p class="text-xs text-[var(--text-muted)]">Find duplicate tracks and keep the best quality version. Can delete files.</p>
 			</button>
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-blue-500/50 bg-blue-500/10' : 'border-[var(--border-primary)] bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]'}" onclick={() => previewCleanup('organize')}>
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('organize')}>
 				<div class="flex items-center gap-2 mb-1">
-					<FolderTree class="w-4 h-4 text-blue-400" />
+					<FolderTree class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Rename & Sort</span>
+					<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-mono">CAUTION</span>
 				</div>
-				<p class="text-xs text-[var(--text-muted)]">Organize files into Artist/Album/Track folder structure.</p>
+				<p class="text-xs text-[var(--text-muted)]">Move and rename files into Artist/Album/Track folder structure.</p>
 			</button>
 		</div>
 
