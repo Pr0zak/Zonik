@@ -23,10 +23,22 @@ async def authenticate_subsonic(request: Request) -> User:
         except Exception:
             pass
 
+    api_key = params.get("apiKey")
     username = params.get("u")
     password = params.get("p")
     token = params.get("t")
     salt = params.get("s")
+
+    # API key auth (OpenSubsonic apiKey param — no username needed)
+    if api_key:
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(User.subsonic_api_key == api_key)
+            )
+            user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(401, "Invalid API key")
+        return user
 
     if not username:
         raise HTTPException(400, "Missing username")
