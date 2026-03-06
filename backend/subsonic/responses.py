@@ -108,7 +108,7 @@ def format_track(track, starred: bool = False) -> dict:
     data = {
         "id": track.id,
         "parent": track.album_id or track.artist_id or "1",
-        "isDir": "false",
+        "isDir": False,
         "title": track.title,
         "album": track.album.title if track.album else None,
         "artist": track.artist.name if track.artist else None,
@@ -122,7 +122,7 @@ def format_track(track, starred: bool = False) -> dict:
         "duration": int(track.duration_seconds) if track.duration_seconds else 0,
         "bitRate": (track.bitrate // 1000) if track.bitrate else None,
         "path": track.file_path,
-        "isVideo": "false",
+        "isVideo": False,
         "discNumber": track.disc_number,
         "type": "music",
         "albumId": track.album_id,
