@@ -108,6 +108,17 @@ async def shutdown(ctx: dict):
     log.info("Zonik worker stopping")
 
 
+def _make_redis_settings() -> RedisSettings:
+    settings = get_settings()
+    url = settings.redis.url
+    parts = url.replace("redis://", "").split("/")
+    host_port = parts[0].split(":")
+    host = host_port[0] or "localhost"
+    port = int(host_port[1]) if len(host_port) > 1 else 6379
+    database = int(parts[1]) if len(parts) > 1 else 0
+    return RedisSettings(host=host, port=port, database=database)
+
+
 class WorkerSettings:
     functions = [download_track, analyze_track, enrich_track, generate_embedding]
     cron_jobs = [
@@ -118,15 +129,4 @@ class WorkerSettings:
     max_jobs = 10
     job_timeout = 600  # 10 minutes
 
-    @staticmethod
-    def redis_settings():
-        settings = get_settings()
-        # Parse redis URL
-        url = settings.redis.url
-        # redis://host:port/db
-        parts = url.replace("redis://", "").split("/")
-        host_port = parts[0].split(":")
-        host = host_port[0] or "localhost"
-        port = int(host_port[1]) if len(host_port) > 1 else 6379
-        database = int(parts[1]) if len(parts) > 1 else 0
-        return RedisSettings(host=host, port=port, database=database)
+    redis_settings = _make_redis_settings()
