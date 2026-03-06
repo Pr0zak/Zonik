@@ -113,7 +113,7 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
 
         # Mark cooled-down / blocked peers and fetch reputation scores
         for r in results:
-            r["on_cooldown"] = await client.reputation.is_blocked(r["username"])
+            r["on_cooldown"] = await client.reputation.has_recent_failure(r["username"])
             r["rep_score"] = await client.reputation.get_score_adjustment(r["username"])
 
         # Sort: cooldown last, then reputation + format + slots + size
@@ -156,6 +156,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         import asyncio
         from backend.soulseek import get_client
         from backend.soulseek.protocol.types import TransferState
+        from backend.services.scanner import import_downloaded_file
         async with async_session() as db:
             job = Job(
                 id=job_id, type="download", card="dl", status="running",
@@ -253,10 +254,6 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                     job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
-                # Filter out blocked peers
-                if candidates and native_client:
-                    candidates = [c for c in candidates if not await native_client.reputation.is_blocked(c["username"])]
-
                 if candidates and native_client and parallel_sources > 1:
                     # === Multi-source parallel download ===
                     batch = candidates[:parallel_sources]
@@ -320,9 +317,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                             cand, save_path = winner
                             short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                             fsize = _file_size(save_path)
+                            track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
                             job.status = "completed"
-                            job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first"})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize}])
+                            job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
                         else:
                             failed_users = [c["username"] for c in batch]
                             job.status = "failed"
@@ -363,9 +361,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
                             short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                             fsize = _file_size(best_path)
+                            track_id = await import_downloaded_file(db, best_path, artist_hint=req.artist)
                             job.status = "completed"
-                            job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best"})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize}])
+                            job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
                         else:
                             failed_users = [c["username"] for c in batch]
                             job.status = "failed"
@@ -404,9 +403,10 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         if status == "completed":
                             await native_client.reputation.record_success(dl_username)
                             fsize = _file_size(save_path)
+                            track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
                             job.status = "completed"
-                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize}])
+                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "track_id": track_id})
+                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
                             break
                         elif status == "cancelled":
                             job.status = "failed"

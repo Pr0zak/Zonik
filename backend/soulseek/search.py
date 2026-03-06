@@ -26,17 +26,8 @@ async def pick_best_results_native(
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
-    # Pre-filter: exclude blocked peers
-    blocked_users: set[str] = set()
-    if reputation:
-        for search_result in results:
-            if await reputation.is_blocked(search_result.username):
-                blocked_users.add(search_result.username)
-
     scored = []
     for search_result in results:
-        if search_result.username in blocked_users:
-            continue
         for file_info in search_result.files:
             filename = file_info.filename
             size = file_info.size

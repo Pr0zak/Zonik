@@ -351,3 +351,106 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
 
     log.info(f"Scan complete: {stats}")
     return stats
+
+
+async def import_downloaded_file(
+    db: AsyncSession,
+    save_path: str,
+    artist_hint: str = "",
+) -> str | None:
+    """Move a downloaded file into the music library and index it.
+
+    Returns the track ID on success, or None on failure.
+    """
+    src = Path(save_path)
+    if not src.exists():
+        log.warning(f"[import] File not found: {save_path}")
+        return None
+
+    settings = get_settings()
+    music_dir = Path(settings.library.music_dir)
+    cache_dir = Path(settings.library.cover_cache_dir)
+
+    # Parse tags to get artist name for directory structure
+    parsed = parse_audio_file(src, src.parent)
+    if not parsed:
+        log.warning(f"[import] Could not parse audio tags: {save_path}")
+        return None
+
+    folder_name = parsed["artist_name"] or artist_hint or "Unknown Artist"
+    # Sanitize folder name
+    folder_name = "".join(c for c in folder_name if c not in '<>:"/\\|?*').strip()
+    if not folder_name:
+        folder_name = "Unknown Artist"
+
+    dest_dir = music_dir / folder_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+
+    # Handle name collision
+    if dest.exists() and dest != src:
+        stem, ext = dest.stem, dest.suffix
+        for i in range(1, 100):
+            dest = dest_dir / f"{stem} ({i}){ext}"
+            if not dest.exists():
+                break
+
+    try:
+        import shutil
+        shutil.move(str(src), str(dest))
+    except Exception as e:
+        log.warning(f"[import] Failed to move {src} → {dest}: {e}")
+        return None
+
+    # Re-parse from new location
+    parsed = parse_audio_file(dest, music_dir)
+    if not parsed:
+        return None
+
+    rel_path = parsed["file_path"]
+    track_id = _stable_id(rel_path)
+
+    artist = None
+    if parsed["artist_name"]:
+        artist = await get_or_create_artist(db, parsed["artist_name"])
+
+    album = None
+    if parsed["album_title"]:
+        album = await get_or_create_album(db, parsed["album_title"], artist, parsed["year"])
+
+    cover_path = extract_cover_art(dest, cache_dir)
+    if cover_path and album and not album.cover_art_path:
+        album.cover_art_path = cover_path
+
+    track = Track(
+        id=track_id,
+        title=parsed["title"],
+        artist_id=artist.id if artist else None,
+        album_id=album.id if album else None,
+        track_number=parsed["track_number"],
+        disc_number=parsed["disc_number"],
+        duration_seconds=parsed["duration_seconds"],
+        file_path=rel_path,
+        file_size=parsed["file_size"],
+        format=parsed["format"],
+        bitrate=parsed["bitrate"],
+        sample_rate=parsed["sample_rate"],
+        bit_depth=parsed["bit_depth"],
+        mime_type=parsed["mime_type"],
+        genre=parsed["genre"],
+        year=parsed["year"],
+        musicbrainz_id=parsed["musicbrainz_id"],
+        cover_art_path=cover_path,
+        replay_gain_track=parsed["replay_gain_track"],
+        replay_gain_album=parsed["replay_gain_album"],
+    )
+    db.add(track)
+
+    from backend.database import update_fts_index
+    await update_fts_index(
+        db, track_id, parsed["title"],
+        parsed["artist_name"], parsed["album_title"],
+    )
+    await db.commit()
+    log.info(f"[import] Indexed: {parsed['artist_name']} — {parsed['title']} → {rel_path}")
+    return track_id

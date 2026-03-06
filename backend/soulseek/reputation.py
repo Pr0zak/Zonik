@@ -1,4 +1,9 @@
-"""Redis-backed peer reputation tracking for download reliability."""
+"""Redis-backed peer reputation tracking for download reliability.
+
+No permanent blocking — peers with failures just get lower scores so they
+rank below healthier sources.  They can still be selected if nothing better
+is available (the peer may simply have been offline temporarily).
+"""
 from __future__ import annotations
 
 import logging
@@ -9,9 +14,7 @@ log = logging.getLogger(__name__)
 # In-memory fallback when Redis is unavailable
 _memory_store: dict[str, dict] = {}
 
-FAILURE_THRESHOLD = 3  # Failures before long block
-BLOCK_DURATION = 24 * 3600  # 24 hours (long block after threshold)
-COOLDOWN_DURATION = 30 * 60  # 30 minutes (short cooldown per failure)
+RECENT_FAILURE_WINDOW = 30 * 60  # 30 min — recent failures weigh more
 
 
 class PeerReputation:
@@ -25,71 +28,67 @@ class PeerReputation:
         if self._redis:
             try:
                 await self._redis.hincrby(key, "success", 1)
-                await self._redis.hdel(key, "failures")
-                await self._redis.expire(key, 7 * 86400)  # 7 day TTL
+                # Halve failure count on success (gradual recovery)
+                failures = int(await self._redis.hget(key, "failures") or 0)
+                if failures > 0:
+                    await self._redis.hset(key, "failures", str(max(0, failures // 2)))
+                await self._redis.expire(key, 7 * 86400)
                 return
             except Exception:
                 pass
-        # Fallback to memory
         _memory_store.setdefault(username, {})
         _memory_store[username]["success"] = _memory_store[username].get("success", 0) + 1
-        _memory_store[username].pop("failures", None)
-        _memory_store[username].pop("blocked_until", None)
+        failures = _memory_store[username].get("failures", 0)
+        if failures > 0:
+            _memory_store[username]["failures"] = max(0, failures // 2)
 
     async def record_failure(self, username: str) -> None:
         key = f"slsk:rep:{username}"
         now = time.time()
         if self._redis:
             try:
-                failures = await self._redis.hincrby(key, "failures", 1)
-                if failures >= FAILURE_THRESHOLD:
-                    cooldown = BLOCK_DURATION
-                else:
-                    cooldown = COOLDOWN_DURATION
-                await self._redis.hset(key, "blocked_until", str(int(now + cooldown)))
+                await self._redis.hincrby(key, "failures", 1)
+                await self._redis.hset(key, "last_failure", str(int(now)))
                 await self._redis.expire(key, 7 * 86400)
                 return
             except Exception:
                 pass
-        # Fallback
         _memory_store.setdefault(username, {})
-        failures = _memory_store[username].get("failures", 0) + 1
-        _memory_store[username]["failures"] = failures
-        if failures >= FAILURE_THRESHOLD:
-            _memory_store[username]["blocked_until"] = now + BLOCK_DURATION
-        else:
-            _memory_store[username]["blocked_until"] = now + COOLDOWN_DURATION
+        _memory_store[username]["failures"] = _memory_store[username].get("failures", 0) + 1
+        _memory_store[username]["last_failure"] = now
 
-    async def is_blocked(self, username: str) -> bool:
-        key = f"slsk:rep:{username}"
+    async def has_recent_failure(self, username: str) -> bool:
+        """Check if the peer failed recently (within the cooldown window)."""
+        now = time.time()
         if self._redis:
             try:
-                blocked_until = await self._redis.hget(key, "blocked_until")
-                if blocked_until:
-                    return time.time() < float(blocked_until)
+                key = f"slsk:rep:{username}"
+                last = await self._redis.hget(key, "last_failure")
+                if last:
+                    return now - float(last) < RECENT_FAILURE_WINDOW
                 return False
             except Exception:
                 pass
-        # Fallback
         data = _memory_store.get(username, {})
-        blocked_until = data.get("blocked_until", 0)
-        return time.time() < blocked_until
+        last = data.get("last_failure", 0)
+        return now - last < RECENT_FAILURE_WINDOW
 
     async def get_score_adjustment(self, username: str) -> int:
         """Return a score adjustment for quality scoring (positive = good, negative = bad)."""
-        if await self.is_blocked(username):
-            return -100
-
         if self._redis:
             try:
                 key = f"slsk:rep:{username}"
                 success = int(await self._redis.hget(key, "success") or 0)
                 failures = int(await self._redis.hget(key, "failures") or 0)
-                return min(success * 2, 10) - failures * 5
             except Exception:
-                pass
+                success, failures = 0, 0
+        else:
+            data = _memory_store.get(username, {})
+            success = data.get("success", 0)
+            failures = data.get("failures", 0)
 
-        data = _memory_store.get(username, {})
-        success = data.get("success", 0)
-        failures = data.get("failures", 0)
-        return min(success * 2, 10) - failures * 5
+        score = min(success * 2, 10) - failures * 3
+        # Extra penalty if they failed very recently
+        if await self.has_recent_failure(username):
+            score -= 5
+        return score

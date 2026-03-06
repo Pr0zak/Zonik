@@ -516,7 +516,7 @@
 						{@const status = friendlyStatus(job, transfer)}
 						{@const jobResult = parseJobResult(job)}
 						{@const jobTracks = parseJobTracks(job)}
-						<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden">
+						<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden group/job">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{job.description || job.type}</p>
@@ -591,6 +591,14 @@
 									<button onclick={() => cancelJob(job.id)}
 										class="p-1.5 text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
 										<X class="w-3.5 h-3.5" />
+									</button>
+								{/if}
+								{#if job.status === 'completed' || job.status === 'failed'}
+									<button onclick={() => {
+										hiddenJobIds = new Set([...hiddenJobIds, job.id]);
+										localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
+									}} class="p-1.5 text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover/job:opacity-100" title="Dismiss">
+										<X class="w-3 h-3" />
 									</button>
 								{/if}
 								{#if job.status === 'failed'}

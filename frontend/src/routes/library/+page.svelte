@@ -300,6 +300,7 @@
 	let similarTracks = $state([]);
 	let similarLoading = $state(false);
 	let similarTab = $state('lastfm');
+	let similarDownloading = $state(new Set());
 
 	// Track action menu
 	let menuTrack = $state(null);
@@ -512,6 +513,7 @@
 		similarTracks = [];
 		similarLoading = true;
 		similarTab = 'lastfm';
+		similarDownloading = new Set();
 		await loadSimilarLastfm();
 	}
 	async function loadSimilarLastfm() {
@@ -536,13 +538,18 @@
 		similarTab = t;
 		if (t === 'lastfm') await loadSimilarLastfm(); else await loadSimilarVibe();
 	}
-	function downloadSimilar(t) {
-		showSimilar = false;
-		goto(`/downloads?artist=${encodeURIComponent(t.artist)}&track=${encodeURIComponent(t.name)}`);
+	async function downloadSimilar(t) {
+		const key = `${t.artist}::${t.name}`.toLowerCase();
+		similarDownloading = new Set([...similarDownloading, key]);
+		try {
+			await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name }) });
+			addToast(`Downloading ${t.name}`, 'success');
+		} catch { addToast('Download failed', 'error'); similarDownloading.delete(key); similarDownloading = new Set(similarDownloading); }
 	}
 	async function downloadAllMissing() {
-		const missing = similarTracks.filter(t => !t.in_library);
+		const missing = similarTracks.filter(t => !t.in_library && !similarDownloading.has(`${t.artist}::${t.name}`.toLowerCase()));
 		if (!missing.length) return;
+		for (const t of missing) similarDownloading = new Set([...similarDownloading, `${t.artist}::${t.name}`.toLowerCase()]);
 		try {
 			await fetch('/api/download/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tracks: missing.map(t => ({ artist: t.artist, track: t.name })) }) });
 			addToast(`Downloading ${missing.length} tracks`, 'success');
@@ -1492,6 +1499,11 @@
 							{/if}
 							{#if t.in_library}
 								<Badge variant="success">In Library</Badge>
+							{:else if similarDownloading.has(`${t.artist}::${t.name}`.toLowerCase())}
+								<Badge variant="info">
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+									Downloading
+								</Badge>
 							{:else}
 								<Button variant="success" size="sm" onclick={() => downloadSimilar(t)}>
 									<Download class="w-3 h-3" /> Get
@@ -1508,13 +1520,17 @@
 		{/if}
 	{/snippet}
 	{#snippet footer()}
+		{@const missingCount = similarTracks.filter(t => !t.in_library && !similarDownloading.has(`${t.artist}::${t.name}`.toLowerCase())).length}
+		{@const dlCount = similarTracks.filter(t => similarDownloading.has(`${t.artist}::${t.name}`.toLowerCase())).length}
 		<div class="flex items-center justify-between">
 			<span class="text-xs text-[var(--text-muted)]">
-				{similarTracks.length} similar &middot; {similarTracks.filter(t => t.in_library).length} in library &middot; {similarTracks.filter(t => !t.in_library).length} missing
+				{similarTracks.length} similar &middot; {similarTracks.filter(t => t.in_library).length} in library
+				{#if dlCount > 0}&middot; {dlCount} downloading{/if}
+				{#if missingCount > 0}&middot; {missingCount} missing{/if}
 			</span>
-			{#if similarTracks.some(t => !t.in_library)}
+			{#if missingCount > 0}
 				<Button variant="success" size="sm" onclick={downloadAllMissing}>
-					<Download class="w-3 h-3" /> Get All Missing ({similarTracks.filter(t => !t.in_library).length})
+					<Download class="w-3 h-3" /> Get All Missing ({missingCount})
 				</Button>
 			{/if}
 		</div>
