@@ -707,6 +707,13 @@
 					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 		</div>
 
+		<!-- Per-page select -->
+		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
+			{#each limitOptions as opt}
+				<option value={opt}>{opt}/page</option>
+			{/each}
+		</select>
+
 		<!-- View toggle -->
 		<div class="flex border border-[var(--border-subtle)] rounded-md overflow-hidden ml-2">
 			<button onclick={() => viewMode = 'grid'}
@@ -1337,11 +1344,6 @@
 			<Button variant="secondary" size="sm" disabled={offset + limit >= currentTotal} onclick={nextPage}>
 				Next <ChevronRight class="w-4 h-4" />
 			</Button>
-			<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
-				{#each limitOptions as opt}
-					<option value={opt}>{opt}/page</option>
-				{/each}
-			</select>
 		</div>
 	{/if}
 </div>
