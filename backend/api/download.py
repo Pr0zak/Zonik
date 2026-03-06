@@ -111,14 +111,13 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
                     "queue_length": sr.queue_length,
                 })
 
-        # Mark cooled-down / blocked peers and fetch reputation scores
+        # Fetch reputation scores for sorting (recently-failed peers sort last)
         for r in results:
-            r["on_cooldown"] = await client.reputation.has_recent_failure(r["username"])
             r["rep_score"] = await client.reputation.get_score_adjustment(r["username"])
 
-        # Sort: cooldown last, then reputation + format + slots + size
+        # Sort: reputation + format + slots + size
         format_order = {"flac": 0, "wav": 1, "alac": 1, "mp3": 2, "m4a": 3, "ogg": 3, "opus": 3}
-        results.sort(key=lambda r: (r.get("on_cooldown", False), format_order.get(r["extension"], 9), -r.get("rep_score", 0), not r["slots_free"], -r["size"]))
+        results.sort(key=lambda r: (format_order.get(r["extension"], 9), -r.get("rep_score", 0), not r["slots_free"], -r["size"]))
 
         return {"results": results, "count": len(results), "users": len(users)}
 
