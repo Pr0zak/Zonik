@@ -53,7 +53,7 @@ backend/
     websocket.py       # Real-time job progress
     favorites.py       # Star/unstar + favorite IDs lookup + bulk import from external sources
     playlists.py       # Playlist CRUD + smart playlist generation
-    users.py           # User management (CRUD, password change)
+    users.py           # User management (CRUD, password change, API key generate/revoke)
   subsonic/            # Full OpenSubsonic API (auth, browsing, media, search, etc.)
   soulseek/            # Native Soulseek P2P client (protocol, network, transfers)
     protocol/          # Binary encode/decode, TCP framing, message types
@@ -96,7 +96,8 @@ docs/                  # Installation, configuration, API reference, development
 - Artist/Album IDs = MD5 of normalized name key
 - SQLite with FTS5 for search, populated during library scan
 - All async (aiosqlite, httpx, arq)
-- Subsonic auth via token or password; search3 empty query = Symfonium fast sync
+- Subsonic auth via token or password; token = md5(api_key + salt), requires per-user API key (not bcrypt hash)
+- Subsonic API key: generated via POST /api/users/{id}/api-key, stored as plaintext for md5 token auth; search3 empty query = Symfonium fast sync
 - Stream transcoding via ffmpeg (maxBitRate, format, timeOffset)
 - Download blacklist system (block artists or specific tracks)
 - Cover art: Deezer > Cover Art Archive > iTunes > Last.fm fallback
@@ -127,8 +128,7 @@ docs/                  # Installation, configuration, API reference, development
 - Track edit: PUT /api/tracks/{id} updates DB + writes tags to audio file via mutagen (title, genre, year, track_number)
 - Favorites: /api/favorites/ids returns track_ids/album_ids/artist_ids sets for fast client-side lookup
 - Favorites import: /api/favorites/import accepts [{title, artist, file_path?}] and matches by file_path MD5 or title+artist
-- KimaHub favorites sync: scheduled task (every 6h) syncs LikedTrack from KimaHub PostgreSQL into Zonik favorites via asyncpg
-- KimaHub config: [kimahub] section in zonik.toml with db_url field
+- Downloads page: sorted by status priority (queued → running → completed → failed), newest first within group
 - Downloads page: single fuzzy search field sends `query` or `artist`+`track` to backend; backend SearchRequest accepts all three fields
 - Downloads page: Active Transfers driven by WebSocket (no polling), paginated Download History from /api/jobs with type filter, cancel transfer + retry failed jobs
 - Transfer model includes speed (bytes/sec) and eta_seconds properties; /api/jobs supports offset + type (comma-separated) params
@@ -139,7 +139,7 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek: peer reputation tracking (in-memory with Redis fallback), scores adjust search result sorting (no visible cooldown badges)
 - Native Soulseek: POST /api/download/reset-reputation clears all peer rep data; button on Stats page; get_summary() for per-peer scores
 - Native Soulseek: multi-source parallel downloads (configurable 1-5 sources, "first" or "best" strategy), per-source error tracking in job results
-- Native Soulseek: library sharing — scans music dir on startup + after scan, reports real file counts to server, responds to SharedFileListRequest from peers
+- Native Soulseek: library sharing — scans music dir on startup + after scan, reports real file counts to server, responds to SharedFileListRequest from peers; configurable via share_library toggle (empty shares when disabled)
 - Native Soulseek: transfer key normalization — path separators canonicalized (backslash→forward slash) to fix filename matching between search results and peer transfer offers
 - Native Soulseek: server keepalive pings every 2 minutes (SET_STATUS online) to prevent idle connection drops
 - Native Soulseek: search scoring includes queue_length penalty (>100: -10, >50: -6, >20: -3, >5: -1)
@@ -204,6 +204,12 @@ docs/                  # Installation, configuration, API reference, development
 - Failed download jobs include failed_sources list + source_errors array with per-source {user, error} detail
 - Downloads page: failed jobs expandable to show per-source error breakdown (username + error message)
 - Player bar: shows cover art (subsonic getCoverArt), track title + artist + album; progress bar uses $state + ontimeupdate for Svelte 5 reactivity
+- Download import upgrade detection: import_downloaded_file checks for existing track with same normalized title+artist, compares quality (FORMAT_QUALITY rank + file size), upgrades or skips duplicates
+- Download cleanup: cleanup_download_dir() runs after every download — removes zero-byte and non-audio orphan files
+- Library "Added" column: sortable by created_at (defaults desc), shows formatRelativeTime() with full timestamp tooltip
+- Library context menu: "Find Upgrade" navigates to /downloads?artist=X&track=Y; bulk "Find Upgrades" triggers POST /api/download/bulk
+- User API keys: per-user subsonic_api_key for Symfonium token auth; generate/revoke/copy/eye-toggle in Settings > User Management
+- Settings page: About merged into Updates card; share library toggle in Soulseek section
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
@@ -227,12 +233,12 @@ docs/                  # Installation, configuration, API reference, development
 - 9 reusable UI components in `frontend/src/components/ui/`: Button (6 variants), Badge (5 variants), Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl
 - WebSocket connected in +layout.svelte on mount
 - Default admin credentials: admin/admin (created on first startup)
+- Symfonium setup: generate API key in Settings > Users, use as password in Symfonium's Subsonic server config
 
 ## Infrastructure
 - CT 228 on pve5 (Zonik production)
 - CT 224 on pve5 (slskd — Soulseek client, `10.0.0.116:5030` — optional when native client enabled)
 - CT 210 (Lidarr, `10.0.0.179:8686`)
-- CT 215 on pve4 (Kima-Hub, `10.0.0.78`, PostgreSQL `kima` DB for favorites sync)
 - Mount points: `/nfs/MUSIC` → `/music`, `/nfs/DOWNLOADS` → `/downloads`
 
 ## Workflow
@@ -247,4 +253,3 @@ docs/                  # Installation, configuration, API reference, development
 - Last.fm: Read API + Write API (scrobble, love) with method signatures (set via web UI)
 - Lidarr: Secondary download source (set via web UI)
 - MusicBrainz: Metadata enrichment (1 req/sec rate limit)
-- KimaHub: PostgreSQL favorites sync (CT 215, asyncpg)
