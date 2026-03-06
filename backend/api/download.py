@@ -465,6 +465,8 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             settings = get_settings()
             semaphore = asyncio.Semaphore(settings.soulseek.max_workers)
 
+            max_retries = settings.soulseek.get("bulk_retries", 3) if hasattr(settings.soulseek, "get") else 3
+
             async def download_one(idx: int, t: dict):
                 async with semaphore:
                     try:
@@ -473,17 +475,26 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
                             track_statuses[idx]["status"] = "skipped"
                             track_statuses[idx]["reason"] = reason
                         else:
-                            result = await search_and_download(t.get("artist", ""), t.get("track", ""))
-                            ok = result.get("ok") or result.get("status") == "downloading"
-                            if ok:
-                                track_statuses[idx]["status"] = "downloaded"
-                                track_statuses[idx]["username"] = result.get("username", "")
-                                fn = result.get("filename", "")
-                                track_statuses[idx]["filename"] = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if fn else ""
-                                track_statuses[idx]["file_size"] = result.get("size", 0)
+                            last_error = ""
+                            for attempt in range(max_retries):
+                                result = await search_and_download(t.get("artist", ""), t.get("track", ""))
+                                ok = result.get("ok") or result.get("status") == "downloading"
+                                if ok:
+                                    track_statuses[idx]["status"] = "downloaded"
+                                    track_statuses[idx]["username"] = result.get("username", "")
+                                    fn = result.get("filename", "")
+                                    track_statuses[idx]["filename"] = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if fn else ""
+                                    track_statuses[idx]["file_size"] = result.get("size", 0)
+                                    if attempt > 0:
+                                        track_statuses[idx]["retries"] = attempt
+                                    break
+                                last_error = result.get("message", "")
+                                if attempt < max_retries - 1:
+                                    log.info(f"[bulk] Retry {attempt + 1}/{max_retries} for {t.get('artist')} - {t.get('track')}: {last_error}")
+                                    await asyncio.sleep(5)
                             else:
                                 track_statuses[idx]["status"] = "failed"
-                                track_statuses[idx]["error"] = result.get("message", "")
+                                track_statuses[idx]["error"] = last_error
                     except Exception as e:
                         track_statuses[idx]["status"] = "failed"
                         track_statuses[idx]["error"] = str(e)
