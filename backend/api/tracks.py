@@ -130,6 +130,7 @@ async def list_tracks(
                 "year": t.year,
                 "file_size": t.file_size,
                 "play_count": t.play_count,
+                "rating": t.rating,
                 "cover_art": t.album_id or t.id,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "analyzed": t.id in analyzed_set,
@@ -261,6 +262,8 @@ async def record_play(track_id: str, db: AsyncSession = Depends(get_db)):
 
     track.play_count = (track.play_count or 0) + 1
     track.last_played_at = datetime.utcnow()
+    from backend.models.play_history import PlayHistory
+    db.add(PlayHistory(track_id=track_id, played_at=datetime.utcnow(), source="web"))
     await db.commit()
 
     # Forward scrobble to Last.fm in background
@@ -275,6 +278,19 @@ async def record_play(track_id: str, db: AsyncSession = Depends(get_db)):
         log.debug("Last.fm scrobble failed: %s", e)
 
     return {"ok": True, "play_count": track.play_count}
+
+
+@router.put("/{track_id}/rating")
+async def set_rating(track_id: str, rating: int = Query(ge=0, le=5), db: AsyncSession = Depends(get_db)):
+    """Set a 0-5 star rating for a track. 0 removes the rating."""
+    result = await db.execute(select(Track).where(Track.id == track_id))
+    track = result.scalar_one_or_none()
+    if not track:
+        raise HTTPException(404, "Track not found")
+
+    track.rating = rating if rating > 0 else None
+    await db.commit()
+    return {"ok": True, "rating": track.rating}
 
 
 @router.delete("/{track_id}")

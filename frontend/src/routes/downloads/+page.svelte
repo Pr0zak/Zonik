@@ -4,7 +4,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
-	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
+	import { formatSize, formatSpeed, formatETA, formatDateTime } from '$lib/utils.js';
 	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -581,7 +581,7 @@
 												<span>attempt {jobResult.attempt}</span>
 											{/if}
 											<span class="text-[var(--text-disabled)]">&middot;</span>
-											<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : ''}</span>
+											<span>{job.finished_at ? formatDateTime(job.finished_at) : ''}</span>
 										</div>
 									{:else}
 										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] flex-wrap">
@@ -620,7 +620,7 @@
 												<span class="text-[var(--text-disabled)]">&middot;</span>
 											{/if}
 											{#if job.status !== 'running'}
-												<span>{job.finished_at ? new Date(job.finished_at).toLocaleString() : job.started_at ? new Date(job.started_at).toLocaleString() : ''}</span>
+												<span>{job.finished_at ? formatDateTime(job.finished_at) : job.started_at ? formatDateTime(job.started_at) : ''}</span>
 											{/if}
 										</div>
 									{/if}

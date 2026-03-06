@@ -1,7 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
-	import { formatSize, formatDuration } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp } from 'lucide-svelte';
+	import { formatSize, formatDuration, parseUTC } from '$lib/utils.js';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity } from 'lucide-svelte';
+	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -15,6 +16,13 @@
 	let history = $state(null);
 	let historyHours = $state(24);
 	let loading = $state(true);
+
+	let playHistory = $state(null);
+	let playPeriod = $state('7d');
+	let playTimelineChartEl = $state(null);
+	let playHourlyChartEl = $state(null);
+	let playTimelineChart = null;
+	let playHourlyChart = null;
 
 	let peersChartEl = $state(null);
 	let transfersChartEl = $state(null);
@@ -61,13 +69,76 @@
 	};
 
 	function formatTimestamp(iso) {
-		const d = new Date(iso + 'Z');
+		const d = parseUTC(iso);
 		return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
 
 	function formatDateTimestamp(iso) {
-		const d = new Date(iso + 'Z');
+		const d = parseUTC(iso);
 		return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function destroyPlayCharts() {
+		playTimelineChart?.destroy(); playTimelineChart = null;
+		playHourlyChart?.destroy(); playHourlyChart = null;
+	}
+
+	function buildPlayCharts() {
+		if (!playHistory) return;
+		destroyPlayCharts();
+
+		if (playTimelineChartEl && playHistory.timeline.length > 1) {
+			const labels = playHistory.timeline.map(d => {
+				if (playPeriod === '24h') return d.period.split(' ')[1] || d.period;
+				return d.period.slice(5); // MM-DD
+			});
+			playTimelineChart = new Chart(playTimelineChartEl, {
+				type: 'bar',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Plays',
+						data: playHistory.timeline.map(d => d.count),
+						backgroundColor: 'rgba(139, 92, 246, 0.6)',
+						borderColor: '#8b5cf6',
+						borderWidth: 1,
+						borderRadius: 3,
+					}],
+				},
+				options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, legend: { display: false } } },
+			});
+		}
+
+		if (playHourlyChartEl && playHistory.hourly_distribution.length) {
+			// Fill all 24 hours
+			const hourData = Array(24).fill(0);
+			playHistory.hourly_distribution.forEach(h => { hourData[h.hour] = h.count; });
+			playHourlyChart = new Chart(playHourlyChartEl, {
+				type: 'bar',
+				data: {
+					labels: hourData.map((_, i) => `${String(i).padStart(2, '0')}:00`),
+					datasets: [{
+						label: 'Plays',
+						data: hourData,
+						backgroundColor: 'rgba(6, 182, 212, 0.5)',
+						borderColor: '#06b6d4',
+						borderWidth: 1,
+						borderRadius: 3,
+					}],
+				},
+				options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, legend: { display: false } } },
+			});
+		}
+	}
+
+	async function loadPlayHistory() {
+		try {
+			playHistory = await api.getPlayHistory(playPeriod);
+			await new Promise(r => setTimeout(r, 0));
+			buildPlayCharts();
+		} catch (e) {
+			console.error('Failed to load play history:', e);
+		}
 	}
 
 	function destroyCharts() {
@@ -75,6 +146,7 @@
 		transfersChart?.destroy(); transfersChart = null;
 		speedChart?.destroy(); speedChart = null;
 		bandwidthChart?.destroy(); bandwidthChart = null;
+		destroyPlayCharts();
 	}
 
 	function buildCharts() {
@@ -254,7 +326,7 @@
 				fetch('/api/library/stats/detailed').then(r => r.json()),
 				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
 			]);
-			await loadHistory();
+			await Promise.all([loadHistory(), loadPlayHistory()]);
 		} catch (e) {
 			console.error('Failed to load stats:', e);
 		} finally {
@@ -461,6 +533,79 @@
 						</div>
 					{/each}
 				</div>
+			</Card>
+		{/if}
+
+		<!-- Play History -->
+		{#if playHistory}
+			<Card padding="p-4" class="mb-8">
+				<div class="flex items-center justify-between mb-4">
+					<div class="flex items-center gap-2">
+						<Activity class="w-4 h-4 text-purple-400" />
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Listening History</h2>
+						<span class="text-xs text-[var(--text-muted)]">({playHistory.total_plays} plays)</span>
+					</div>
+					<div class="flex gap-1">
+						{#each [
+							{ v: '24h', l: '24h' },
+							{ v: '7d', l: '7d' },
+							{ v: '30d', l: '30d' },
+							{ v: '90d', l: '90d' },
+						] as opt}
+							<button
+								class="px-2.5 py-1 text-xs rounded transition-colors {playPeriod === opt.v ? 'bg-purple-500 text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--bg-tertiary)]'}"
+								onclick={() => { playPeriod = opt.v; loadPlayHistory(); }}
+							>
+								{opt.l}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+					<div>
+						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Plays Over Time</h3>
+						<div class="h-48">
+							<canvas bind:this={playTimelineChartEl}></canvas>
+						</div>
+					</div>
+					<div>
+						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Hour of Day</h3>
+						<div class="h-48">
+							<canvas bind:this={playHourlyChartEl}></canvas>
+						</div>
+					</div>
+				</div>
+
+				{#if playHistory.top_tracks.length}
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+						<div>
+							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Top Tracks (Period)</h3>
+							<div class="space-y-1.5">
+								{#each playHistory.top_tracks.slice(0, 10) as track, i}
+									<div class="flex items-center gap-2 text-sm">
+										<span class="w-5 text-right text-[var(--text-muted)] font-mono text-xs">{i + 1}</span>
+										<span class="flex-1 truncate text-[var(--text-body)]">{track.title}</span>
+										<span class="text-[var(--text-secondary)] truncate max-w-32 text-xs">{track.artist || 'Unknown'}</span>
+										<span class="text-purple-400 text-xs font-mono w-8 text-right">{track.plays}x</span>
+									</div>
+								{/each}
+							</div>
+						</div>
+						<div>
+							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Top Artists (Period)</h3>
+							<div class="space-y-1.5">
+								{#each playHistory.top_artists.slice(0, 10) as artist, i}
+									<div class="flex items-center gap-2 text-sm">
+										<span class="w-5 text-right text-[var(--text-muted)] font-mono text-xs">{i + 1}</span>
+										<span class="flex-1 truncate text-[var(--text-body)]">{artist.name}</span>
+										<span class="text-purple-400 text-xs font-mono w-8 text-right">{artist.plays}x</span>
+									</div>
+								{/each}
+							</div>
+						</div>
+					</div>
+				{/if}
 			</Card>
 		{/if}
 

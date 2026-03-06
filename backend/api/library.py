@@ -511,3 +511,87 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
         "most_played": most_played,
         "job_stats": job_stats,
     }
+
+
+@router.get("/stats/play-history")
+async def play_history_stats(
+    period: str = "7d",
+    db: AsyncSession = Depends(get_db),
+):
+    """Play history over time for charting. Periods: 24h, 7d, 30d, 90d, all."""
+    from backend.models.play_history import PlayHistory
+    from datetime import timedelta
+
+    now = datetime.utcnow()
+    period_map = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30), "90d": timedelta(days=90)}
+    cutoff = now - period_map.get(period, timedelta(days=7)) if period != "all" else None
+
+    base = select(PlayHistory)
+    if cutoff:
+        base = base.where(PlayHistory.played_at >= cutoff)
+
+    # Plays over time (group by hour for 24h, by day otherwise)
+    if period == "24h":
+        time_col = func.strftime("%Y-%m-%d %H:00", PlayHistory.played_at)
+    else:
+        time_col = func.strftime("%Y-%m-%d", PlayHistory.played_at)
+
+    timeline_q = (
+        select(time_col.label("period"), func.count(PlayHistory.id).label("count"))
+        .group_by(time_col)
+        .order_by(time_col)
+    )
+    if cutoff:
+        timeline_q = timeline_q.where(PlayHistory.played_at >= cutoff)
+    timeline = [{"period": p, "count": c} for p, c in (await db.execute(timeline_q)).all()]
+
+    # Top tracks by play count in period
+    top_tracks_q = (
+        select(Track.title, Artist.name.label("artist"), func.count(PlayHistory.id).label("plays"))
+        .join(Track, PlayHistory.track_id == Track.id)
+        .outerjoin(Artist, Track.artist_id == Artist.id)
+        .group_by(PlayHistory.track_id)
+        .order_by(func.count(PlayHistory.id).desc())
+        .limit(20)
+    )
+    if cutoff:
+        top_tracks_q = top_tracks_q.where(PlayHistory.played_at >= cutoff)
+    top_tracks = [{"title": t, "artist": a, "plays": p} for t, a, p in (await db.execute(top_tracks_q)).all()]
+
+    # Top artists
+    top_artists_q = (
+        select(Artist.name, func.count(PlayHistory.id).label("plays"))
+        .join(Track, PlayHistory.track_id == Track.id)
+        .join(Artist, Track.artist_id == Artist.id)
+        .group_by(Artist.id)
+        .order_by(func.count(PlayHistory.id).desc())
+        .limit(15)
+    )
+    if cutoff:
+        top_artists_q = top_artists_q.where(PlayHistory.played_at >= cutoff)
+    top_artists = [{"name": n, "plays": p} for n, p in (await db.execute(top_artists_q)).all()]
+
+    # Total plays in period
+    total_q = select(func.count(PlayHistory.id))
+    if cutoff:
+        total_q = total_q.where(PlayHistory.played_at >= cutoff)
+    total_plays = (await db.execute(total_q)).scalar() or 0
+
+    # Hourly distribution (plays by hour of day)
+    hour_q = (
+        select(func.strftime("%H", PlayHistory.played_at).label("hour"), func.count(PlayHistory.id))
+        .group_by(func.strftime("%H", PlayHistory.played_at))
+        .order_by(func.strftime("%H", PlayHistory.played_at))
+    )
+    if cutoff:
+        hour_q = hour_q.where(PlayHistory.played_at >= cutoff)
+    hourly = [{"hour": int(h), "count": c} for h, c in (await db.execute(hour_q)).all()]
+
+    return {
+        "timeline": timeline,
+        "top_tracks": top_tracks,
+        "top_artists": top_artists,
+        "hourly_distribution": hourly,
+        "total_plays": total_plays,
+        "period": period,
+    }

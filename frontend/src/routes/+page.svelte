@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
-	import { formatSize } from '$lib/utils.js';
+	import { formatSize, formatDateTime } from '$lib/utils.js';
 	import { Music, Users, Disc3, HardDrive, Clock, RefreshCw, Wifi, Share2 } from 'lucide-svelte';
 	import PageHeader from '../components/ui/PageHeader.svelte';
 	import Card from '../components/ui/Card.svelte';
@@ -101,7 +101,7 @@
 					</div>
 					<p class="text-lg font-bold text-[var(--text-primary)]">{timeAgo(lastScan.finished_at)}</p>
 					<p class="text-xs text-[var(--text-muted)]">
-						{lastScan.finished_at ? new Date(lastScan.finished_at).toLocaleString() : ''}
+						{formatDateTime(lastScan.finished_at)}
 					</p>
 				</Card>
 			{/if}

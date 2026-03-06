@@ -4,7 +4,7 @@
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
 	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack } from '$lib/stores.js';
-	import { formatDuration, formatSize, formatRelativeTime, debounce } from '$lib/utils.js';
+	import { formatDuration, formatSize, formatRelativeTime, formatDateTime, debounce } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
@@ -19,6 +19,7 @@
 	import Modal from '../../components/ui/Modal.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import StarRating from '../../components/ui/StarRating.svelte';
 
 	const tabs = [
 		{ id: 'tracks', label: 'Tracks', icon: Music },
@@ -40,6 +41,10 @@
 	let sort = $state('title');
 	let order = $state('asc');
 	let analyzedFilter = $state(''); // '', 'yes', 'no'
+	let filterArtistId = $state('');
+	let filterArtistName = $state('');
+	let filterAlbumId = $state('');
+	let filterAlbumName = $state('');
 
 	// Artists state
 	let artists = $state([]);
@@ -302,6 +307,12 @@
 	let similarTab = $state('lastfm');
 	let similarDownloading = $state(new Set());
 
+	// Remix discovery modal
+	let showRemixes = $state(false);
+	let remixSource = $state(null);
+	let remixes = $state([]);
+	let remixLoading = $state(false);
+
 	// Track action menu
 	let menuTrack = $state(null);
 	let menuPos = $state({ x: 0, y: 0 });
@@ -388,7 +399,7 @@
 		loading = true;
 		try {
 			if (tab === 'tracks') {
-				const result = await api.getTracks({ offset, limit, sort, order, search: search || undefined, analyzed: analyzedFilter || undefined });
+				const result = await api.getTracks({ offset, limit, sort, order, search: search || undefined, analyzed: analyzedFilter || undefined, artist_id: filterArtistId || undefined, album_id: filterAlbumId || undefined });
 				tracks = result.tracks;
 				trackTotal = result.total;
 			} else if (tab === 'artists') {
@@ -551,6 +562,18 @@
 			}));
 		} catch (e) { console.error('Vibe match failed:', e); similarTracks = []; } finally { similarLoading = false; }
 	}
+	async function findRemixes(track) {
+		remixSource = track;
+		showRemixes = true;
+		remixes = [];
+		remixLoading = true;
+		try {
+			const data = await api.getRemixes(track.artist, track.title);
+			remixes = data.remixes || [];
+		} catch (e) { console.error('Remix search failed:', e); remixes = []; }
+		remixLoading = false;
+	}
+
 	async function switchSimilarTab(t) {
 		similarTab = t;
 		if (t === 'lastfm') await loadSimilarLastfm(); else await loadSimilarVibe();
@@ -567,10 +590,14 @@
 		const missing = similarTracks.filter(t => !t.in_library && !similarDownloading.has(`${t.artist}::${t.name}`.toLowerCase()));
 		if (!missing.length) return;
 		for (const t of missing) similarDownloading = new Set([...similarDownloading, `${t.artist}::${t.name}`.toLowerCase()]);
-		try {
-			await fetch('/api/download/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tracks: missing.map(t => ({ artist: t.artist, track: t.name })) }) });
-			addToast(`Downloading ${missing.length} tracks`, 'success');
-		} catch { addToast('Bulk download failed', 'error'); }
+		let started = 0;
+		for (const t of missing) {
+			try {
+				await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name }) });
+				started++;
+			} catch { /* individual failures tracked via WS */ }
+		}
+		addToast(`Queued ${started} downloads`, 'success');
 	}
 
 	// Artist detail
@@ -754,6 +781,24 @@
 			</select>
 		{/if}
 
+		<!-- Active filter pills -->
+		{#if filterArtistId}
+			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1 ml-2">
+				Artist: {filterArtistName}
+				<button onclick={() => { filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
+					<X class="w-3 h-3" />
+				</button>
+			</span>
+		{/if}
+		{#if filterAlbumId}
+			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1 ml-2">
+				Album: {filterAlbumName}
+				<button onclick={() => { filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
+					<X class="w-3 h-3" />
+				</button>
+			</span>
+		{/if}
+
 		<!-- Per-page select -->
 		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
 			{#each limitOptions as opt}
@@ -902,6 +947,7 @@
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-24 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('rating')}>Rating {sort === 'rating' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-20 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('created_at')}>Added {sort === 'created_at' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
 									<AudioWaveform class="w-3.5 h-3.5 inline" /> {sort === 'analyzed' ? (order === 'asc' ? '↑' : '↓') : ''}
@@ -931,12 +977,40 @@
 									</td>
 									<td class="px-3 py-2">
 										<p class="font-medium text-[var(--text-primary)] truncate max-w-xs">{track.title}</p>
-										<p class="text-xs text-[var(--text-muted)] md:hidden truncate">{track.artist || '-'}</p>
+										{#if track.artist_id}
+											<button class="text-xs text-[var(--text-muted)] md:hidden truncate hover:text-[var(--color-accent)] hover:underline"
+												onclick={(e) => { e.stopPropagation(); filterArtistId = track.artist_id; filterArtistName = track.artist; filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }}>
+												{track.artist || '-'}
+											</button>
+										{:else}
+											<p class="text-xs text-[var(--text-muted)] md:hidden truncate">{track.artist || '-'}</p>
+										{/if}
 									</td>
-									<td class="px-3 py-2 text-[var(--text-secondary)] hidden md:table-cell truncate max-w-[200px]">{track.artist || '-'}</td>
-									<td class="px-3 py-2 text-[var(--text-muted)] hidden lg:table-cell truncate max-w-[200px]">{track.album || '-'}</td>
+									<td class="px-3 py-2 hidden md:table-cell truncate max-w-[200px]">
+										{#if track.artist_id}
+											<button class="text-[var(--text-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors text-left truncate max-w-full"
+												onclick={(e) => { e.stopPropagation(); filterArtistId = track.artist_id; filterArtistName = track.artist; filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }}>
+												{track.artist || '-'}
+											</button>
+										{:else}
+											<span class="text-[var(--text-secondary)]">{track.artist || '-'}</span>
+										{/if}
+									</td>
+									<td class="px-3 py-2 hidden lg:table-cell truncate max-w-[200px]">
+										{#if track.album_id}
+											<button class="text-[var(--text-muted)] hover:text-[var(--color-accent)] hover:underline transition-colors text-left truncate max-w-full"
+												onclick={(e) => { e.stopPropagation(); filterAlbumId = track.album_id; filterAlbumName = track.album; filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }}>
+												{track.album || '-'}
+											</button>
+										{:else}
+											<span class="text-[var(--text-muted)]">{track.album || '-'}</span>
+										{/if}
+									</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
-									<td class="px-3 py-2 text-[var(--text-muted)] text-xs hidden xl:table-cell" title={track.created_at ? new Date(track.created_at).toLocaleString() : ''}>{track.created_at ? formatRelativeTime(track.created_at) : '-'}</td>
+									<td class="px-3 py-2 hidden xl:table-cell" onclick={(e) => e.stopPropagation()}>
+										<StarRating rating={track.rating || 0} size="xs" onrate={async (r) => { await api.setRating(track.id, r); track.rating = r || null; }} />
+									</td>
+									<td class="px-3 py-2 text-[var(--text-muted)] text-xs hidden xl:table-cell" title={track.created_at ? formatDateTime(track.created_at) : ''}>{track.created_at ? formatRelativeTime(track.created_at) : '-'}</td>
 									<td class="px-3 py-2 hidden lg:table-cell text-center" title={track.analyzed ? 'Analyzed' : 'Not analyzed'}>
 										<AudioWaveform class="w-3.5 h-3.5 inline {track.analyzed ? 'text-pink-400' : 'text-[var(--text-disabled)] opacity-30'}" />
 									</td>
@@ -1443,6 +1517,10 @@
 			{favTrackIds.has(menuTrack.id) ? 'Unfavorite' : 'Favorite'}
 		</button>
 		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+			onclick={() => { const t = menuTrack; closeMenu(); findRemixes(t); }}>
+			<Disc3 class="w-3.5 h-3.5 text-teal-400" /> Find Remixes
+		</button>
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
 			onclick={() => { const t = menuTrack; closeMenu(); goto(`/downloads?artist=${encodeURIComponent(t.artist || '')}&track=${encodeURIComponent(t.title || '')}`); }}>
 			<Download class="w-3.5 h-3.5 text-green-400" /> Find Upgrade
 		</button>
@@ -1568,5 +1646,57 @@
 				</Button>
 			{/if}
 		</div>
+	{/snippet}
+</Modal>
+
+<!-- Remix Discovery Modal -->
+<Modal bind:open={showRemixes} title="Find Remixes">
+	{#snippet children()}
+		{#if remixSource}
+			<p class="text-xs text-[var(--text-muted)] mb-3">
+				Remixes of <span class="text-[var(--text-primary)]">{remixSource.title}</span> by <span class="text-[var(--text-secondary)]">{remixSource.artist}</span>
+			</p>
+		{/if}
+		{#if remixLoading}
+			<div class="space-y-2">
+				{#each Array(5) as _}
+					<Skeleton class="h-10 rounded" />
+				{/each}
+			</div>
+		{:else if remixes.length}
+			<div class="space-y-1 max-h-96 overflow-y-auto">
+				{#each remixes as remix}
+					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--bg-hover)] transition-colors group">
+						<div class="flex-1 min-w-0">
+							<p class="text-sm text-[var(--text-primary)] truncate">{remix.name}</p>
+							<p class="text-xs text-[var(--text-muted)]">{remix.artist}</p>
+						</div>
+						<Badge variant={remix.version_type === 'remix' ? 'info' : remix.version_type === 'extended' ? 'success' : 'default'}>
+							{remix.version_type}
+						</Badge>
+						{#if remix.in_library}
+							<Badge variant="success">In Library</Badge>
+						{:else}
+							<Button variant="success" size="sm"
+								onclick={async () => {
+									try {
+										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name }) });
+										addToast(`Downloading ${remix.name}`, 'success');
+									} catch { addToast('Download failed', 'error'); }
+								}}>
+								<Download class="w-3 h-3" /> Get
+							</Button>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else}
+			<p class="text-[var(--text-muted)] text-center py-8 text-sm">No remixes found.</p>
+		{/if}
+	{/snippet}
+	{#snippet footer()}
+		<span class="text-xs text-[var(--text-muted)]">
+			{remixes.length} remixes found &middot; {remixes.filter(r => r.in_library).length} in library
+		</span>
 	{/snippet}
 </Modal>

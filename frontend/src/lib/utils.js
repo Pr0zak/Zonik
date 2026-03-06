@@ -17,9 +17,25 @@ export function formatSize(bytes) {
 	return `${size.toFixed(1)} ${units[i]}`;
 }
 
+/**
+ * Parse an ISO timestamp from the API as UTC.
+ * Backend stores UTC but .isoformat() omits the Z suffix.
+ */
+export function parseUTC(iso) {
+	if (!iso) return null;
+	// If it already ends with Z or has timezone offset, leave it
+	if (iso.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(iso)) return new Date(iso);
+	return new Date(iso + 'Z');
+}
+
 export function formatDate(iso) {
 	if (!iso) return '';
-	return new Date(iso).toLocaleDateString();
+	return parseUTC(iso).toLocaleDateString();
+}
+
+export function formatDateTime(iso) {
+	if (!iso) return '';
+	return parseUTC(iso).toLocaleString();
 }
 
 export function formatSpeed(bytesPerSec) {
@@ -45,7 +61,7 @@ export const inputClass = 'w-full bg-[var(--bg-primary)] border border-[var(--bo
 
 export function formatRelativeTime(iso) {
 	if (!iso) return '';
-	const diff = Date.now() - new Date(iso).getTime();
+	const diff = Date.now() - parseUTC(iso).getTime();
 	if (diff < 0) return 'just now';
 	const mins = Math.floor(diff / 60000);
 	if (mins < 1) return 'just now';

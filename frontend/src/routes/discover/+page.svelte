@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
+	import { parseUTC } from '$lib/utils.js';
 	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -315,47 +316,27 @@
 		bulkDownloading = true;
 		for (const t of missing) trackStatus[trackKey(t)] = 'queued';
 
-		try {
-			const res = await fetch('/api/download/bulk', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ tracks: missing.map(t => ({ artist: t.artist, track: t.name })) })
-			});
-			const data = await res.json();
-			if (data.job_id) {
-				addToast(`Downloading ${missing.length} tracks`, 'success');
-				pollBulkJob(data.job_id);
-			}
-		} catch (e) {
-			addToast('Bulk download failed', 'error');
-			for (const t of missing) trackStatus[trackKey(t)] = 'failed';
-		} finally {
-			bulkDownloading = false;
-		}
-	}
-
-	async function pollBulkJob(jobId) {
-		for (let i = 0; i < 300; i++) {
-			await new Promise(r => setTimeout(r, 2000));
+		let started = 0;
+		for (const t of missing) {
 			try {
-				const job = await fetch(`/api/jobs/${jobId}`).then(r => r.json());
-				if (job.tracks) {
-					try {
-						for (const tj of JSON.parse(job.tracks)) {
-							const key = `${tj.artist}::${tj.track}`.toLowerCase();
-							if (tj.status === 'downloaded' || tj.status === 'downloading') trackStatus[key] = 'completed';
-							else if (tj.status === 'failed' || tj.status === 'skipped') trackStatus[key] = 'failed';
-						}
-					} catch {}
-				}
-				if (job.status === 'completed' || job.status === 'failed') return;
-			} catch {}
+				await fetch('/api/download/trigger', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ artist: t.artist, track: t.name })
+				});
+				trackStatus[trackKey(t)] = 'downloading';
+				started++;
+			} catch {
+				trackStatus[trackKey(t)] = 'failed';
+			}
 		}
+		addToast(`Queued ${started} individual downloads`, 'success');
+		bulkDownloading = false;
 	}
 
 	function formatAge(iso) {
 		if (!iso) return '';
-		const ms = Date.now() - new Date(iso).getTime();
+		const ms = Date.now() - parseUTC(iso).getTime();
 		const h = Math.floor(ms / 3600000);
 		if (h < 1) return 'just now';
 		if (h < 24) return `${h}h ago`;

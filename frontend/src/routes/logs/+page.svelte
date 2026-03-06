@@ -4,6 +4,7 @@
 	import { api } from '$lib/api.js';
 	import { ScrollText, ChevronDown, ChevronRight, ChevronLeft, RotateCcw, XCircle } from 'lucide-svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
+	import { formatDateTime } from '$lib/utils.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
@@ -269,7 +270,7 @@
 								{formatJobDuration(job.started_at, job.finished_at)}
 							</td>
 							<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono">
-								{job.started_at ? new Date(job.started_at).toLocaleString() : '-'}
+								{job.started_at ? formatDateTime(job.started_at) : '-'}
 							</td>
 						</tr>
 						{#if expandedJob === job.id && jobDetail}
@@ -288,13 +289,13 @@
 											{#if jobDetail.started_at}
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
 													<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Started</span>
-													<p class="text-[var(--text-body)] font-mono text-[10px]">{new Date(jobDetail.started_at).toLocaleString()}</p>
+													<p class="text-[var(--text-body)] font-mono text-[10px]">{formatDateTime(jobDetail.started_at)}</p>
 												</div>
 											{/if}
 											{#if jobDetail.finished_at}
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
 													<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Finished</span>
-													<p class="text-[var(--text-body)] font-mono text-[10px]">{new Date(jobDetail.finished_at).toLocaleString()}</p>
+													<p class="text-[var(--text-body)] font-mono text-[10px]">{formatDateTime(jobDetail.finished_at)}</p>
 												</div>
 											{/if}
 										</div>

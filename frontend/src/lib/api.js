@@ -83,4 +83,21 @@ export const api = {
 	// Blacklist
 	addToBlacklist: (artist, track = null, reason = null) =>
 		request('/download/blacklist', { method: 'POST', body: JSON.stringify({ artist, track, reason }) }),
+
+	// Ratings
+	setRating: (trackId, rating) => request(`/tracks/${trackId}/rating?rating=${rating}`, { method: 'PUT' }),
+
+	// Play History
+	getPlayHistory: (period = '7d') => request(`/library/stats/play-history?period=${period}`),
+
+	// Remixes
+	getRemixes: (artist, track, limit = 30) =>
+		request(`/discovery/remixes?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}&limit=${limit}`),
+
+	// Music Map
+	getMapGraph: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/map/graph?${qs}`);
+	},
 };

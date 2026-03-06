@@ -137,12 +137,14 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
         return error_response(10, "Missing id parameter", _get_format(request))
 
     if submission == "true":
-        # Update play count
+        # Update play count and record history
         result = await db.execute(select(Track).where(Track.id == song_id))
         track = result.scalar_one_or_none()
         if track:
             track.play_count = (track.play_count or 0) + 1
             track.last_played_at = datetime.utcnow()
+            from backend.models.play_history import PlayHistory
+            db.add(PlayHistory(track_id=song_id, played_at=datetime.utcnow(), source="subsonic"))
             await db.commit()
 
     return subsonic_response({}, _get_format(request))
@@ -150,6 +152,36 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
 
 @router.get("/setRating")
 @router.get("/setRating.view")
-async def set_rating(request: Request):
-    # Accept but ignore ratings for now
+@router.post("/setRating")
+@router.post("/setRating.view")
+async def set_rating(request: Request, db: AsyncSession = Depends(get_db)):
+    params = dict(request.query_params)
+    if request.method == "POST":
+        try:
+            form = await request.form()
+            params.update(form)
+        except Exception:
+            pass
+
+    song_id = params.get("id")
+    rating_str = params.get("rating", "0")
+
+    if not song_id:
+        return error_response(10, "Missing id parameter", _get_format(request))
+
+    try:
+        rating = int(rating_str)
+    except (ValueError, TypeError):
+        return error_response(10, "Invalid rating", _get_format(request))
+
+    if rating < 0 or rating > 5:
+        return error_response(10, "Rating must be 0-5", _get_format(request))
+
+    result = await db.execute(select(Track).where(Track.id == song_id))
+    track = result.scalar_one_or_none()
+    if not track:
+        return error_response(70, "Song not found", _get_format(request))
+
+    track.rating = rating if rating > 0 else None
+    await db.commit()
     return subsonic_response({}, _get_format(request))

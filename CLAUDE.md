@@ -4,7 +4,7 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) + ARQ/Redis
-- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js (dark theme, 12 routes)
+- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 13 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
 - **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
 - **Discovery**: Last.fm API (similar tracks/artists, top charts, scrobbling)
@@ -40,14 +40,15 @@ backend/
   main.py              # FastAPI app, lifespan, router registration
   config.py            # Settings from zonik.toml (Pydantic models)
   database.py          # SQLAlchemy engine, FTS5 setup, search helpers
-  models/              # 15 SQLAlchemy models (Track, Artist, Album, SoulseekSnapshot, etc.)
+  models/              # 16 SQLAlchemy models (Track, Artist, Album, PlayHistory, SoulseekSnapshot, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner
     download.py        # Soulseek search/trigger/bulk + blacklist + stats + stats history + reputation reset
-    discovery.py       # Last.fm charts, similar tracks/artists
+    discovery.py       # Last.fm charts, similar tracks/artists, remix discovery
+    map.py             # Music Map graph API (genre/artist/track nodes)
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management (task labels + descriptions)
     websocket.py       # Real-time job progress
@@ -67,24 +68,25 @@ backend/
     shares.py          # Library file sharing — scan music dir, build compressed file list for peers
   models/
     stats.py           # SoulseekSnapshot model — periodic P2P stat snapshots for charting
-  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, etc.)
+  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, graph_builder, remix_discovery, etc.)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
-  src/routes/          # SvelteKit pages (12 routes)
+  src/routes/          # SvelteKit pages (13 routes)
     +page.svelte       # Dashboard (stats, last scan, version, health, Soulseek P2P)
-    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner
-    discover/          # Last.fm charts + inline download (per-track status, bulk download), similar artists
+    library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner + remix discovery
+    discover/          # Last.fm charts + inline download (per-track status, individual download queue), similar artists
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
-    stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset) + P2P history charts (Chart.js)
+    stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset) + P2P history charts + Listening History charts (Chart.js)
+    map/               # Music Map — D3.js force-directed graph (genre clusters, artist nodes, zoom levels)
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
   src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell/settings icons), Player, Toast
-    ui/                # 9 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl
+    ui/                # 10 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating
   src/lib/             # api.js, stores.js, utils.js, websocket.js
 deploy/                # Systemd service files
 docs/                  # Installation, configuration, API reference, development guide
@@ -116,7 +118,7 @@ docs/                  # Installation, configuration, API reference, development
 - upgrade.sh supports SKIP_RESTART=1 env var (used by web UI to handle restart separately)
 - Backend sends full API keys (not masked) — self-hosted single-user app, frontend password fields handle hiding
 - WebSocket real-time: job progress (broadcast_job_update), transfer progress (broadcast_transfer_progress with 500ms throttle)
-- "Download All Missing" button on Discover page wires to /api/download/bulk
+- "Download All Missing" fires individual /api/download/trigger per track (not bulk) for independent job tracking
 - Active jobs indicator in sidebar footer (spinning loader + count, clickable → /logs)
 - Sidebar transfer mini-progress: shows active transferring file with thin progress bar (blue accent, links to /downloads)
 - Library scan: pre-counts files, broadcasts progress via WebSocket every 50 files, stores JSON result
@@ -221,6 +223,19 @@ docs/                  # Installation, configuration, API reference, development
 - Schedule page: danger tasks (library_cleanup) shown with amber dot, AlertTriangle icon, warning badge
 - Logo: text-3xl font-bold tracking-[0.15em] (bigger + wider letter spacing)
 - Last.fm OAuth: auth button in Settings, auto-redirect callback with ?lastfm_auth=ok, token paste fallback
+- Play history: PlayHistory model (track_id FK, played_at, source), recorded on Subsonic scrobble + web play
+- Play history API: GET /api/library/stats/play-history with period param (24h/7d/30d/90d/all), returns timeline, hourly_distribution, top_tracks, top_artists
+- Play history charts: Chart.js bar charts on Stats page (plays over time, by hour of day, top tracks/artists)
+- User ratings: Track.rating column (nullable int 1-5), Subsonic setRating persists rating, userRating in responses
+- StarRating component: 5-star rating with hover preview, click-to-rate, click-same-to-clear; sizes xs/sm/md
+- Remix discovery: backend/services/remix_discovery.py — VERSION_PATTERNS regex for 14 version types, Last.fm 3-strategy search
+- Remix discovery UI: "Find Remixes" context menu in Library, modal with version type badges, in-library status, download button
+- Music Map: D3.js v7 force-directed graph at /map, genre clusters (sized by track count), artist nodes (colored by primary genre)
+- Music Map: zoom levels (genre<0.5, artist<2.0, track>2.0), hover highlight connections, drag+pin, search+center, detail panel
+- Music Map backend: graph_builder.py builds nodes/edges, GET /api/map/graph with configurable caps (max_artists, min_genre_tracks, etc.)
+- Library list view: clickable artist/album cells navigate to filtered view (stopPropagation to prevent row play), removable filter pills
+- Timezone: parseUTC() in utils.js appends 'Z' to naive ISO strings from backend; formatDateTime() for absolute timestamps; applied across all pages
+- Per-section color coding includes map=teal (--color-map: #14b8a6)
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
@@ -239,9 +254,9 @@ docs/                  # Installation, configuration, API reference, development
 - Svelte 5 deprecation warnings (on:click → onclick) are harmless, builds succeed
 - `stores.js` exports: sidebarOpen, currentTrack, isPlaying, activeJobs, activeTransfers, toasts, updateAvailable, addToast, showShortcuts
 - CSS variable-based design system in `app.css` (layered backgrounds: --bg-primary/#0a0a0a → --bg-secondary → --bg-tertiary → --bg-hover)
-- Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, schedule=orange, logs=violet, settings=slate)
+- Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, map=teal, schedule=orange, logs=violet, settings=slate)
 - Inter font via Google Fonts CDN; lucide-svelte icons throughout (tree-shakeable SVG icons)
-- 9 reusable UI components in `frontend/src/components/ui/`: Button (6 variants), Badge (5 variants), Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl
+- 10 reusable UI components in `frontend/src/components/ui/`: Button (6 variants), Badge (5 variants), Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating
 - WebSocket connected in +layout.svelte on mount
 - Default admin credentials: admin/admin (created on first startup)
 - Symfonium setup: generate API key in Settings > Users, use as password in Symfonium's Subsonic server config

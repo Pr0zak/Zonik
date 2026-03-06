@@ -32,6 +32,7 @@ class Track(Base):
     cover_art_path: Mapped[str | None] = mapped_column(String)
     replay_gain_track: Mapped[float | None] = mapped_column(Float)
     replay_gain_album: Mapped[float | None] = mapped_column(Float)
+    rating: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     play_count: Mapped[int] = mapped_column(Integer, default=0)
     last_played_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

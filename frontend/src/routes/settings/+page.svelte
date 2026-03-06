@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
-	import { inputClass } from '$lib/utils.js';
+	import { inputClass, formatDateTime } from '$lib/utils.js';
 	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -819,7 +819,7 @@
 							<div class="flex flex-col">
 								<span class="font-mono text-xs text-[var(--text-body)]">{backup.filename}</span>
 								<span class="text-xs text-[var(--text-muted)]">
-									{new Date(backup.created_at).toLocaleString()} &middot; {(backup.size / 1024 / 1024).toFixed(1)} MB
+									{formatDateTime(backup.created_at)} &middot; {(backup.size / 1024 / 1024).toFixed(1)} MB
 								</span>
 							</div>
 							<button onclick={() => restoreBackup(backup.filename)}

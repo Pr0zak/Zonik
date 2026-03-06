@@ -128,6 +128,7 @@ def format_track(track, starred: bool = False) -> dict:
         "albumId": track.album_id,
         "artistId": track.artist_id,
         "playCount": track.play_count,
+        "userRating": track.rating,
         "created": _format_dt(track.created_at),
     }
     if starred:

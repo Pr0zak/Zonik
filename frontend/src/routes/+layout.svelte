@@ -75,6 +75,7 @@
 		if (key === '8') { goto('/stats'); return; }
 		if (key === '9') { goto('/schedule'); return; }
 		if (key === '0') { goto('/logs'); return; }
+		if (key === 'm') { goto('/map'); return; }
 		if (key === 's' && !ctrl) { goto('/settings'); return; }
 
 		// n = next track, p = prev track

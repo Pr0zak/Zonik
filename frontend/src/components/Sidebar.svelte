@@ -5,7 +5,7 @@
 	import { Loader2 } from 'lucide-svelte';
 	import {
 		LayoutDashboard, Library, Compass, Download, ListMusic,
-		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings, Github
+		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings, Github, Network
 	} from 'lucide-svelte';
 
 	let currentTransfer = $derived($activeTransfers.find(t => t.state === 'transferring') || null);
@@ -18,6 +18,7 @@
 		{ href: '/playlists', label: 'Playlists', icon: ListMusic, color: 'var(--color-playlists)' },
 		{ href: '/favorites', label: 'Favorites', icon: Heart, color: 'var(--color-favorites)' },
 		{ href: '/analysis', label: 'Analysis', icon: AudioWaveform, color: 'var(--color-analysis)' },
+		{ href: '/map', label: 'Music Map', icon: Network, color: 'var(--color-map)' },
 		{ href: '/stats', label: 'Stats', icon: BarChart3, color: 'var(--color-stats)' },
 		{ href: '/schedule', label: 'Schedule', icon: Clock, color: 'var(--color-schedule)' },
 		{ href: '/logs', label: 'Logs', icon: ScrollText, color: 'var(--color-logs)' },

@@ -277,6 +277,37 @@ async def similar_by_track(
     }
 
 
+@router.get("/remixes")
+async def find_remixes(
+    artist: str,
+    track: str,
+    limit: int = Query(30, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find remixes, dubs, and edits of a track via Last.fm search."""
+    from backend.services.remix_discovery import find_remixes as _find_remixes
+
+    remixes = await _find_remixes(artist, track, limit=limit)
+
+    # Annotate with library status
+    for r in remixes:
+        existing = await db.execute(
+            select(Track).join(Artist, Track.artist_id == Artist.id).where(
+                Track.title.ilike(r["name"]),
+                Artist.name.ilike(r["artist"]),
+            ).limit(1)
+        )
+        existing_track = existing.scalar_one_or_none()
+        r["in_library"] = existing_track is not None
+        r["track_id"] = existing_track.id if existing_track else None
+
+    return {
+        "remixes": remixes,
+        "source_artist": artist,
+        "source_track": track,
+    }
+
+
 @router.get("/artist-info")
 async def artist_info(artist: str):
     """Get detailed artist info from Last.fm."""

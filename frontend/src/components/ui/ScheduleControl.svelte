@@ -1,6 +1,7 @@
 <script>
 	import { Clock, Play, Download } from 'lucide-svelte';
 	import Button from './Button.svelte';
+	import { parseUTC, formatDateTime } from '$lib/utils.js';
 
 	let {
 		taskName,
@@ -53,9 +54,9 @@
 		<span class="text-xs text-[var(--text-secondary)] font-medium min-w-0 truncate">{label}</span>
 	{/if}
 	{#if lastRunAt}
-		<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0" title="{new Date(lastRunAt).toLocaleString()}">
+		<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0" title="{formatDateTime(lastRunAt)}">
 			{(() => {
-				const diff = Math.max(0, Date.now() - new Date(lastRunAt));
+				const diff = Math.max(0, Date.now() - parseUTC(lastRunAt));
 				const mins = Math.floor(diff / 60000);
 				if (mins < 1) return 'just now';
 				if (mins < 60) return `${mins}m ago`;
