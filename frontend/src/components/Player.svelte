@@ -105,6 +105,8 @@
 			audio.src = `/rest/stream?id=${$currentTrack.id}&v=1.16.1&c=zonik-web`;
 			audio.play();
 			$isPlaying = true;
+			// Record play count
+			api.recordPlay($currentTrack.id).catch(() => {});
 		}
 	});
 

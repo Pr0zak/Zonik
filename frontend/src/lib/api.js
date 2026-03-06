@@ -25,6 +25,7 @@ export const api = {
 	getTrack: (id) => request(`/tracks/${id}`),
 	deleteTrack: (id) => request(`/tracks/${id}`, { method: 'DELETE' }),
 	updateTrack: (id, data) => request(`/tracks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+	recordPlay: (id) => request(`/tracks/${id}/play`, { method: 'POST' }),
 	bulkDeleteTracks: (ids) => request('/tracks/bulk-delete', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
 	bulkAnalyzeTracks: (ids) => request('/tracks/bulk-analyze', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
 

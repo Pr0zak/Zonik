@@ -214,6 +214,36 @@ async def update_track(track_id: str, req: TrackUpdateRequest, db: AsyncSession 
     }
 
 
+@router.post("/{track_id}/play")
+async def record_play(track_id: str, db: AsyncSession = Depends(get_db)):
+    """Record a play for a track — increments play_count, updates last_played_at, scrobbles to Last.fm."""
+    from datetime import datetime
+
+    result = await db.execute(
+        select(Track).options(selectinload(Track.artist)).where(Track.id == track_id)
+    )
+    track = result.scalar_one_or_none()
+    if not track:
+        raise HTTPException(404, "Track not found")
+
+    track.play_count = (track.play_count or 0) + 1
+    track.last_played_at = datetime.utcnow()
+    await db.commit()
+
+    # Forward scrobble to Last.fm in background
+    try:
+        from backend.services.scrobbler import forward_scrobble
+        await forward_scrobble(
+            artist=track.artist.name if track.artist else "Unknown",
+            track=track.title,
+            album="",
+        )
+    except Exception as e:
+        log.debug("Last.fm scrobble failed: %s", e)
+
+    return {"ok": True, "play_count": track.play_count}
+
+
 @router.delete("/{track_id}")
 async def delete_track(track_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Track).where(Track.id == track_id))

@@ -843,9 +843,10 @@
 									</th>
 								{/if}
 								<th class="px-3 py-2.5 w-10"></th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('title')}>Title</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Artist</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('title')}>Title {sort === 'title' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16">Time</th>
 								<th class="px-3 py-2.5 w-10"></th>
 							</tr>
@@ -875,6 +876,7 @@
 									</td>
 									<td class="px-3 py-2 text-[var(--text-secondary)] hidden md:table-cell truncate max-w-[200px]">{track.artist || '-'}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] hidden lg:table-cell truncate max-w-[200px]">{track.album || '-'}</td>
+									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
 									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{formatDuration(track.duration)}</td>
 									<td class="px-3 py-2 w-20">
 										<div class="flex items-center gap-0.5">
