@@ -1,7 +1,8 @@
 <script>
 	import { onMount } from 'svelte';
 	import { formatSize, formatDuration } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw } from 'lucide-svelte';
+	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
@@ -223,7 +224,20 @@
 		<!-- Soulseek P2P -->
 		{#if slsk}
 			<Card padding="p-4">
-				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Soulseek P2P</h2>
+				<div class="flex items-center justify-between mb-4">
+					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Soulseek P2P</h2>
+					<button
+						class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+						onclick={async () => {
+							const res = await fetch('/api/download/reset-reputation', { method: 'POST' });
+							const data = await res.json();
+							addToast(`Reputation reset (${data.cleared} entries cleared)`, 'success');
+						}}
+					>
+						<RotateCcw class="w-3.5 h-3.5" />
+						Reset Reputation
+					</button>
+				</div>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
 					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">

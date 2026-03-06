@@ -682,6 +682,19 @@ async def soulseek_stats():
     }
 
 
+@router.post("/reset-reputation")
+async def reset_reputation():
+    """Clear all peer reputation data (cooldowns + scores)."""
+    from backend.soulseek import get_client
+
+    client = get_client()
+    if not client:
+        return {"cleared": 0}
+
+    count = await client.reputation.reset_all()
+    return {"cleared": count}
+
+
 # --- Blacklist CRUD ---
 
 class BlacklistEntry(BaseModel):

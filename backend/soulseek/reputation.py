@@ -73,6 +73,22 @@ class PeerReputation:
         last = data.get("last_failure", 0)
         return now - last < RECENT_FAILURE_WINDOW
 
+    async def reset_all(self) -> int:
+        """Clear all reputation data. Returns number of entries cleared."""
+        count = len(_memory_store)
+        _memory_store.clear()
+        if self._redis:
+            try:
+                keys = []
+                async for key in self._redis.scan_iter("slsk:rep:*"):
+                    keys.append(key)
+                if keys:
+                    await self._redis.delete(*keys)
+                    count = max(count, len(keys))
+            except Exception:
+                pass
+        return count
+
     async def get_score_adjustment(self, username: str) -> int:
         """Return a score adjustment for quality scoring (positive = good, negative = bad)."""
         if self._redis:
