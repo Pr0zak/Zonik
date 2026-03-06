@@ -94,7 +94,12 @@ class ServerConnection:
 
         # Post-login handshake
         await self._send(build_set_wait_port(self.listen_port))
-        await self._send(build_shared_folders_files(1, 1))
+        # Report real share counts from cached scan
+        from backend.soulseek.shares import get_share_counts
+        num_dirs, num_files = get_share_counts()
+        if num_dirs == 0:
+            num_dirs, num_files = 1, 1  # Minimum to avoid looking like a leecher
+        await self._send(build_shared_folders_files(num_dirs, num_files))
         await self._send(build_have_no_parents(True))
         await self._send(build_set_status(UserStatus.ONLINE))
 

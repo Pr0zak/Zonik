@@ -71,6 +71,11 @@ class PeerConnection:
         self._stream.write_message(build_transfer_response(token, allowed, reason))
         await self._stream.drain()
 
+    async def send_raw(self, data: bytes) -> None:
+        """Send a pre-built message (already has length prefix)."""
+        self._stream.writer.write(data)
+        await self._stream.drain()
+
     async def _read_loop(self) -> None:
         try:
             while True:

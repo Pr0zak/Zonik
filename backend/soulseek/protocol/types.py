@@ -25,6 +25,7 @@ class ServerMessageCode(IntEnum):
 
 class PeerMessageCode(IntEnum):
     SHARED_FILE_LIST_REQUEST = 4
+    SHARED_FILE_LIST_RESPONSE = 5
     FILE_SEARCH_RESPONSE = 9
     TRANSFER_REQUEST = 40
     TRANSFER_RESPONSE = 41

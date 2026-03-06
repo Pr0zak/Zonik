@@ -73,7 +73,19 @@ class SoulseekClient:
         await self.listener.start()
         self.transfers.start()
         self._peer_cleanup_task = asyncio.create_task(self._peer_cleanup_loop())
+        # Build shared file list before login so we report real counts
+        self._refresh_shares()
         await self.server.connect_and_login(username, password)
+
+    def _refresh_shares(self) -> None:
+        """Scan music library and cache shared file list."""
+        try:
+            from backend.config import get_settings
+            from backend.soulseek.shares import refresh_shares
+            settings = get_settings()
+            refresh_shares(settings.library.music_dir)
+        except Exception as e:
+            log.warning(f"[client] Failed to refresh shares: {e}")
 
     async def search(
         self,
@@ -264,6 +276,17 @@ class SoulseekClient:
 
     async def _handle_peer_message(self, msg: dict, peer: PeerConnection) -> None:
         kind = msg.get("kind")
+
+        if kind == "shared_file_list_request":
+            from backend.soulseek.shares import get_shared_file_list_response
+            response = get_shared_file_list_response()
+            if response:
+                try:
+                    await peer.send_raw(response)
+                    log.debug(f"[client] Sent shared file list to {peer.username}")
+                except Exception as e:
+                    log.debug(f"[client] Failed to send share list to {peer.username}: {e}")
+            return
 
         if kind == "file_search_response":
             token = msg["token"]

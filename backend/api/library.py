@@ -92,6 +92,15 @@ async def scan_library(background_tasks: BackgroundTasks):
                     "progress": progress, "total": total,
                 })
 
+                # Refresh Soulseek shared file list after scan
+                if status == "completed":
+                    try:
+                        from backend.soulseek.shares import refresh_shares
+                        from backend.config import get_settings
+                        refresh_shares(get_settings().library.music_dir)
+                    except Exception:
+                        pass
+
                 # Auto-trigger analysis/enrichment on new additions
                 if status == "completed" and stats.get("added", 0) > 0:
                     await _auto_trigger_post_scan(stats["added"])
