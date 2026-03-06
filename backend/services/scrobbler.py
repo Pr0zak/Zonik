@@ -1,33 +1,18 @@
-"""Scrobble forwarding to Last.fm."""
+"""Scrobble forwarding and favorites sync to Last.fm."""
 from __future__ import annotations
 
-import json
 import logging
 import time
-from pathlib import Path
 
 from backend.config import get_settings
 
 log = logging.getLogger(__name__)
 
-SYNC_FILE = Path("data/lastfm_sync.json")
-
-
-def _load_sync_config() -> dict:
-    if SYNC_FILE.exists():
-        return json.loads(SYNC_FILE.read_text())
-    return {}
-
-
-def _save_sync_config(config: dict):
-    SYNC_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SYNC_FILE.write_text(json.dumps(config, indent=2))
-
 
 async def forward_scrobble(artist: str, track: str, album: str = ""):
     """Forward a scrobble to Last.fm if a session key is configured."""
-    config = _load_sync_config()
-    session_key = config.get("session_key")
+    settings = get_settings()
+    session_key = settings.lastfm.session_key
     if not session_key:
         return
 
@@ -35,14 +20,23 @@ async def forward_scrobble(artist: str, track: str, album: str = ""):
     await scrobble_track(artist, track, int(time.time()), session_key, album)
 
 
-async def sync_loved_tracks(session_key: str):
-    """Sync starred tracks to Last.fm as loved tracks."""
+async def sync_loved_tracks(session_key: str, username: str = "") -> dict:
+    """Sync Zonik favorites → Last.fm loved tracks (incremental)."""
     from backend.database import async_session
     from backend.models.favorite import Favorite
     from backend.models.track import Track
     from sqlalchemy import select
     from sqlalchemy.orm import selectinload
-    from backend.services.lastfm import love_track
+    from backend.services.lastfm import love_track, get_loved_tracks
+
+    # Get already-loved tracks on Last.fm to avoid redundant API calls
+    already_loved: set[tuple[str, str]] = set()
+    if username:
+        try:
+            already_loved = await get_loved_tracks(username)
+            log.info(f"Last.fm has {len(already_loved)} loved tracks")
+        except Exception as e:
+            log.warning(f"Could not fetch Last.fm loved tracks: {e}")
 
     async with async_session() as db:
         result = await db.execute(
@@ -52,6 +46,26 @@ async def sync_loved_tracks(session_key: str):
         )
         favorites = result.scalars().all()
 
-        for fav in favorites:
-            if fav.track and fav.track.artist:
-                await love_track(fav.track.artist.name, fav.track.title, session_key)
+    synced = 0
+    skipped = 0
+    errors = 0
+    for fav in favorites:
+        if not fav.track or not fav.track.artist:
+            continue
+        artist_name = fav.track.artist.name
+        title = fav.track.title
+        if (artist_name.lower(), title.lower()) in already_loved:
+            skipped += 1
+            continue
+        try:
+            resp = await love_track(artist_name, title, session_key)
+            if resp.get("error"):
+                errors += 1
+                log.warning(f"Failed to love {artist_name} - {title}: {resp.get('message', '')}")
+            else:
+                synced += 1
+        except Exception as e:
+            errors += 1
+            log.warning(f"Error loving {artist_name} - {title}: {e}")
+
+    return {"synced": synced, "skipped": skipped, "errors": errors, "total": len(favorites)}

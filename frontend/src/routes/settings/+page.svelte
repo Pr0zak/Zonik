@@ -674,7 +674,7 @@
 					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Sync Schedule</span>
 				</div>
 				{#if schedTasks.lastfm_sync}
-					<ScheduleControl taskName="lastfm_sync" label="Last.fm Scrobble Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
+					<ScheduleControl taskName="lastfm_sync" label="Last.fm Favorites Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
 				{/if}
 			</Card>
 		{/if}

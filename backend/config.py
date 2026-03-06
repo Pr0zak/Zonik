@@ -59,6 +59,8 @@ class LastfmConfig(BaseModel):
     api_key: str = ""
     write_api_key: str = ""
     write_api_secret: str = ""
+    session_key: str = ""
+    username: str = ""
 
 
 class AnalysisConfig(BaseModel):

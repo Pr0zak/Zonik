@@ -250,3 +250,30 @@ async def scrobble_track(artist: str, track: str, timestamp: int, session_key: s
     if album:
         params["album"] = album
     return await lastfm_write("track.scrobble", params, session_key)
+
+
+async def get_loved_tracks(username: str, limit: int = 1000) -> set[tuple[str, str]]:
+    """Get all loved tracks from Last.fm as a set of (artist_lower, title_lower) tuples."""
+    loved = set()
+    page = 1
+    while True:
+        data = await lastfm_request("user.getLovedTracks", {
+            "user": username, "limit": str(min(limit, 200)), "page": str(page),
+        })
+        if not data:
+            break
+        tracks = data.get("lovedtracks", {}).get("track", [])
+        if not tracks:
+            break
+        if isinstance(tracks, dict):
+            tracks = [tracks]
+        for t in tracks:
+            artist = t.get("artist", {}).get("name", "")
+            title = t.get("name", "")
+            if artist and title:
+                loved.add((artist.lower(), title.lower()))
+        total_pages = int(data.get("lovedtracks", {}).get("@attr", {}).get("totalPages", 1))
+        if page >= total_pages:
+            break
+        page += 1
+    return loved

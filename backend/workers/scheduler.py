@@ -79,7 +79,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             await _run_discover_similar(db, job, count=count or 10)
 
         elif task_name == "lastfm_sync":
-            job.result = json.dumps({"status": "sync_placeholder"})
+            await _run_lastfm_loved_sync(db, job)
 
         elif task_name == "playlist_weekly_top":
             await _run_auto_playlist(db, "Weekly Top Tracks", "lastfm_top", count=count or 50)
@@ -370,3 +370,21 @@ async def _run_unfavorites_playlist(db: AsyncSession):
     for i, tid in enumerate(unfav_tracks):
         db.add(PlaylistTrack(id=str(uuid.uuid4()), playlist_id=playlist.id, track_id=tid, position=i))
     await db.commit()
+
+
+async def _run_lastfm_loved_sync(db: AsyncSession, job: Job):
+    """Sync Zonik favorites → Last.fm loved tracks."""
+    from backend.config import get_settings
+    from backend.services.scrobbler import sync_loved_tracks
+
+    settings = get_settings()
+    session_key = settings.lastfm.session_key
+    if not session_key:
+        job.result = json.dumps({"error": "No Last.fm session key. Authenticate via Settings > Last.fm."})
+        return
+
+    username = settings.lastfm.username
+    result = await sync_loved_tracks(session_key, username=username)
+    job.total = result["total"]
+    job.progress = result["synced"] + result["skipped"]
+    job.result = json.dumps(result)

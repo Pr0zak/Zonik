@@ -211,6 +211,8 @@ docs/                  # Installation, configuration, API reference, development
 - Library "Added" column: sortable by created_at (defaults desc), shows formatRelativeTime() with full timestamp tooltip
 - Library context menu: "Find Upgrade" navigates to /downloads?artist=X&track=Y; bulk "Find Upgrades" triggers POST /api/download/bulk
 - User API keys: per-user subsonic_api_key for Symfonium token auth; generate/revoke/copy/eye-toggle in Settings > User Management
+- Last.fm favorites sync: scheduled task pushes Zonik starred tracks → Last.fm loved tracks (incremental, skips already-loved)
+- Last.fm auth: callback saves session_key + username to zonik.toml; session_key and username in [lastfm] config
 - Settings page: About merged into Updates card; share library toggle in Soulseek section
 
 ## Important Files
