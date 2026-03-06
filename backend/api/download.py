@@ -652,6 +652,8 @@ async def soulseek_stats():
     client = get_client()
     num_dirs, num_files = get_share_counts()
 
+    import time
+
     if not client:
         return {
             "connected": False,
@@ -659,15 +661,30 @@ async def soulseek_stats():
             "peers": 0,
             "shared_folders": num_dirs,
             "shared_files": num_files,
+            "listen_port": None,
+            "uptime_seconds": 0,
+            "reconnects": 0,
+            "active_searches": 0,
             "active_transfers": 0,
+            "queued_transfers": 0,
             "completed_transfers": 0,
             "failed_transfers": 0,
+            "total_bytes_transferred": 0,
+            "aggregate_speed": 0,
+            "reputation": {"tracked_peers": 0, "peers": []},
         }
 
     transfers = client.transfers.get_all_transfers()
-    active = sum(1 for t in transfers if t.get("state") in ("transferring", "connected", "requested", "queued"))
+    active = sum(1 for t in transfers if t.get("state") in ("transferring", "connected"))
+    queued = sum(1 for t in transfers if t.get("state") in ("requested", "queued"))
     completed = sum(1 for t in transfers if t.get("state") == "completed")
     failed = sum(1 for t in transfers if t.get("state") in ("failed", "denied"))
+    total_bytes = sum(t.get("received_bytes", 0) for t in transfers)
+    agg_speed = sum(t.get("speed", 0) for t in transfers if t.get("state") == "transferring")
+
+    uptime = 0.0
+    if client.server.connected_since:
+        uptime = time.time() - client.server.connected_since
 
     return {
         "connected": client.logged_in,
@@ -675,9 +692,17 @@ async def soulseek_stats():
         "peers": len(client.peers),
         "shared_folders": num_dirs,
         "shared_files": num_files,
+        "listen_port": client.server.listen_port,
+        "uptime_seconds": round(uptime),
+        "reconnects": client.server.total_reconnects,
+        "active_searches": len(client._search_events),
         "active_transfers": active,
+        "queued_transfers": queued,
         "completed_transfers": completed,
         "failed_transfers": failed,
+        "total_bytes_transferred": total_bytes,
+        "aggregate_speed": round(agg_speed),
+        "reputation": client.reputation.get_summary(),
     }
 
 

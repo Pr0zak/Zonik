@@ -43,10 +43,12 @@ class ServerConnection:
         self._reconnect_task: asyncio.Task | None = None
         self._credentials: tuple[str, str] | None = None
         self._reconnect_attempts = 0
+        self.total_reconnects = 0
         self._auto_reconnect = True
         self._connected = False
         self.logged_in = False
         self.username: str | None = None
+        self.connected_since: float | None = None
 
     @property
     def connected(self) -> bool:
@@ -89,7 +91,9 @@ class ServerConnection:
         if not result.get("success"):
             raise ConnectionError(f"Login failed: {result.get('reason', 'unknown')}")
 
+        import time
         self.logged_in = True
+        self.connected_since = time.time()
         self._reconnect_attempts = 0
 
         # Post-login handshake
@@ -172,6 +176,7 @@ class ServerConnection:
         try:
             await self.connect()
             await self.login(*self._credentials)
+            self.total_reconnects += 1
             log.info("[server] Reconnected successfully")
         except Exception as e:
             log.warning(f"[server] Reconnect failed: {e}")

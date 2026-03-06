@@ -89,6 +89,18 @@ class PeerReputation:
                 pass
         return count
 
+    def get_summary(self) -> dict:
+        """Return summary of all tracked peers."""
+        peers = []
+        for username, data in _memory_store.items():
+            peers.append({
+                "username": username,
+                "successes": data.get("success", 0),
+                "failures": data.get("failures", 0),
+            })
+        peers.sort(key=lambda p: p["failures"] - p["successes"])
+        return {"tracked_peers": len(peers), "peers": peers}
+
     async def get_score_adjustment(self, username: str) -> int:
         """Return a score adjustment for quality scoring (positive = good, negative = bad)."""
         if self._redis:

@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { formatSize, formatDuration } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert } from 'lucide-svelte';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -34,6 +34,24 @@
 	let maxGenre = $derived(data?.genres?.length ? data.genres[0].count : 1);
 	let maxBr = $derived(data ? Math.max(...Object.values(data.bitrates), 1) : 1);
 	let maxYear = $derived(data?.years?.length ? Math.max(...data.years.map(y => y.count)) : 1);
+
+	function formatUptime(seconds) {
+		if (!seconds) return '—';
+		const d = Math.floor(seconds / 86400);
+		const h = Math.floor((seconds % 86400) / 3600);
+		const m = Math.floor((seconds % 3600) / 60);
+		if (d > 0) return `${d}d ${h}h`;
+		if (h > 0) return `${h}h ${m}m`;
+		return `${m}m`;
+	}
+
+	function formatSpeed(bps) {
+		if (bps > 1048576) return `${(bps / 1048576).toFixed(1)} MB/s`;
+		if (bps > 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
+		return `${bps} B/s`;
+	}
+
+	let showAllPeers = $state(false);
 
 	const barColors = {
 		formats: 'bg-[var(--color-accent)]',
@@ -223,22 +241,25 @@
 
 		<!-- Soulseek P2P -->
 		{#if slsk}
-			<Card padding="p-4">
+			<Card padding="p-4" class="mb-8">
 				<div class="flex items-center justify-between mb-4">
 					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Soulseek P2P</h2>
 					<button
 						class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
 						onclick={async () => {
 							const res = await fetch('/api/download/reset-reputation', { method: 'POST' });
-							const data = await res.json();
-							addToast(`Reputation reset (${data.cleared} entries cleared)`, 'success');
+							const d = await res.json();
+							slsk = await fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => slsk);
+							addToast(`Reputation reset (${d.cleared} entries cleared)`, 'success');
 						}}
 					>
 						<RotateCcw class="w-3.5 h-3.5" />
 						Reset Reputation
 					</button>
 				</div>
-				<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+
+				<!-- Connection & Network -->
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
 					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Wifi class="w-4 h-4 {slsk.connected ? 'text-emerald-400' : 'text-red-400'}" />
@@ -251,12 +272,32 @@
 					</div>
 					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
+							<Clock class="w-4 h-4 text-[var(--color-stats)]" />
+							<span class="text-xs text-[var(--text-muted)]">Uptime</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{formatUptime(slsk.uptime_seconds)}</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.reconnects} reconnect{slsk.reconnects !== 1 ? 's' : ''}</p>
+					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
 							<Users class="w-4 h-4 text-[var(--color-downloads)]" />
 							<span class="text-xs text-[var(--text-muted)]">Peers</span>
 						</div>
 						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.peers}</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">active connections</p>
 					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<Radio class="w-4 h-4 text-[var(--color-discover)]" />
+							<span class="text-xs text-[var(--text-muted)]">Listen Port</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.listen_port || '—'}</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.active_searches} active search{slsk.active_searches !== 1 ? 'es' : ''}</p>
+					</div>
+				</div>
+
+				<!-- Sharing & Transfers -->
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
 					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Share2 class="w-4 h-4 text-[var(--color-discover)]" />
@@ -271,9 +312,60 @@
 							<span class="text-xs text-[var(--text-muted)]">Transfers</span>
 						</div>
 						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.active_transfers} active</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.queued_transfers} queued</p>
+					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<HardDrive class="w-4 h-4 text-[var(--color-stats)]" />
+							<span class="text-xs text-[var(--text-muted)]">Transferred</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{formatSize(slsk.total_bytes_transferred)}</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
 					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<Zap class="w-4 h-4 text-amber-400" />
+							<span class="text-xs text-[var(--text-muted)]">Speed</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.aggregate_speed > 0 ? formatSpeed(slsk.aggregate_speed) : '—'}</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">aggregate</p>
+					</div>
 				</div>
+
+				<!-- Peer Reputation -->
+				{#if slsk.reputation?.tracked_peers > 0}
+					<div class="mt-2">
+						<div class="flex items-center justify-between mb-2">
+							<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Peer Reputation ({slsk.reputation.tracked_peers})</h3>
+							{#if slsk.reputation.tracked_peers > 10}
+								<button
+									class="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+									onclick={() => showAllPeers = !showAllPeers}
+								>
+									{showAllPeers ? 'Show less' : `Show all ${slsk.reputation.tracked_peers}`}
+								</button>
+							{/if}
+						</div>
+						<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+							{#each (showAllPeers ? slsk.reputation.peers : slsk.reputation.peers.slice(0, 12)) as peer}
+								<div class="bg-[var(--bg-hover)] rounded px-3 py-2 flex items-center gap-2">
+									{#if peer.failures > peer.successes}
+										<ShieldAlert class="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+									{:else}
+										<ShieldCheck class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+									{/if}
+									<div class="min-w-0">
+										<p class="text-xs text-[var(--text-body)] truncate" title={peer.username}>{peer.username}</p>
+										<p class="text-[10px] text-[var(--text-muted)]">
+											<span class="text-emerald-400">{peer.successes}</span> /
+											<span class="text-red-400">{peer.failures}</span>
+										</p>
+									</div>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
 			</Card>
 		{/if}
 	{/if}
