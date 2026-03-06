@@ -77,6 +77,7 @@
 			const data = await fetch(`/api/discovery/search?q=${encodeURIComponent(searchQuery.trim())}&limit=50`).then(r => r.json());
 			searchResults = data.tracks || [];
 			searchDone = true;
+			await syncDownloadStatuses(searchResults);
 			if (!searchResults.length) addToast('No results found on Last.fm', 'warning');
 		} catch (e) {
 			addToast('Search failed', 'error');
@@ -130,12 +131,33 @@
 
 	// --- Live scan (API call) ---
 
+	async function syncDownloadStatuses(tracks) {
+		// Check recent download jobs to mark tracks that were already downloaded
+		try {
+			const data = await fetch('/api/jobs?type=download,bulk_download&status=completed&limit=50').then(r => r.json());
+			const jobs = data.items || [];
+			for (const job of jobs) {
+				if (!job.tracks) continue;
+				try {
+					const jt = JSON.parse(job.tracks);
+					for (const t of jt) {
+						if (t.status === 'downloaded' || t.status === 'downloading') {
+							const key = `${t.artist}::${t.track}`.toLowerCase();
+							if (!trackStatus[key]) trackStatus[key] = 'completed';
+						}
+					}
+				} catch {}
+			}
+		} catch {}
+	}
+
 	async function scanTopTracks() {
 		topLoading = true;
 		try {
 			const data = await fetch(`/api/discovery/top-tracks?limit=${topLimit}`).then(r => r.json());
 			topTracks = data.tracks || [];
 			topLastScanned = new Date().toISOString();
+			await syncDownloadStatuses(topTracks);
 		} catch (e) {
 			addToast('Failed to load top tracks', 'error');
 		} finally {
@@ -149,6 +171,7 @@
 			const data = await fetch(`/api/discovery/similar-tracks?limit=${similarLimit}`).then(r => r.json());
 			similarTracks = data.tracks || [];
 			similarLastScanned = new Date().toISOString();
+			await syncDownloadStatuses(similarTracks);
 		} catch (e) {
 			addToast('Failed to load similar tracks', 'error');
 		} finally {
@@ -307,7 +330,8 @@
 
 		// Try loading cached results first, fall back to live scan
 		const hasCached = await loadCachedResults('lastfm_top_tracks', v => topTracks = v, v => topLimit = v, v => topLastScanned = v);
-		if (!hasCached) scanTopTracks();
+		if (hasCached) await syncDownloadStatuses(topTracks);
+		else scanTopTracks();
 	});
 </script>
 

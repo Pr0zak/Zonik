@@ -521,7 +521,7 @@
 										{@const t = jobTracks?.[0]}
 										{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
 										{@const ext = fileExtension(fname)}
-										{@const fsize = t?.file_size || jobResult?.file_size || 0}
+										{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
 										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
 											{#if fname}
 												<a href="/library?search={encodeURIComponent(fname.replace(/\.\w+$/, ''))}"
