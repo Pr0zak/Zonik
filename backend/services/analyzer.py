@@ -20,12 +20,17 @@ ESSENTIA_SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac"
 _analysis_pool: ProcessPoolExecutor | None = None
 
 
+def _lower_priority():
+    """Set worker process to low CPU priority (nice 15)."""
+    os.nice(15)
+
+
 def get_analysis_pool() -> ProcessPoolExecutor:
     global _analysis_pool
     if _analysis_pool is None:
         workers = max(1, (os.cpu_count() or 2) - 1)
-        _analysis_pool = ProcessPoolExecutor(max_workers=workers)
-        log.info(f"Analysis pool: {workers} worker(s)")
+        _analysis_pool = ProcessPoolExecutor(max_workers=workers, initializer=_lower_priority)
+        log.info(f"Analysis pool: {workers} worker(s), nice 15")
     return _analysis_pool
 
 
