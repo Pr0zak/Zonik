@@ -2,6 +2,74 @@
 
 ## Medium Priority
 
+### Play Stats & Listening History Charts
+Track when and what is played via Symfonium scrobbles and show listening charts on the Stats page.
+
+**Current state:**
+- Symfonium sends `scrobble` to Subsonic API on each play → Zonik increments `track.play_count` + `track.last_played_at`
+- Stats page already shows "Most Played" list from play_count
+- BUT: no history — we only store the running total, not individual play events
+- Can't chart "plays per day" or "listening hours this week" without timestamped events
+
+**What we need:**
+- A `play_history` table to log each scrobble with timestamp
+- API endpoints to aggregate play data for charting
+- Chart.js charts on the Stats page (same pattern as Soulseek stats charts)
+
+**Schema:**
+```sql
+CREATE TABLE play_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    played_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source TEXT DEFAULT 'subsonic'  -- 'subsonic', 'web', 'api'
+);
+CREATE INDEX idx_play_history_played_at ON play_history(played_at);
+CREATE INDEX idx_play_history_track_id ON play_history(track_id);
+```
+
+**Backend changes:**
+- Alembic migration for `play_history` table
+- Update `subsonic/annotation.py` scrobble: INSERT into play_history (in addition to incrementing play_count)
+- Update `api/tracks.py` POST `/{id}/play`: also INSERT into play_history
+- New API endpoint: `GET /api/stats/listening`
+  - Params: `hours=168` (default 7 days), `group_by=hour|day|week`
+  - Returns: `{ plays: [{time, count}], top_tracks: [{title, artist, plays}], top_artists: [{name, plays}], total_plays, total_hours }`
+- Auto-prune: keep 90 days of history (scheduled cleanup or on-write)
+
+**Frontend — Stats page charts:**
+1. **Plays Over Time** (line chart) — plays per day/hour, 7d/30d/90d range selector
+2. **Listening Hours** (bar chart) — hours listened per day
+3. **Top Tracks This Week/Month** (horizontal bar chart) — most played tracks in period
+4. **Top Artists This Week/Month** (horizontal bar chart) — most played artists in period
+5. **Listening Heatmap** (optional, low priority) — hour-of-day × day-of-week grid
+
+**Chart layout on Stats page:**
+- New "Listening" section above or below existing Soulseek stats
+- Same time range selector pattern (6h/24h/3d/7d/30d)
+- Same Chart.js line/bar chart styling
+
+**Data flow:**
+```
+Symfonium plays track
+  → POST /rest/scrobble?id=xxx
+  → subsonic/annotation.py: track.play_count++, INSERT play_history
+  → Stats page: GET /api/stats/listening?hours=168
+  → Chart.js renders plays over time
+```
+
+**Implementation order:**
+1. Alembic migration: create `play_history` table
+2. Update scrobble endpoint: log to play_history
+3. Update web play endpoint: log to play_history
+4. Add `/api/stats/listening` endpoint with aggregation queries
+5. Add Chart.js charts to Stats page
+6. Add auto-prune (90-day retention)
+
+**Complexity: MEDIUM** — new table + migration, 2 endpoint updates, 1 new API, frontend charts. ~1 session.
+
+---
+
 ### Remix & Alternate Version Discovery
 Search for remixes, dubs, edits, and other alternate versions of tracks already in the library, and download them to expand the collection.
 
