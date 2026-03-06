@@ -181,25 +181,20 @@ class TransferManager:
         log.info(f"[transfer] Inbound file transfer from {username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
 
-        # Send transfer token (4 bytes) — tells peer which file we want
-        if transfer.token:
-            writer.write(transfer.token)
-        else:
-            writer.write(token)
-
-        # Send file offset (resume position)
-        writer.write(struct.pack("<Q", transfer.received_bytes))
-        await writer.drain()
-
-        # Read and discard the 4-byte token echo from the uploader
+        # Protocol: uploader sends FileTransferInit (4-byte token), then we send FileOffset (8 bytes)
+        # Read the transfer token from the uploader first
         try:
-            token_echo = await asyncio.wait_for(reader.readexactly(4), timeout=60)
-            log.info(f"[transfer] Token echo from {username}: {token_echo.hex()}")
+            peer_token = await asyncio.wait_for(reader.readexactly(4), timeout=60)
+            log.info(f"[transfer] FileTransferInit from {username}: {peer_token.hex()}")
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
-            log.warning(f"[transfer] No token echo from {username}: {e}")
+            log.warning(f"[transfer] No FileTransferInit from {username}: {e}")
             self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
             writer.close()
             return
+
+        # Send file offset (8 bytes) — tells uploader where to start
+        writer.write(struct.pack("<Q", transfer.received_bytes))
+        await writer.drain()
 
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
@@ -278,43 +273,24 @@ class TransferManager:
         writer.write(pf_msg)
         await writer.drain()
 
-        # Send transfer token (identifies which file) + file offset (resume position)
-        xfer_token = transfer.token or token
+        # Protocol: uploader sends FileTransferInit (4-byte token), then we send FileOffset (8 bytes)
+        # Read the transfer token from the uploader first
+        try:
+            peer_token = await asyncio.wait_for(reader.readexactly(4), timeout=60)
+            log.info(f"[transfer] FileTransferInit from {transfer.username}: {peer_token.hex()}")
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
+            log.warning(f"[transfer] No FileTransferInit from {transfer.username}: {e}")
+            self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
+            writer.close()
+            return
+
+        # Send file offset (8 bytes) — tells uploader where to start
         offset_bytes = struct.pack("<Q", transfer.received_bytes)
-        log.info(f"[transfer] Handshake: relay={token.hex()}, xfer={xfer_token.hex()}, offset={transfer.received_bytes}")
-        writer.write(xfer_token)
         writer.write(offset_bytes)
         await writer.drain()
 
         self.update_state(transfer, TransferState.TRANSFERRING)
         log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
-
-        # Read and discard the 4-byte token echo from the uploader
-        try:
-            token_echo = await asyncio.wait_for(reader.readexactly(4), timeout=60)
-            log.info(f"[transfer] Token echo from {transfer.username}: {token_echo.hex()}")
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
-            log.warning(f"[transfer] No token echo from {transfer.username}: {e}")
-            self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
-            writer.close()
-            return
-
-        # Read first data and inspect for FLAC header
-        try:
-            first_data = await asyncio.wait_for(reader.read(65536), timeout=60)
-        except asyncio.TimeoutError:
-            log.warning(f"[transfer] No file data from {transfer.username} after token echo")
-            self.update_state(transfer, TransferState.FAILED, error="No file data")
-            writer.close()
-            return
-        if not first_data:
-            log.warning(f"[transfer] Connection closed after token echo from {transfer.username}")
-            self.update_state(transfer, TransferState.FAILED, error="Connection closed after echo")
-            writer.close()
-            return
-        log.info(f"[transfer] First data ({len(first_data)}B) from {transfer.username}: {first_data[:64].hex()}")
-        has_flac = first_data[:4] == b'fLaC'
-        log.info(f"[transfer] fLaC header present: {has_flac}, first 4 bytes as text: {first_data[:4]}")
 
         # Determine save path
         short_name = transfer.filename.rsplit("\\", 1)[-1]
@@ -324,10 +300,6 @@ class TransferManager:
 
         try:
             async with aiofiles.open(save_path, "wb") as f:
-                # Write the first data chunk we already read
-                await f.write(first_data)
-                transfer.received_bytes += len(first_data)
-
                 while True:
                     try:
                         chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
