@@ -564,6 +564,51 @@ Combine Subsonic music folders with smart auto-detection:
 
 ---
 
+### User Ratings (Symfonium Star Ratings)
+Persist per-track 1-5 star ratings from Symfonium and surface them in the web UI + Subsonic responses.
+
+**Current state:**
+- Subsonic `setRating` endpoint exists but is a no-op (accepts and ignores)
+- `getRating` not implemented — Subsonic browsing responses don't include `userRating`
+- Track model has no `rating` column
+- Symfonium sends `setRating?id=xxx&rating=3` when user rates a track
+
+**What's needed:**
+
+1. **Migration**: Add `rating INTEGER` column to `tracks` table (nullable, 0-5 where 0 = unrated)
+2. **setRating endpoint**: Store the rating value on the track
+3. **Subsonic responses**: Include `userRating` attribute in track/song XML/JSON (getAlbum, search, getRandomSongs, etc.)
+4. **Web UI**: Show star rating on track cards/list rows, allow clicking to rate
+5. **API**: `PUT /api/tracks/{id}` already handles metadata — add `rating` field
+
+**Backend changes:**
+- `backend/models/track.py`: add `rating = Column(Integer, nullable=True)`
+- `backend/subsonic/annotation.py`: `set_rating` — parse `id` + `rating` params, update track
+- `backend/subsonic/responses.py` (or wherever song XML is built): include `userRating` attr
+- Alembic migration for the new column
+
+**Frontend changes:**
+- Library track list/grid: clickable star rating (1-5 stars, click to set, click again to clear)
+- Track detail/edit modal: rating display + edit
+- Sortable/filterable by rating (library page)
+- Favorites page could show ratings alongside starred tracks
+
+**Subsonic API reference:**
+- `setRating(id, rating)` — rating is 1-5, or 0 to remove
+- Song responses include `userRating` attribute (integer 1-5)
+- `getStarred` returns starred items — ratings are separate from stars
+
+**Implementation order:**
+1. Alembic migration: add `rating` column to tracks
+2. Update `setRating` endpoint to actually persist
+3. Include `userRating` in all Subsonic song/child responses
+4. Frontend: star rating component on library tracks
+5. Frontend: filter/sort by rating
+
+**Complexity: LOW-MEDIUM** — one column, one endpoint fix, response updates, small UI component. ~1 session.
+
+---
+
 ## Low Priority
 
 ### Christmas Auto-Playlist
