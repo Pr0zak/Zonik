@@ -5,7 +5,7 @@
 	import { addToast, activeTransfers } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Share2, Users, FolderOpen, FileAudio } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -81,9 +81,6 @@
 		high: results.filter(r => r.bitrate >= 320 || r.extension === 'flac').length,
 		mid: results.filter(r => r.bitrate >= 256 || r.extension === 'flac').length,
 	});
-
-	// Soulseek stats
-	let slskStats = $state(null);
 
 	// Blacklist state
 	let blacklist = $state([]);
@@ -410,7 +407,6 @@
 	onMount(() => {
 		loadBlacklist();
 		loadJobs();
-		fetch('/api/download/soulseek-stats').then(r => r.json()).then(d => slskStats = d).catch(() => {});
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
 		}).catch(() => {});
@@ -472,48 +468,6 @@
 
 <div class="max-w-6xl">
 	<PageHeader title="Downloads" color="var(--color-downloads)" />
-
-	<!-- Soulseek Stats -->
-	{#if slskStats}
-		<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-			<Card padding="p-3">
-				<div class="flex items-center gap-2 mb-1">
-					<Wifi class="w-3.5 h-3.5 {slskStats.connected ? 'text-emerald-400' : 'text-red-400'}" />
-					<span class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">Status</span>
-				</div>
-				<p class="text-sm font-semibold text-[var(--text-primary)]">
-					{slskStats.connected ? 'Connected' : 'Offline'}
-				</p>
-				{#if slskStats.username}
-					<p class="text-[10px] text-[var(--text-muted)] truncate">{slskStats.username}</p>
-				{/if}
-			</Card>
-			<Card padding="p-3">
-				<div class="flex items-center gap-2 mb-1">
-					<Users class="w-3.5 h-3.5 text-[var(--color-downloads)]" />
-					<span class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">Peers</span>
-				</div>
-				<p class="text-sm font-semibold text-[var(--text-primary)]">{slskStats.peers}</p>
-				<p class="text-[10px] text-[var(--text-muted)]">connected</p>
-			</Card>
-			<Card padding="p-3">
-				<div class="flex items-center gap-2 mb-1">
-					<Share2 class="w-3.5 h-3.5 text-[var(--color-discover)]" />
-					<span class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">Sharing</span>
-				</div>
-				<p class="text-sm font-semibold text-[var(--text-primary)]">{slskStats.shared_files.toLocaleString()}</p>
-				<p class="text-[10px] text-[var(--text-muted)]">{slskStats.shared_folders} folders</p>
-			</Card>
-			<Card padding="p-3">
-				<div class="flex items-center gap-2 mb-1">
-					<Download class="w-3.5 h-3.5 text-[var(--color-downloads)]" />
-					<span class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">Transfers</span>
-				</div>
-				<p class="text-sm font-semibold text-[var(--text-primary)]">{slskStats.active_transfers}</p>
-				<p class="text-[10px] text-[var(--text-muted)]">{slskStats.completed_transfers} done · {slskStats.failed_transfers} failed</p>
-			</Card>
-		</div>
-	{/if}
 
 	<!-- Search Bar -->
 	<div class="flex gap-3 mb-6">

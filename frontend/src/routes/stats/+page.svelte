@@ -1,17 +1,21 @@
 <script>
 	import { onMount } from 'svelte';
 	import { formatSize, formatDuration } from '$lib/utils.js';
-	import { BarChart3 } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 
 	let data = $state(null);
+	let slsk = $state(null);
 	let loading = $state(true);
 
 	onMount(async () => {
 		try {
-			data = await fetch('/api/library/stats/detailed').then(r => r.json());
+			[data, slsk] = await Promise.all([
+				fetch('/api/library/stats/detailed').then(r => r.json()),
+				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
+			]);
 		} catch (e) {
 			console.error('Failed to load stats:', e);
 		} finally {
@@ -203,7 +207,7 @@
 
 		<!-- Job Stats -->
 		{#if data.job_stats.length}
-			<Card padding="p-4">
+			<Card padding="p-4" class="mb-8">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Job History Summary</h2>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 					{#each data.job_stats as js}
@@ -212,6 +216,49 @@
 							<p class="text-sm font-medium text-[var(--text-primary)]">{js.completed} <span class="text-[var(--text-muted)]">/ {js.total}</span></p>
 						</div>
 					{/each}
+				</div>
+			</Card>
+		{/if}
+
+		<!-- Soulseek P2P -->
+		{#if slsk}
+			<Card padding="p-4">
+				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Soulseek P2P</h2>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<Wifi class="w-4 h-4 {slsk.connected ? 'text-emerald-400' : 'text-red-400'}" />
+							<span class="text-xs text-[var(--text-muted)]">Connection</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.connected ? 'Online' : 'Offline'}</p>
+						{#if slsk.username}
+							<p class="text-xs text-[var(--text-muted)] truncate mt-0.5">{slsk.username}</p>
+						{/if}
+					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<Users class="w-4 h-4 text-[var(--color-downloads)]" />
+							<span class="text-xs text-[var(--text-muted)]">Peers</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.peers}</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">active connections</p>
+					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<Share2 class="w-4 h-4 text-[var(--color-discover)]" />
+							<span class="text-xs text-[var(--text-muted)]">Sharing</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.shared_files.toLocaleString()}</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.shared_folders} folders</p>
+					</div>
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+						<div class="flex items-center gap-2 mb-2">
+							<ArrowUpDown class="w-4 h-4 text-[var(--color-downloads)]" />
+							<span class="text-xs text-[var(--text-muted)]">Transfers</span>
+						</div>
+						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.active_transfers} active</p>
+						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
+					</div>
 				</div>
 			</Card>
 		{/if}
