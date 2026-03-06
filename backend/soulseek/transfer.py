@@ -161,15 +161,28 @@ class TransferManager:
     ) -> None:
         """Handle an inbound file transfer connection.
 
-        Protocol: peer sends token (4 bytes), we match to transfer, send file offset (8 bytes),
+        Protocol: peer sends pierce_firewall(relay_token), then transfer_token (4 bytes raw).
+        We match to transfer by transfer_token, send file offset (8 bytes),
         then receive file data until complete.
         """
-        transfer = self.get_transfer_by_token(username, token)
+        # Read the actual transfer token from peer (4 bytes, sent after pierce_firewall)
+        try:
+            transfer_token = await asyncio.wait_for(reader.readexactly(4), timeout=10)
+            log.info(f"[transfer] Received transfer token from {username}: {transfer_token.hex()}")
+        except Exception as e:
+            log.warning(f"[transfer] Failed to read transfer token from {username}: {e}")
+            writer.close()
+            return
+
+        # Match transfer by the actual transfer token
+        transfer = self.get_transfer_by_token(username, transfer_token)
         if not transfer:
-            # Also try token-only search (pierce_firewall doesn't always provide username)
-            transfer = self.find_transfer_by_token(token)
+            transfer = self.find_transfer_by_token(transfer_token)
         if not transfer:
-            log.warning(f"[transfer] No transfer found for token {token.hex()} from {username}")
+            # Fall back to username-based matching
+            transfer = self.find_active_transfer_for_user(username)
+        if not transfer:
+            log.warning(f"[transfer] No transfer found for token {transfer_token.hex()} from {username}")
             writer.close()
             return
 
@@ -244,7 +257,19 @@ class TransferManager:
         writer.write(build_pierce_firewall_raw(token))
         await writer.drain()
 
-        # Start receiving file data directly (we already have the transfer object)
+        # Wait for peer's token echo (4 bytes) — confirms file transfer connection
+        try:
+            token_echo = await asyncio.wait_for(reader.readexactly(4), timeout=10)
+            log.info(f"[transfer] Token echo received from {transfer.username}")
+        except Exception as e:
+            log.warning(f"[transfer] No token echo from {transfer.username}: {e}")
+            self.update_state(transfer, TransferState.FAILED, error=f"No token echo: {e}")
+            writer.close()
+            if self.on_complete:
+                await self.on_complete(transfer)
+            return
+
+        # Start receiving file data
         log.info(f"[transfer] Starting file transfer from {transfer.username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
 
