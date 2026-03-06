@@ -239,21 +239,61 @@
 		svgEl.transition().duration(300).call(zoomBehavior.scaleBy, factor);
 	}
 
-	function handleSearch() {
-		if (!container || !searchQuery.trim()) return;
-		const svgEl = d3.select(container).select('svg');
-		const q = searchQuery.toLowerCase();
-		const nodes = graphData?.nodes || [];
-		const match = nodes.find(n => n.label.toLowerCase().includes(q));
-		if (match && match.x !== undefined) {
-			const width = container.clientWidth;
-			const height = container.clientHeight;
-			svgEl.transition().duration(750).call(
-				zoomBehavior.transform,
-				d3.zoomIdentity.translate(width / 2, height / 2).scale(1.5).translate(-match.x, -match.y)
-			);
-			selectedNode = match;
+	let searchResults = $state([]);
+	let searchFocused = $state(false);
+
+	function fuzzyScore(label, query) {
+		const l = label.toLowerCase();
+		const q = query.toLowerCase();
+		// Exact match
+		if (l === q) return 100;
+		// Starts with
+		if (l.startsWith(q)) return 90;
+		// Contains substring
+		if (l.includes(q)) return 80;
+		// Fuzzy: all query chars appear in order
+		let li = 0;
+		let matched = 0;
+		let consecutive = 0;
+		let maxConsecutive = 0;
+		for (let qi = 0; qi < q.length; qi++) {
+			const found = l.indexOf(q[qi], li);
+			if (found === -1) return 0;
+			matched++;
+			consecutive = (found === li) ? consecutive + 1 : 1;
+			maxConsecutive = Math.max(maxConsecutive, consecutive);
+			li = found + 1;
 		}
+		return 30 + (matched / q.length) * 20 + maxConsecutive * 5 - (li - matched) * 0.5;
+	}
+
+	function updateSearchResults() {
+		const q = searchQuery.trim();
+		if (!q || !graphData?.nodes) { searchResults = []; return; }
+		searchResults = graphData.nodes
+			.map(n => ({ node: n, score: fuzzyScore(n.label, q) }))
+			.filter(r => r.score > 0)
+			.sort((a, b) => b.score - a.score)
+			.slice(0, 8)
+			.map(r => r.node);
+	}
+
+	function navigateToNode(node) {
+		if (!container || !zoomBehavior || node.x === undefined) return;
+		const svgEl = d3.select(container).select('svg');
+		const width = container.clientWidth;
+		const height = container.clientHeight;
+		svgEl.transition().duration(750).call(
+			zoomBehavior.transform,
+			d3.zoomIdentity.translate(width / 2, height / 2).scale(1.5).translate(-node.x, -node.y)
+		);
+		selectedNode = node;
+		searchResults = [];
+		searchFocused = false;
+	}
+
+	function handleSearch() {
+		if (searchResults.length) navigateToNode(searchResults[0]);
 	}
 
 	onMount(() => {
@@ -282,10 +322,25 @@
 			<!-- Search -->
 			<div class="relative">
 				<input type="text" bind:value={searchQuery}
+					oninput={updateSearchResults}
+					onfocus={() => { searchFocused = true; updateSearchResults(); }}
+					onblur={() => setTimeout(() => searchFocused = false, 200)}
 					onkeydown={(e) => e.key === 'Enter' && handleSearch()}
 					placeholder="Search nodes..."
 					class="bg-[var(--bg-tertiary)] text-[var(--text-primary)] text-xs px-3 py-1.5 pl-8 rounded border border-[var(--border-subtle)] w-48 focus:outline-none focus:border-[var(--color-map)]" />
 				<Search class="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-2.5 top-1/2 -translate-y-1/2" />
+				{#if searchFocused && searchResults.length}
+					<div class="absolute top-full left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded shadow-lg z-50 max-h-64 overflow-y-auto">
+						{#each searchResults as node}
+							<button onclick={() => navigateToNode(node)}
+								class="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-hover)] flex items-center gap-2 transition-colors">
+								<div class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {node.color}"></div>
+								<span class="text-xs text-[var(--text-primary)] truncate">{node.label}</span>
+								<span class="text-[10px] text-[var(--text-disabled)] ml-auto flex-shrink-0 capitalize">{node.type}</span>
+							</button>
+						{/each}
+					</div>
+				{/if}
 			</div>
 
 			<!-- Zoom controls -->
