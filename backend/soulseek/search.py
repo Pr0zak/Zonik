@@ -88,6 +88,17 @@ async def pick_best_results_native(
             elif search_result.avg_speed > 500000:  # >500KB/s
                 score += 4
 
+            # Queue length penalty — heavily-queued peers serve us slower
+            ql = search_result.queue_length
+            if ql > 100:
+                score -= 10
+            elif ql > 50:
+                score -= 6
+            elif ql > 20:
+                score -= 3
+            elif ql > 5:
+                score -= 1
+
             # Reputation: boost successful sources, penalize unreliable ones
             if reputation:
                 score += await reputation.get_score_adjustment(search_result.username)

@@ -94,17 +94,21 @@ class TransferManager:
         """Normalize transfer key — canonicalize path separators."""
         return f"{username}:{filename.replace(chr(92), '/')}"
 
-    def get_transfer(self, username: str, filename: str) -> Transfer | None:
+    def get_transfer(self, username: str, filename: str, expected_size: int = 0) -> Transfer | None:
         # Exact match first (normalized)
         t = self.transfers.get(self._normalize_key(username, filename))
         if t:
             return t
-        # Fuzzy fallback: match by username + basename
+        # Fuzzy fallback: match by username + basename + optional size check
         basename = filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
         for t in self.transfers.values():
             if t.username == username and t.state in ("requested", "queued", "connected"):
                 t_basename = t.filename.replace("\\", "/").rsplit("/", 1)[-1].lower()
                 if t_basename == basename:
+                    # If both sides have size info, verify they match (within 1MB tolerance)
+                    if expected_size > 0 and t.total_bytes > 0:
+                        if abs(t.total_bytes - expected_size) > 1024 * 1024:
+                            continue  # Size mismatch, probably different file
                     return t
         return None
 
@@ -247,7 +251,19 @@ class TransferManager:
                 for key, transfer in self.transfers.items():
                     age = now - transfer.started_at
                     if transfer.state in (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED):
-                        if age > 60:  # Keep completed/failed for 1 minute
+                        if age > 60:  # Keep terminal states for 1 minute
+                            to_remove.append(key)
+                    elif transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
+                        if age > 180:  # 3 min for queue timeout (waiting for peer response)
+                            log.warning(f"[transfer] Queue timeout: {transfer.filename} ({transfer.state})")
+                            transfer.state = TransferState.FAILED
+                            transfer.error = "Queue timeout"
+                            to_remove.append(key)
+                    elif transfer.state == TransferState.CONNECTED:
+                        if age > 120:  # 2 min connected but no data
+                            log.warning(f"[transfer] Connected timeout: {transfer.filename}")
+                            transfer.state = TransferState.FAILED
+                            transfer.error = "Connected but no data"
                             to_remove.append(key)
                     elif age > DOWNLOAD_TTL:
                         log.warning(f"[transfer] Cleaning up stuck transfer: {transfer.filename}")

@@ -40,6 +40,7 @@ class ServerConnection:
 
         self._stream: MessageStream | None = None
         self._read_task: asyncio.Task | None = None
+        self._keepalive_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
         self._credentials: tuple[str, str] | None = None
         self._reconnect_attempts = 0
@@ -106,6 +107,11 @@ class ServerConnection:
         await self._send(build_shared_folders_files(num_dirs, num_files))
         await self._send(build_have_no_parents(True))
         await self._send(build_set_status(UserStatus.ONLINE))
+
+        # Start keepalive pings
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
+        self._keepalive_task = asyncio.create_task(self._keepalive_loop())
 
         log.info(f"[server] Logged in as {username}")
         return result
@@ -182,6 +188,19 @@ class ServerConnection:
             log.warning(f"[server] Reconnect failed: {e}")
             self._schedule_reconnect()
 
+    async def _keepalive_loop(self) -> None:
+        """Send periodic status pings to keep the server connection alive."""
+        try:
+            while self._connected and self._stream:
+                await asyncio.sleep(120)  # Ping every 2 minutes
+                if self._connected and self._stream:
+                    try:
+                        await self._send(build_set_status(UserStatus.ONLINE))
+                    except Exception:
+                        break  # Connection died, let reconnect handle it
+        except asyncio.CancelledError:
+            return
+
     def destroy(self) -> None:
         """Tear down the connection."""
         self._auto_reconnect = False
@@ -190,6 +209,8 @@ class ServerConnection:
 
         if self._read_task and not self._read_task.done():
             self._read_task.cancel()
+        if self._keepalive_task and not self._keepalive_task.done():
+            self._keepalive_task.cancel()
         if self._reconnect_task and not self._reconnect_task.done():
             self._reconnect_task.cancel()
         if self._stream:

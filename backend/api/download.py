@@ -400,6 +400,12 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                         try:
                             await native_client.download(dl_username, dl_filename)
                             log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
+                        except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
+                            # Transient network errors — don't penalize reputation
+                            log.warning(f"[download] Transient connection error to {dl_username}: {e}")
+                            last_error = f"Connection timeout: {e}"
+                            source_errors.append({"user": dl_username, "error": last_error})
+                            continue
                         except Exception as e:
                             log.warning(f"[download] Failed to connect to {dl_username}: {e}")
                             last_error = f"Connection failed: {e}"

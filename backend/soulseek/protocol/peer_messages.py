@@ -49,6 +49,10 @@ def build_transfer_response(token: bytes, allowed: bool, reason: str = "") -> by
     return b.build()
 
 
+def build_upload_denied(filename: str, reason: str) -> bytes:
+    return MessageBuilder().uint32(PeerMessageCode.UPLOAD_DENIED).string(filename).string(reason).build()
+
+
 def build_pierce_firewall_raw(token: bytes) -> bytes:
     """Build pierce firewall for file transfer connection (no length prefix wrapping)."""
     return MessageBuilder().uint8(PeerInitCode.PIERCE_FIREWALL).raw(token).build()
@@ -108,6 +112,14 @@ def parse_peer_message(data: bytes) -> dict | None:
         filename = msg.string()
         place = msg.uint32()
         return {"kind": "place_in_queue_response", "filename": filename, "place": place}
+
+    elif code == PeerMessageCode.QUEUE_UPLOAD:
+        filename = msg.string()
+        return {"kind": "queue_upload", "filename": filename}
+
+    elif code == PeerMessageCode.PLACE_IN_QUEUE_REQUEST:
+        filename = msg.string()
+        return {"kind": "place_in_queue_request", "filename": filename}
 
     elif code == PeerMessageCode.UPLOAD_FAILED:
         filename = msg.string()

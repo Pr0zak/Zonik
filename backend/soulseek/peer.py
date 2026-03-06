@@ -9,7 +9,7 @@ from backend.soulseek.protocol.stream import MessageStream
 from backend.soulseek.protocol.peer_messages import (
     build_queue_upload, build_place_in_queue_request,
     build_transfer_response, build_peer_init, build_pierce_firewall,
-    parse_peer_message,
+    build_upload_denied, parse_peer_message,
 )
 
 log = logging.getLogger(__name__)
@@ -69,6 +69,10 @@ class PeerConnection:
 
     async def send_transfer_response(self, token: bytes, allowed: bool, reason: str = "") -> None:
         self._stream.write_message(build_transfer_response(token, allowed, reason))
+        await self._stream.drain()
+
+    async def send_upload_denied(self, filename: str, reason: str) -> None:
+        self._stream.write_message(build_upload_denied(filename, reason))
         await self._stream.drain()
 
     async def send_raw(self, data: bytes) -> None:

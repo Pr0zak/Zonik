@@ -310,8 +310,10 @@ class SoulseekClient:
                     self.transfers.update_state(transfer, TransferState.CONNECTED)
                     await peer.send_transfer_response(msg["token"], True)
                 else:
+                    # FIX #1: Send rejection so peer can try elsewhere immediately
+                    await peer.send_transfer_response(msg["token"], False, "File not queued")
                     active = [f"{t.filename}" for t in self.transfers.transfers.values() if t.username == peer.username]
-                    log.warning(f"[client] No transfer for upload request from {peer.username}: {msg['filename']} (active transfers for user: {active or 'none'})")
+                    log.debug(f"[client] Rejected transfer request from {peer.username}: {msg['filename']} (active: {active or 'none'})")
 
         elif kind == "place_in_queue_response":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
@@ -326,11 +328,26 @@ class SoulseekClient:
                 self.transfers.update_state(transfer, TransferState.DENIED, error=msg.get("reason", ""))
                 await self._on_transfer_complete(transfer)
 
+        elif kind == "transfer_response":
+            # Peer rejected our transfer request
+            if not msg.get("allowed"):
+                transfer = self.transfers.get_transfer_by_token(peer.username, msg["token"])
+                if transfer:
+                    reason = msg.get("reason", "Rejected by peer")
+                    self.transfers.update_state(transfer, TransferState.DENIED, error=reason)
+                    await self._on_transfer_complete(transfer)
+
         elif kind == "upload_failed":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
             if transfer:
                 self.transfers.update_state(transfer, TransferState.FAILED, error="Upload failed by peer")
                 await self._on_transfer_complete(transfer)
+
+        elif kind == "queue_upload":
+            # FIX #4: Peer wants to download from us — acknowledge but deny (we don't upload)
+            log.debug(f"[client] Queue upload request from {peer.username}: {msg['filename']}")
+            # We could implement uploads here in the future; for now deny
+            await peer.send_upload_denied(msg["filename"], "Not sharing this file")
 
     async def _handle_peer_close(self, peer: PeerConnection) -> None:
         self.peers.pop(peer.username, None)
