@@ -71,24 +71,13 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
             await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": 0, "total": total})
 
             try:
-                # Process in batches — concurrent Essentia across cores, sequential DB writes
-                batch_size = max(1, (os.cpu_count() or 2) - 1)
                 completed = 0
+                last_broadcast = 0
 
-                for batch_start in range(0, total, batch_size):
-                    batch = tracks[batch_start:batch_start + batch_size]
-
-                    # Run Essentia concurrently across process pool workers
-                    results = await _aio.gather(
-                        *[analyze_track_async(fp) for _, fp in batch],
-                        return_exceptions=True,
-                    )
-
-                    # Write results to DB sequentially
-                    for (track_id, file_path), analysis in zip(batch, results):
-                        if isinstance(analysis, Exception):
-                            log.warning("Analysis failed for track %s: %s", track_id, analysis)
-                        elif analysis:
+                for i, (track_id, file_path) in enumerate(tracks):
+                    try:
+                        analysis = await analyze_track_async(file_path)
+                        if analysis:
                             ta = TrackAnalysis(
                                 track_id=track_id,
                                 bpm=analysis.get("bpm"),
@@ -99,15 +88,19 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                                 loudness=analysis.get("loudness"),
                             )
                             await db.merge(ta)
-                        completed += 1
+                    except Exception as e:
+                        log.warning("Analysis failed for track %s: %s", track_id, e)
 
-                    # Commit after each batch, broadcast progress
-                    job.progress = completed
-                    await db.merge(job)
-                    await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": completed, "total": total})
-                    # Brief pause to keep HTTP responsive
-                    await _aio.sleep(0.1)
+                    completed = i + 1
+
+                    # DB commit every 10 tracks, WS broadcast every 10 tracks
+                    if completed % 10 == 0 or completed == total:
+                        job.progress = completed
+                        await db.merge(job)
+                        await db.commit()
+                    if completed - last_broadcast >= 10 or completed == total:
+                        last_broadcast = completed
+                        await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": completed, "total": total})
 
                 job.status = "completed"
             except Exception as e:
