@@ -71,6 +71,10 @@ def _write_config(data: dict) -> None:
     # Clear cached settings so next get_settings() picks up changes
     get_settings.cache_clear()
 
+    # Reset download semaphore so new queue limit takes effect
+    from backend.api.download import reset_download_semaphore
+    reset_download_semaphore()
+
 
 class ServiceConfig(BaseModel):
     download_dir: str = ""
@@ -80,6 +84,7 @@ class ServiceConfig(BaseModel):
     slsk_username: str = ""
     slsk_password: str = ""
     slsk_listen_port: int = 2234
+    slsk_max_concurrent_downloads: int = 4
     slsk_parallel_sources: int = 1
     slsk_source_strategy: str = "first"
     # Lidarr
@@ -103,6 +108,7 @@ async def get_service_config():
         "slsk_username": settings.soulseek.username,
         "slsk_password": settings.soulseek.password,
         "slsk_listen_port": settings.soulseek.listen_port,
+        "slsk_max_concurrent_downloads": settings.soulseek.max_concurrent_downloads,
         "slsk_parallel_sources": settings.soulseek.parallel_sources,
         "slsk_source_strategy": settings.soulseek.source_strategy,
         "lidarr_enabled": settings.lidarr.enabled,
@@ -131,6 +137,7 @@ async def update_service_config(req: ServiceConfig):
         soulseek["password"] = req.slsk_password
     soulseek["listen_port"] = req.slsk_listen_port
     soulseek["use_native"] = True  # Always native
+    soulseek["max_concurrent_downloads"] = max(1, min(req.slsk_max_concurrent_downloads, 10))
     soulseek["parallel_sources"] = max(1, min(req.slsk_parallel_sources, 5))
     if req.slsk_source_strategy in ("first", "best"):
         soulseek["source_strategy"] = req.slsk_source_strategy

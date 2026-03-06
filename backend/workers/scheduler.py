@@ -173,6 +173,10 @@ async def _auto_download_missing(missing: list[dict], source: str):
         await db.commit()
     await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": total, "description": desc})
 
+    # Use global download semaphore to respect queue limits
+    from backend.api.download import _get_semaphore
+    sem = _get_semaphore()
+
     completed = 0
     failed = 0
     for i, t in enumerate(missing):
@@ -180,12 +184,13 @@ async def _auto_download_missing(missing: list[dict], source: str):
         track = t.get("track", "")
         if not artist or not track:
             continue
-        try:
-            await search_and_download(artist, track)
-            completed += 1
-        except Exception as e:
-            failed += 1
-            log.warning(f"Auto-download failed for {artist} - {track}: {e}")
+        async with sem:
+            try:
+                await search_and_download(artist, track)
+                completed += 1
+            except Exception as e:
+                failed += 1
+                log.warning(f"Auto-download failed for {artist} - {track}: {e}")
         await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": i + 1, "total": total, "description": f"{desc} — {artist} - {track}"})
 
     # Finalize

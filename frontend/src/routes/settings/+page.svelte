@@ -18,6 +18,7 @@
 		slsk_username: '',
 		slsk_password: '',
 		slsk_listen_port: 2234,
+		slsk_max_concurrent_downloads: 4,
 		slsk_parallel_sources: 1,
 		slsk_source_strategy: 'first',
 		lidarr_enabled: false,
@@ -472,9 +473,21 @@
 								placeholder="2234" class={inputClass} />
 						</div>
 					</div>
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+					<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
 						<div>
-							<label class="block text-xs text-[var(--text-muted)] mb-1">Parallel Sources</label>
+							<label class="block text-xs text-[var(--text-muted)] mb-1">Download Queue</label>
+							<select bind:value={services.slsk_max_concurrent_downloads} onchange={markDirty} class={inputClass}>
+								<option value={1}>1 at a time</option>
+								<option value={2}>2 concurrent</option>
+								<option value={3}>3 concurrent</option>
+								<option value={4}>4 concurrent</option>
+								<option value={6}>6 concurrent</option>
+								<option value={8}>8 concurrent</option>
+								<option value={10}>10 concurrent</option>
+							</select>
+						</div>
+						<div>
+							<label class="block text-xs text-[var(--text-muted)] mb-1">Sources per Track</label>
 							<select bind:value={services.slsk_parallel_sources} onchange={markDirty} class={inputClass}>
 								<option value={1}>1 (sequential)</option>
 								<option value={2}>2 sources</option>
@@ -486,8 +499,8 @@
 						<div>
 							<label class="block text-xs text-[var(--text-muted)] mb-1">Source Strategy</label>
 							<select bind:value={services.slsk_source_strategy} onchange={markDirty} class={inputClass}>
-								<option value="first">First completed (fastest)</option>
-								<option value="best">Best quality (wait for all)</option>
+								<option value="first">First completed</option>
+								<option value="best">Best quality</option>
 							</select>
 						</div>
 					</div>

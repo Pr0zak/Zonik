@@ -1,12 +1,34 @@
 """Download API routes - Soulseek search and download triggers."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime
 
 log = logging.getLogger(__name__)
+
+# Module-level download queue — limits concurrent download jobs
+_download_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Lazy-init semaphore with configured max_concurrent_downloads."""
+    global _download_semaphore
+    if _download_semaphore is None:
+        from backend.config import get_settings
+        limit = get_settings().soulseek.max_concurrent_downloads
+        _download_semaphore = asyncio.Semaphore(limit)
+        log.info(f"[download] Queue initialized: max {limit} concurrent downloads")
+    return _download_semaphore
+
+
+def reset_download_semaphore():
+    """Reset semaphore after config change. New limit takes effect for next downloads."""
+    global _download_semaphore
+    _download_semaphore = None
+
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
@@ -157,311 +179,339 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         from backend.soulseek.protocol.types import TransferState
         from backend.services.scanner import import_downloaded_file
         async with async_session() as db:
-            job = Job(
-                id=job_id, type="download", card="dl", status="running",
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "pending"}]),
-            )
-            db.add(job)
-            await db.commit()
             desc = f"{req.artist} — {req.track}"
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+            sem = _get_semaphore()
 
-            def _file_size(path):
-                """Get file size in bytes, or 0 if unavailable."""
-                try:
-                    import os
-                    return os.path.getsize(path) if path else 0
-                except Exception:
-                    return 0
-
-            async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
-                """Poll transfer until terminal state. Returns (status, save_path, error)."""
-                import time
-                last_bytes = 0
-                stall_start = None
-                queue_start = time.monotonic()
-                for _ in range(timeout_polls):
-                    await asyncio.sleep(2)
-                    if check_cancel:
-                        await db.refresh(job)
-                        if job.status == "failed":
-                            return "cancelled", None, "Cancelled by user"
-                    transfer = client.transfers.get_transfer(username, filename)
-                    if not transfer:
-                        return "failed", None, "Transfer removed"
-                    if transfer.state == TransferState.COMPLETED:
-                        return "completed", transfer.save_path, None
-                    elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
-                        return "failed", None, transfer.error or transfer.state
-
-                    # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
-                    if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
-                        if time.monotonic() - queue_start > queue_timeout:
-                            client.transfers.update_state(transfer, TransferState.FAILED, error="Peer did not respond")
-                            client.transfers.remove_transfer(username, filename)
-                            return "failed", None, "Peer did not respond in time"
-                        continue  # Don't check stall yet
-
-                    # CONNECTED/TRANSFERRING — detect data stall
-                    if transfer.received_bytes > last_bytes:
-                        last_bytes = transfer.received_bytes
-                        stall_start = None
-                    else:
-                        if stall_start is None:
-                            stall_start = time.monotonic()
-                        elif time.monotonic() - stall_start > stall_timeout:
-                            client.transfers.update_state(transfer, TransferState.FAILED, error="Stalled (no data)")
-                            client.transfers.remove_transfer(username, filename)
-                            return "failed", None, "Transfer stalled — no data received"
-                return "timeout", None, "Transfer monitoring timed out"
-
-            try:
-                native_client = get_client()
-                from backend.config import get_settings as _get_settings
-                dl_settings = _get_settings()
-                parallel_sources = dl_settings.soulseek.parallel_sources
-                source_strategy = dl_settings.soulseek.source_strategy
-
-                if req.username and req.filename and native_client:
-                    # Direct download — try requested source first, then fall back to search
-                    candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
-                    try:
-                        from backend.soulseek.search import search_multi_strategy_native
-                        fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track)
-                        # Add fallbacks excluding the already-requested source
-                        for fb in fallbacks:
-                            if fb["username"] != req.username:
-                                candidates.append(fb)
-                        candidates = candidates[:5]  # Limit total attempts
-                    except Exception as e:
-                        log.debug("Fallback search failed: %s", e)
-                elif native_client:
-                    # Auto-download — get candidates from search
-                    from backend.soulseek.search import search_multi_strategy_native
-                    candidates = await search_multi_strategy_native(native_client, req.artist, req.track)
-                else:
-                    from backend.services.soulseek import search_and_download
-                    result = await search_and_download(req.artist, req.track)
-                    ok = result.get("ok") or result.get("status") == "downloading"
-                    job.status = "completed" if ok else "failed"
-                    job.result = json.dumps(result)
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded" if ok else "failed"}])
-                    candidates = []  # Skip native loop
-
-                if native_client and not candidates:
-                    job.status = "failed"
-                    job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
-
-                if candidates and native_client and parallel_sources > 1:
-                    # === Multi-source parallel download ===
-                    batch = candidates[:parallel_sources]
-                    usernames_str = ", ".join(c["username"] for c in batch)
-                    job.tracks = json.dumps([{
-                        "artist": req.artist, "track": req.track, "status": "downloading",
-                        "sources": len(batch),
-                    }])
+            # If semaphore is full, show as queued
+            if sem.locked():
+                job = Job(
+                    id=job_id, type="download", card="dl", status="pending",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued"}]),
+                )
+                db.add(job)
+                await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
+                async with sem:
+                    job.status = "running"
                     await db.merge(job)
                     await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
-
-                    # Start all downloads concurrently
-                    async def try_source(candidate):
-                        """Attempt download from one source. Returns (candidate, status, save_path, error)."""
-                        dl_username = candidate["username"]
-                        dl_filename = candidate["filename"]
-                        try:
-                            await native_client.download(dl_username, dl_filename)
-                            log.info(f"[download] Multi-source queued: {dl_username}")
-                        except Exception as e:
-                            await native_client.reputation.record_failure(dl_username)
-                            return candidate, "failed", None, str(e)
-                        # check_cancel=False: parallel sources share the outer db session
-                        status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename, check_cancel=False)
-                        if status == "completed":
-                            await native_client.reputation.record_success(dl_username)
-                            return candidate, "completed", save_path, None
-                        else:
-                            await native_client.reputation.record_failure(dl_username)
-                            return candidate, status, None, error
-
-                    if source_strategy == "first":
-                        # Race — keep first completed, cancel the rest
-                        tasks_map = {}
-                        for c in batch:
-                            task = asyncio.create_task(try_source(c))
-                            tasks_map[task] = c
-
-                        winner = None
-                        source_errors = []
-                        pending = set(tasks_map.keys())
-                        while pending:
-                            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                            for task in done:
-                                cand, status, save_path, error = task.result()
-                                if status == "completed" and not winner:
-                                    winner = (cand, save_path)
-                                elif status == "completed" and winner:
-                                    # Duplicate completed — remove the extra file
-                                    if save_path:
-                                        try:
-                                            from pathlib import Path
-                                            Path(save_path).unlink(missing_ok=True)
-                                        except Exception:
-                                            pass
-                                else:
-                                    source_errors.append({"user": cand["username"], "error": error or status})
-                            if winner:
-                                for t in pending:
-                                    t.cancel()
-                                break
-
-                        if winner:
-                            cand, save_path = winner
-                            short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                            fsize = _file_size(save_path)
-                            track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
-                            job.status = "completed"
-                            job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
-                        else:
-                            failed_users = [c["username"] for c in batch]
-                            last_err = source_errors[-1]["error"] if source_errors else "unknown"
-                            job.status = "failed"
-                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "first", "failed_sources": failed_users, "source_errors": source_errors})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
-
-                    else:
-                        # "best" strategy — wait for all, keep highest quality
-                        results_all = await asyncio.gather(*[try_source(c) for c in batch], return_exceptions=True)
-                        completed = []
-                        source_errors = []
-                        for r in results_all:
-                            if isinstance(r, Exception):
-                                source_errors.append({"user": "unknown", "error": str(r)})
-                                continue
-                            cand, status, save_path, error = r
-                            if status == "completed" and save_path:
-                                completed.append((cand, save_path))
-                            else:
-                                source_errors.append({"user": cand["username"], "error": error or status})
-
-                        if completed:
-                            def _quality_score(item):
-                                cand, path = item
-                                ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-                                fmt_scores = {"flac": 20, "wav": 18, "alac": 18, "mp3": 5, "m4a": 3, "ogg": 3, "opus": 3}
-                                score = fmt_scores.get(ext, 0)
-                                score += cand.get("bitRate", 0) or 0
-                                score += (cand.get("size", 0) or 0) // (1024 * 1024)
-                                return score
-
-                            completed.sort(key=_quality_score, reverse=True)
-                            best_cand, best_path = completed[0]
-
-                            # Delete the losers
-                            for cand, path in completed[1:]:
-                                try:
-                                    from pathlib import Path
-                                    Path(path).unlink(missing_ok=True)
-                                except Exception:
-                                    pass
-
-                            short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                            fsize = _file_size(best_path)
-                            track_id = await import_downloaded_file(db, best_path, artist_hint=req.artist)
-                            job.status = "completed"
-                            job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
-                        else:
-                            failed_users = [c["username"] for c in batch]
-                            last_err = source_errors[-1]["error"] if source_errors else "unknown"
-                            job.status = "failed"
-                            job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "best", "failed_sources": failed_users, "source_errors": source_errors})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
-
-                elif candidates and native_client:
-                    # === Sequential download (parallel_sources == 1, original behavior) ===
-                    last_error = ""
-                    source_errors = []  # [(username, error), ...]
-                    for i, candidate in enumerate(candidates):
-                        dl_username = candidate["username"]
-                        dl_filename = candidate["filename"]
-                        short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
-
-                        attempt_label = f"attempt {i+1}/{len(candidates)}"
-                        job.tracks = json.dumps([{
-                            "artist": req.artist, "track": req.track, "status": "downloading",
-                            "username": dl_username, "filename": short_name,
-                        }])
-                        await db.merge(job)
-                        await db.commit()
-                        await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
-
-                        try:
-                            await native_client.download(dl_username, dl_filename)
-                            log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
-                        except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
-                            # Transient network errors — don't penalize reputation
-                            log.warning(f"[download] Transient connection error to {dl_username}: {e}")
-                            last_error = f"Connection timeout: {e}"
-                            source_errors.append({"user": dl_username, "error": last_error})
-                            continue
-                        except Exception as e:
-                            log.warning(f"[download] Failed to connect to {dl_username}: {e}")
-                            last_error = f"Connection failed: {e}"
-                            source_errors.append({"user": dl_username, "error": last_error})
-                            await native_client.reputation.record_failure(dl_username)
-                            continue
-
-                        status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
-                        log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
-
-                        if status == "completed":
-                            await native_client.reputation.record_success(dl_username)
-                            fsize = _file_size(save_path)
-                            track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
-                            job.status = "completed"
-                            job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
-                            break
-                        elif status == "cancelled":
-                            job.status = "failed"
-                            job.result = json.dumps({"error": "Cancelled by user"})
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
-                            break
-                        else:
-                            await native_client.reputation.record_failure(dl_username)
-                            last_error = error or status
-                            source_errors.append({"user": dl_username, "error": last_error})
-
-                    else:
-                        if candidates and job.status != "failed":
-                            failed_users = [c["username"] for c in candidates]
-                            job.status = "failed"
-                            err_detail = last_error or "unknown"
-                            job.result = json.dumps({
-                                "message": f"All {len(candidates)} sources failed",
-                                "last_error": err_detail,
-                                "failed_sources": failed_users,
-                                "source_errors": source_errors,
-                            })
-                            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": err_detail}])
-
-            except Exception as e:
-                log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)
-                job.status = "failed"
-                job.result = json.dumps({"error": str(e)})
-            finally:
-                job.finished_at = datetime.utcnow()
-                await db.merge(job)
+                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                    await _do_download_inner(db, job, job_id, desc, req)
+            else:
+                job = Job(
+                    id=job_id, type="download", card="dl", status="running",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "pending"}]),
+                )
+                db.add(job)
                 await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": desc})
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                async with sem:
+                    await _do_download_inner(db, job, job_id, desc, req)
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
 
+
+async def _do_download_inner(db, job, job_id, desc, req):
+    """Core download logic — runs inside the download semaphore."""
+    import asyncio
+    from backend.soulseek import get_client
+    from backend.soulseek.protocol.types import TransferState
+    from backend.services.scanner import import_downloaded_file
+
+    def _file_size(path):
+        """Get file size in bytes, or 0 if unavailable."""
+        try:
+            import os
+            return os.path.getsize(path) if path else 0
+        except Exception:
+            return 0
+
+    async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
+        """Poll transfer until terminal state. Returns (status, save_path, error)."""
+        import time
+        last_bytes = 0
+        stall_start = None
+        queue_start = time.monotonic()
+        for _ in range(timeout_polls):
+            await asyncio.sleep(2)
+            if check_cancel:
+                await db.refresh(job)
+                if job.status == "failed":
+                    return "cancelled", None, "Cancelled by user"
+            transfer = client.transfers.get_transfer(username, filename)
+            if not transfer:
+                return "failed", None, "Transfer removed"
+            if transfer.state == TransferState.COMPLETED:
+                return "completed", transfer.save_path, None
+            elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
+                return "failed", None, transfer.error or transfer.state
+
+            # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
+            if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
+                if time.monotonic() - queue_start > queue_timeout:
+                    client.transfers.update_state(transfer, TransferState.FAILED, error="Peer did not respond")
+                    client.transfers.remove_transfer(username, filename)
+                    return "failed", None, "Peer did not respond in time"
+                continue  # Don't check stall yet
+
+            # CONNECTED/TRANSFERRING — detect data stall
+            if transfer.received_bytes > last_bytes:
+                last_bytes = transfer.received_bytes
+                stall_start = None
+            else:
+                if stall_start is None:
+                    stall_start = time.monotonic()
+                elif time.monotonic() - stall_start > stall_timeout:
+                    client.transfers.update_state(transfer, TransferState.FAILED, error="Stalled (no data)")
+                    client.transfers.remove_transfer(username, filename)
+                    return "failed", None, "Transfer stalled — no data received"
+        return "timeout", None, "Transfer monitoring timed out"
+
+    try:
+        native_client = get_client()
+        from backend.config import get_settings as _get_settings
+        dl_settings = _get_settings()
+        parallel_sources = dl_settings.soulseek.parallel_sources
+        source_strategy = dl_settings.soulseek.source_strategy
+
+        if req.username and req.filename and native_client:
+            # Direct download — try requested source first, then fall back to search
+            candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
+            try:
+                from backend.soulseek.search import search_multi_strategy_native
+                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track)
+                # Add fallbacks excluding the already-requested source
+                for fb in fallbacks:
+                    if fb["username"] != req.username:
+                        candidates.append(fb)
+                candidates = candidates[:5]  # Limit total attempts
+            except Exception as e:
+                log.debug("Fallback search failed: %s", e)
+        elif native_client:
+            # Auto-download — get candidates from search
+            from backend.soulseek.search import search_multi_strategy_native
+            candidates = await search_multi_strategy_native(native_client, req.artist, req.track)
+        else:
+            from backend.services.soulseek import search_and_download
+            result = await search_and_download(req.artist, req.track)
+            ok = result.get("ok") or result.get("status") == "downloading"
+            job.status = "completed" if ok else "failed"
+            job.result = json.dumps(result)
+            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded" if ok else "failed"}])
+            candidates = []  # Skip native loop
+
+        if native_client and not candidates:
+            job.status = "failed"
+            job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
+            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+
+        if candidates and native_client and parallel_sources > 1:
+            # === Multi-source parallel download ===
+            batch = candidates[:parallel_sources]
+            usernames_str = ", ".join(c["username"] for c in batch)
+            job.tracks = json.dumps([{
+                "artist": req.artist, "track": req.track, "status": "downloading",
+                "sources": len(batch),
+            }])
+            await db.merge(job)
+            await db.commit()
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
+
+            # Start all downloads concurrently
+            async def try_source(candidate):
+                """Attempt download from one source. Returns (candidate, status, save_path, error)."""
+                dl_username = candidate["username"]
+                dl_filename = candidate["filename"]
+                try:
+                    await native_client.download(dl_username, dl_filename)
+                    log.info(f"[download] Multi-source queued: {dl_username}")
+                except Exception as e:
+                    await native_client.reputation.record_failure(dl_username)
+                    return candidate, "failed", None, str(e)
+                # check_cancel=False: parallel sources share the outer db session
+                status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename, check_cancel=False)
+                if status == "completed":
+                    await native_client.reputation.record_success(dl_username)
+                    return candidate, "completed", save_path, None
+                else:
+                    await native_client.reputation.record_failure(dl_username)
+                    return candidate, status, None, error
+
+            if source_strategy == "first":
+                # Race — keep first completed, cancel the rest
+                tasks_map = {}
+                for c in batch:
+                    task = asyncio.create_task(try_source(c))
+                    tasks_map[task] = c
+
+                winner = None
+                source_errors = []
+                pending = set(tasks_map.keys())
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        cand, status, save_path, error = task.result()
+                        if status == "completed" and not winner:
+                            winner = (cand, save_path)
+                        elif status == "completed" and winner:
+                            # Duplicate completed — remove the extra file
+                            if save_path:
+                                try:
+                                    from pathlib import Path
+                                    Path(save_path).unlink(missing_ok=True)
+                                except Exception:
+                                    pass
+                        else:
+                            source_errors.append({"user": cand["username"], "error": error or status})
+                    if winner:
+                        for t in pending:
+                            t.cancel()
+                        break
+
+                if winner:
+                    cand, save_path = winner
+                    short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    fsize = _file_size(save_path)
+                    track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
+                    job.status = "completed"
+                    job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
+                else:
+                    failed_users = [c["username"] for c in batch]
+                    last_err = source_errors[-1]["error"] if source_errors else "unknown"
+                    job.status = "failed"
+                    job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "first", "failed_sources": failed_users, "source_errors": source_errors})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
+
+            else:
+                # "best" strategy — wait for all, keep highest quality
+                results_all = await asyncio.gather(*[try_source(c) for c in batch], return_exceptions=True)
+                completed = []
+                source_errors = []
+                for r in results_all:
+                    if isinstance(r, Exception):
+                        source_errors.append({"user": "unknown", "error": str(r)})
+                        continue
+                    cand, status, save_path, error = r
+                    if status == "completed" and save_path:
+                        completed.append((cand, save_path))
+                    else:
+                        source_errors.append({"user": cand["username"], "error": error or status})
+
+                if completed:
+                    def _quality_score(item):
+                        cand, path = item
+                        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+                        fmt_scores = {"flac": 20, "wav": 18, "alac": 18, "mp3": 5, "m4a": 3, "ogg": 3, "opus": 3}
+                        score = fmt_scores.get(ext, 0)
+                        score += cand.get("bitRate", 0) or 0
+                        score += (cand.get("size", 0) or 0) // (1024 * 1024)
+                        return score
+
+                    completed.sort(key=_quality_score, reverse=True)
+                    best_cand, best_path = completed[0]
+
+                    # Delete the losers
+                    for cand, path in completed[1:]:
+                        try:
+                            from pathlib import Path
+                            Path(path).unlink(missing_ok=True)
+                        except Exception:
+                            pass
+
+                    short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    fsize = _file_size(best_path)
+                    track_id = await import_downloaded_file(db, best_path, artist_hint=req.artist)
+                    job.status = "completed"
+                    job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
+                else:
+                    failed_users = [c["username"] for c in batch]
+                    last_err = source_errors[-1]["error"] if source_errors else "unknown"
+                    job.status = "failed"
+                    job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "best", "failed_sources": failed_users, "source_errors": source_errors})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
+
+        elif candidates and native_client:
+            # === Sequential download (parallel_sources == 1, original behavior) ===
+            last_error = ""
+            source_errors = []  # [(username, error), ...]
+            for i, candidate in enumerate(candidates):
+                dl_username = candidate["username"]
+                dl_filename = candidate["filename"]
+                short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
+
+                attempt_label = f"attempt {i+1}/{len(candidates)}"
+                job.tracks = json.dumps([{
+                    "artist": req.artist, "track": req.track, "status": "downloading",
+                    "username": dl_username, "filename": short_name,
+                }])
+                await db.merge(job)
+                await db.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
+
+                try:
+                    await native_client.download(dl_username, dl_filename)
+                    log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
+                except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
+                    # Transient network errors — don't penalize reputation
+                    log.warning(f"[download] Transient connection error to {dl_username}: {e}")
+                    last_error = f"Connection timeout: {e}"
+                    source_errors.append({"user": dl_username, "error": last_error})
+                    continue
+                except Exception as e:
+                    log.warning(f"[download] Failed to connect to {dl_username}: {e}")
+                    last_error = f"Connection failed: {e}"
+                    source_errors.append({"user": dl_username, "error": last_error})
+                    await native_client.reputation.record_failure(dl_username)
+                    continue
+
+                status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
+
+                if status == "completed":
+                    await native_client.reputation.record_success(dl_username)
+                    fsize = _file_size(save_path)
+                    track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
+                    job.status = "completed"
+                    job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
+                    break
+                elif status == "cancelled":
+                    job.status = "failed"
+                    job.result = json.dumps({"error": "Cancelled by user"})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                    break
+                else:
+                    await native_client.reputation.record_failure(dl_username)
+                    last_error = error or status
+                    source_errors.append({"user": dl_username, "error": last_error})
+
+            else:
+                if candidates and job.status != "failed":
+                    failed_users = [c["username"] for c in candidates]
+                    job.status = "failed"
+                    err_detail = last_error or "unknown"
+                    job.result = json.dumps({
+                        "message": f"All {len(candidates)} sources failed",
+                        "last_error": err_detail,
+                        "failed_sources": failed_users,
+                        "source_errors": source_errors,
+                    })
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": err_detail}])
+
+    except Exception as e:
+        log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)
+        job.status = "failed"
+        job.result = json.dumps({"error": str(e)})
+    finally:
+        job.finished_at = datetime.utcnow()
+        await db.merge(job)
+        await db.commit()
+        await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": desc})
 
 @router.post("/bulk")
 async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTasks):
@@ -488,8 +538,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             await db.commit()
             await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": len(req.tracks)})
 
-            settings = get_settings()
-            semaphore = asyncio.Semaphore(settings.soulseek.max_workers)
+            semaphore = _get_semaphore()
             max_retries = 3
 
             # Try native client
