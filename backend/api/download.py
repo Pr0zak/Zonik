@@ -627,6 +627,44 @@ async def download_status():
     return {"downloads": [], "logged_in": False}
 
 
+@router.get("/soulseek-stats")
+async def soulseek_stats():
+    """Get Soulseek client stats — connection, shares, peers, transfers."""
+    from backend.soulseek import get_client
+    from backend.soulseek.shares import get_share_counts
+
+    client = get_client()
+    num_dirs, num_files = get_share_counts()
+
+    if not client:
+        return {
+            "connected": False,
+            "username": None,
+            "peers": 0,
+            "shared_folders": num_dirs,
+            "shared_files": num_files,
+            "active_transfers": 0,
+            "completed_transfers": 0,
+            "failed_transfers": 0,
+        }
+
+    transfers = client.transfers.get_all_transfers()
+    active = sum(1 for t in transfers if t.get("state") in ("transferring", "connected", "requested", "queued"))
+    completed = sum(1 for t in transfers if t.get("state") == "completed")
+    failed = sum(1 for t in transfers if t.get("state") in ("failed", "denied"))
+
+    return {
+        "connected": client.logged_in,
+        "username": client.username,
+        "peers": len(client.peers),
+        "shared_folders": num_dirs,
+        "shared_files": num_files,
+        "active_transfers": active,
+        "completed_transfers": completed,
+        "failed_transfers": failed,
+    }
+
+
 # --- Blacklist CRUD ---
 
 class BlacklistEntry(BaseModel):
