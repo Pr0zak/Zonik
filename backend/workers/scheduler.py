@@ -388,6 +388,10 @@ async def _run_lastfm_loved_sync(db: AsyncSession, job: Job):
     username = settings.lastfm.username
 
     async def on_progress(current, total):
+        job.progress = current
+        job.total = total
+        if current % 10 == 0 or current == total:
+            await db.commit()
         await broadcast_job_update({
             "id": job.id, "type": "lastfm_sync", "status": "running",
             "progress": current, "total": total,
