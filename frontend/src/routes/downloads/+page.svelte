@@ -334,7 +334,9 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(body)
 			}).then(r => r.json());
-			results = data.results || [];
+			results = (data.results || []).map(r =>
+				failedSources.has(r.username) ? { ...r, on_cooldown: true } : r
+			);
 			resultCount = data.count || 0;
 			resultUsers = data.users || 0;
 			searchDone = true;
@@ -589,7 +591,16 @@
 								{/if}
 								{#if job.status === 'failed'}
 									{#if jobTracks?.[0]?.artist && jobTracks?.[0]?.track}
-										<button onclick={() => { searchQuery = `${jobTracks[0].artist} - ${jobTracks[0].track}`; searchSoulseek(); }}
+										<button onclick={() => {
+											// Extract failed sources from job result to mark as cooldown
+											if (jobResult?.failed_sources?.length) {
+												const updated = new Set(failedSources);
+												for (const u of jobResult.failed_sources) updated.add(u);
+												failedSources = updated;
+											}
+											searchQuery = `${jobTracks[0].artist} - ${jobTracks[0].track}`;
+											searchSoulseek();
+										}}
 											class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for new sources">
 											<Search class="w-3.5 h-3.5" />
 										</button>
