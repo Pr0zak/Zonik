@@ -27,7 +27,10 @@ class MessageStream:
 
         length = struct.unpack("<I", header)[0]
         if length > 50 * 1024 * 1024:  # 50MB sanity limit
-            log.warning(f"[stream] Message too large: {length} bytes, dropping")
+            log.warning(f"[stream] Message too large: {length} bytes, closing stream to force clean reconnect")
+            # Stream is likely desync'd — remaining reads will produce garbage.
+            # Close and return None to trigger reconnect with fresh stream.
+            self.close()
             return None
 
         try:

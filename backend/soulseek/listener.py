@@ -49,7 +49,7 @@ class PeerListener:
             else:
                 writer.close()
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, OSError) as e:
-            log.debug(f"[listener] Inbound connection error: {e}")
+            log.info(f"[listener] Inbound connection error: {e}")
             try:
                 writer.close()
             except Exception:

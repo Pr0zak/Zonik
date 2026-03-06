@@ -118,6 +118,13 @@ class TransferManager:
                 return t
         return None
 
+    def find_transfer_by_token(self, token: bytes) -> Transfer | None:
+        """Find a transfer by token only (no username required). Used for inbound pierce_firewall."""
+        for t in self.transfers.values():
+            if t.token == token and t.state in (TransferState.CONNECTED, TransferState.REQUESTED, TransferState.QUEUED):
+                return t
+        return None
+
     def create_transfer(self, username: str, filename: str) -> Transfer:
         key = self._normalize_key(username, filename)
         transfer = Transfer(username=username, filename=filename)
@@ -146,10 +153,14 @@ class TransferManager:
         """
         transfer = self.get_transfer_by_token(username, token)
         if not transfer:
-            log.warning(f"[transfer] No transfer found for token from {username}")
+            # Also try token-only search (pierce_firewall doesn't always provide username)
+            transfer = self.find_transfer_by_token(token)
+        if not transfer:
+            log.warning(f"[transfer] No transfer found for token {token.hex()} from {username}")
             writer.close()
             return
 
+        log.info(f"[transfer] Starting file transfer from {username}: {transfer.filename}")
         self.update_state(transfer, TransferState.TRANSFERRING)
 
         # Send file offset (resume position)
@@ -206,11 +217,13 @@ class TransferManager:
         token: bytes,
     ) -> None:
         """Connect to peer for file transfer (outbound, server-mediated)."""
+        log.info(f"[transfer] Outbound file transfer to {transfer.username} at {host}:{port}")
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port), timeout=10
             )
         except Exception as e:
+            log.warning(f"[transfer] Outbound connect failed to {transfer.username}: {e}")
             self.update_state(transfer, TransferState.FAILED, error=f"Connect failed: {e}")
             return
 
@@ -218,15 +231,7 @@ class TransferManager:
         writer.write(build_pierce_firewall_raw(token))
         await writer.drain()
 
-        # Read the token echo (4 bytes) from peer
-        try:
-            echo_data = await asyncio.wait_for(reader.readexactly(4), timeout=10)
-        except Exception:
-            self.update_state(transfer, TransferState.FAILED, error="No token echo")
-            writer.close()
-            return
-
-        # Now handle the transfer like an inbound one
+        # Now handle the transfer — send offset, receive file data
         await self.handle_file_transfer_connection(
             transfer.username, token, reader, writer
         )

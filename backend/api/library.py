@@ -92,12 +92,17 @@ async def scan_library(background_tasks: BackgroundTasks):
                     "progress": progress, "total": total,
                 })
 
-                # Refresh Soulseek shared file list after scan
+                # Refresh Soulseek shared file list after scan and report to server
                 if status == "completed":
                     try:
                         from backend.soulseek.shares import refresh_shares
                         from backend.config import get_settings
                         refresh_shares(get_settings().library.music_dir)
+                        # Re-report share counts to Soulseek server
+                        from backend.soulseek import get_client
+                        client = get_client()
+                        if client and client.server.connected:
+                            await client._report_shares_to_server()
                     except Exception:
                         pass
 

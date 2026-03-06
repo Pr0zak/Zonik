@@ -76,6 +76,8 @@ class SoulseekClient:
         # Build shared file list before login so we report real counts
         self._refresh_shares()
         await self.server.connect_and_login(username, password)
+        # Schedule a delayed share refresh in case NFS/music dir wasn't ready at startup
+        asyncio.create_task(self._delayed_share_refresh())
 
     def _refresh_shares(self) -> None:
         """Scan music library and cache shared file list."""
@@ -83,9 +85,36 @@ class SoulseekClient:
             from backend.config import get_settings
             from backend.soulseek.shares import refresh_shares
             settings = get_settings()
-            refresh_shares(settings.library.music_dir)
+            num_dirs, num_files = refresh_shares(settings.library.music_dir)
+            log.info(f"[client] Shares refreshed: {num_files} files in {num_dirs} dirs")
         except Exception as e:
             log.warning(f"[client] Failed to refresh shares: {e}")
+
+    async def _delayed_share_refresh(self) -> None:
+        """Re-scan shares after 30s in case music dir wasn't ready at startup."""
+        try:
+            await asyncio.sleep(30)
+            from backend.soulseek.shares import get_share_counts
+            old_dirs, old_files = get_share_counts()
+            self._refresh_shares()
+            new_dirs, new_files = get_share_counts()
+            if new_files > old_files:
+                log.info(f"[client] Delayed share refresh found more files: {old_files} -> {new_files}")
+                await self._report_shares_to_server()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning(f"[client] Delayed share refresh failed: {e}")
+
+    async def _report_shares_to_server(self) -> None:
+        """Report current share counts to the Soulseek server."""
+        from backend.soulseek.shares import get_share_counts
+        from backend.soulseek.protocol.server_messages import build_shared_folders_files
+        num_dirs, num_files = get_share_counts()
+        if num_dirs == 0:
+            num_dirs, num_files = 1, 1
+        await self.server._send(build_shared_folders_files(num_dirs, num_files))
+        log.info(f"[client] Reported shares to server: {num_files} files in {num_dirs} dirs")
 
     async def search(
         self,
@@ -246,10 +275,15 @@ class SoulseekClient:
 
             elif conn_type == ConnectionType.FILE_TRANSFER:
                 transfer = self.transfers.get_transfer_by_token(username, token)
+                if not transfer:
+                    transfer = self.transfers.find_transfer_by_token(token)
                 if transfer:
+                    log.info(f"[client] Server-mediated file transfer to {username} at {host}:{port}")
                     asyncio.create_task(
                         self.transfers.handle_outbound_file_transfer(transfer, host, port, token)
                     )
+                else:
+                    log.warning(f"[client] connect_to_peer FILE_TRANSFER but no matching transfer for {username}")
 
         elif kind == "possible_parents":
             pass  # We don't participate in distributed network
@@ -266,7 +300,7 @@ class SoulseekClient:
             peer.start_reading()
             self.peers[username] = peer
         except Exception as e:
-            log.debug(f"[client] Failed to connect to indirect peer {username}: {e}")
+            log.info(f"[client] Failed to connect to indirect peer {username}: {e}")
             await self.server.cant_connect_to_peer(token, username)
 
     async def _handle_server_disconnect(self) -> None:
@@ -283,9 +317,9 @@ class SoulseekClient:
             if response:
                 try:
                     await peer.send_raw(response)
-                    log.debug(f"[client] Sent shared file list to {peer.username}")
+                    log.info(f"[client] Sent shared file list to {peer.username}")
                 except Exception as e:
-                    log.debug(f"[client] Failed to send share list to {peer.username}: {e}")
+                    log.warning(f"[client] Failed to send share list to {peer.username}: {e}")
             return
 
         if kind == "file_search_response":
@@ -309,11 +343,11 @@ class SoulseekClient:
                     transfer.total_bytes = msg.get("size", 0)
                     self.transfers.update_state(transfer, TransferState.CONNECTED)
                     await peer.send_transfer_response(msg["token"], True)
+                    log.info(f"[client] Accepted transfer from {peer.username}: {msg['filename']} ({msg.get('size', 0)} bytes)")
                 else:
-                    # FIX #1: Send rejection so peer can try elsewhere immediately
                     await peer.send_transfer_response(msg["token"], False, "File not queued")
                     active = [f"{t.filename}" for t in self.transfers.transfers.values() if t.username == peer.username]
-                    log.debug(f"[client] Rejected transfer request from {peer.username}: {msg['filename']} (active: {active or 'none'})")
+                    log.warning(f"[client] Rejected transfer request from {peer.username}: {msg['filename']} (active: {active or 'none'})")
 
         elif kind == "place_in_queue_response":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
@@ -325,7 +359,9 @@ class SoulseekClient:
         elif kind == "upload_denied":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
             if transfer:
-                self.transfers.update_state(transfer, TransferState.DENIED, error=msg.get("reason", ""))
+                reason = msg.get("reason", "")
+                log.warning(f"[client] Upload denied by {peer.username}: {reason}")
+                self.transfers.update_state(transfer, TransferState.DENIED, error=reason)
                 await self._on_transfer_complete(transfer)
 
         elif kind == "transfer_response":
@@ -340,13 +376,13 @@ class SoulseekClient:
         elif kind == "upload_failed":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
             if transfer:
+                log.warning(f"[client] Upload failed by {peer.username}: {msg.get('filename', '?')}")
                 self.transfers.update_state(transfer, TransferState.FAILED, error="Upload failed by peer")
                 await self._on_transfer_complete(transfer)
 
         elif kind == "queue_upload":
-            # FIX #4: Peer wants to download from us — acknowledge but deny (we don't upload)
-            log.debug(f"[client] Queue upload request from {peer.username}: {msg['filename']}")
-            # We could implement uploads here in the future; for now deny
+            # Peer wants to download from us — deny (we don't upload)
+            log.info(f"[client] Queue upload request from {peer.username}: {msg['filename']} (denied)")
             await peer.send_upload_denied(msg["filename"], "Not sharing this file")
 
     async def _handle_peer_close(self, peer: PeerConnection) -> None:
@@ -361,9 +397,30 @@ class SoulseekClient:
 
         if kind == "peer_init":
             username = msg["username"]
-            if username in self.peers:
-                writer.close()
+            conn_type = msg.get("type", "")
+
+            if conn_type == ConnectionType.FILE_TRANSFER:
+                # File transfer connection — route to TransferManager
+                token = msg.get("token")
+                if token:
+                    transfer = self.transfers.get_transfer_by_token(username, token)
+                    if transfer:
+                        log.info(f"[client] Inbound file transfer connection from {username} (peer_init F)")
+                        asyncio.create_task(
+                            self.transfers.handle_file_transfer_connection(username, token, reader, writer)
+                        )
+                    else:
+                        log.warning(f"[client] File transfer connection from {username} but no matching transfer")
+                        writer.close()
+                else:
+                    writer.close()
                 return
+
+            # Regular P2P connection
+            if username in self.peers:
+                # Replace stale peer connection
+                old = self.peers.pop(username)
+                old.destroy()
 
             peer = PeerConnection(
                 reader, writer, username,
@@ -374,9 +431,22 @@ class SoulseekClient:
             self.peers[username] = peer
 
         elif kind == "pierce_firewall":
-            # This is handled by the _get_or_connect_peer listener override
-            # or by the transfer connection handler
-            pass
+            # Inbound file transfer — peer connects to our listen port with transfer token
+            token = msg.get("token")
+            if token:
+                transfer = self.transfers.find_transfer_by_token(token)
+                if transfer:
+                    log.info(f"[client] Inbound file transfer via pierce_firewall from {transfer.username}")
+                    asyncio.create_task(
+                        self.transfers.handle_file_transfer_connection(
+                            transfer.username, token, reader, writer
+                        )
+                    )
+                else:
+                    log.warning(f"[client] pierce_firewall with unknown token {token.hex()}")
+                    writer.close()
+            else:
+                writer.close()
 
     # --- Transfer callbacks ---
 
@@ -404,7 +474,7 @@ class SoulseekClient:
             from backend.api.websocket import broadcast_transfer_progress
             await broadcast_transfer_progress(self.transfers.get_all_transfers())
         except Exception as e:
-            self.log.debug("Transfer broadcast failed: %s", e)
+            log.debug("Transfer broadcast failed: %s", e)
 
     async def _peer_cleanup_loop(self) -> None:
         """Close idle peer connections to prevent fd leaks."""
@@ -419,7 +489,7 @@ class SoulseekClient:
                     if peer:
                         peer.destroy()
                 if idle:
-                    log.debug(f"[client] Cleaned up {len(idle)} idle peer connections")
+                    log.info(f"[client] Cleaned up {len(idle)} idle peer connections")
         except asyncio.CancelledError:
             return
 
