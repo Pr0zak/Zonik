@@ -25,10 +25,12 @@ Search for remixes, dubs, edits, and other alternate versions of tracks already 
   - `(.*Remix.*)`, `(.*Dub.*)`, `(.*Mix.*)`, `(.*Extended.*)`, `(.*Edit.*)`, `(.*Instrumental.*)`, `(.*Acoustic.*)`, `(.*Live.*)`, `(.*VIP.*)`, `(.*Bootleg.*)`
 
 **Frontend:**
-- Discover page: new "Remixes" tab or sub-section
-- Per-track "Find Remixes" button in library context menu (3-dot menu)
+- Discover page: new "Remixes" tab or sub-section for batch discovery
+- Per-track "Find Remixes" in library context menu (3-dot menu) — like "Find Similar"
+- Per-track "Find Remixes" on Discover similar-by-track page (`/discover?artist=X&track=Y&mode=remixes`)
 - Results table: Track, Artist, Version Type, Status (in library / download)
 - Bulk download missing remixes
+- Inline per-track download with status (same pattern as top tracks / similar tracks)
 
 **Auto-download option:**
 - ScheduleTask.config `{auto_download: true}` like existing discover tasks
@@ -40,6 +42,175 @@ Search for remixes, dubs, edits, and other alternate versions of tracks already 
 4. Add "Find Remixes" to library context menu
 5. Add Remixes tab/section to Discover page
 6. Add ScheduleControl + auto-download toggle
+
+---
+
+## Concept — Needs Design
+
+### Multi-Library System
+Enable/disable entire collections of music (e.g., Christmas, Techno/Dance/Dub, Main Library). When a library is disabled, its tracks are hidden from Symfonium and the web UI — they still exist on disk but are invisible.
+
+**Use cases:**
+- Hide Christmas music outside December
+- Separate Techno/Dance/Dub collection that can be toggled for parties
+- Keep a "Main" library always on, toggle specialty collections on/off
+- Different moods/vibes as switchable libraries
+
+#### Option A: Subsonic Music Folders (Recommended)
+
+Subsonic API has built-in `getMusicFolders` — clients like Symfonium already support filtering by folder. This is the most natural fit.
+
+**How it works:**
+- Each "library" maps to a Subsonic music folder (physical directory or virtual)
+- `getMusicFolders` returns the list of libraries with enabled/disabled state
+- Symfonium's `musicFolderId` param filters all browsing/search to that folder
+- Zonik filters responses server-side when a library is disabled
+
+**Schema:**
+```sql
+CREATE TABLE music_libraries (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,           -- "Main", "Christmas", "Techno/Dance"
+    enabled BOOLEAN DEFAULT TRUE, -- visible to clients when true
+    detection_rules TEXT,         -- JSON: keyword/genre matching rules (nullable)
+    sort_order INTEGER DEFAULT 0,
+    created_at DATETIME
+);
+
+-- Track belongs to one library (simple) or many (flexible)
+ALTER TABLE tracks ADD COLUMN library_id INTEGER REFERENCES music_libraries(id) DEFAULT 1;
+```
+
+**Assignment methods:**
+1. **Directory-based**: tracks in `/music/Christmas/` auto-assign to "Christmas" library
+2. **Rule-based**: genre contains "Techno" or "House" → auto-assign to "Techno/Dance" library
+3. **Manual**: drag tracks between libraries in web UI
+4. **Hybrid**: auto-detect on scan + manual override
+
+**Pros:**
+- Native Subsonic support — Symfonium already handles `musicFolderId`
+- Simple: one `library_id` column on tracks table
+- Toggle = just flip `enabled` flag, instant effect
+- Subsonic clients can filter per-folder natively
+
+**Cons:**
+- Track can only belong to one library (unless many-to-many)
+- Physical dirs add complexity to file organization
+- Need to filter ALL Subsonic endpoints (search, browse, stream)
+
+#### Option B: Tag/Collection System (Gmail-like Labels)
+
+Tracks can belong to multiple collections via a join table. More flexible but more complex.
+
+**Schema:**
+```sql
+CREATE TABLE collections (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT TRUE,
+    color TEXT,                    -- UI accent color
+    icon TEXT,                     -- lucide icon name
+    detection_rules TEXT,          -- JSON auto-detection rules
+    sort_order INTEGER DEFAULT 0
+);
+
+CREATE TABLE track_collections (
+    track_id TEXT REFERENCES tracks(id),
+    collection_id TEXT REFERENCES collections(id),
+    PRIMARY KEY (track_id, collection_id)
+);
+```
+
+**Pros:**
+- Track in multiple collections (Christmas + Chill + Main)
+- No file moving needed
+- Very flexible tag-like system
+
+**Cons:**
+- More complex queries (JOIN on every request)
+- Subsonic `musicFolderId` expects exclusive folders, not overlapping labels
+- Every Subsonic endpoint needs collection-aware filtering
+- Performance impact on large libraries (extra JOIN)
+
+#### Option C: Virtual Directories (Filesystem-based)
+
+Each library is a physical subdirectory. Scanner assigns `library_id` based on path prefix.
+
+**Config:**
+```toml
+[[libraries]]
+name = "Main"
+path = "/music"
+enabled = true
+
+[[libraries]]
+name = "Christmas"
+path = "/music/Christmas"
+enabled = false
+
+[[libraries]]
+name = "Techno/Dance"
+path = "/music/Techno"
+enabled = true
+```
+
+**Pros:**
+- Simplest to implement — library = directory prefix match
+- Maps directly to Subsonic music folders
+- No extra DB tables needed (derive from file_path)
+- Easy to understand: put files in a folder = assign to library
+
+**Cons:**
+- Moving a track between libraries means moving the file
+- Tracks can only be in one library (directory-based)
+- Nested directories create ambiguity (`/music/Christmas/Techno/` = which library?)
+
+#### Recommendation: Option A (Music Folders) + Rule-Based Detection
+
+Combine Subsonic music folders with smart auto-detection:
+
+1. **music_libraries table** with name, enabled, detection_rules
+2. **library_id on tracks** (FK, default = "Main")
+3. **Auto-detection on scan**: match genre/title/album against rules, assign library_id
+4. **Manual override**: reassign tracks via web UI
+5. **Subsonic filtering**: all endpoints check library.enabled, respect musicFolderId param
+6. **Web UI**: Libraries page or section in Settings with toggle switches per library
+
+**Detection rules format:**
+```json
+{
+  "genres": ["Techno", "House", "Trance", "Drum and Bass", "Dubstep"],
+  "title_keywords": [],
+  "album_keywords": [],
+  "directory_prefix": "/music/Techno"
+}
+```
+
+**What needs filtering (Subsonic endpoints):**
+- `getIndexes`, `getMusicDirectory`, `getAlbumList`, `getAlbumList2`
+- `search2`, `search3`
+- `getRandomSongs`, `getSongsByGenre`
+- `getStarred`, `getStarred2`
+- `getPlaylists` (exclude playlists with only disabled-library tracks)
+
+**What does NOT need filtering:**
+- `stream`, `download`, `getCoverArt` (direct ID access — if you have the ID, you can play it)
+- `scrobble`, `star`, `unstar`
+
+**Implementation order:**
+1. Design: finalize schema, decide on assignment strategy
+2. Migration: add `music_libraries` table + `library_id` column on tracks
+3. Scanner: assign library_id during scan (rule-based + directory prefix)
+4. Subsonic: update `getMusicFolders` to return real libraries
+5. Subsonic: add `library_id` filtering to all browsing/search endpoints
+6. API: CRUD endpoints for libraries (`/api/libraries`)
+7. Frontend: Libraries management UI (create, edit rules, toggle on/off)
+8. Frontend: Library selector in sidebar or top bar
+9. Test with Symfonium: verify musicFolderId filtering works end-to-end
+
+**Complexity: HIGH** — touches scanner, all Subsonic endpoints, new DB table, new UI page. Plan 3-4 sessions.
+
+**Depends on:** Nothing, but Christmas Auto-Playlist becomes a special case of this (Christmas = a library with detection rules for holiday keywords).
 
 ---
 
