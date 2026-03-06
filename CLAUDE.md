@@ -151,6 +151,8 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek file transfer protocol: PierceFirewall(relay_token) → peer sends FileTransferInit(4-byte token) → we send FileOffset(8 bytes) → peer streams file data
 - Native Soulseek: relay token (from ConnectToPeer) ≠ transfer token (from TRANSFER_REQUEST) — pierce_firewall uses relay token, FileTransferInit carries transfer token
 - Native Soulseek: parallel download poll_transfer uses check_cancel=False to avoid concurrent DB session access (SQLite single-writer constraint)
+- Download queue: global asyncio.Semaphore in download.py gates all download paths (trigger, bulk, auto-download); max_concurrent_downloads configurable 1-10 (default 4)
+- Download queue: excess downloads show as "Queued" (pending status) in bell/UI until a slot opens; semaphore resets on config save via reset_download_semaphore()
 - Soulseek stats: /api/download/soulseek-stats returns connection, uptime, reconnects, peers, shares, listen port, active searches, transfers, bandwidth, speed, reputation — shown on Dashboard + Stats page
 - Soulseek stats history: background collector snapshots stats every 5 minutes into soulseek_snapshots table (auto-pruned after 7 days)
 - Soulseek stats charts: /api/download/soulseek-stats/history?hours=24 powers 4 Chart.js line charts (peers, transfers, speed, bandwidth) with 6h/24h/3d/7d range selector
@@ -165,7 +167,7 @@ docs/                  # Installation, configuration, API reference, development
 - Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
 - Schedule controls distributed to section pages via reusable ScheduleControl component (Library, Analysis, Discover, Playlists, Settings)
 - Schedule page is summary/overview: groups tasks by section, shows status/interval/last run, links to respective pages
-- ScheduleControl component: compact row with toggle, label, interval select, time input, optional day/count, run button
+- ScheduleControl component: compact row with toggle, label, interval select, time input, optional day/count, optional auto-download button, run button
 - Discover page: top tracks limit fetched from scheduled task config (default 100); per-track inline download with status (spinner/check/failed+retry)
 - Discovery library matching: joins Artist table, matches exact artist + title (case-insensitive) — not loose ILIKE %title%
 - Logs page: category filter tabs (All/Downloads/Library/Analysis/Discovery/Playlists), expanded job detail with colored status badges
@@ -189,7 +191,8 @@ docs/                  # Installation, configuration, API reference, development
 - Track upgrade scanner: POST /api/library/upgrades/scan with modes (low_bitrate, lossy_to_lossless, all_lossy), triggers bulk Soulseek download
 - ScheduleControl last-run display: relative time ("2h ago") shown after label (not end of line), full timestamp on hover, guards against negative time diff
 - Auto-run after scan: analysis/enrichment tasks can be auto-triggered after library scan via ScheduleTask.config JSON {auto_after_scan: true}
-- Auto-download: discover tasks can auto-download missing tracks via ScheduleTask.config JSON {auto_download: true}
+- Auto-download: discover tasks can auto-download missing tracks via ScheduleTask.config JSON {auto_download: true}; toggle is inline on ScheduleControl row (not separate section)
+- Scheduled task runs broadcast job_update via WebSocket (bell shows running tasks); auto-download creates a bulk_download Job with per-track progress
 - Health check: disabled services return "warning" status which doesn't degrade overall status (only "error" degrades)
 - Playlist scheduled tasks: playlist_favorites (starred tracks), playlist_unfavorites (non-starred tracks), playlist_weekly_top, playlist_weekly_discover
 - Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
