@@ -478,7 +478,9 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
 
     lossy_formats = ["mp3", "m4a", "ogg", "opus", "aac", "wma"]
 
-    if mode == "lossy_to_lossless":
+    if mode == "opus_to_flac":
+        query = query.where(Track.format == "opus")
+    elif mode == "lossy_to_lossless":
         query = query.where(Track.format.in_(lossy_formats))
     elif mode == "all_lossy":
         query = query.where(Track.format.in_(lossy_formats))

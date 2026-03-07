@@ -200,6 +200,7 @@
 		{ value: 'low_bitrate', label: 'Low Bitrate', desc: 'Tracks below a bitrate threshold' },
 		{ value: 'lossy_to_lossless', label: 'Lossy → Lossless', desc: 'All MP3/AAC/OGG tracks (upgrade to FLAC)' },
 		{ value: 'all_lossy', label: 'All Lossy Formats', desc: 'Every non-lossless track in library' },
+		{ value: 'opus_to_flac', label: 'Opus → FLAC', desc: 'Replace .opus files (incompatible with analysis)' },
 	];
 
 	async function scanUpgrades() {
@@ -656,6 +657,7 @@
 								<option value="low_bitrate">Low Bitrate</option>
 								<option value="lossy_to_lossless">Lossy → Lossless</option>
 								<option value="all_lossy">All Lossy</option>
+								<option value="opus_to_flac">Opus → FLAC</option>
 							</select>
 						</label>
 						{#if (schedTasks.upgrade_scan.config?.mode || 'low_bitrate') === 'low_bitrate'}

@@ -365,7 +365,7 @@ async def scan_upgradeable_tracks(
     """Find tracks that could be upgraded to better quality.
 
     Body options:
-      mode: 'lossy_to_lossless' | 'low_bitrate' | 'all_lossy'
+      mode: 'lossy_to_lossless' | 'low_bitrate' | 'all_lossy' | 'opus_to_flac'
       max_bitrate: int (for low_bitrate mode, default 256)
       limit: int (default 100)
     """
@@ -381,7 +381,9 @@ async def scan_upgradeable_tracks(
 
     lossy_formats = ["mp3", "m4a", "ogg", "opus", "aac", "wma"]
 
-    if mode == "lossy_to_lossless":
+    if mode == "opus_to_flac":
+        query = query.where(Track.format == "opus")
+    elif mode == "lossy_to_lossless":
         query = query.where(Track.format.in_(lossy_formats))
     elif mode == "low_bitrate":
         query = query.where(
