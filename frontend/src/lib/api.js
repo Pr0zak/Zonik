@@ -112,6 +112,26 @@ export const api = {
 		request('/recommendations/feedback', { method: 'POST', body: JSON.stringify({ recommendation_id: recommendationId, action }) }),
 	getTasteProfile: () => request('/recommendations/profile'),
 
+	// Upgrades
+	getUpgrades: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/upgrades?${qs}`);
+	},
+	getUpgradeStats: () => request('/upgrades/stats'),
+	scanUpgrades: (data) => request('/upgrades/scan', { method: 'POST', body: JSON.stringify(data) }),
+	startUpgrades: (data = {}) => request('/upgrades/start', { method: 'POST', body: JSON.stringify(data) }),
+	skipUpgrade: (id) => request(`/upgrades/${id}/skip`, { method: 'POST' }),
+	retryUpgrade: (id) => request(`/upgrades/${id}/retry`, { method: 'POST' }),
+	clearUpgrades: (status = 'completed') => request(`/upgrades/clear?status=${status}`, { method: 'DELETE' }),
+
+	// Remix Suggestions
+	getRemixSuggestions: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/discovery/remix-suggestions?${qs}`);
+	},
+
 	// Music Map
 	getMapGraph: (params = {}) => {
 		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
