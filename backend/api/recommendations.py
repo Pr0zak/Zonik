@@ -225,8 +225,8 @@ class BulkDownloadRequest(BaseModel):
 
 @router.post("/bulk-download")
 async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    """Download multiple recommendations at once."""
-    import uuid
+    """Download multiple recommendations as individual download jobs."""
+    from backend.api.download import _do_download_inner, _get_semaphore, DownloadRequest
     from backend.models.job import Job
     from backend.api.websocket import broadcast_job_update
 
@@ -243,60 +243,42 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
     if not recs:
         return {"ok": False, "error": "No pending recommendations to download"}
 
-    job_id = str(uuid.uuid4())
-    tracks = [{"artist": r.artist, "track": r.track, "status": "missing", "rec_id": r.id} for r in recs]
-
-    job = Job(
-        id=job_id, type="bulk_download", card="dl",
-        status="running", total=len(tracks),
-        started_at=datetime.utcnow(),
-        description=f"Download {len(tracks)} recommendations",
-        tracks=json.dumps(tracks),
-    )
-    db.add(job)
+    # Mark as downloaded immediately
+    rec_ids = []
+    for r in recs:
+        rec_ids.append(r.id)
+        r.status = "downloaded"
     await db.commit()
 
-    async def do_bulk():
-        from backend.services.soulseek import search_and_download
-        from backend.services.scanner import import_downloaded_file
-        from backend.api.download import _download_semaphore
+    # Create individual download jobs
+    import uuid
+    sem = _get_semaphore()
 
+    async def download_one(artist, track, rec_id):
+        job_id = str(uuid.uuid4())
+        desc = f"{artist} — {track}"
+        req = DownloadRequest(artist=artist, track=track)
         async with async_session() as sess:
-            j = await sess.get(Job, job_id)
-            completed = 0
-            for item in tracks:
-                try:
-                    async with _download_semaphore:
-                        result = await search_and_download(item["artist"], item["track"])
-                    if result and result.get("save_path"):
-                        await import_downloaded_file(sess, result["save_path"], artist_hint=item["artist"])
-                    # Mark recommendation as downloaded
-                    rec = await sess.get(Recommendation, item["rec_id"])
-                    if rec:
-                        rec.status = "downloaded"
-                except Exception:
-                    pass
-                completed += 1
-                j.progress = completed
-                await sess.merge(j)
-                await sess.commit()
-                await broadcast_job_update({
-                    "id": job_id, "type": "bulk_download", "status": "running",
-                    "progress": completed, "total": len(tracks),
-                    "description": f"Downloading recommendations ({completed}/{len(tracks)})",
-                })
-
-            j.status = "completed"
-            j.finished_at = datetime.utcnow()
-            await sess.merge(j)
+            job = Job(
+                id=job_id, type="download", card="dl",
+                status="pending" if sem.locked() else "running",
+                started_at=datetime.utcnow(),
+                tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
+            )
+            sess.add(job)
             await sess.commit()
             await broadcast_job_update({
-                "id": job_id, "type": "bulk_download", "status": "completed",
-                "progress": len(tracks), "total": len(tracks),
+                "id": job_id, "type": "download",
+                "status": job.status, "progress": 0, "total": 1,
+                "description": f"{'Queued' if job.status == 'pending' else 'Downloading'}: {desc}",
             })
+            async with sem:
+                await _do_download_inner(sess, job_id, req)
 
-    background_tasks.add_task(do_bulk)
-    return {"ok": True, "job_id": job_id, "count": len(tracks)}
+    for r in recs:
+        background_tasks.add_task(download_one, r.artist, r.track, r.id)
+
+    return {"ok": True, "count": len(recs)}
 
 
 @router.get("/profile")
