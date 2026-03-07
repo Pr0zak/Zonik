@@ -67,6 +67,18 @@ Seasonal playlist feature — detect Christmas/holiday tracks in library and man
 - Fixed across all pages: Dashboard, Library, Discover, Downloads, Logs, Settings, Stats, ScheduleControl
 
 ### Individual Download Queue ✅
-- "Download All Missing" on Discover + Library similar tracks now fires individual `/api/download/trigger` per track
-- Each track gets its own job in the logs with independent status tracking
-- Replaced bulk job approach (`/api/download/bulk`) for similar/missing track downloads
+- All download paths (single, bulk, recommendations, retry, auto-download) create individual per-track jobs
+- Each track gets its own job in logs/notifications with independent status, retry, and progress tracking
+- Eliminated `bulk_download` job type — all downloads use `download` type with `_do_download_inner`
+- Download queue with global semaphore gates concurrency (configurable 1-10, default 4)
+- Excess downloads show as "Queued" (pending) until a slot opens
+
+### AI Recommendation Enhancements ✅
+- Cover art + 30s preview URLs fetched from iTunes Search API (no key needed)
+- Preview playback: hover cover art for play/pause overlay on all Discover tabs (For You, Top Tracks, Similar)
+- Last.fm tag-based genre scoring replaces weak pattern matching
+- Source filter pills (All/Similar/Artists/Genre/Trending/AI) with per-filter count badges
+- Artwork batch fetching: backend proxy for iTunes API (CORS), debounced 50ms, 10 concurrent lookups
+- Auto-download recommendations: configurable min_score + max_downloads gates in Schedule config
+- CLAP vibe embeddings working on production (transformers 5.x API fixes)
+- Bulk download button creates individual per-track download jobs

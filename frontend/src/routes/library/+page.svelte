@@ -837,16 +837,6 @@
 					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 		</div>
 
-		<!-- Analyzed filter (tracks tab only) -->
-		{#if tab === 'tracks'}
-			<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2"
-				value={analyzedFilter} onchange={(e) => { analyzedFilter = e.target.value; offset = 0; loadData(); }}>
-				<option value="">All Tracks</option>
-				<option value="no">Not Analyzed</option>
-				<option value="yes">Analyzed</option>
-			</select>
-		{/if}
-
 		<!-- Active filter pills -->
 		{#if filterArtistId}
 			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1 ml-2">

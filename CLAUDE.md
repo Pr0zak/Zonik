@@ -201,7 +201,7 @@ docs/                  # Installation, configuration, API reference, development
 - ScheduleControl last-run display: relative time ("2h ago") shown after label (not end of line), full timestamp on hover, guards against negative time diff
 - Auto-run after scan: analysis/enrichment tasks can be auto-triggered after library scan via ScheduleTask.config JSON {auto_after_scan: true}
 - Auto-download: discover tasks can auto-download missing tracks via ScheduleTask.config JSON {auto_download: true}; toggle is inline on ScheduleControl row (not separate section)
-- Scheduled task runs broadcast job_update via WebSocket (bell shows running tasks); auto-download creates a bulk_download Job with per-track progress
+- Scheduled task runs broadcast job_update via WebSocket (bell shows running tasks); auto-download creates individual download Jobs per track
 - Health check: disabled services return "warning" status which doesn't degrade overall status (only "error" degrades)
 - Playlist scheduled tasks: playlist_favorites (starred tracks), playlist_unfavorites (non-starred tracks), playlist_weekly_top, playlist_weekly_discover
 - Playlist detail view: click playlist to see tracks with cover art, artist, album, duration; client-side pagination
@@ -258,7 +258,10 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation genre scoring: Last.fm tags fetched per candidate via track.getInfo, scored as weighted overlap with user's genre_distribution (replaces weak pattern matching)
 - Recommendation source filters: frontend pills (All/Similar/Artists/Genre/Trending/AI) filter by existing source field, with per-filter count badges
 - Recommendation stats: GET /api/recommendations/stats — conversion funnel (total/downloaded/thumbs_up/thumbs_down/by_source/downloads_by_source)
-- Recommendation bulk download: POST /api/recommendations/bulk-download with mode (top/above_score), count, min_score; downloads via Soulseek with semaphore gating
+- Recommendation bulk download: POST /api/recommendations/bulk-download with mode (top/above_score), count, min_score; creates individual download jobs per track
+- All download paths (trigger, bulk, recommendations, retry, auto-download) create individual per-track download jobs — no bulk_download job type
+- Artwork batch fetching: POST /api/discovery/artwork/batch proxies iTunes Search API (CORS), 100 items max, 10 concurrent lookups; frontend debounces 50ms
+- Recommendation auto-download: configurable min_score + max_downloads in ScheduleTask.config; runs after recommendation_refresh completes
 - Last.fm user history: taste profile enriched with user.getTopArtists + user.getTopTracks when session_key exists (blended with local data)
 - Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode (low_bitrate/lossy_to_lossless/all_lossy) + max_bitrate via UI selectors
 - Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
