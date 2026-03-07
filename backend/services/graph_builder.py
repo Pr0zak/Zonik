@@ -24,6 +24,9 @@ def _color_from_name(name: str) -> str:
     return f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
 
 
+FORMAT_QUALITY = {"flac": 100, "wav": 90, "opus": 70, "ogg": 60, "m4a": 55, "mp3": 50, "aac": 45, "wma": 30}
+
+
 async def build_graph(
     db: AsyncSession,
     max_artists: int = 200,
@@ -55,9 +58,14 @@ async def build_graph(
             "color": _color_from_name(genre_name),
         })
 
-    # 2. Top artists by track count
+    # 2. Top artists by track count + aggregate play_count and quality
     artist_result = await db.execute(
-        select(Artist.id, Artist.name, func.count(Track.id).label("cnt"))
+        select(
+            Artist.id, Artist.name,
+            func.count(Track.id).label("cnt"),
+            func.coalesce(func.sum(Track.play_count), 0).label("total_plays"),
+            func.avg(Track.bitrate).label("avg_bitrate"),
+        )
         .join(Track, Track.artist_id == Artist.id)
         .group_by(Artist.id)
         .order_by(func.count(Track.id).desc())
@@ -65,6 +73,19 @@ async def build_graph(
     )
     artists = artist_result.all()
     artist_ids = [a[0] for a in artists]
+
+    # 2b. Primary format per artist (most common format)
+    artist_primary_format: dict[str, str] = {}
+    if artist_ids:
+        fmt_result = await db.execute(
+            select(Track.artist_id, Track.format, func.count(Track.id).label("cnt"))
+            .where(Track.artist_id.in_(artist_ids), Track.format.isnot(None))
+            .group_by(Track.artist_id, Track.format)
+            .order_by(func.count(Track.id).desc())
+        )
+        for aid, fmt, cnt in fmt_result.all():
+            if aid not in artist_primary_format:
+                artist_primary_format[aid] = fmt
 
     # 3. Get favorite artist IDs
     fav_result = await db.execute(
@@ -89,9 +110,11 @@ async def build_graph(
         artist_primary_genre = {}
 
     # 5. Build artist nodes + artist_genre edges
-    for artist_id, artist_name, track_count in artists:
+    for artist_id, artist_name, track_count, total_plays, avg_bitrate in artists:
         primary = artist_primary_genre.get(artist_id)
         genre_color = _color_from_name(primary) if primary else "#888888"
+        primary_fmt = artist_primary_format.get(artist_id, "unknown")
+        avg_quality = FORMAT_QUALITY.get(primary_fmt, 0) + int((avg_bitrate or 0) // 10)
         nodes.append({
             "id": f"artist:{artist_id}",
             "type": "artist",
@@ -100,6 +123,10 @@ async def build_graph(
             "genre": primary,
             "is_favorite": artist_id in fav_artist_ids,
             "color": genre_color,
+            "play_count": total_plays,
+            "avg_bitrate": int(avg_bitrate) if avg_bitrate else None,
+            "primary_format": primary_fmt,
+            "avg_quality": avg_quality,
         })
         if primary and primary in genre_set:
             edges.append({

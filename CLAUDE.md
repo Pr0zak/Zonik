@@ -4,7 +4,7 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) + ARQ/Redis
-- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 13 routes)
+- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 14 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
 - **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
 - **Discovery**: Last.fm API (similar tracks/artists, top charts, scrobbling)
@@ -45,10 +45,10 @@ backend/
     config_api.py      # Services config + version/updates/upgrade endpoints
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
-    library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner
+    library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner, duplicates management
     download.py        # Soulseek search/trigger/bulk + blacklist + stats + stats history + reputation reset
     discovery.py       # Last.fm charts, similar tracks/artists, remix discovery
-    map.py             # Music Map graph API (genre/artist/track nodes)
+    map.py             # Music Map graph API (genre/artist/track nodes, view modes: genre/play_heatmap/quality/duplicates)
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management (task labels + descriptions)
     websocket.py       # Real-time job progress
@@ -68,20 +68,21 @@ backend/
     shares.py          # Library file sharing — scan music dir, build compressed file list for peers
   models/
     stats.py           # SoulseekSnapshot model — periodic P2P stat snapshots for charting
-  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, graph_builder, remix_discovery, etc.)
+  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, graph_builder (play/quality data), remix_discovery, etc.)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
-  src/routes/          # SvelteKit pages (13 routes)
+  src/routes/          # SvelteKit pages (14 routes)
     +page.svelte       # Dashboard (stats, last scan, version, health, Soulseek P2P)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner + remix discovery
+    duplicates/        # Duplicate management — grouped cards, rich track details (format/bitrate/quality/plays), bulk remove, find upgrade
     discover/          # Last.fm charts + inline download (per-track status, individual download queue), similar artists
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
     stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset) + P2P history charts + Listening History charts (Chart.js)
-    map/               # Music Map — D3.js force-directed graph (genre clusters, artist nodes, zoom levels)
+    map/               # Music Map — D3.js force-directed graph with 4 view modes (genre/play heatmap/quality/duplicates)
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
@@ -235,7 +236,17 @@ docs/                  # Installation, configuration, API reference, development
 - Music Map backend: graph_builder.py builds nodes/edges, GET /api/map/graph with configurable caps (max_artists, min_genre_tracks, etc.)
 - Library list view: clickable artist/album cells navigate to filtered view (stopPropagation to prevent row play), removable filter pills
 - Timezone: parseUTC() in utils.js appends 'Z' to naive ISO strings from backend; formatDateTime() for absolute timestamps; applied across all pages
-- Per-section color coding includes map=teal (--color-map: #14b8a6)
+- Per-section color coding includes map=teal (--color-map: #14b8a6), duplicates=amber (--color-duplicates: #f59e0b)
+- Duplicates page: dedicated /duplicates route with enriched grouped card view — cover art, format badges (color-coded by tier), bitrate, bit_depth/sample_rate, file size, quality score bar, play count, favorite heart, added date, file path
+- Duplicates API: GET /api/library/duplicates returns enriched groups with full track details + reclaimable_bytes; GET /api/library/duplicates/artists returns artist IDs with dupes (lightweight, for map overlay)
+- Duplicates: find_duplicates_enriched() in cleanup.py — includes album_id for cover art, is_best flag, quality_score, play_count, rating, is_favorite, created_at
+- Duplicates: confirmation modal before destructive actions (Remove from DB vs Remove + Delete Files)
+- Library cleanup: dedup card replaced with link to /duplicates page (orphan cleanup and organize tools remain in Danger Zone)
+- Music Map view modes: Genre (default), Play Heatmap, Quality, Duplicates — view mode selector in header bar
+- Music Map Play Heatmap: recolors artist nodes by total play_count (cold blue → warm orange → hot red gradient)
+- Music Map Quality: recolors by avg_quality score (green=lossless → red=low quality), low-quality nodes get "Find Upgrades" action in detail panel
+- Music Map Duplicates: pulsing amber rings on artist nodes with duplicate tracks, link to Duplicates Manager in detail panel
+- Music Map graph_builder: artist nodes include play_count (sum), avg_bitrate, primary_format, avg_quality (FORMAT_QUALITY + bitrate)
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)

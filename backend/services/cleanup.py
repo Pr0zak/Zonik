@@ -162,6 +162,93 @@ async def find_duplicates(db: AsyncSession) -> list[dict]:
     return groups
 
 
+async def find_duplicates_enriched(db: AsyncSession) -> dict:
+    """Find duplicate tracks with full track details for the duplicates page."""
+    from backend.models.favorite import Favorite
+
+    # Find title+artist combinations with multiple tracks
+    result = await db.execute(
+        select(
+            func.lower(Track.title),
+            Track.artist_id,
+            func.count(Track.id),
+        )
+        .where(Track.artist_id.isnot(None))
+        .group_by(func.lower(Track.title), Track.artist_id)
+        .having(func.count(Track.id) > 1)
+    )
+    dupe_groups = result.all()
+    if not dupe_groups:
+        return {"groups": [], "total_groups": 0, "total_duplicates": 0, "reclaimable_bytes": 0}
+
+    # Get favorite track IDs
+    fav_result = await db.execute(
+        select(Favorite.track_id).where(Favorite.track_id.isnot(None))
+    )
+    fav_track_ids = {r[0] for r in fav_result.all()}
+
+    groups = []
+    total_dupes = 0
+    reclaimable = 0
+
+    for title_lower, artist_id, count in dupe_groups:
+        tracks_result = await db.execute(
+            select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+            .where(func.lower(Track.title) == title_lower, Track.artist_id == artist_id)
+            .order_by(Track.bitrate.desc().nullslast())
+        )
+        tracks = tracks_result.scalars().all()
+        if len(tracks) < 2:
+            continue
+
+        scored = sorted(tracks, key=_track_quality_score, reverse=True)
+
+        def _track_detail(t, is_best=False):
+            return {
+                "id": t.id,
+                "title": t.title,
+                "artist": t.artist.name if t.artist else "Unknown",
+                "album": t.album.title if t.album else None,
+                "album_id": t.album_id,
+                "format": t.format,
+                "bitrate": t.bitrate,
+                "bit_depth": t.bit_depth,
+                "sample_rate": t.sample_rate,
+                "file_size": t.file_size,
+                "file_path": t.file_path,
+                "quality_score": _track_quality_score(t),
+                "play_count": t.play_count or 0,
+                "rating": t.rating,
+                "is_favorite": t.id in fav_track_ids,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "is_best": is_best,
+            }
+
+        best = scored[0]
+        others = scored[1:]
+        total_dupes += len(others)
+        for t in others:
+            reclaimable += t.file_size or 0
+
+        groups.append({
+            "title": best.title,
+            "artist": best.artist.name if best.artist else "Unknown",
+            "artist_id": artist_id,
+            "count": len(tracks),
+            "tracks": [_track_detail(best, is_best=True)] + [_track_detail(t) for t in others],
+        })
+
+    # Sort by group size descending
+    groups.sort(key=lambda g: g["count"], reverse=True)
+
+    return {
+        "groups": groups,
+        "total_groups": len(groups),
+        "total_duplicates": total_dupes,
+        "reclaimable_bytes": reclaimable,
+    }
+
+
 async def remove_duplicates(db: AsyncSession, remove_ids: list[str], delete_files: bool = False) -> dict:
     """Remove specified duplicate tracks."""
     settings = get_settings()

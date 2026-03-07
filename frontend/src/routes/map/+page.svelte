@@ -1,14 +1,16 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api.js';
+	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
-	import { Network, ZoomIn, ZoomOut, Maximize2, Search, X } from 'lucide-svelte';
+	import Badge from '../../components/ui/Badge.svelte';
+	import { Network, ZoomIn, ZoomOut, Search, X, Eye, Copy, Music, BarChart3, Gem } from 'lucide-svelte';
 	import * as d3 from 'd3';
 
 	let container = $state(null);
-	let svg = $state(null);
 	let graphData = $state(null);
 	let loading = $state(true);
 	let error = $state(null);
@@ -19,7 +21,23 @@
 	let zoomBehavior = null;
 	let currentTransform = $state(d3.zoomIdentity);
 
+	// View modes
+	let viewMode = $state('genre'); // 'genre' | 'play_heatmap' | 'quality' | 'duplicates'
+	let duplicateArtistIds = $state(new Set());
+
+	const VIEW_MODES = [
+		{ id: 'genre', label: 'Genre', icon: Network },
+		{ id: 'play_heatmap', label: 'Play Heatmap', icon: BarChart3 },
+		{ id: 'quality', label: 'Quality', icon: Gem },
+		{ id: 'duplicates', label: 'Duplicates', icon: Copy },
+	];
+
 	const ZOOM_THRESHOLDS = { genre: 0.5, artist: 2.0 };
+
+	// Store D3 selections for recoloring
+	let nodeSelection = null;
+	let linkSelection = null;
+	let processedNodes = null;
 
 	function getZoomLevel(k) {
 		if (k < ZOOM_THRESHOLDS.genre) return 'genre';
@@ -27,11 +45,87 @@
 		return 'track';
 	}
 
+	// Color scales for view modes
+	function playHeatmapColor(playCount, maxPlays) {
+		if (!playCount || maxPlays === 0) return '#334155'; // slate-700 (cold)
+		const t = Math.min(1, playCount / maxPlays);
+		// cold(blue) → warm(orange) → hot(red)
+		if (t < 0.33) return d3.interpolateRgb('#334155', '#3b82f6')(t / 0.33);
+		if (t < 0.66) return d3.interpolateRgb('#3b82f6', '#f59e0b')((t - 0.33) / 0.33);
+		return d3.interpolateRgb('#f59e0b', '#ef4444')((t - 0.66) / 0.34);
+	}
+
+	function qualityColor(avgQuality) {
+		if (avgQuality >= 120) return '#22c55e'; // green — lossless
+		if (avgQuality >= 80) return '#84cc16'; // lime — high
+		if (avgQuality >= 50) return '#f59e0b'; // amber — mid
+		if (avgQuality >= 30) return '#f97316'; // orange — low
+		return '#ef4444'; // red — very low
+	}
+
+	function getNodeColor(node) {
+		if (node.type === 'genre') {
+			if (viewMode === 'genre' || viewMode === 'duplicates') return node.color;
+			return 'rgba(255,255,255,0.1)';
+		}
+		switch (viewMode) {
+			case 'play_heatmap': {
+				const maxPlays = Math.max(...(processedNodes || []).filter(n => n.type === 'artist').map(n => n.play_count || 0), 1);
+				return playHeatmapColor(node.play_count || 0, maxPlays);
+			}
+			case 'quality':
+				return qualityColor(node.avg_quality || 0);
+			case 'duplicates':
+				return duplicateArtistIds.has(node.id.replace('artist:', '')) ? '#f59e0b' : node.color;
+			default:
+				return node.color || '#888';
+		}
+	}
+
+	function applyViewMode() {
+		if (!nodeSelection || !processedNodes) return;
+
+		nodeSelection.select('circle')
+			.transition().duration(400)
+			.attr('fill', d => getNodeColor(d))
+			.attr('stroke', d => {
+				if (viewMode === 'duplicates' && d.type === 'artist' && duplicateArtistIds.has(d.id.replace('artist:', ''))) {
+					return '#f59e0b';
+				}
+				return getNodeColor(d);
+			})
+			.attr('stroke-width', d => {
+				if (viewMode === 'duplicates' && d.type === 'artist' && duplicateArtistIds.has(d.id.replace('artist:', ''))) {
+					return 3;
+				}
+				return d.type === 'genre' ? 2 : 1;
+			});
+
+		// Add/remove pulsing animation for duplicates
+		nodeSelection.select('.dupe-ring').remove();
+		if (viewMode === 'duplicates') {
+			nodeSelection.filter(d => d.type === 'artist' && duplicateArtistIds.has(d.id.replace('artist:', '')))
+				.append('circle')
+				.attr('class', 'dupe-ring')
+				.attr('r', d => d.radius + 4)
+				.attr('fill', 'none')
+				.attr('stroke', '#f59e0b')
+				.attr('stroke-width', 2)
+				.attr('stroke-opacity', 0.6)
+				.style('animation', 'pulse-ring 2s ease-in-out infinite');
+		}
+	}
+
 	async function loadGraph() {
 		loading = true;
 		error = null;
 		try {
 			graphData = await api.getMapGraph({ max_artists: 200, min_genre_tracks: 3 });
+			// Also load duplicate artist IDs
+			try {
+				const dupeData = await api.getDuplicateArtists();
+				duplicateArtistIds = new Set(dupeData.artist_ids || []);
+			} catch { /* ignore */ }
 		} catch (e) {
 			error = e.message;
 		}
@@ -54,6 +148,14 @@
 			.attr('height', height)
 			.style('background', 'var(--bg-primary)');
 
+		// Add CSS animation for pulsing ring
+		svgEl.append('defs').append('style').text(`
+			@keyframes pulse-ring {
+				0%, 100% { stroke-opacity: 0.6; }
+				50% { stroke-opacity: 0.15; }
+			}
+		`);
+
 		const g = svgEl.append('g');
 
 		// Zoom
@@ -70,6 +172,7 @@
 		// Process data
 		const nodes = graphData.nodes.map(d => ({ ...d }));
 		const edges = graphData.edges.map(d => ({ ...d }));
+		processedNodes = nodes;
 
 		// Radius scale
 		const genreExtent = d3.extent(nodes.filter(n => n.type === 'genre'), d => d.size);
@@ -82,7 +185,7 @@
 		});
 
 		// Links
-		const link = g.append('g')
+		linkSelection = g.append('g')
 			.attr('class', 'links')
 			.selectAll('line')
 			.data(edges)
@@ -91,7 +194,7 @@
 			.attr('stroke-width', d => d.type === 'genre_cooccurrence' ? Math.min(3, d.weight * 0.5) : 0.5);
 
 		// Nodes
-		const node = g.append('g')
+		nodeSelection = g.append('g')
 			.attr('class', 'nodes')
 			.selectAll('g')
 			.data(nodes)
@@ -103,16 +206,16 @@
 				.on('end', dragended));
 
 		// Circle
-		node.append('circle')
+		nodeSelection.append('circle')
 			.attr('r', d => d.radius)
-			.attr('fill', d => d.color || '#888')
+			.attr('fill', d => getNodeColor(d))
 			.attr('fill-opacity', d => d.type === 'genre' ? 0.25 : 0.6)
-			.attr('stroke', d => d.color || '#888')
+			.attr('stroke', d => getNodeColor(d))
 			.attr('stroke-width', d => d.type === 'genre' ? 2 : 1)
 			.attr('stroke-opacity', 0.8);
 
 		// Favorite badge
-		node.filter(d => d.is_favorite)
+		nodeSelection.filter(d => d.is_favorite)
 			.append('circle')
 			.attr('r', d => d.radius * 0.3)
 			.attr('cx', d => d.radius * 0.6)
@@ -120,7 +223,7 @@
 			.attr('fill', '#ef4444');
 
 		// Labels
-		node.append('text')
+		nodeSelection.append('text')
 			.text(d => d.label.length > 20 ? d.label.slice(0, 18) + '...' : d.label)
 			.attr('text-anchor', 'middle')
 			.attr('dy', d => d.radius + 14)
@@ -130,14 +233,13 @@
 			.attr('class', 'node-label');
 
 		// Interactions
-		node.on('click', (event, d) => {
+		nodeSelection.on('click', (event, d) => {
 			event.stopPropagation();
 			selectedNode = d;
 		});
 
-		node.on('dblclick', (event, d) => {
+		nodeSelection.on('dblclick', (event, d) => {
 			if (d.type === 'genre') {
-				// Zoom to genre cluster
 				const genreArtists = nodes.filter(n => n.type === 'artist' && n.genre === d.label);
 				if (genreArtists.length) {
 					const cx = d3.mean(genreArtists, n => n.x);
@@ -150,8 +252,7 @@
 			}
 		});
 
-		node.on('mouseenter', (event, d) => {
-			// Highlight connected
+		nodeSelection.on('mouseenter', (event, d) => {
 			const connectedIds = new Set();
 			connectedIds.add(d.id);
 			edges.forEach(e => {
@@ -160,18 +261,18 @@
 				if (src === d.id) connectedIds.add(tgt);
 				if (tgt === d.id) connectedIds.add(src);
 			});
-			node.select('circle').attr('fill-opacity', n => connectedIds.has(n.id) ? 0.9 : 0.1);
-			link.attr('stroke-opacity', e => {
+			nodeSelection.select('circle').attr('fill-opacity', n => connectedIds.has(n.id) ? 0.9 : 0.1);
+			linkSelection.attr('stroke-opacity', e => {
 				const src = typeof e.source === 'object' ? e.source.id : e.source;
 				const tgt = typeof e.target === 'object' ? e.target.id : e.target;
 				return connectedIds.has(src) && connectedIds.has(tgt) ? 0.6 : 0.02;
 			});
 		});
 
-		node.on('mouseleave', () => {
-			node.select('circle').attr('fill-opacity', d => d.type === 'genre' ? 0.25 : 0.6);
-			link.attr('stroke-opacity', 1);
-			link.attr('stroke', d => d.type === 'genre_cooccurrence' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)');
+		nodeSelection.on('mouseleave', () => {
+			nodeSelection.select('circle').attr('fill-opacity', d => d.type === 'genre' ? 0.25 : 0.6);
+			linkSelection.attr('stroke-opacity', 1);
+			linkSelection.attr('stroke', d => d.type === 'genre_cooccurrence' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)');
 		});
 
 		// Click empty to deselect
@@ -192,22 +293,25 @@
 			.force('center', d3.forceCenter(width / 2, height / 2))
 			.force('collision', d3.forceCollide().radius(d => d.radius + 4))
 			.on('tick', () => {
-				link
+				linkSelection
 					.attr('x1', d => d.source.x)
 					.attr('y1', d => d.source.y)
 					.attr('x2', d => d.target.x)
 					.attr('y2', d => d.target.y);
-				node.attr('transform', d => `translate(${d.x},${d.y})`);
+				nodeSelection.attr('transform', d => `translate(${d.x},${d.y})`);
 			});
+
+		// Apply initial view mode if not genre
+		if (viewMode !== 'genre') applyViewMode();
 
 		function updateVisibility(k) {
 			const level = getZoomLevel(k);
-			node.select('circle').attr('opacity', d => {
+			nodeSelection.select('circle').attr('opacity', d => {
 				if (level === 'genre') return d.type === 'genre' ? 1 : 0.15;
 				if (level === 'artist') return d.type === 'genre' ? 0.2 : 1;
 				return d.type === 'track' ? 1 : 0.3;
 			});
-			node.select('.node-label').attr('opacity', d => {
+			nodeSelection.select('.node-label').attr('opacity', d => {
 				if (level === 'genre') return d.type === 'genre' ? 1 : 0;
 				if (level === 'artist') return d.type === 'artist' ? 1 : (d.type === 'genre' ? 0.5 : 0);
 				return d.type === 'track' ? 1 : 0.3;
@@ -245,13 +349,9 @@
 	function fuzzyScore(label, query) {
 		const l = label.toLowerCase();
 		const q = query.toLowerCase();
-		// Exact match
 		if (l === q) return 100;
-		// Starts with
 		if (l.startsWith(q)) return 90;
-		// Contains substring
 		if (l.includes(q)) return 80;
-		// Fuzzy: all query chars appear in order
 		let li = 0;
 		let matched = 0;
 		let consecutive = 0;
@@ -296,6 +396,11 @@
 		if (searchResults.length) navigateToNode(searchResults[0]);
 	}
 
+	function switchViewMode(mode) {
+		viewMode = mode;
+		applyViewMode();
+	}
+
 	onMount(() => {
 		loadGraph().then(() => {
 			if (graphData) setTimeout(initGraph, 50);
@@ -314,11 +419,27 @@
 </script>
 
 <div class="flex flex-col h-[calc(100vh-4rem)]">
-	<div class="px-6 pt-5 pb-3 flex items-center justify-between">
+	<div class="px-6 pt-5 pb-3 flex items-center justify-between flex-wrap gap-2">
 		<PageHeader title="Music Map" icon={Network} color="var(--color-map)"
-			subtitle={graphData ? `${graphData.meta.total_artists} artists · ${graphData.meta.total_genres} genres · ${graphData.meta.total_tracks} tracks` : ''} />
+			subtitle={graphData ? `${graphData.meta.total_artists} artists \u00b7 ${graphData.meta.total_genres} genres \u00b7 ${graphData.meta.total_tracks} tracks` : ''} />
 
 		<div class="flex items-center gap-2">
+			<!-- View mode selector -->
+			<div class="flex items-center bg-[var(--bg-tertiary)] rounded border border-[var(--border-subtle)] overflow-hidden">
+				{#each VIEW_MODES as mode}
+					{@const Icon = mode.icon}
+					<button onclick={() => switchViewMode(mode.id)}
+						class="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] transition-colors
+							{viewMode === mode.id
+								? 'bg-[var(--color-map)]/20 text-[var(--color-map)]'
+								: 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-white/5'}"
+						title={mode.label}>
+						<Icon class="w-3.5 h-3.5" />
+						<span class="hidden sm:inline">{mode.label}</span>
+					</button>
+				{/each}
+			</div>
+
 			<!-- Search -->
 			<div class="relative">
 				<input type="text" bind:value={searchQuery}
@@ -378,6 +499,41 @@
 			</div>
 		{:else}
 			<div bind:this={container} class="w-full h-full"></div>
+
+			<!-- Legend overlay -->
+			{#if viewMode === 'play_heatmap'}
+				<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2 backdrop-blur-sm">
+					<p class="text-[10px] text-[var(--text-muted)] mb-1.5 uppercase tracking-wider">Play Count</p>
+					<div class="flex items-center gap-1">
+						<span class="text-[10px] text-[var(--text-disabled)]">0</span>
+						<div class="w-24 h-2 rounded-full" style="background: linear-gradient(to right, #334155, #3b82f6, #f59e0b, #ef4444)"></div>
+						<span class="text-[10px] text-[var(--text-disabled)]">High</span>
+					</div>
+				</div>
+			{:else if viewMode === 'quality'}
+				<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2 backdrop-blur-sm">
+					<p class="text-[10px] text-[var(--text-muted)] mb-1.5 uppercase tracking-wider">Audio Quality</p>
+					<div class="flex items-center gap-2">
+						{#each [['#ef4444', 'Low'], ['#f97316', 'Mid'], ['#f59e0b', 'Good'], ['#84cc16', 'High'], ['#22c55e', 'Lossless']] as [color, label]}
+							<div class="flex items-center gap-1">
+								<div class="w-2 h-2 rounded-full" style="background: {color}"></div>
+								<span class="text-[10px] text-[var(--text-disabled)]">{label}</span>
+							</div>
+						{/each}
+					</div>
+				</div>
+			{:else if viewMode === 'duplicates'}
+				<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2 backdrop-blur-sm">
+					<p class="text-[10px] text-[var(--text-muted)] mb-1.5 uppercase tracking-wider">Duplicates</p>
+					<div class="flex items-center gap-2">
+						<div class="flex items-center gap-1">
+							<div class="w-3 h-3 rounded-full border-2 border-amber-400 bg-amber-400/30"></div>
+							<span class="text-[10px] text-[var(--text-disabled)]">Has duplicates</span>
+						</div>
+						<span class="text-[10px] text-[var(--text-disabled)]">{duplicateArtistIds.size} artists</span>
+					</div>
+				</div>
+			{/if}
 		{/if}
 
 		<!-- Detail panel -->
@@ -385,7 +541,7 @@
 			<div class="absolute top-0 right-0 w-80 h-full bg-[var(--bg-secondary)] border-l border-[var(--border-subtle)] p-4 overflow-y-auto shadow-lg">
 				<div class="flex items-center justify-between mb-3">
 					<div class="flex items-center gap-2">
-						<div class="w-3 h-3 rounded-full" style="background-color: {selectedNode.color}"></div>
+						<div class="w-3 h-3 rounded-full" style="background-color: {getNodeColor(selectedNode)}"></div>
 						<span class="text-[10px] font-mono text-[var(--text-muted)] uppercase">{selectedNode.type}</span>
 					</div>
 					<button onclick={() => selectedNode = null} class="p-1 hover:bg-white/10 rounded">
@@ -403,6 +559,35 @@
 						{/if}
 						{#if selectedNode.is_favorite}
 							<p class="text-[var(--color-favorites)]">Favorited</p>
+						{/if}
+
+						<!-- View-mode specific details -->
+						{#if viewMode === 'play_heatmap' || selectedNode.play_count}
+							<p><span class="text-[var(--text-muted)]">Total plays:</span> {selectedNode.play_count || 0}</p>
+						{/if}
+						{#if viewMode === 'quality' || selectedNode.primary_format}
+							<p><span class="text-[var(--text-muted)]">Primary format:</span> {selectedNode.primary_format?.toUpperCase()}</p>
+							{#if selectedNode.avg_bitrate}
+								<p><span class="text-[var(--text-muted)]">Avg bitrate:</span> {Math.round(selectedNode.avg_bitrate / 1000)}kbps</p>
+							{/if}
+							<p><span class="text-[var(--text-muted)]">Quality score:</span> {selectedNode.avg_quality}</p>
+						{/if}
+						{#if viewMode === 'duplicates' && duplicateArtistIds.has(selectedNode.id.replace('artist:', ''))}
+							<div class="mt-2 pt-2 border-t border-[var(--border-primary)]">
+								<p class="text-amber-400 mb-2">Has duplicate tracks</p>
+								<button onclick={() => goto('/duplicates')}
+									class="text-xs text-[var(--color-accent)] hover:underline">
+									View in Duplicates Manager
+								</button>
+							</div>
+						{/if}
+						{#if viewMode === 'quality' && (selectedNode.avg_quality || 0) < 60}
+							<div class="mt-2 pt-2 border-t border-[var(--border-primary)]">
+								<button onclick={() => goto(`/downloads?artist=${encodeURIComponent(selectedNode.label)}`)}
+									class="text-xs text-[var(--color-accent)] hover:underline">
+									Find Upgrades on Soulseek
+								</button>
+							</div>
 						{/if}
 					{/if}
 				</div>

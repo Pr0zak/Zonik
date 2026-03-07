@@ -282,6 +282,26 @@ async def remove_orphans(db: AsyncSession = Depends(get_db)):
     return await remove_orphaned_tracks(db)
 
 
+@router.get("/duplicates")
+async def get_duplicates(db: AsyncSession = Depends(get_db)):
+    """Get enriched duplicate groups for the duplicates management page."""
+    from backend.services.cleanup import find_duplicates_enriched
+    return await find_duplicates_enriched(db)
+
+
+@router.get("/duplicates/artists")
+async def get_duplicate_artist_ids(db: AsyncSession = Depends(get_db)):
+    """Get artist IDs that have duplicate tracks (lightweight, for map overlay)."""
+    result = await db.execute(
+        select(Track.artist_id)
+        .where(Track.artist_id.isnot(None))
+        .group_by(func.lower(Track.title), Track.artist_id)
+        .having(func.count(Track.id) > 1)
+    )
+    artist_ids = list({r[0] for r in result.all()})
+    return {"artist_ids": artist_ids, "count": len(artist_ids)}
+
+
 @router.post("/cleanup/duplicates/preview")
 async def preview_duplicates(db: AsyncSession = Depends(get_db)):
     """Preview duplicate tracks."""

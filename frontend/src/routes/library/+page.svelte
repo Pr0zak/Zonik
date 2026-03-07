@@ -1326,14 +1326,14 @@
 				</div>
 				<p class="text-xs text-[var(--text-muted)]">Remove database entries for files that no longer exist on disk.</p>
 			</button>
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'duplicates' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('duplicates')}>
+			<a href="/duplicates" class="text-left p-3 rounded-lg border transition-colors border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5">
 				<div class="flex items-center gap-2 mb-1">
 					<Copy class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Deduplication</span>
-					<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-mono">CAUTION</span>
+					<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono">OPEN</span>
 				</div>
-				<p class="text-xs text-[var(--text-muted)]">Find duplicate tracks and keep the best quality version. Can delete files.</p>
-			</button>
+				<p class="text-xs text-[var(--text-muted)]">Manage duplicate tracks with full details — format, quality, play count, ratings.</p>
+			</a>
 			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('organize')}>
 				<div class="flex items-center gap-2 mb-1">
 					<FolderTree class="w-4 h-4 text-amber-400" />
@@ -1372,64 +1372,6 @@
 					</div>
 				{:else}
 					<p class="text-sm text-emerald-400">No orphaned tracks found. Library is clean.</p>
-				{/if}
-			</div>
-		{:else if cleanupTab === 'duplicates' && cleanupPreview}
-			<div class="border border-[var(--border-primary)] rounded-lg p-3">
-				<div class="flex items-center justify-between mb-2">
-					<div class="flex items-center gap-3">
-						<span class="text-sm font-medium text-[var(--text-primary)]">
-							{cleanupPreview.total_groups} duplicate group{cleanupPreview.total_groups !== 1 ? 's' : ''} ({cleanupPreview.total_duplicates} extra file{cleanupPreview.total_duplicates !== 1 ? 's' : ''})
-						</span>
-						{#if cleanupPreview.total_duplicates > 0}
-							<button onclick={toggleDedupAll} class="text-xs text-[var(--color-accent)] hover:underline">
-								{dedupSelected.size === cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id)).length ? 'Deselect All' : 'Select All'}
-							</button>
-						{/if}
-					</div>
-					{#if dedupSelected.size > 0}
-						<div class="flex items-center gap-2">
-							<span class="text-xs text-[var(--text-muted)]">{dedupSelected.size} selected</span>
-							<Button variant="warning" size="sm" disabled={cleanupExecuting} onclick={() => executeDuplicates(false)}>
-								{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
-								Remove from DB
-							</Button>
-							<Button variant="danger" size="sm" disabled={cleanupExecuting} onclick={() => executeDuplicates(true)}>
-								Remove + Delete Files
-							</Button>
-						</div>
-					{/if}
-				</div>
-				{#if cleanupPreview.groups?.length}
-					<div class="max-h-80 overflow-y-auto space-y-3">
-						{#each cleanupPreview.groups as group}
-							<div class="border border-[var(--border-primary)] rounded p-2">
-								<p class="text-sm font-medium text-[var(--text-primary)] mb-1">{group.artist} — {group.title}</p>
-								<div class="text-xs space-y-1">
-									<div class="flex items-center gap-2 text-emerald-400">
-										<span class="font-mono">KEEP</span>
-										<span class="text-[var(--text-muted)] flex-1 truncate">{group.keep.file_path}</span>
-										<Badge>{group.keep.format?.toUpperCase()}</Badge>
-										{#if group.keep.bitrate}<Badge variant="info">{Math.round(group.keep.bitrate / 1000)}k</Badge>{/if}
-										{#if group.keep.file_size}<span class="text-[var(--text-muted)] font-mono">{formatSize(group.keep.file_size)}</span>{/if}
-									</div>
-									{#each group.remove as rem}
-										<div class="flex items-center gap-2 {dedupSelected.has(rem.id) ? 'text-red-400' : 'text-[var(--text-disabled)]'}">
-											<input type="checkbox" checked={dedupSelected.has(rem.id)} onchange={() => toggleDedupTrack(rem.id)}
-												class="w-3.5 h-3.5 rounded accent-red-500 cursor-pointer" />
-											<span class="font-mono">{dedupSelected.has(rem.id) ? 'DROP' : 'SKIP'}</span>
-											<span class="text-[var(--text-muted)] flex-1 truncate">{rem.file_path}</span>
-											<Badge>{rem.format?.toUpperCase()}</Badge>
-											{#if rem.bitrate}<Badge variant="info">{Math.round(rem.bitrate / 1000)}k</Badge>{/if}
-											{#if rem.file_size}<span class="text-[var(--text-muted)] font-mono">{formatSize(rem.file_size)}</span>{/if}
-										</div>
-									{/each}
-								</div>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<p class="text-sm text-emerald-400">No duplicates found.</p>
 				{/if}
 			</div>
 		{:else if cleanupTab === 'organize' && cleanupPreview}

@@ -94,6 +94,12 @@ export const api = {
 	getRemixes: (artist, track, limit = 30) =>
 		request(`/discovery/remixes?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}&limit=${limit}`),
 
+	// Duplicates
+	getDuplicates: () => request('/library/duplicates'),
+	getDuplicateArtists: () => request('/library/duplicates/artists'),
+	removeDuplicates: (removeIds, deleteFiles = false) =>
+		request('/library/cleanup/duplicates', { method: 'POST', body: JSON.stringify({ remove_ids: removeIds, delete_files: deleteFiles }) }),
+
 	// Music Map
 	getMapGraph: (params = {}) => {
 		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
