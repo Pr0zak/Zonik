@@ -162,7 +162,9 @@ docs/                  # Installation, configuration, API reference, development
 - Soulseek stats history: background collector snapshots stats every 5 minutes into soulseek_snapshots table (auto-pruned after 7 days)
 - Soulseek stats charts: /api/download/soulseek-stats/history?hours=24 powers 4 Chart.js line charts (peers, transfers, speed, bandwidth) with 6h/24h/3d/7d range selector
 - Scheduled audio_analysis: per-track try/except so individual track failures don't mark entire job as failed
-- Essentia segfault guard: .opus files skipped via ESSENTIA_SUPPORTED_EXTENSIONS allowlist; >2 channel files pre-validated with mutagen and skipped
+- Essentia segfault guard: .opus files pre-converted to temp .wav via ffmpeg (MonoLoader SIGSEGV on opus); >2 channel files pre-validated with mutagen and skipped
+- Essentia opus support: _NEEDS_CONVERSION set in analyzer.py, ffmpeg conversion with 30s timeout, temp file cleanup in finally block
+- Analysis pool recovery: BrokenProcessPool (worker segfault) detected and pool recreated via _reset_analysis_pool(); 120s per-track async timeout
 - Essentia supported formats: ESSENTIA_SUPPORTED_EXTENSIONS allowlist in analyzer.py (.mp3, .flac, .wav, .ogg, .m4a, .aac, .wma, .aiff, .alac)
 - Audio analysis resilience: ProcessPoolExecutor with BrokenProcessPool recovery — if a worker crashes (segfault), pool is recreated and job continues; 120s per-track timeout prevents hangs
 - Audio analysis performance: ProcessPoolExecutor (true multi-core parallelism), nice 15 priority, DB commits every 10 tracks, WS broadcasts every 10 tracks
@@ -220,6 +222,7 @@ docs/                  # Installation, configuration, API reference, development
 - Last.fm auth: callback saves session_key + username to zonik.toml; session_key and username in [lastfm] config
 - Settings page: 8 separate Card sections with icon badges; sticky save bar; Share Library moved to Library section; Last.fm Sync moved into Last.fm card; Subsonic styled as info-only
 - Discover page: sortable column headers (click to sort asc/desc/clear, ▲/▼ indicators) on all track tables
+- Discover page: iTunes artwork thumbnails on all tabs (For You, Top Tracks, Similar Tracks) via client-side cache; Music icon fallback
 - Notification bell: clicking a job navigates to /logs?job=id with auto-expand
 - Logs page: reads ?job= URL param to auto-expand specific job on load
 - Library cleanup tools: "Danger Zone" section with amber border, DESTRUCTIVE/CAUTION tags on tool cards
@@ -254,6 +257,9 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation cover art: image_url + preview_url columns on Recommendation model, fetched from iTunes Search API (no key needed, 300x300 art + 30s preview)
 - Recommendation genre scoring: Last.fm tags fetched per candidate via track.getInfo, scored as weighted overlap with user's genre_distribution (replaces weak pattern matching)
 - Recommendation source filters: frontend pills (All/Similar/Artists/Genre/Trending/AI) filter by existing source field, with per-filter count badges
+- Recommendation stats: GET /api/recommendations/stats — conversion funnel (total/downloaded/thumbs_up/thumbs_down/by_source/downloads_by_source)
+- Recommendation bulk download: POST /api/recommendations/bulk-download with mode (top/above_score), count, min_score; downloads via Soulseek with semaphore gating
+- Last.fm user history: taste profile enriched with user.getTopArtists + user.getTopTracks when session_key exists (blended with local data)
 - Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode (low_bitrate/lossy_to_lossless/all_lossy) + max_bitrate via UI selectors
 - Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
 - Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)

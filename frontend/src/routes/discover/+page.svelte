@@ -90,6 +90,35 @@
 	let sortColumn = $state(null);
 	let sortDir = $state(null);
 
+	// Artwork cache — fetches from iTunes Search API
+	let artworkCache = $state({});
+	async function fetchArtwork(artist, track) {
+		const key = `${artist}::${track}`.toLowerCase();
+		if (artworkCache[key] !== undefined) return;
+		artworkCache[key] = null; // mark as loading
+		try {
+			const q = encodeURIComponent(`${artist} ${track}`);
+			const resp = await fetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`);
+			const data = await resp.json();
+			if (data.results?.[0]) {
+				artworkCache[key] = {
+					image: data.results[0].artworkUrl100?.replace('100x100', '60x60'),
+					preview: data.results[0].previewUrl,
+				};
+			} else {
+				artworkCache[key] = { image: null, preview: null };
+			}
+		} catch {
+			artworkCache[key] = { image: null, preview: null };
+		}
+	}
+	function getArtwork(artist, track) {
+		const key = `${artist}::${track}`.toLowerCase();
+		const cached = artworkCache[key];
+		if (cached === undefined) fetchArtwork(artist, track);
+		return cached;
+	}
+
 	// Shared
 	let bulkDownloading = $state(false);
 	let trackStatus = $state({...$discoverTrackStatus});
@@ -1086,9 +1115,21 @@
 						<tbody class="divide-y divide-[var(--border-subtle)]">
 							{#each sortedTopTracks as t, i}
 								{@const status = getStatus(t)}
+								{@const art = getArtwork(t.artist, t.name)}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
-									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
+									<td class="px-4 py-3">
+										<div class="flex items-center gap-3">
+											{#if art?.image}
+												<img src={art.image} alt="" class="w-8 h-8 rounded object-cover flex-shrink-0" />
+											{:else}
+												<div class="w-8 h-8 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
+													<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+												</div>
+											{/if}
+											<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
+										</div>
+									</td>
 									<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
 									<td class="px-4 py-3 text-right">
@@ -1167,8 +1208,20 @@
 						<tbody class="divide-y divide-[var(--border-subtle)]">
 							{#each sortedSimilarTracks as t}
 								{@const status = getStatus(t)}
+								{@const art = getArtwork(t.artist, t.name)}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
-									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
+									<td class="px-4 py-3">
+										<div class="flex items-center gap-3">
+											{#if art?.image}
+												<img src={art.image} alt="" class="w-8 h-8 rounded object-cover flex-shrink-0" />
+											{:else}
+												<div class="w-8 h-8 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
+													<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+												</div>
+											{/if}
+											<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
+										</div>
+									</td>
 									<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
 									<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
 										{#if t.source_artist}
