@@ -689,7 +689,7 @@
 							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
 								Min Score
 								<input type="number" min="0.1" max="1.0" step="0.05"
-									value={schedTasks.recommendation_refresh.config?.min_score ?? 0.7}
+									value={schedTasks.recommendation_refresh.config?.min_score ?? 0.5}
 									onchange={(e) => updateSchedConfig('recommendation_refresh', { min_score: parseFloat(e.target.value) })}
 									class="w-16 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
 							</label>

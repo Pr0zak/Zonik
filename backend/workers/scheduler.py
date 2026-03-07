@@ -135,12 +135,6 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             result = await refresh_recommendations(db, on_progress=on_progress)
             job.result = json.dumps(result)
 
-            # Auto-download top recommendations if configured
-            if task_config.get("auto_download") and result.get("recommendations_saved", 0) > 0:
-                min_score = task_config.get("min_score", 0.7)
-                max_downloads = task_config.get("max_downloads", 10)
-                await _auto_download_recommendations(db, min_score, max_downloads)
-
         elif task_name == "upgrade_scan":
             await _run_upgrade_scan(db, job, count=count or 50, config=task_config)
 
@@ -175,6 +169,19 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                     await _auto_download_missing(missing, task_name)
             except Exception as e:
                 log.error(f"Auto-download after {task_name} failed: {e}")
+
+        # Auto-download top recommendations if configured
+        if (
+            job.status == "completed"
+            and task_config.get("auto_download")
+            and task_name == "recommendation_refresh"
+        ):
+            try:
+                min_score = task_config.get("min_score", 0.5)
+                max_downloads = task_config.get("max_downloads", 10)
+                await _auto_download_recommendations(db, min_score, max_downloads)
+            except Exception as e:
+                log.error(f"Auto-download recommendations failed: {e}")
 
 
 async def _auto_download_recommendations(db: AsyncSession, min_score: float, max_downloads: int):
