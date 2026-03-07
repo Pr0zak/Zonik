@@ -18,6 +18,8 @@ from backend.models.analysis import TrackAnalysis
 
 router = APIRouter()
 
+TRACK_SORT_COLUMNS = {"title", "artist_id", "album_id", "genre", "year", "format", "bitrate", "duration_seconds", "file_size", "play_count", "rating", "created_at"}
+
 
 @router.get("")
 async def list_tracks(
@@ -72,7 +74,7 @@ async def list_tracks(
         else:
             query = query.order_by(has_analysis.desc(), Track.title.asc())
     else:
-        sort_col = getattr(Track, sort, Track.title)
+        sort_col = getattr(Track, sort) if sort in TRACK_SORT_COLUMNS else Track.title
         query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
     query = query.offset(offset).limit(limit)
 

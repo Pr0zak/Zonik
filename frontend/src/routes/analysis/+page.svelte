@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, activeJobs } from '$lib/stores.js';
 	import { AudioWaveform, Sparkles, Database, Search, Clock, ChevronDown, ChevronUp } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -137,25 +138,11 @@
 		}
 	}
 
-	async function toggleSched(name) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const newEnabled = !t.enabled;
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
-		schedTasks[name] = { ...t, enabled: newEnabled };
-	}
-	async function updateSched(name, updates) {
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
-		schedTasks[name] = { ...schedTasks[name], ...updates };
-	}
-	async function runSched(name) {
-		schedRunning[name] = true;
-		try {
-			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
-			addToast('Task started', 'success');
-		} catch { addToast('Failed to run task', 'error'); }
-		finally { schedRunning[name] = false; }
-	}
+	const { toggleSched, updateSched, runSched } = createScheduleHelpers(
+		() => schedTasks,
+		(name, val) => { schedTasks[name] = val; },
+		addToast
+	);
 
 	async function toggleAutoAfterScan(name) {
 		const t = schedTasks[name];

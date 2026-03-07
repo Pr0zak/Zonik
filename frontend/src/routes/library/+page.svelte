@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
+	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, formatSize, formatRelativeTime, formatDateTime, debounce } from '$lib/utils.js';
 	import {
@@ -74,40 +75,11 @@
 	let schedRunning = $state({});
 	let schedExpanded = $state(false);
 
-	async function toggleSched(name) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const newEnabled = !t.enabled;
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
-		schedTasks[name] = { ...t, enabled: newEnabled };
-	}
-	async function updateSched(name, updates) {
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
-		schedTasks[name] = { ...schedTasks[name], ...updates };
-	}
-	async function runSched(name) {
-		schedRunning[name] = true;
-		try {
-			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
-			addToast('Task started', 'success');
-		} catch { addToast('Failed to run task', 'error'); }
-		finally { schedRunning[name] = false; }
-	}
-	async function toggleAutoDownload(name) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const current = t.config?.auto_download || false;
-		const newConfig = { auto_download: !current };
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
-		schedTasks[name] = { ...t, config: { ...t.config, ...newConfig } };
-	}
-	async function updateSchedConfig(name, configUpdates) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const newConfig = { ...t.config, ...configUpdates };
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
-		schedTasks[name] = { ...t, config: newConfig };
-	}
+	const { toggleSched, updateSched, runSched, toggleAutoDownload, updateSchedConfig } = createScheduleHelpers(
+		() => schedTasks,
+		(name, val) => { schedTasks[name] = val; },
+		addToast
+	);
 
 	// Cleanup state
 	let cleanupTab = $state(null); // 'orphans' | 'duplicates' | 'organize'

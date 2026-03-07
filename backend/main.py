@@ -144,7 +144,7 @@ app = FastAPI(title="Zonik", version=_get_version(), lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.server.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

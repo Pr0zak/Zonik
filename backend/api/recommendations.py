@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session
@@ -226,9 +226,7 @@ class BulkDownloadRequest(BaseModel):
 @router.post("/bulk-download")
 async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Download multiple recommendations as individual download jobs."""
-    from backend.api.download import _do_download_inner, _get_semaphore, DownloadRequest
-    from backend.models.job import Job
-    from backend.api.websocket import broadcast_job_update
+    from backend.api.download import enqueue_download
 
     query = select(Recommendation).where(Recommendation.status == "pending")
     if req.mode == "above_score":
@@ -244,62 +242,12 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
         return {"ok": False, "error": "No pending recommendations to download"}
 
     # Mark as downloaded immediately
-    rec_ids = []
     for r in recs:
-        rec_ids.append(r.id)
         r.status = "downloaded"
     await db.commit()
 
-    # Create individual download jobs
-    import uuid
-    sem = _get_semaphore()
-
-    async def download_one(artist, track, rec_id):
-        job_id = str(uuid.uuid4())
-        desc = f"{artist} — {track}"
-        dl_req = DownloadRequest(artist=artist, track=track)
-        async with async_session() as sess:
-            if sem.locked():
-                job = Job(
-                    id=job_id, type="download", card="dl", status="pending",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
-                )
-                sess.add(job)
-                await sess.commit()
-                await broadcast_job_update({
-                    "id": job_id, "type": "download",
-                    "status": "pending", "progress": 0, "total": 1,
-                    "description": f"Queued: {desc}",
-                })
-                async with sem:
-                    job.status = "running"
-                    await sess.merge(job)
-                    await sess.commit()
-                    await broadcast_job_update({
-                        "id": job_id, "type": "download",
-                        "status": "running", "progress": 0, "total": 1,
-                        "description": desc,
-                    })
-                    await _do_download_inner(sess, job, job_id, desc, dl_req)
-            else:
-                job = Job(
-                    id=job_id, type="download", card="dl", status="running",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
-                )
-                sess.add(job)
-                await sess.commit()
-                await broadcast_job_update({
-                    "id": job_id, "type": "download",
-                    "status": "running", "progress": 0, "total": 1,
-                    "description": desc,
-                })
-                async with sem:
-                    await _do_download_inner(sess, job, job_id, desc, dl_req)
-
     for r in recs:
-        background_tasks.add_task(download_one, r.artist, r.track, r.id)
+        background_tasks.add_task(enqueue_download, r.artist, r.track)
 
     return {"ok": True, "count": len(recs)}
 

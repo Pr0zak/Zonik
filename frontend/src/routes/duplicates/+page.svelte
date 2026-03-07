@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api.js';
+	import { formatBadgeClass } from '$lib/colors.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatSize, formatRelativeTime, formatDateTime } from '$lib/utils.js';
 	import {
@@ -23,23 +24,6 @@
 	let executing = $state(false);
 	let expandedGroups = $state(new Set());
 	let confirmModal = $state(null); // null | 'db' | 'files'
-
-	const FORMAT_COLORS = {
-		flac: 'text-emerald-400 bg-emerald-500/15 border-emerald-500/30',
-		wav: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',
-		alac: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',
-		aiff: 'text-emerald-300 bg-emerald-500/10 border-emerald-500/20',
-		opus: 'text-blue-400 bg-blue-500/15 border-blue-500/30',
-		ogg: 'text-blue-300 bg-blue-500/10 border-blue-500/20',
-		m4a: 'text-amber-400 bg-amber-500/15 border-amber-500/30',
-		mp3: 'text-amber-300 bg-amber-500/10 border-amber-500/20',
-		aac: 'text-orange-400 bg-orange-500/15 border-orange-500/30',
-		wma: 'text-red-400 bg-red-500/15 border-red-500/30',
-	};
-
-	function formatBadgeClass(fmt) {
-		return FORMAT_COLORS[fmt?.toLowerCase()] || 'text-[var(--text-muted)] bg-[var(--bg-tertiary)] border-[var(--border-subtle)]';
-	}
 
 	function qualityPercent(score, maxScore) {
 		if (!maxScore) return 0;

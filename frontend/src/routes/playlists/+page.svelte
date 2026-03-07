@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
+	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, inputClass } from '$lib/utils.js';
 	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-svelte';
@@ -118,25 +119,11 @@
 		return `/rest/getCoverArt?id=${id}`;
 	}
 
-	async function toggleSched(name) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const newEnabled = !t.enabled;
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
-		schedTasks[name] = { ...t, enabled: newEnabled };
-	}
-	async function updateSched(name, updates) {
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
-		schedTasks[name] = { ...schedTasks[name], ...updates };
-	}
-	async function runSched(name) {
-		schedRunning[name] = true;
-		try {
-			await fetch(`/api/schedule/${name}/run`, { method: 'POST' });
-			addToast('Task started', 'success');
-		} catch { addToast('Failed to run task', 'error'); }
-		finally { schedRunning[name] = false; }
-	}
+	const { toggleSched, updateSched, runSched } = createScheduleHelpers(
+		() => schedTasks,
+		(name, val) => { schedTasks[name] = val; },
+		addToast
+	);
 
 	onMount(async () => {
 		try {

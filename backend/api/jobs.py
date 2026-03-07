@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db, async_session
+from backend.database import get_db
 from backend.models.job import Job
 from backend.api.websocket import broadcast_job_update
 
@@ -170,46 +169,13 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
     if not failed_tracks:
         return {"error": "No failed tracks to retry"}
 
-    from backend.api.download import _do_download_inner, _get_semaphore, DownloadRequest
-    sem = _get_semaphore()
-
-    async def download_one(artist: str, track: str):
-        new_job_id = str(uuid.uuid4())
-        desc = f"{artist} — {track}"
-        dl_req = DownloadRequest(artist=artist, track=track)
-        async with async_session() as sess:
-            if sem.locked():
-                new_job = Job(
-                    id=new_job_id, type="download", card="dl", status="pending",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
-                )
-                sess.add(new_job)
-                await sess.commit()
-                await broadcast_job_update({"id": new_job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
-                async with sem:
-                    new_job.status = "running"
-                    await sess.merge(new_job)
-                    await sess.commit()
-                    await broadcast_job_update({"id": new_job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                    await _do_download_inner(sess, new_job, new_job_id, desc, dl_req)
-            else:
-                new_job = Job(
-                    id=new_job_id, type="download", card="dl", status="running",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
-                )
-                sess.add(new_job)
-                await sess.commit()
-                await broadcast_job_update({"id": new_job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                async with sem:
-                    await _do_download_inner(sess, new_job, new_job_id, desc, dl_req)
+    from backend.api.download import enqueue_download
 
     for t in failed_tracks:
         artist = t.get("artist", "")
         track = t.get("track", "")
         if artist and track:
-            background_tasks.add_task(download_one, artist, track)
+            background_tasks.add_task(enqueue_download, artist, track)
 
     return {"ok": True, "total": len(failed_tracks)}
 

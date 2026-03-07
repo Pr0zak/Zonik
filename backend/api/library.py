@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
+from pydantic import BaseModel
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,9 @@ from backend.models.job import Job
 from backend.api.websocket import broadcast_job_update
 
 router = APIRouter()
+
+ARTIST_SORT_COLUMNS = {"name"}
+ALBUM_SORT_COLUMNS = {"title", "year", "artist_id"}
 
 
 @router.get("/stats")
@@ -171,7 +175,7 @@ async def list_artists(
         query = query.where(Artist.name.ilike(f"%{search}%"))
         count_q = count_q.where(Artist.name.ilike(f"%{search}%"))
 
-    sort_col = getattr(Artist, sort, Artist.name)
+    sort_col = getattr(Artist, sort) if sort in ARTIST_SORT_COLUMNS else Artist.name
     query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
     query = query.offset(offset).limit(limit)
 
@@ -240,7 +244,7 @@ async def list_albums(
         query = query.where(Album.artist_id == artist_id)
         count_q = count_q.where(Album.artist_id == artist_id)
 
-    sort_col = getattr(Album, sort, Album.title)
+    sort_col = getattr(Album, sort) if sort in ALBUM_SORT_COLUMNS else Album.title
     query = query.order_by(sort_col.asc() if order == "asc" else sort_col.desc())
     query = query.offset(offset).limit(limit)
 
@@ -311,18 +315,21 @@ async def preview_duplicates(db: AsyncSession = Depends(get_db)):
     return {"groups": groups, "total_groups": len(groups), "total_duplicates": total_dupes}
 
 
+class RemoveDupesRequest(BaseModel):
+    remove_ids: list[str]
+    delete_files: bool = False
+
+
 @router.post("/cleanup/duplicates")
 async def remove_dupes(
-    request: dict,
+    request: RemoveDupesRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Remove specified duplicate tracks. Body: {remove_ids: [...], delete_files: bool}"""
+    """Remove specified duplicate tracks."""
     from backend.services.cleanup import remove_duplicates
-    remove_ids = request.get("remove_ids", [])
-    delete_files = request.get("delete_files", False)
-    if not remove_ids:
+    if not request.remove_ids:
         return {"error": "No track IDs provided"}
-    return await remove_duplicates(db, remove_ids, delete_files)
+    return await remove_duplicates(db, request.remove_ids, request.delete_files)
 
 
 @router.post("/cleanup/organize/preview")
@@ -333,14 +340,18 @@ async def preview_organize_files(db: AsyncSession = Depends(get_db)):
     return {"moves": moves, "count": len(moves)}
 
 
+class OrganizeRequest(BaseModel):
+    move_ids: list[str] | None = None
+
+
 @router.post("/cleanup/organize")
 async def organize_files(
-    request: dict | None = None,
+    request: OrganizeRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Execute file rename/sort. Optional body: {move_ids: [...]}"""
     from backend.services.cleanup import execute_organize
-    move_ids = request.get("move_ids") if request else None
+    move_ids = request.move_ids if request else None
     return await execute_organize(db, move_ids)
 
 

@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api.js';
+	import { qualityHex } from '$lib/colors.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -55,13 +56,7 @@
 		return d3.interpolateRgb('#f59e0b', '#ef4444')((t - 0.66) / 0.34);
 	}
 
-	function qualityColor(avgQuality) {
-		if (avgQuality >= 120) return '#22c55e'; // green — lossless
-		if (avgQuality >= 80) return '#84cc16'; // lime — high
-		if (avgQuality >= 50) return '#f59e0b'; // amber — mid
-		if (avgQuality >= 30) return '#f97316'; // orange — low
-		return '#ef4444'; // red — very low
-	}
+	const qualityColor = qualityHex;
 
 	function getNodeColor(node) {
 		if (node.type === 'genre') {

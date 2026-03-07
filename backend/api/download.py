@@ -519,48 +519,49 @@ async def _do_download_inner(db, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Cleanup skipped: {e}")
 
+async def enqueue_download(artist: str, track: str):
+    """Create an individual download job with semaphore queuing."""
+    job_id = str(uuid.uuid4())
+    desc = f"{artist} — {track}"
+    dl_req = DownloadRequest(artist=artist, track=track)
+    sem = _get_semaphore()
+    async with async_session() as sess:
+        if sem.locked():
+            job = Job(
+                id=job_id, type="download", card="dl", status="pending",
+                started_at=datetime.utcnow(),
+                tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
+            )
+            sess.add(job)
+            await sess.commit()
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
+            async with sem:
+                job.status = "running"
+                await sess.merge(job)
+                await sess.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                await _do_download_inner(sess, job, job_id, desc, dl_req)
+        else:
+            job = Job(
+                id=job_id, type="download", card="dl", status="running",
+                started_at=datetime.utcnow(),
+                tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
+            )
+            sess.add(job)
+            await sess.commit()
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+            async with sem:
+                await _do_download_inner(sess, job, job_id, desc, dl_req)
+
+
 @router.post("/bulk")
 async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTasks):
     """Download multiple tracks as individual download jobs."""
-    sem = _get_semaphore()
-
-    async def download_one(artist: str, track: str):
-        job_id = str(uuid.uuid4())
-        desc = f"{artist} — {track}"
-        dl_req = DownloadRequest(artist=artist, track=track)
-        async with async_session() as sess:
-            if sem.locked():
-                job = Job(
-                    id=job_id, type="download", card="dl", status="pending",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
-                )
-                sess.add(job)
-                await sess.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
-                async with sem:
-                    job.status = "running"
-                    await sess.merge(job)
-                    await sess.commit()
-                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                    await _do_download_inner(sess, job, job_id, desc, dl_req)
-            else:
-                job = Job(
-                    id=job_id, type="download", card="dl", status="running",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
-                )
-                sess.add(job)
-                await sess.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                async with sem:
-                    await _do_download_inner(sess, job, job_id, desc, dl_req)
-
     for t in req.tracks:
         artist = t.get("artist", "")
         track = t.get("track", "")
         if artist and track:
-            background_tasks.add_task(download_one, artist, track)
+            background_tasks.add_task(enqueue_download, artist, track)
 
     return {"ok": True, "total": len(req.tracks)}
 

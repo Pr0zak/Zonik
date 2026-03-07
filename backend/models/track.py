@@ -13,8 +13,8 @@ class Track(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    artist_id: Mapped[str | None] = mapped_column(String, ForeignKey("artists.id"))
-    album_id: Mapped[str | None] = mapped_column(String, ForeignKey("albums.id"))
+    artist_id: Mapped[str | None] = mapped_column(String, ForeignKey("artists.id"), index=True)
+    album_id: Mapped[str | None] = mapped_column(String, ForeignKey("albums.id"), index=True)
     track_number: Mapped[int | None] = mapped_column(Integer)
     disc_number: Mapped[int] = mapped_column(Integer, default=1)
     duration_seconds: Mapped[float | None] = mapped_column(Float)

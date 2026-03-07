@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import {
 		Music, Users, Disc3, HardDrive, Clock, RefreshCw, Wifi, Share2,
-		Activity, Heart, Copy, AlertTriangle, Calendar, Play, Zap,
+		Activity, Heart, Copy, Calendar, Play, Zap,
 		Search, AudioWaveform, Sparkles, TrendingUp, ChevronDown, ChevronUp,
 		Download, Check, X, Loader2, FileSearch, BarChart3
 	} from 'lucide-svelte';
@@ -65,17 +65,7 @@
 		return Clock;
 	}
 
-	function qualityColor(score) {
-		if (score >= 80) return 'text-emerald-400';
-		if (score >= 50) return 'text-yellow-400';
-		return 'text-red-400';
-	}
-
-	function qualityBarColor(score) {
-		if (score >= 80) return 'bg-emerald-500';
-		if (score >= 50) return 'bg-yellow-500';
-		return 'bg-red-500';
-	}
+	import { qualityColor, qualityBarColor, FORMAT_HEX } from '$lib/colors.js';
 
 	// Quick actions
 	async function quickScan() {
@@ -264,7 +254,7 @@
 						<span class="text-sm font-bold text-[var(--text-primary)]">{formatSize(storage.total_size)}</span>
 					</div>
 					<!-- Stacked bar -->
-					{@const fmtColors = { flac: '#10b981', wav: '#14b8a6', alac: '#06b6d4', aiff: '#0ea5e9', mp3: '#f59e0b', m4a: '#f97316', ogg: '#ef4444', opus: '#ec4899', aac: '#a855f7', wma: '#6366f1', unknown: '#6b7280' }}
+					{@const fmtColors = FORMAT_HEX}
 					<div class="flex h-4 rounded-full overflow-hidden mb-3">
 						{#each storage.by_format as fmt}
 							{@const pct = (fmt.size / Math.max(storage.total_size, 1)) * 100}

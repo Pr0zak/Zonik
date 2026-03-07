@@ -12,9 +12,9 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    type: Mapped[str] = mapped_column(String, nullable=False)
+    type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     card: Mapped[str | None] = mapped_column(String)
-    status: Mapped[str] = mapped_column(String, default="pending")
+    status: Mapped[str] = mapped_column(String, default="pending", index=True)
     progress: Mapped[int] = mapped_column(Integer, default=0)
     total: Mapped[int] = mapped_column(Integer, default=0)
     result: Mapped[str | None] = mapped_column(Text)  # JSON

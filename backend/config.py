@@ -11,6 +11,7 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 3000
     secret_key: str = "change-me"
+    cors_origins: list[str] = ["*"]
 
 
 class LibraryConfig(BaseModel):

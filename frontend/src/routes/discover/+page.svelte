@@ -4,6 +4,7 @@
 	import { parseUTC } from '$lib/utils.js';
 	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
+	import { createScheduleHelpers } from '$lib/schedule.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -439,17 +440,13 @@
 	}
 
 	// --- Schedule helpers ---
-	async function toggleSched(name) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const newEnabled = !t.enabled;
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: newEnabled }) });
-		schedTasks[name] = { ...t, enabled: newEnabled };
-	}
-	async function updateSched(name, updates) {
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates) });
-		schedTasks[name] = { ...schedTasks[name], ...updates };
-	}
+	const _sched = createScheduleHelpers(
+		() => schedTasks,
+		(name, val) => { schedTasks[name] = val; },
+		addToast
+	);
+	const { toggleSched, updateSched, toggleAutoDownload, updateSchedConfig } = _sched;
+
 	async function runSched(name) {
 		schedRunning[name] = true;
 		try {
@@ -486,23 +483,6 @@
 			} catch {}
 		}
 		schedRunning[name] = false;
-	}
-
-	async function updateSchedConfig(name, configUpdates) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const newConfig = { ...t.config, ...configUpdates };
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
-		schedTasks[name] = { ...t, config: newConfig };
-	}
-
-	async function toggleAutoDownload(name) {
-		const t = schedTasks[name];
-		if (!t) return;
-		const current = t.config?.auto_download || false;
-		const newConfig = { auto_download: !current };
-		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
-		schedTasks[name] = { ...t, config: { ...t.config, ...newConfig } };
 	}
 
 	// --- For You ---

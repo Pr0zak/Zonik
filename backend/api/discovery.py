@@ -27,25 +27,37 @@ async def top_tracks(
     db: AsyncSession = Depends(get_db),
 ):
     """Get Last.fm top tracks chart, annotated with library presence."""
+    from sqlalchemy import or_, and_, func as sqfunc
+
     chart = await lastfm.get_top_tracks(limit=limit, page=page)
 
-    # Check which tracks are already in library (match both artist + title)
-    for t in chart:
-        result = await db.execute(
-            select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                Track.title.ilike(t["name"]),
-                Artist.name.ilike(t["artist"]),
-            ).limit(1)
+    # Batch library match — single query for all chart tracks
+    if chart:
+        conditions = [
+            and_(
+                sqfunc.lower(Track.title) == t["name"].lower(),
+                sqfunc.lower(Artist.name) == t["artist"].lower(),
+            )
+            for t in chart
+        ]
+        lib_result = await db.execute(
+            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(or_(*conditions))
         )
-        existing = result.scalar_one_or_none()
-        t["in_library"] = existing is not None
-        t["track_id"] = existing.id if existing else None
+        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+
+        for t in chart:
+            key = (t["name"].lower(), t["artist"].lower())
+            matched_id = lib_map.get(key)
+            t["in_library"] = matched_id is not None
+            t["track_id"] = matched_id
 
     return {
         "tracks": chart,
         "total": len(chart),
-        "in_library": sum(1 for t in chart if t["in_library"]),
-        "missing": sum(1 for t in chart if not t["in_library"]),
+        "in_library": sum(1 for t in chart if t.get("in_library")),
+        "missing": sum(1 for t in chart if not t.get("in_library")),
     }
 
 
@@ -258,18 +270,31 @@ async def similar_by_track(
     db: AsyncSession = Depends(get_db),
 ):
     """Get tracks similar to a specific track via Last.fm, annotated with library status."""
+    from sqlalchemy import or_, and_, func as sqfunc
+
     similar = await lastfm.get_similar_tracks(artist, track, limit=limit)
 
-    for t in similar:
-        existing = await db.execute(
-            select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                Track.title.ilike(t["name"]),
-                Artist.name.ilike(t["artist"]),
-            ).limit(1)
+    # Batch library match
+    if similar:
+        conditions = [
+            and_(
+                sqfunc.lower(Track.title) == t["name"].lower(),
+                sqfunc.lower(Artist.name) == t["artist"].lower(),
+            )
+            for t in similar
+        ]
+        lib_result = await db.execute(
+            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(or_(*conditions))
         )
-        existing_track = existing.scalar_one_or_none()
-        t["in_library"] = existing_track is not None
-        t["track_id"] = existing_track.id if existing_track else None
+        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+
+        for t in similar:
+            key = (t["name"].lower(), t["artist"].lower())
+            matched_id = lib_map.get(key)
+            t["in_library"] = matched_id is not None
+            t["track_id"] = matched_id
 
     return {
         "tracks": similar[:limit],
@@ -288,19 +313,31 @@ async def find_remixes(
     """Find remixes, dubs, and edits of a track via Last.fm search."""
     from backend.services.remix_discovery import find_remixes as _find_remixes
 
+    from sqlalchemy import or_, and_, func as sqfunc
+
     remixes = await _find_remixes(artist, track, limit=limit)
 
-    # Annotate with library status
-    for r in remixes:
-        existing = await db.execute(
-            select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                Track.title.ilike(r["name"]),
-                Artist.name.ilike(r["artist"]),
-            ).limit(1)
+    # Batch library match
+    if remixes:
+        conditions = [
+            and_(
+                sqfunc.lower(Track.title) == r["name"].lower(),
+                sqfunc.lower(Artist.name) == r["artist"].lower(),
+            )
+            for r in remixes
+        ]
+        lib_result = await db.execute(
+            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(or_(*conditions))
         )
-        existing_track = existing.scalar_one_or_none()
-        r["in_library"] = existing_track is not None
-        r["track_id"] = existing_track.id if existing_track else None
+        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+
+        for r in remixes:
+            key = (r["name"].lower(), r["artist"].lower())
+            matched_id = lib_map.get(key)
+            r["in_library"] = matched_id is not None
+            r["track_id"] = matched_id
 
     return {
         "remixes": remixes,

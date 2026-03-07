@@ -23,8 +23,6 @@ from backend.config import get_settings, CONFIG_PATHS
 from backend.database import async_session, get_db
 from backend.models.job import Job
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter()
 
 
@@ -706,10 +704,3 @@ async def restore_backup(filename: str):
     shutil.copy2(str(backup_path), str(db_path))
 
     return {"ok": True, "message": "Database restored. Restart services to apply."}
-
-
-def _mask(value: str) -> str:
-    """Mask an API key for display, showing only last 4 chars."""
-    if not value or len(value) < 8:
-        return value
-    return value[:4] + "***" + value[-4:]
