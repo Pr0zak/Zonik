@@ -173,15 +173,15 @@
 
 	// Show progress relative to total library size (aligns with stats card)
 	function analysisProgress(job) {
-		if (!stats || !job) return { done: 0, total: 0, pct: 0 };
-		const done = (stats.analyzed || 0) + (job.progress || 0);
-		const total = stats.total_tracks || 0;
+		if (!job) return { done: 0, total: 0, pct: 0 };
+		const done = job.progress || 0;
+		const total = job.total || 0;
 		return { done, total, pct: total > 0 ? Math.round(done / total * 100) : 0 };
 	}
 	function embeddingsProgress(job) {
-		if (!stats || !job) return { done: 0, total: 0, pct: 0 };
-		const done = (stats.with_embeddings || 0) + (job.progress || 0);
-		const total = stats.total_tracks || 0;
+		if (!job) return { done: 0, total: 0, pct: 0 };
+		const done = job.progress || 0;
+		const total = job.total || 0;
 		return { done, total, pct: total > 0 ? Math.round(done / total * 100) : 0 };
 	}
 </script>
