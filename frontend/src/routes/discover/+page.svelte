@@ -236,7 +236,7 @@
 
 	function sortIndicator(column) {
 		if (sortColumn !== column) return '';
-		return sortDir === 'asc' ? '▲' : '▼';
+		return sortDir === 'asc' ? '↑' : '↓';
 	}
 
 	// Clear sort when switching tabs

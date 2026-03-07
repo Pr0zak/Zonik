@@ -815,28 +815,28 @@
 								<th class="px-4 py-2 w-5">
 									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors"
 										title="Sort by quality">
-										{sortCol === 'quality' ? (sortAsc ? '▲' : '▼') : '◆'}
+										{sortCol === 'quality' ? (sortAsc ? '↑' : '↓') : '◆'}
 									</button>
 								</th>
 								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
 								<th class="px-4 py-2 hidden md:table-cell">
 									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										User {sortCol === 'user' ? (sortAsc ? '▲' : '▼') : ''}
+										User {sortCol === 'user' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2">
 									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										Format {sortCol === 'format' ? (sortAsc ? '▲' : '▼') : ''}
+										Format {sortCol === 'format' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2 hidden sm:table-cell">
 									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '▲' : '▼') : ''}
+										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2">
 									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
-										Size {sortCol === 'size' ? (sortAsc ? '▲' : '▼') : ''}
+										Size {sortCol === 'size' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2"></th>
