@@ -97,7 +97,7 @@
 
 	async function flushArtworkQueue() {
 		if (!artworkQueue.length) return;
-		const batch = artworkQueue.splice(0, 20);
+		const batch = artworkQueue.splice(0, 100);
 		try {
 			const resp = await api('/api/discovery/artwork/batch', {
 				method: 'POST',

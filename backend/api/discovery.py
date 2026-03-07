@@ -386,14 +386,14 @@ class ArtworkBatchRequest(BaseModel):
 
 @router.post("/artwork/batch")
 async def get_artwork_batch(req: ArtworkBatchRequest):
-    """Batch fetch artwork from iTunes Search API (up to 20 items, 5 concurrent)."""
+    """Batch fetch artwork from iTunes Search API (up to 100 items, 10 concurrent)."""
     import asyncio
     import httpx
     import urllib.parse
 
-    items = req.items[:20]  # cap at 20
+    items = req.items[:100]
     results = {}
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(10)
 
     async def fetch_one(client, item):
         artist = item.get("artist", "")
