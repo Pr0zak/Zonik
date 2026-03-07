@@ -1533,13 +1533,25 @@
 							{@const status = trackStatus[key]}
 							{@const art = getArtwork(r.artist, r.name)}
 							<div class="px-4 py-3 flex items-center gap-4 hover:bg-[var(--bg-hover)] transition-colors">
-								{#if art?.image}
-									<img src={art.image} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0" />
-								{:else}
-									<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
-										<Music class="w-4 h-4 text-[var(--text-disabled)]" />
-									</div>
-								{/if}
+								<button onclick={() => playPreview(art?.preview, key)}
+									class="relative w-10 h-10 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+									{#if art?.image}
+										<img src={art.image} alt="" class="w-full h-full object-cover" />
+									{:else}
+										<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+											<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+									{#if art?.preview}
+										<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === key ? 'opacity-100' : ''}">
+											{#if previewKey === key}
+												<Pause class="w-4 h-4 text-white" />
+											{:else}
+												<Play class="w-4 h-4 text-white" />
+											{/if}
+										</div>
+									{/if}
+								</button>
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] truncate">{r.name}</p>
 									<p class="text-xs text-[var(--text-muted)] truncate">{r.artist}</p>
