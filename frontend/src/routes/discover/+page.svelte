@@ -92,30 +92,32 @@
 
 	// Artwork cache — fetches from iTunes Search API
 	let artworkCache = $state({});
-	async function fetchArtwork(artist, track) {
-		const key = `${artist}::${track}`.toLowerCase();
-		if (artworkCache[key] !== undefined) return;
-		artworkCache[key] = null; // mark as loading
-		try {
-			const q = encodeURIComponent(`${artist} ${track}`);
-			const resp = await fetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`);
-			const data = await resp.json();
-			if (data.results?.[0]) {
-				artworkCache[key] = {
-					image: data.results[0].artworkUrl100?.replace('100x100', '60x60'),
-					preview: data.results[0].previewUrl,
-				};
-			} else {
-				artworkCache[key] = { image: null, preview: null };
+	let artworkQueue = [];
+	let artworkFetching = false;
+
+	async function processArtworkQueue() {
+		if (artworkFetching) return;
+		artworkFetching = true;
+		while (artworkQueue.length > 0) {
+			const { artist, track, key } = artworkQueue.shift();
+			try {
+				const resp = await api(`/api/discovery/artwork?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`);
+				artworkCache = { ...artworkCache, [key]: resp };
+			} catch {
+				artworkCache = { ...artworkCache, [key]: { image: null, preview: null } };
 			}
-		} catch {
-			artworkCache[key] = { image: null, preview: null };
 		}
+		artworkFetching = false;
 	}
+
 	function getArtwork(artist, track) {
 		const key = `${artist}::${track}`.toLowerCase();
 		const cached = artworkCache[key];
-		if (cached === undefined) fetchArtwork(artist, track);
+		if (cached === undefined) {
+			artworkCache[key] = null; // mark as loading
+			artworkQueue.push({ artist, track, key });
+			processArtworkQueue();
+		}
 		return cached;
 	}
 

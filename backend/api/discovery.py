@@ -377,3 +377,28 @@ async def lastfm_callback(token: str, request: Request):
     if request.headers.get("accept", "").startswith("text/html"):
         return RedirectResponse(url="/settings?lastfm_auth=failed")
     return {"error": data.get("message", "Authentication failed")}
+
+
+@router.get("/artwork")
+async def get_artwork(artist: str = Query(...), track: str = Query(...)):
+    """Proxy iTunes Search API for cover art (avoids CORS issues)."""
+    import httpx
+    import urllib.parse
+
+    q = urllib.parse.quote(f"{artist} {track}")
+    url = f"https://itunes.apple.com/search?term={q}&media=music&entity=song&limit=1"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"image": None, "preview": None}
+            data = resp.json()
+            if data.get("results"):
+                r = data["results"][0]
+                return {
+                    "image": (r.get("artworkUrl100") or "").replace("100x100", "60x60"),
+                    "preview": r.get("previewUrl"),
+                }
+    except Exception:
+        pass
+    return {"image": None, "preview": None}
