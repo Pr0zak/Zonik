@@ -93,30 +93,38 @@
 	// Artwork cache — fetches from iTunes Search API
 	let artworkCache = $state({});
 	let artworkQueue = [];
-	let artworkFetching = false;
+	let artworkFlushTimer = null;
 
-	async function processArtworkQueue() {
-		if (artworkFetching) return;
-		artworkFetching = true;
-		while (artworkQueue.length > 0) {
-			const { artist, track, key } = artworkQueue.shift();
-			try {
-				const resp = await api(`/api/discovery/artwork?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`);
-				artworkCache = { ...artworkCache, [key]: resp };
-			} catch {
-				artworkCache = { ...artworkCache, [key]: { image: null, preview: null } };
+	async function flushArtworkQueue() {
+		if (!artworkQueue.length) return;
+		const batch = artworkQueue.splice(0, 20);
+		try {
+			const resp = await api('/api/discovery/artwork/batch', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ items: batch.map(b => ({ artist: b.artist, track: b.track })) }),
+			});
+			if (resp.results) {
+				artworkCache = { ...artworkCache, ...resp.results };
 			}
+		} catch {
+			const failed = {};
+			for (const b of batch) failed[b.key] = { image: null, preview: null };
+			artworkCache = { ...artworkCache, ...failed };
 		}
-		artworkFetching = false;
+		// Process remaining
+		if (artworkQueue.length) flushArtworkQueue();
 	}
 
 	function getArtwork(artist, track) {
 		const key = `${artist}::${track}`.toLowerCase();
 		const cached = artworkCache[key];
 		if (cached === undefined) {
-			artworkCache[key] = null; // mark as loading
+			artworkCache[key] = null; // mark as queued
 			artworkQueue.push({ artist, track, key });
-			processArtworkQueue();
+			// Debounce: wait 50ms to collect all render calls, then batch
+			clearTimeout(artworkFlushTimer);
+			artworkFlushTimer = setTimeout(() => flushArtworkQueue(), 50);
 		}
 		return cached;
 	}

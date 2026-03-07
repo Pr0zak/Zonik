@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -379,26 +380,44 @@ async def lastfm_callback(token: str, request: Request):
     return {"error": data.get("message", "Authentication failed")}
 
 
-@router.get("/artwork")
-async def get_artwork(artist: str = Query(...), track: str = Query(...)):
-    """Proxy iTunes Search API for cover art (avoids CORS issues)."""
+class ArtworkBatchRequest(BaseModel):
+    items: list[dict]  # [{artist, track}]
+
+
+@router.post("/artwork/batch")
+async def get_artwork_batch(req: ArtworkBatchRequest):
+    """Batch fetch artwork from iTunes Search API (up to 20 items, 5 concurrent)."""
+    import asyncio
     import httpx
     import urllib.parse
 
-    q = urllib.parse.quote(f"{artist} {track}")
-    url = f"https://itunes.apple.com/search?term={q}&media=music&entity=song&limit=1"
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url)
-            if resp.status_code != 200:
-                return {"image": None, "preview": None}
-            data = resp.json()
-            if data.get("results"):
-                r = data["results"][0]
-                return {
-                    "image": (r.get("artworkUrl100") or "").replace("100x100", "60x60"),
-                    "preview": r.get("previewUrl"),
-                }
-    except Exception:
-        pass
-    return {"image": None, "preview": None}
+    items = req.items[:20]  # cap at 20
+    results = {}
+    sem = asyncio.Semaphore(5)
+
+    async def fetch_one(client, item):
+        artist = item.get("artist", "")
+        track = item.get("track", "")
+        key = f"{artist}::{track}".lower()
+        async with sem:
+            try:
+                q = urllib.parse.quote(f"{artist} {track}")
+                url = f"https://itunes.apple.com/search?term={q}&media=music&entity=song&limit=1"
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("results"):
+                        r = data["results"][0]
+                        results[key] = {
+                            "image": (r.get("artworkUrl100") or "").replace("100x100", "60x60"),
+                            "preview": r.get("previewUrl"),
+                        }
+                        return
+            except Exception:
+                pass
+            results[key] = {"image": None, "preview": None}
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        await asyncio.gather(*[fetch_one(client, item) for item in items])
+
+    return {"results": results}
