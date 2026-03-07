@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import BrokenProcessPool, ProcessPoolExecutor
 from pathlib import Path
 
 from backend.config import get_settings
@@ -34,6 +34,35 @@ def get_analysis_pool() -> ProcessPoolExecutor:
     return _analysis_pool
 
 
+def _reset_analysis_pool():
+    """Destroy broken pool and create a fresh one."""
+    global _analysis_pool
+    if _analysis_pool is not None:
+        try:
+            _analysis_pool.shutdown(wait=False)
+        except Exception:
+            pass
+    _analysis_pool = None
+    log.warning("Analysis pool reset after worker crash")
+    return get_analysis_pool()
+
+
+def _pre_validate(abs_path: Path) -> str | None:
+    """Quick validation before sending to Essentia. Returns error string or None."""
+    try:
+        import mutagen
+        f = mutagen.File(str(abs_path))
+        if f is None:
+            return "mutagen could not identify file"
+        info = f.info
+        channels = getattr(info, "channels", None)
+        if channels is not None and channels > 2:
+            return f"unsupported channel count: {channels}"
+    except Exception:
+        pass  # If mutagen fails, let Essentia try anyway
+    return None
+
+
 def analyze_track(file_path: str) -> dict | None:
     """Analyze an audio file with Essentia. Returns analysis dict or None.
 
@@ -49,6 +78,12 @@ def analyze_track(file_path: str) -> dict | None:
 
     ext = abs_path.suffix.lower()
     if ext not in ESSENTIA_SUPPORTED_EXTENSIONS:
+        return None
+
+    # Pre-validate to catch known crash triggers before Essentia
+    error = _pre_validate(abs_path)
+    if error:
+        logging.getLogger(__name__).warning(f"Skipping {file_path}: {error}")
         return None
 
     try:
@@ -94,7 +129,30 @@ def analyze_track(file_path: str) -> dict | None:
 
 
 async def analyze_track_async(file_path: str) -> dict | None:
-    """Async wrapper — runs Essentia in a separate process for true parallelism."""
+    """Async wrapper — runs Essentia in a separate process for true parallelism.
+
+    If a worker process segfaults (BrokenProcessPool), recreates the pool
+    and returns None for this track so the job can continue.
+    """
     import asyncio
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(get_analysis_pool(), analyze_track, file_path)
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(get_analysis_pool(), analyze_track, file_path),
+            timeout=120,
+        )
+    except BrokenProcessPool:
+        log.error(f"Worker crashed analyzing {file_path} — resetting pool")
+        _reset_analysis_pool()
+        return None
+    except asyncio.TimeoutError:
+        log.warning(f"Analysis timed out (120s) for {file_path}")
+        return None
+    except Exception as e:
+        log.warning(f"Analysis async error for {file_path}: {e}")
+        # Check if pool is still usable
+        try:
+            get_analysis_pool().submit(lambda: None)
+        except BrokenProcessPool:
+            _reset_analysis_pool()
+        return None
