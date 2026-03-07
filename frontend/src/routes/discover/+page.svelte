@@ -42,7 +42,7 @@
 	let expandedScoreId = $state(null);
 	let recFilter = $state('all');
 	let previewAudio = $state(null);
-	let previewRecId = $state(null);
+	let previewKey = $state(null);
 	let recStats = $state(null);
 	let showBulkMenu = $state(false);
 
@@ -64,19 +64,22 @@
 		return recommendations.filter(r => r.source === key).length;
 	}
 
-	function togglePreview(rec) {
-		if (!rec.preview_url) return;
-		if (previewRecId === rec.id) {
-			// Stop playing
+	function playPreview(url, key) {
+		if (!url) return;
+		if (previewKey === key) {
 			if (previewAudio) { previewAudio.pause(); previewAudio = null; }
-			previewRecId = null;
+			previewKey = null;
 			return;
 		}
 		if (previewAudio) { previewAudio.pause(); }
-		previewAudio = new Audio(rec.preview_url);
-		previewRecId = rec.id;
+		previewAudio = new Audio(url);
+		previewKey = key;
 		previewAudio.play();
-		previewAudio.onended = () => { previewRecId = null; previewAudio = null; };
+		previewAudio.onended = () => { previewKey = null; previewAudio = null; };
+	}
+
+	function togglePreview(rec) {
+		playPreview(rec.preview_url, rec.id);
 	}
 
 	// Search state
@@ -983,7 +986,7 @@
 									{#if rec.preview_url}
 										<button onclick={() => togglePreview(rec)}
 											class="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
-											{#if previewRecId === rec.id}
+											{#if previewKey === rec.id}
 												<Pause class="w-4 h-4 text-white" />
 											{:else}
 												<Play class="w-4 h-4 text-white" />
@@ -1125,17 +1128,30 @@
 							{#each sortedTopTracks as t, i}
 								{@const status = getStatus(t)}
 								{@const art = getArtwork(t.artist, t.name)}
+								{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
 									<td class="px-4 py-3">
 										<div class="flex items-center gap-3">
-											{#if art?.image}
-												<img src={art.image} alt="" class="w-8 h-8 rounded object-cover flex-shrink-0" />
-											{:else}
-												<div class="w-8 h-8 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
-													<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-												</div>
-											{/if}
+											<button onclick={() => playPreview(art?.preview, tKey)}
+												class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+												{#if art?.image}
+													<img src={art.image} alt="" class="w-full h-full object-cover" />
+												{:else}
+													<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+														<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+													</div>
+												{/if}
+												{#if art?.preview}
+													<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
+														{#if previewKey === tKey}
+															<Pause class="w-3.5 h-3.5 text-white" />
+														{:else}
+															<Play class="w-3.5 h-3.5 text-white" />
+														{/if}
+													</div>
+												{/if}
+											</button>
 											<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
 										</div>
 									</td>
@@ -1218,16 +1234,29 @@
 							{#each sortedSimilarTracks as t}
 								{@const status = getStatus(t)}
 								{@const art = getArtwork(t.artist, t.name)}
+								{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3">
 										<div class="flex items-center gap-3">
-											{#if art?.image}
-												<img src={art.image} alt="" class="w-8 h-8 rounded object-cover flex-shrink-0" />
-											{:else}
-												<div class="w-8 h-8 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
-													<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-												</div>
-											{/if}
+											<button onclick={() => playPreview(art?.preview, tKey)}
+												class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+												{#if art?.image}
+													<img src={art.image} alt="" class="w-full h-full object-cover" />
+												{:else}
+													<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+														<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+													</div>
+												{/if}
+												{#if art?.preview}
+													<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
+														{#if previewKey === tKey}
+															<Pause class="w-3.5 h-3.5 text-white" />
+														{:else}
+															<Play class="w-3.5 h-3.5 text-white" />
+														{/if}
+													</div>
+												{/if}
+											</button>
 											<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
 										</div>
 									</td>
