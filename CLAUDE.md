@@ -166,7 +166,8 @@ docs/                  # Installation, configuration, API reference, development
 - Essentia supported formats: ESSENTIA_SUPPORTED_EXTENSIONS allowlist in analyzer.py (.mp3, .flac, .wav, .ogg, .m4a, .aac, .wma, .aiff, .alac)
 - Audio analysis resilience: ProcessPoolExecutor with BrokenProcessPool recovery — if a worker crashes (segfault), pool is recreated and job continues; 120s per-track timeout prevents hangs
 - Audio analysis performance: ProcessPoolExecutor (true multi-core parallelism), nice 15 priority, DB commits every 10 tracks, WS broadcasts every 10 tracks
-- Analysis progress UI: shows job's own progress/total (not added to stale stats)
+- Analysis progress UI: shows job's own progress/total (not added to stale stats); skipped tracks shown as amber segment in progress bar with format breakdown tooltip
+- Analysis stats: /api/analysis/stats returns analyzable (total minus unsupported formats), skipped count, skipped_by_format breakdown; analysis_pct based on analyzable tracks
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
