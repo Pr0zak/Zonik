@@ -99,11 +99,11 @@
 		if (!artworkQueue.length) return;
 		const batch = artworkQueue.splice(0, 100);
 		try {
-			const resp = await api('/api/discovery/artwork/batch', {
+			const resp = await fetch('/api/discovery/artwork/batch', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ items: batch.map(b => ({ artist: b.artist, track: b.track })) }),
-			});
+			}).then(r => r.json());
 			if (resp.results) {
 				artworkCache = { ...artworkCache, ...resp.results };
 			}
