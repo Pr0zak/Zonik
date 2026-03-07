@@ -488,6 +488,14 @@
 		schedRunning[name] = false;
 	}
 
+	async function updateSchedConfig(name, configUpdates) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newConfig = { ...t.config, ...configUpdates };
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
+		schedTasks[name] = { ...t, config: newConfig };
+	}
+
 	async function toggleAutoDownload(name) {
 		const t = schedTasks[name];
 		if (!t) return;
@@ -675,7 +683,25 @@
 		{#if schedExpanded}
 			<Card padding="p-4" class="mb-4">
 				{#if schedTasks.recommendation_refresh}
-					<ScheduleControl taskName="recommendation_refresh" label="AI Recommendations" enabled={schedTasks.recommendation_refresh.enabled} intervalHours={schedTasks.recommendation_refresh.interval_hours} runAt={schedTasks.recommendation_refresh.run_at} lastRunAt={schedTasks.recommendation_refresh.last_run_at} running={schedRunning.recommendation_refresh} onToggle={() => toggleSched('recommendation_refresh')} onUpdate={(u) => updateSched('recommendation_refresh', u)} onRun={() => runSched('recommendation_refresh')} />
+					<ScheduleControl taskName="recommendation_refresh" label="Music Discovery AI" enabled={schedTasks.recommendation_refresh.enabled} intervalHours={schedTasks.recommendation_refresh.interval_hours} runAt={schedTasks.recommendation_refresh.run_at} lastRunAt={schedTasks.recommendation_refresh.last_run_at} running={schedRunning.recommendation_refresh} onToggle={() => toggleSched('recommendation_refresh')} onUpdate={(u) => updateSched('recommendation_refresh', u)} onRun={() => runSched('recommendation_refresh')} autoDownload={schedTasks.recommendation_refresh.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('recommendation_refresh')} />
+					{#if schedTasks.recommendation_refresh.config?.auto_download}
+						<div class="flex items-center gap-4 ml-6 mt-1 mb-2">
+							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+								Min Score
+								<input type="number" min="0.1" max="1.0" step="0.05"
+									value={schedTasks.recommendation_refresh.config?.min_score ?? 0.7}
+									onchange={(e) => updateSchedConfig('recommendation_refresh', { min_score: parseFloat(e.target.value) })}
+									class="w-16 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
+							</label>
+							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
+								Max Downloads
+								<input type="number" min="1" max="50" step="1"
+									value={schedTasks.recommendation_refresh.config?.max_downloads ?? 10}
+									onchange={(e) => updateSchedConfig('recommendation_refresh', { max_downloads: parseInt(e.target.value) })}
+									class="w-16 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
+							</label>
+						</div>
+					{/if}
 				{/if}
 				{#if schedTasks.lastfm_top_tracks}
 					<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} autoDownload={schedTasks.lastfm_top_tracks.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('lastfm_top_tracks')} />

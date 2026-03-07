@@ -130,10 +130,16 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                 await broadcast_job_update({
                     "id": job_id, "type": "recommendation_refresh",
                     "status": "running", "progress": current, "total": total,
-                    "description": description or "AI Recommendations",
+                    "description": description or "Music Discovery AI",
                 })
             result = await refresh_recommendations(db, on_progress=on_progress)
             job.result = json.dumps(result)
+
+            # Auto-download top recommendations if configured
+            if task_config.get("auto_download") and result.get("recommendations_saved", 0) > 0:
+                min_score = task_config.get("min_score", 0.7)
+                max_downloads = task_config.get("max_downloads", 10)
+                await _auto_download_recommendations(db, min_score, max_downloads)
 
         elif task_name == "upgrade_scan":
             await _run_upgrade_scan(db, job, count=count or 50, config=task_config)
@@ -169,6 +175,33 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                     await _auto_download_missing(missing, task_name)
             except Exception as e:
                 log.error(f"Auto-download after {task_name} failed: {e}")
+
+
+async def _auto_download_recommendations(db: AsyncSession, min_score: float, max_downloads: int):
+    """Auto-download top pending recommendations above score threshold."""
+    from sqlalchemy import select
+    from backend.models.recommendation import Recommendation
+
+    result = await db.execute(
+        select(Recommendation)
+        .where(Recommendation.status == "pending", Recommendation.score >= min_score)
+        .order_by(Recommendation.score.desc())
+        .limit(max_downloads)
+    )
+    recs = result.scalars().all()
+    if not recs:
+        log.info(f"No recommendations above {min_score} to auto-download")
+        return
+
+    missing = [{"artist": r.artist, "track": r.track, "rec_id": r.id} for r in recs]
+    log.info(f"Auto-downloading {len(missing)} recommendations (score >= {min_score})")
+
+    await _auto_download_missing(missing, "recommendation_refresh")
+
+    # Mark downloaded recommendations
+    for r in recs:
+        r.status = "downloaded"
+    await db.commit()
 
 
 async def _auto_download_missing(missing: list[dict], source: str):
