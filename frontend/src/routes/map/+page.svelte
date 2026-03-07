@@ -422,7 +422,7 @@
 	});
 </script>
 
-<div class="flex flex-col h-[calc(100vh-4rem)]">
+<div class="flex flex-col h-[calc(100vh-8rem)] -m-4 md:-m-6">
 	<div class="px-6 pt-5 pb-3 flex items-center justify-between flex-wrap gap-2">
 		<PageHeader title="Music Map" icon={Network} color="var(--color-map)"
 			subtitle={graphData ? `${graphData.meta.total_artists} artists \u00b7 ${graphData.meta.total_genres} genres \u00b7 ${graphData.meta.total_tracks} tracks` : ''} />
