@@ -101,6 +101,13 @@
 		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
 		schedTasks[name] = { ...t, config: { ...t.config, ...newConfig } };
 	}
+	async function updateSchedConfig(name, configUpdates) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const newConfig = { ...t.config, ...configUpdates };
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
+		schedTasks[name] = { ...t, config: newConfig };
+	}
 
 	// Cleanup state
 	let cleanupTab = $state(null); // 'orphans' | 'duplicates' | 'organize'
@@ -666,6 +673,33 @@
 				{/if}
 				{#if schedTasks.upgrade_scan}
 					<ScheduleControl taskName="upgrade_scan" label="Quality Upgrade Scan" enabled={schedTasks.upgrade_scan.enabled} intervalHours={schedTasks.upgrade_scan.interval_hours} runAt={schedTasks.upgrade_scan.run_at} lastRunAt={schedTasks.upgrade_scan.last_run_at} count={schedTasks.upgrade_scan.count} running={schedRunning.upgrade_scan} onToggle={() => toggleSched('upgrade_scan')} onUpdate={(u) => updateSched('upgrade_scan', u)} onRun={() => runSched('upgrade_scan')} autoDownload={schedTasks.upgrade_scan.config?.auto_download} onToggleAutoDownload={() => toggleAutoDownload('upgrade_scan')} />
+					<div class="flex items-center gap-4 mt-2 ml-1 text-xs">
+						<label class="flex items-center gap-1.5 text-[var(--text-muted)]">
+							Mode
+							<select
+								value={schedTasks.upgrade_scan.config?.mode || 'low_bitrate'}
+								onchange={(e) => updateSchedConfig('upgrade_scan', { mode: e.target.value })}
+								class="bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-xs text-[var(--text-body)]"
+							>
+								<option value="low_bitrate">Low Bitrate</option>
+								<option value="lossy_to_lossless">Lossy → Lossless</option>
+								<option value="all_lossy">All Lossy</option>
+							</select>
+						</label>
+						{#if (schedTasks.upgrade_scan.config?.mode || 'low_bitrate') === 'low_bitrate'}
+							<label class="flex items-center gap-1.5 text-[var(--text-muted)]">
+								Max Bitrate
+								<input
+									type="number"
+									value={schedTasks.upgrade_scan.config?.max_bitrate || 256}
+									onchange={(e) => updateSchedConfig('upgrade_scan', { max_bitrate: parseInt(e.target.value) || 256 })}
+									min="64" max="512" step="32"
+									class="w-20 bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-xs text-[var(--text-body)]"
+								/>
+								<span class="text-[var(--text-disabled)]">kbps</span>
+							</label>
+						{/if}
+					</div>
 				{/if}
 			</Card>
 		{/if}
