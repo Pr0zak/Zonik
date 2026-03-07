@@ -521,179 +521,48 @@ async def _do_download_inner(db, job, job_id, desc, req):
 
 @router.post("/bulk")
 async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTasks):
-    """Download multiple tracks in parallel."""
-    job_id = str(uuid.uuid4())
+    """Download multiple tracks as individual download jobs."""
+    sem = _get_semaphore()
 
-    async def do_bulk():
-        async with async_session() as db:
-            from backend.config import get_settings
-            from backend.services.scanner import import_downloaded_file
-            import asyncio
-            import time as _time
+    async def download_one(artist: str, track: str):
+        job_id = str(uuid.uuid4())
+        desc = f"{artist} — {track}"
+        dl_req = DownloadRequest(artist=artist, track=track)
+        async with async_session() as sess:
+            if sem.locked():
+                job = Job(
+                    id=job_id, type="download", card="dl", status="pending",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
+                )
+                sess.add(job)
+                await sess.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
+                async with sem:
+                    job.status = "running"
+                    await sess.merge(job)
+                    await sess.commit()
+                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                    await _do_download_inner(sess, job, job_id, desc, dl_req)
+            else:
+                job = Job(
+                    id=job_id, type="download", card="dl", status="running",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
+                )
+                sess.add(job)
+                await sess.commit()
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+                async with sem:
+                    await _do_download_inner(sess, job, job_id, desc, dl_req)
 
-            track_statuses = [
-                {"artist": t.get("artist", ""), "track": t.get("track", ""), "status": "pending"}
-                for t in req.tracks
-            ]
-            job = Job(
-                id=job_id, type="bulk_download", card="dl", status="running",
-                total=len(req.tracks), started_at=datetime.utcnow(),
-                tracks=json.dumps(track_statuses),
-            )
-            db.add(job)
-            await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": 0, "total": len(req.tracks)})
+    for t in req.tracks:
+        artist = t.get("artist", "")
+        track = t.get("track", "")
+        if artist and track:
+            background_tasks.add_task(download_one, artist, track)
 
-            semaphore = _get_semaphore()
-            max_retries = 3
-
-            # Try native client
-            native_client = None
-            try:
-                from backend.soulseek import get_client
-                from backend.soulseek.search import search_multi_strategy_native
-                from backend.soulseek.protocol.types import TransferState
-                native_client = get_client()
-            except Exception:
-                pass
-
-            async def poll_transfer(client, username, filename, timeout=150):
-                """Poll transfer until done. Returns (save_path, error)."""
-                queue_start = _time.monotonic()
-                last_bytes = 0
-                stall_start = None
-                for poll_i in range(timeout):
-                    await asyncio.sleep(2)
-                    if poll_i % 5 == 0 and await check_cancelled():
-                        return None, "Cancelled by user"
-                    transfer = client.transfers.get_transfer(username, filename)
-                    if not transfer:
-                        return None, "Transfer removed"
-                    if transfer.state == TransferState.COMPLETED:
-                        return transfer.save_path, None
-                    if transfer.state in (TransferState.FAILED, TransferState.DENIED):
-                        return None, transfer.error or str(transfer.state)
-                    if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
-                        if _time.monotonic() - queue_start > 120:
-                            return None, "Peer did not respond"
-                        continue
-                    if transfer.received_bytes > last_bytes:
-                        last_bytes = transfer.received_bytes
-                        stall_start = None
-                    elif stall_start is None:
-                        stall_start = _time.monotonic()
-                    elif _time.monotonic() - stall_start > 60:
-                        return None, "Transfer stalled"
-                return None, "Timeout"
-
-            cancelled = False
-
-            async def check_cancelled():
-                nonlocal cancelled
-                if cancelled:
-                    return True
-                await db.refresh(job, ["status"])
-                if job.status == "failed":
-                    cancelled = True
-                    return True
-                return False
-
-            async def download_one(idx: int, t: dict):
-                async with semaphore:
-                    if await check_cancelled():
-                        track_statuses[idx]["status"] = "skipped"
-                        track_statuses[idx]["reason"] = "Cancelled"
-                        return
-                    artist = t.get("artist", "")
-                    track = t.get("track", "")
-                    try:
-                        reason = await is_blacklisted(db, artist, track)
-                        if reason:
-                            track_statuses[idx]["status"] = "skipped"
-                            track_statuses[idx]["reason"] = reason
-                        elif native_client:
-                            candidates = await search_multi_strategy_native(native_client, artist, track)
-                            if not candidates:
-                                track_statuses[idx]["status"] = "failed"
-                                track_statuses[idx]["error"] = "No results"
-                            else:
-                                last_error = ""
-                                for cand in candidates[:max_retries]:
-                                    un = cand["username"]
-                                    fn = cand["filename"]
-                                    short = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                                    try:
-                                        await native_client.download(un, fn)
-                                        save_path, error = await poll_transfer(native_client, un, fn)
-                                        if save_path:
-                                            await native_client.reputation.record_success(un)
-                                            import os
-                                            fsize = os.path.getsize(save_path) if save_path else 0
-                                            track_id = await import_downloaded_file(db, save_path, artist_hint=artist)
-                                            track_statuses[idx]["status"] = "downloaded"
-                                            track_statuses[idx]["username"] = un
-                                            track_statuses[idx]["filename"] = short
-                                            track_statuses[idx]["file_size"] = fsize
-                                            track_statuses[idx]["track_id"] = track_id
-                                            break
-                                        last_error = error or "Transfer failed"
-                                        await native_client.reputation.record_failure(un)
-                                    except Exception as e:
-                                        last_error = str(e)
-                                        await native_client.reputation.record_failure(un)
-                                else:
-                                    track_statuses[idx]["status"] = "failed"
-                                    track_statuses[idx]["error"] = last_error
-                        else:
-                            from backend.services.soulseek import search_and_download
-                            last_error = ""
-                            for attempt in range(max_retries):
-                                result = await search_and_download(artist, track)
-                                ok = result.get("ok") or result.get("status") == "downloading"
-                                if ok:
-                                    track_statuses[idx]["status"] = "downloaded"
-                                    track_statuses[idx]["username"] = result.get("username", "")
-                                    fn = result.get("filename", "")
-                                    track_statuses[idx]["filename"] = fn.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if fn else ""
-                                    track_statuses[idx]["file_size"] = result.get("size", 0)
-                                    break
-                                last_error = result.get("message", "")
-                                if attempt < max_retries - 1:
-                                    await asyncio.sleep(5)
-                            else:
-                                track_statuses[idx]["status"] = "failed"
-                                track_statuses[idx]["error"] = last_error
-                    except Exception as e:
-                        track_statuses[idx]["status"] = "failed"
-                        track_statuses[idx]["error"] = str(e)
-
-                    job.progress = sum(1 for s in track_statuses if s["status"] not in ("pending",))
-                    job.tracks = json.dumps(track_statuses)
-                    await db.merge(job)
-                    await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": "running", "progress": job.progress, "total": len(req.tracks)})
-
-            tasks = [download_one(i, t) for i, t in enumerate(req.tracks)]
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-            await db.refresh(job, ["status"])
-            if job.status != "failed":
-                any_ok = any(s["status"] == "downloaded" for s in track_statuses)
-                job.status = "completed" if any_ok else "failed"
-            job.finished_at = datetime.utcnow()
-            job.tracks = json.dumps(track_statuses)
-            await db.merge(job)
-            await db.commit()
-            await broadcast_job_update({"id": job_id, "type": "bulk_download", "status": job.status, "progress": len(req.tracks), "total": len(req.tracks)})
-            # Clean up zero-byte and non-audio leftovers
-            try:
-                from backend.services.scanner import cleanup_download_dir
-                cleanup_download_dir()
-            except Exception:
-                pass
-
-    background_tasks.add_task(do_bulk)
-    return {"job_id": job_id, "total": len(req.tracks)}
+    return {"ok": True, "total": len(req.tracks)}
 
 
 class CancelTransferRequest(BaseModel):
