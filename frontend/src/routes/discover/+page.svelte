@@ -1531,20 +1531,15 @@
 						{#each remixes as r}
 							{@const key = `${r.artist}::${r.name}`.toLowerCase()}
 							{@const status = trackStatus[key]}
+							{@const art = getArtwork(r.artist, r.name)}
 							<div class="px-4 py-3 flex items-center gap-4 hover:bg-[var(--bg-hover)] transition-colors">
-								{#await getArtwork(r.artist, r.name)}
+								{#if art?.image}
+									<img src={art.image} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0" />
+								{:else}
 									<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
 										<Music class="w-4 h-4 text-[var(--text-disabled)]" />
 									</div>
-								{:then art}
-									{#if art}
-										<img src={art} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0" />
-									{:else}
-										<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
-											<Music class="w-4 h-4 text-[var(--text-disabled)]" />
-										</div>
-									{/if}
-								{/await}
+								{/if}
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] truncate">{r.name}</p>
 									<p class="text-xs text-[var(--text-muted)] truncate">{r.artist}</p>
