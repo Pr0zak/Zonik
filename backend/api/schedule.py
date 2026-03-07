@@ -30,6 +30,7 @@ DEFAULT_TASKS = [
     {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
     {"task_name": "recommendation_refresh", "interval_hours": 24, "run_at": "05:30"},
     {"task_name": "upgrade_scan", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0, "count": 50},
+    {"task_name": "remix_discovery", "interval_hours": 168, "run_at": "04:00", "day_of_week": 5, "count": 30},
 ]
 
 TASK_LABELS = {
@@ -47,6 +48,7 @@ TASK_LABELS = {
     "library_cleanup": "Orphan Cleanup",
     "recommendation_refresh": "Music Discovery AI",
     "upgrade_scan": "Quality Upgrade Scan",
+    "remix_discovery": "Remix Discovery",
 }
 
 TASK_DESCRIPTIONS = {
@@ -64,6 +66,7 @@ TASK_DESCRIPTIONS = {
     "library_cleanup": "Remove orphaned database entries for files that no longer exist on disk.",
     "recommendation_refresh": "Build a taste profile from your library (genres, artists, audio features, Last.fm history), then find and score new tracks via similar artists, genre matching, and trending charts. Optionally re-ranks with Claude AI.",
     "upgrade_scan": "Find low-quality tracks (low bitrate, lossy formats) and search Soulseek for higher-quality replacements.",
+    "remix_discovery": "Search for remixes, edits, and alternate versions of popular tracks in your library.",
 }
 
 

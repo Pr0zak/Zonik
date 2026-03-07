@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { parseUTC } from '$lib/utils.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3 } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -30,6 +30,11 @@
 	// Similar Artists state
 	let similarArtists = $state([]);
 	let artistsLoading = $state(false);
+
+	// Remixes state
+	let remixes = $state([]);
+	let remixLoading = $state(false);
+	let remixSource = $state('popular');
 
 	// For You state
 	let recommendations = $state([]);
@@ -149,6 +154,7 @@
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
 		{ key: 'search', label: 'Search', icon: Search },
+		{ key: 'remixes', label: 'Remixes', icon: Disc3 },
 	];
 
 	function trackKey(t) {
@@ -239,6 +245,7 @@
 		if (tab === 'top' && !topTracks.length && !topLoading) scanTopTracks();
 		if (tab === 'similar' && !similarTracks.length && !similarLoading) scanSimilarTracks();
 		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
+		if (tab === 'remixes' && !remixes.length && !remixLoading) loadRemixes();
 	}
 
 	let sortedTopTracks = $derived(sortTracks(topTracks));
@@ -367,6 +374,60 @@
 			artistsLoading = false;
 		}
 	}
+
+	async function downloadAllRemixes() {
+		const missing = remixes.filter(r => !r.in_library && !trackStatus[`${r.artist}::${r.name}`.toLowerCase()]);
+		if (!missing.length) return;
+		for (const r of missing) trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'queued';
+		for (const r of missing) {
+			try {
+				await fetch('/api/download/trigger', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ artist: r.artist, track: r.name })
+				});
+				trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'downloading';
+			} catch {
+				trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'failed';
+			}
+		}
+		addToast(`Started downloading ${missing.length} remixes`, 'success');
+	}
+
+	async function loadRemixes() {
+		remixLoading = true;
+		try {
+			const data = await api.getRemixSuggestions({ source: remixSource, tracks_to_scan: 20, limit: 50 });
+			remixes = data.remixes || [];
+			// Sync download statuses
+			for (const r of remixes) {
+				if (r.in_library) {
+					trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'completed';
+				}
+			}
+		} catch (e) {
+			addToast('Failed to load remix suggestions', 'error');
+		} finally {
+			remixLoading = false;
+		}
+	}
+
+	const versionTypeColors = {
+		remix: 'bg-purple-500/20 text-purple-400',
+		dub: 'bg-blue-500/20 text-blue-400',
+		extended: 'bg-green-500/20 text-green-400',
+		live: 'bg-red-500/20 text-red-400',
+		acoustic: 'bg-amber-500/20 text-amber-400',
+		instrumental: 'bg-slate-500/20 text-slate-400',
+		edit: 'bg-cyan-500/20 text-cyan-400',
+		radio: 'bg-pink-500/20 text-pink-400',
+		club: 'bg-indigo-500/20 text-indigo-400',
+		vip: 'bg-orange-500/20 text-orange-400',
+		bootleg: 'bg-rose-500/20 text-rose-400',
+		mashup: 'bg-teal-500/20 text-teal-400',
+		rework: 'bg-violet-500/20 text-violet-400',
+		remaster: 'bg-emerald-500/20 text-emerald-400',
+	};
 
 	// --- Actions ---
 
@@ -1425,6 +1486,102 @@
 			{:else}
 				<Card>
 					<EmptyState title="No similar artists" description="Star some tracks first to get artist suggestions." />
+				</Card>
+			{/if}
+
+		{:else if activeTab === 'remixes'}
+			<!-- Source pills + refresh -->
+			<div class="flex items-center gap-3 mb-4 flex-wrap">
+				{#each [{ key: 'popular', label: 'Popular' }, { key: 'favorites', label: 'Favorites' }, { key: 'random', label: 'Random' }] as src}
+					<button
+						onclick={() => { remixSource = src.key; loadRemixes(); }}
+						class="px-3 py-1.5 text-xs rounded-md transition-colors {remixSource === src.key ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+					>{src.label}</button>
+				{/each}
+				<Button variant="ghost" onclick={loadRemixes} disabled={remixLoading}>
+					{#if remixLoading}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
+					Refresh
+				</Button>
+				{#if remixes.filter(r => !r.in_library).length > 0}
+					<Button variant="primary" onclick={downloadAllRemixes}>
+						<Download class="w-4 h-4" />
+						Download All Missing ({remixes.filter(r => !r.in_library).length})
+					</Button>
+				{/if}
+			</div>
+
+			{#if remixLoading}
+				<Card padding="p-0">
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each Array(10) as _}
+							<div class="px-4 py-3 flex items-center gap-4">
+								<Skeleton class="w-10 h-10 rounded" />
+								<div class="flex-1 space-y-1">
+									<Skeleton class="h-4 w-48" />
+									<Skeleton class="h-3 w-32" />
+								</div>
+								<Skeleton class="h-5 w-16 rounded-full" />
+							</div>
+						{/each}
+					</div>
+				</Card>
+			{:else if remixes.length}
+				<Card padding="p-0">
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each remixes as r}
+							{@const key = `${r.artist}::${r.name}`.toLowerCase()}
+							{@const status = trackStatus[key]}
+							<div class="px-4 py-3 flex items-center gap-4 hover:bg-[var(--bg-hover)] transition-colors">
+								{#await getArtwork(r.artist, r.name)}
+									<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
+										<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+									</div>
+								{:then art}
+									{#if art}
+										<img src={art} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0" />
+									{:else}
+										<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex items-center justify-center flex-shrink-0">
+											<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+								{/await}
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-[var(--text-primary)] truncate">{r.name}</p>
+									<p class="text-xs text-[var(--text-muted)] truncate">{r.artist}</p>
+									{#if r.source_track}
+										<p class="text-[10px] text-[var(--text-disabled)]">from: {r.source_artist} — {r.source_track}</p>
+									{/if}
+								</div>
+								{#if r.version_type}
+									<span class="px-2 py-0.5 rounded-full text-[10px] font-medium {versionTypeColors[r.version_type] || 'bg-gray-500/20 text-gray-400'}">{r.version_type}</span>
+								{/if}
+								{#if r.listeners}
+									<span class="text-xs text-[var(--text-muted)] font-mono hidden sm:inline">{Number(r.listeners).toLocaleString()}</span>
+								{/if}
+								<div class="flex items-center gap-2 flex-shrink-0">
+									{#if r.in_library || status === 'completed'}
+										<Badge variant="success">In Library</Badge>
+									{:else if status === 'downloading' || status === 'queued'}
+										<Loader2 class="w-4 h-4 text-[var(--color-info)] animate-spin" />
+									{:else if status === 'failed'}
+										<button onclick={() => downloadTrack({artist: r.artist, name: r.name})}
+											class="p-1.5 text-red-400 hover:text-red-300 transition-colors" title="Retry download">
+											<X class="w-4 h-4" />
+										</button>
+									{:else}
+										<button onclick={() => downloadTrack({artist: r.artist, name: r.name})}
+											class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Download">
+											<Download class="w-4 h-4" />
+										</button>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				</Card>
+			{:else}
+				<Card>
+					<EmptyState icon={Disc3} title="No remixes found" description="Try a different source or play more tracks to build history." />
 				</Card>
 			{/if}
 		{/if}

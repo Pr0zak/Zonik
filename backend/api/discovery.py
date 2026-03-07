@@ -346,6 +346,101 @@ async def find_remixes(
     }
 
 
+@router.get("/remix-suggestions")
+async def remix_suggestions(
+    source: str = Query("popular", pattern="^(popular|favorites|random)$"),
+    tracks_to_scan: int = Query(20, le=50),
+    limit: int = Query(50, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Find remixes across multiple library tracks for bulk discovery."""
+    import asyncio
+    from sqlalchemy import func as sqfunc, or_, and_
+    from backend.services.remix_discovery import find_remixes as _find_remixes
+
+    # Pick source tracks
+    if source == "favorites":
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .join(Favorite, Favorite.track_id == Track.id)
+            .order_by(sqfunc.random())
+            .limit(tracks_to_scan)
+        )
+    elif source == "popular":
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .where(Track.play_count > 0)
+            .order_by(Track.play_count.desc())
+            .limit(tracks_to_scan)
+        )
+    else:  # random
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .order_by(sqfunc.random())
+            .limit(tracks_to_scan)
+        )
+    source_tracks = result.scalars().all()
+
+    # Rate-limited remix search
+    sem = asyncio.Semaphore(3)
+    all_remixes = []
+    seen: set[str] = set()
+
+    async def scan_one(t):
+        if not t.artist:
+            return []
+        async with sem:
+            return await _find_remixes(t.artist.name, t.title, limit=5)
+
+    tasks = [scan_one(t) for t in source_tracks]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for t, remix_list in zip(source_tracks, results):
+        if isinstance(remix_list, Exception):
+            continue
+        for r in remix_list:
+            key = normalize_text(f"{r['artist']} {r['name']}")
+            if key in seen:
+                continue
+            seen.add(key)
+            r["source_track"] = t.title
+            r["source_artist"] = t.artist.name if t.artist else ""
+            all_remixes.append(r)
+            if len(all_remixes) >= limit:
+                break
+        if len(all_remixes) >= limit:
+            break
+
+    all_remixes = all_remixes[:limit]
+
+    # Batch library match
+    if all_remixes:
+        conditions = [
+            and_(
+                sqfunc.lower(Track.title) == r["name"].lower(),
+                sqfunc.lower(Artist.name) == r["artist"].lower(),
+            )
+            for r in all_remixes
+        ]
+        lib_result = await db.execute(
+            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(or_(*conditions))
+        )
+        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+
+        for r in all_remixes:
+            key = (r["name"].lower(), r["artist"].lower())
+            matched_id = lib_map.get(key)
+            r["in_library"] = matched_id is not None
+            r["track_id"] = matched_id
+
+    return {
+        "remixes": all_remixes,
+        "source_tracks_scanned": len(source_tracks),
+    }
+
+
 @router.get("/artist-info")
 async def artist_info(artist: str):
     """Get detailed artist info from Last.fm."""
