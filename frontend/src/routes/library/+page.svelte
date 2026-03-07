@@ -688,7 +688,7 @@
 						</label>
 						{#if (schedTasks.upgrade_scan.config?.mode || 'low_bitrate') === 'low_bitrate'}
 							<label class="flex items-center gap-1.5 text-[var(--text-muted)]">
-								Max Bitrate
+								Upgrade Under
 								<input
 									type="number"
 									value={schedTasks.upgrade_scan.config?.max_bitrate || 256}
