@@ -75,7 +75,7 @@ def generate_embedding(file_path: str) -> bytes | None:
         # Load audio (CLAP expects 48kHz)
         audio, sr = librosa.load(str(abs_path), sr=48000, duration=30)
 
-        inputs = processor(audios=audio, sampling_rate=48000, return_tensors="pt")
+        inputs = processor(audio=audio, sampling_rate=48000, return_tensors="pt")
 
         if settings.analysis.use_gpu and torch.cuda.is_available():
             inputs = {k: v.cuda() for k, v in inputs.items()}
