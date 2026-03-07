@@ -274,10 +274,18 @@
 					<AudioWaveform class="w-4 h-4 text-[var(--color-accent)]" />
 					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Audio Analyzed</span>
 				</div>
-				<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.analyzed} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.total_tracks}</span></p>
-				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
-					<div class="h-full bg-[var(--color-accent)] rounded-full transition-all" style="width: {stats.analysis_pct}%"></div>
+				<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.analyzed} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.analyzable ?? stats.total_tracks}</span></p>
+				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden flex">
+					<div class="h-full bg-[var(--color-accent)] transition-all" style="width: {stats.analyzable ? (stats.analyzed / stats.analyzable * 100) : stats.analysis_pct}%"></div>
+					{#if stats.skipped > 0}
+						<div class="h-full bg-amber-600/60 transition-all" style="width: {stats.analyzable ? (stats.skipped / stats.total_tracks * 100) : 0}%"></div>
+					{/if}
 				</div>
+				{#if stats.skipped > 0}
+					<p class="text-[10px] text-amber-500 mt-1" title={Object.entries(stats.skipped_by_format || {}).map(([f, c]) => `${c} ${f}`).join(', ')}>
+						{stats.skipped} skipped — unsupported format ({Object.keys(stats.skipped_by_format || {}).join(', ')})
+					</p>
+				{/if}
 				{#if analysisJob}
 					{@const ap = analysisProgress(analysisJob)}
 					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">

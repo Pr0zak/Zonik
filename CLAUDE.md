@@ -162,10 +162,11 @@ docs/                  # Installation, configuration, API reference, development
 - Soulseek stats history: background collector snapshots stats every 5 minutes into soulseek_snapshots table (auto-pruned after 7 days)
 - Soulseek stats charts: /api/download/soulseek-stats/history?hours=24 powers 4 Chart.js line charts (peers, transfers, speed, bandwidth) with 6h/24h/3d/7d range selector
 - Scheduled audio_analysis: per-track try/except so individual track failures don't mark entire job as failed
-- Essentia segfault guard: .opus files skipped before reaching MonoLoader (C++ segfault kills process, uncatchable by Python)
+- Essentia segfault guard: .opus files skipped via ESSENTIA_SUPPORTED_EXTENSIONS allowlist; >2 channel files pre-validated with mutagen and skipped
 - Essentia supported formats: ESSENTIA_SUPPORTED_EXTENSIONS allowlist in analyzer.py (.mp3, .flac, .wav, .ogg, .m4a, .aac, .wma, .aiff, .alac)
+- Audio analysis resilience: ProcessPoolExecutor with BrokenProcessPool recovery — if a worker crashes (segfault), pool is recreated and job continues; 120s per-track timeout prevents hangs
 - Audio analysis performance: ProcessPoolExecutor (true multi-core parallelism), nice 15 priority, DB commits every 10 tracks, WS broadcasts every 10 tracks
-- Analysis progress UI: shows (already_analyzed + job_progress) / total_tracks to align with stats card
+- Analysis progress UI: shows job's own progress/total (not added to stale stats)
 - Enrichment: per-track 45s timeout via asyncio.wait_for, concurrent MusicBrainz + Last.fm via asyncio.gather, cover art 20s timeout
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
@@ -252,7 +253,8 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation cover art: image_url + preview_url columns on Recommendation model, fetched from iTunes Search API (no key needed, 300x300 art + 30s preview)
 - Recommendation genre scoring: Last.fm tags fetched per candidate via track.getInfo, scored as weighted overlap with user's genre_distribution (replaces weak pattern matching)
 - Recommendation source filters: frontend pills (All/Similar/Artists/Genre/Trending/AI) filter by existing source field, with per-filter count badges
-- Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode + max_bitrate
+- Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode (low_bitrate/lossy_to_lossless/all_lossy) + max_bitrate via UI selectors
+- Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
 - Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)
 - Library page layout: pagination above schedule/danger zone sections; orphan cleanup ScheduleControl moved into Danger Zone card
 

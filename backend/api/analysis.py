@@ -27,16 +27,33 @@ router = APIRouter()
 @router.get("/stats")
 async def analysis_stats(db: AsyncSession = Depends(get_db)):
     """Get analysis coverage statistics."""
+    from backend.services.analyzer import ESSENTIA_SUPPORTED_EXTENSIONS
+
     total_tracks = (await db.execute(select(func.count(Track.id)))).scalar() or 0
     analyzed = (await db.execute(select(func.count(TrackAnalysis.track_id)))).scalar() or 0
     with_embeddings = (await db.execute(select(func.count(TrackEmbedding.track_id)))).scalar() or 0
 
+    # Count tracks with unsupported formats (skipped by Essentia)
+    supported_fmts = [ext.lstrip(".") for ext in ESSENTIA_SUPPORTED_EXTENSIONS]
+    skipped_result = await db.execute(
+        select(Track.format, func.count(Track.id))
+        .where(Track.format.notin_(supported_fmts))
+        .group_by(Track.format)
+    )
+    skipped_by_format = {fmt: cnt for fmt, cnt in skipped_result.all()}
+    skipped_total = sum(skipped_by_format.values())
+
+    analyzable = total_tracks - skipped_total
+
     return {
         "total_tracks": total_tracks,
         "analyzed": analyzed,
+        "analyzable": analyzable,
         "with_embeddings": with_embeddings,
-        "analysis_pct": round(analyzed / total_tracks * 100, 1) if total_tracks else 0,
+        "analysis_pct": round(analyzed / analyzable * 100, 1) if analyzable else 0,
         "embedding_pct": round(with_embeddings / total_tracks * 100, 1) if total_tracks else 0,
+        "skipped": skipped_total,
+        "skipped_by_format": skipped_by_format,
     }
 
 
