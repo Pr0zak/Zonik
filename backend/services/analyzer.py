@@ -13,8 +13,11 @@ log = logging.getLogger(__name__)
 
 
 # Formats Essentia MonoLoader can decode (via FFmpeg/libav internally).
-# .opus causes a segfault in Essentia's C++ AudioLoader — skip it entirely.
-ESSENTIA_SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".aiff", ".alac"}
+# .opus is converted to temp .wav via ffmpeg before analysis (MonoLoader segfaults on opus).
+ESSENTIA_SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aac", ".wma", ".aiff", ".alac", ".opus"}
+
+# Formats that need ffmpeg pre-conversion (Essentia can't load directly)
+_NEEDS_CONVERSION = {".opus"}
 
 # ProcessPoolExecutor for CPU-bound Essentia work — true parallelism across cores.
 # Workers = CPU count - 1 (leave one core for the event loop / HTTP serving).
@@ -87,11 +90,41 @@ def analyze_track(file_path: str) -> dict | None:
         logging.getLogger(__name__).warning(f"Skipping {file_path}: {error}")
         return None
 
+    # Convert opus (and other unsupported codecs) to temp wav via ffmpeg
+    tmp_wav = None
+    analysis_path = abs_path
+    if ext in _NEEDS_CONVERSION:
+        import subprocess
+        import tempfile
+        try:
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(tmp_fd)
+            tmp_wav = Path(tmp_path)
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-i", str(abs_path), "-ar", "44100", "-ac", "1", str(tmp_wav)],
+                capture_output=True, timeout=30,
+            )
+            if result.returncode != 0 or not tmp_wav.exists() or tmp_wav.stat().st_size == 0:
+                logging.getLogger(__name__).warning(f"ffmpeg conversion failed for {file_path}")
+                tmp_wav.unlink(missing_ok=True)
+                return None
+            analysis_path = tmp_wav
+        except subprocess.TimeoutExpired:
+            logging.getLogger(__name__).warning(f"ffmpeg conversion timed out for {file_path}")
+            if tmp_wav:
+                tmp_wav.unlink(missing_ok=True)
+            return None
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"ffmpeg conversion error for {file_path}: {e}")
+            if tmp_wav:
+                tmp_wav.unlink(missing_ok=True)
+            return None
+
     try:
         import essentia
         import essentia.standard as es
 
-        audio = es.MonoLoader(filename=str(abs_path), sampleRate=44100)()
+        audio = es.MonoLoader(filename=str(analysis_path), sampleRate=44100)()
 
         # BPM
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
@@ -113,7 +146,7 @@ def analyze_track(file_path: str) -> dict | None:
         # Loudness (ReplayGain)
         replay_gain = es.ReplayGain()(audio)
 
-        return {
+        result = {
             "bpm": round(bpm, 1),
             "key": key,
             "scale": scale,
@@ -121,12 +154,16 @@ def analyze_track(file_path: str) -> dict | None:
             "danceability": round(danceability, 3),
             "loudness": round(replay_gain, 2),
         }
+        return result
 
     except ImportError:
         return None
     except Exception as e:
         logging.getLogger(__name__).error(f"Analysis failed for {file_path}: {e}")
         return None
+    finally:
+        if tmp_wav:
+            tmp_wav.unlink(missing_ok=True)
 
 
 async def analyze_track_async(file_path: str) -> dict | None:

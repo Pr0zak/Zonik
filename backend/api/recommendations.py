@@ -177,6 +177,128 @@ async def submit_feedback(req: FeedbackRequest, db: AsyncSession = Depends(get_d
     return {"ok": True}
 
 
+@router.get("/stats")
+async def recommendation_stats(db: AsyncSession = Depends(get_db)):
+    """Get recommendation conversion stats."""
+    total = (await db.execute(select(func.count(Recommendation.id)))).scalar() or 0
+    downloaded = (await db.execute(
+        select(func.count(Recommendation.id)).where(Recommendation.status == "downloaded")
+    )).scalar() or 0
+    thumbs_up = (await db.execute(
+        select(func.count(Recommendation.id)).where(Recommendation.feedback == "thumbs_up")
+    )).scalar() or 0
+    thumbs_down = (await db.execute(
+        select(func.count(Recommendation.id)).where(Recommendation.feedback == "thumbs_down")
+    )).scalar() or 0
+
+    # By source breakdown
+    source_result = await db.execute(
+        select(Recommendation.source, func.count(Recommendation.id))
+        .group_by(Recommendation.source)
+    )
+    by_source = {src: cnt for src, cnt in source_result.all() if src}
+
+    # Downloads by source
+    dl_source_result = await db.execute(
+        select(Recommendation.source, func.count(Recommendation.id))
+        .where(Recommendation.status == "downloaded")
+        .group_by(Recommendation.source)
+    )
+    downloads_by_source = {src: cnt for src, cnt in dl_source_result.all() if src}
+
+    return {
+        "total": total,
+        "downloaded": downloaded,
+        "thumbs_up": thumbs_up,
+        "thumbs_down": thumbs_down,
+        "pending": total - downloaded - thumbs_down,
+        "by_source": by_source,
+        "downloads_by_source": downloads_by_source,
+    }
+
+
+class BulkDownloadRequest(BaseModel):
+    mode: str = "top"  # "top" or "above_score"
+    count: int = 20
+    min_score: float = 0.7
+
+
+@router.post("/bulk-download")
+async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    """Download multiple recommendations at once."""
+    import uuid
+    from backend.models.job import Job
+    from backend.api.websocket import broadcast_job_update
+
+    query = select(Recommendation).where(Recommendation.status == "pending")
+    if req.mode == "above_score":
+        query = query.where(Recommendation.score >= req.min_score)
+    query = query.order_by(Recommendation.score.desc())
+    if req.mode == "top":
+        query = query.limit(req.count)
+
+    result = await db.execute(query)
+    recs = result.scalars().all()
+
+    if not recs:
+        return {"ok": False, "error": "No pending recommendations to download"}
+
+    job_id = str(uuid.uuid4())
+    tracks = [{"artist": r.artist, "track": r.track, "status": "missing", "rec_id": r.id} for r in recs]
+
+    job = Job(
+        id=job_id, type="bulk_download", card="dl",
+        status="running", total=len(tracks),
+        started_at=datetime.utcnow(),
+        description=f"Download {len(tracks)} recommendations",
+        tracks=json.dumps(tracks),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def do_bulk():
+        from backend.services.soulseek import search_and_download
+        from backend.services.scanner import import_downloaded_file
+        from backend.api.download import _download_semaphore
+
+        async with async_session() as sess:
+            j = await sess.get(Job, job_id)
+            completed = 0
+            for item in tracks:
+                try:
+                    async with _download_semaphore:
+                        result = await search_and_download(item["artist"], item["track"])
+                    if result and result.get("save_path"):
+                        await import_downloaded_file(sess, result["save_path"], artist_hint=item["artist"])
+                    # Mark recommendation as downloaded
+                    rec = await sess.get(Recommendation, item["rec_id"])
+                    if rec:
+                        rec.status = "downloaded"
+                except Exception:
+                    pass
+                completed += 1
+                j.progress = completed
+                await sess.merge(j)
+                await sess.commit()
+                await broadcast_job_update({
+                    "id": job_id, "type": "bulk_download", "status": "running",
+                    "progress": completed, "total": len(tracks),
+                    "description": f"Downloading recommendations ({completed}/{len(tracks)})",
+                })
+
+            j.status = "completed"
+            j.finished_at = datetime.utcnow()
+            await sess.merge(j)
+            await sess.commit()
+            await broadcast_job_update({
+                "id": job_id, "type": "bulk_download", "status": "completed",
+                "progress": len(tracks), "total": len(tracks),
+            })
+
+    background_tasks.add_task(do_bulk)
+    return {"ok": True, "job_id": job_id, "count": len(tracks)}
+
+
 @router.get("/profile")
 async def get_profile(db: AsyncSession = Depends(get_db)):
     """Get the current taste profile summary."""

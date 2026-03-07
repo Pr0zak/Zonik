@@ -257,7 +257,7 @@ async def get_loved_tracks(username: str, limit: int = 1000) -> set[tuple[str, s
     loved = set()
     page = 1
     while True:
-        data = await lastfm_request("user.getLovedTracks", {
+        data = await lastfm_api("user.getLovedTracks", {
             "user": username, "limit": str(min(limit, 200)), "page": str(page),
         })
         if not data:
@@ -277,3 +277,39 @@ async def get_loved_tracks(username: str, limit: int = 1000) -> set[tuple[str, s
             break
         page += 1
     return loved
+
+
+async def get_user_top_artists(username: str, period: str = "6month", limit: int = 50) -> list[dict]:
+    """Get user's top artists from Last.fm. period: overall, 7day, 1month, 3month, 6month, 12month."""
+    data = await lastfm_api("user.getTopArtists", {
+        "user": username, "period": period, "limit": str(limit),
+    })
+    if not data:
+        return []
+    artists = data.get("topartists", {}).get("artist", [])
+    if isinstance(artists, dict):
+        artists = [artists]
+    return [
+        {"name": a.get("name", ""), "playcount": int(a.get("playcount", 0))}
+        for a in artists if a.get("name")
+    ]
+
+
+async def get_user_top_tracks(username: str, period: str = "6month", limit: int = 100) -> list[dict]:
+    """Get user's top tracks from Last.fm. period: overall, 7day, 1month, 3month, 6month, 12month."""
+    data = await lastfm_api("user.getTopTracks", {
+        "user": username, "period": period, "limit": str(limit),
+    })
+    if not data:
+        return []
+    tracks = data.get("toptracks", {}).get("track", [])
+    if isinstance(tracks, dict):
+        tracks = [tracks]
+    return [
+        {
+            "artist": t.get("artist", {}).get("name", ""),
+            "title": t.get("name", ""),
+            "playcount": int(t.get("playcount", 0)),
+        }
+        for t in tracks if t.get("name")
+    ]

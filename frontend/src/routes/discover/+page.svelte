@@ -43,6 +43,8 @@
 	let recFilter = $state('all');
 	let previewAudio = $state(null);
 	let previewRecId = $state(null);
+	let recStats = $state(null);
+	let showBulkMenu = $state(false);
 
 	const sourceFilters = [
 		{ key: 'all', label: 'All' },
@@ -458,14 +460,16 @@
 	async function loadRecommendations() {
 		recLoading = true;
 		try {
-			const [recData, profileData] = await Promise.all([
+			const [recData, profileData, statsData] = await Promise.all([
 				api.getRecommendations({ status: 'pending', limit: 50 }),
 				api.getTasteProfile(),
+				fetch('/api/recommendations/stats').then(r => r.json()).catch(() => null),
 			]);
 			recommendations = recData.items || [];
 			recTotal = recData.total || 0;
 			recProfileComputedAt = recData.profile_computed_at;
 			tasteProfile = profileData.exists ? profileData : null;
+			recStats = statsData;
 		} catch (e) {
 			addToast('Failed to load recommendations', 'error');
 		} finally {
@@ -543,6 +547,28 @@
 			}
 		} catch {
 			addToast('Failed to submit feedback', 'error');
+		}
+	}
+
+	async function bulkDownloadRecs(mode, count = 20, minScore = 0.7) {
+		bulkDownloading = true;
+		showBulkMenu = false;
+		try {
+			const resp = await fetch('/api/recommendations/bulk-download', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ mode, count, min_score: minScore }),
+			});
+			const data = await resp.json();
+			if (data.ok) {
+				addToast(`Downloading ${data.count} recommendations`, 'success');
+			} else {
+				addToast(data.error || 'No recommendations to download', 'warning');
+			}
+		} catch {
+			addToast('Bulk download failed', 'error');
+		} finally {
+			setTimeout(() => bulkDownloading = false, 3000);
 		}
 	}
 
@@ -821,8 +847,46 @@
 								AI Suggestions
 							</Button>
 						{/if}
+						{#if recommendations.length}
+							<div class="relative">
+								<Button variant="default" size="sm" onclick={() => showBulkMenu = !showBulkMenu} loading={bulkDownloading}>
+									<Download class="w-3.5 h-3.5" />
+									Download
+									<ChevronDown class="w-3 h-3" />
+								</Button>
+								{#if showBulkMenu}
+									<!-- svelte-ignore a11y_click_events_have_key_events -->
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<div class="fixed inset-0 z-40" onclick={() => showBulkMenu = false}></div>
+									<div class="absolute right-0 top-full mt-1 w-48 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden">
+										<button onclick={() => bulkDownloadRecs('top', 10)}
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)]">Top 10</button>
+										<button onclick={() => bulkDownloadRecs('top', 20)}
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)]">Top 20</button>
+										<button onclick={() => bulkDownloadRecs('above_score', 0, 0.7)}
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)] border-t border-[var(--border-subtle)]">Score &gt; 70%</button>
+										<button onclick={() => bulkDownloadRecs('above_score', 0, 0.5)}
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)]">Score &gt; 50%</button>
+									</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
 				</div>
+				<!-- Stats bar -->
+				{#if recStats && recStats.total > 0}
+					<div class="flex items-center gap-3 text-xs flex-wrap">
+						<span class="text-[var(--text-muted)]">{recStats.total} recommended</span>
+						<span class="text-[var(--text-disabled)]">→</span>
+						<span class="text-[var(--color-downloads)]">{recStats.downloaded} downloaded</span>
+						<span class="text-[var(--text-disabled)]">→</span>
+						<span class="text-green-400">{recStats.thumbs_up} liked</span>
+						{#if recStats.thumbs_down > 0}
+							<span class="text-[var(--text-disabled)]">·</span>
+							<span class="text-red-400">{recStats.thumbs_down} disliked</span>
+						{/if}
+					</div>
+				{/if}
 				<!-- Source filter pills -->
 				{#if recommendations.length}
 					<div class="flex gap-1.5 flex-wrap">

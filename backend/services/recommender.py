@@ -147,11 +147,42 @@ async def build_taste_profile(db: AsyncSession) -> dict:
     track_count = (await db.execute(select(func.count(Track.id)))).scalar() or 0
     fav_count = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
 
+    # Last.fm user history (if authenticated)
+    lastfm_top_artists = []
+    lastfm_top_tracks = []
+    settings = get_settings()
+    if settings.lastfm.api_key and settings.lastfm.username:
+        try:
+            from backend.services.lastfm import get_user_top_artists, get_user_top_tracks
+            lastfm_top_artists = await get_user_top_artists(settings.lastfm.username, period="6month", limit=50)
+            lastfm_top_tracks = await get_user_top_tracks(settings.lastfm.username, period="6month", limit=100)
+            log.info(f"Last.fm history: {len(lastfm_top_artists)} top artists, {len(lastfm_top_tracks)} top tracks")
+
+            # Merge Last.fm top artists into local top_artists (blend play counts)
+            local_artist_names = {a["name"].lower() for a in top_artists}
+            for lfm_artist in lastfm_top_artists:
+                name_lower = lfm_artist["name"].lower()
+                found = False
+                for local in top_artists:
+                    if local["name"].lower() == name_lower:
+                        local["plays"] = local["plays"] + lfm_artist["playcount"]
+                        found = True
+                        break
+                if not found:
+                    top_artists.append({"name": lfm_artist["name"], "plays": lfm_artist["playcount"]})
+            # Re-sort by combined plays
+            top_artists.sort(key=lambda a: a["plays"], reverse=True)
+            top_artists = top_artists[:30]
+        except Exception as e:
+            log.warning(f"Failed to fetch Last.fm history: {e}")
+
     profile_data = {
         "genre_distribution": genre_distribution,
         "top_artists": top_artists,
         "favorite_artists": all_fav_artists,
         "blacklisted_artists": blacklisted_artists,
+        "lastfm_top_artists": lastfm_top_artists[:20],
+        "lastfm_top_tracks": lastfm_top_tracks[:50],
         "audio": {
             "avg_bpm": round(avg_bpm, 1) if avg_bpm else None,
             "bpm_std": bpm_std,
