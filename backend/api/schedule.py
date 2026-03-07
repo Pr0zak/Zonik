@@ -28,6 +28,7 @@ DEFAULT_TASKS = [
     {"task_name": "playlist_unfavorites", "interval_hours": 24, "run_at": "01:30"},
     {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
     {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
+    {"task_name": "recommendation_refresh", "interval_hours": 24, "run_at": "05:30"},
 ]
 
 TASK_LABELS = {
@@ -43,6 +44,7 @@ TASK_LABELS = {
     "playlist_unfavorites": "Unfavorites Playlist",
     "audio_analysis": "Audio Analysis",
     "library_cleanup": "Library Cleanup",
+    "recommendation_refresh": "AI Recommendations",
 }
 
 TASK_DESCRIPTIONS = {
@@ -58,6 +60,7 @@ TASK_DESCRIPTIONS = {
     "playlist_unfavorites": "Rebuild the Unfavorites playlist from all tracks that are not starred.",
     "audio_analysis": "Run Essentia audio analysis (BPM, key, energy, danceability) on unanalyzed tracks.",
     "library_cleanup": "Remove orphaned database entries for files that no longer exist on disk.",
+    "recommendation_refresh": "Build taste profile and generate personalized track recommendations from Last.fm.",
 }
 
 

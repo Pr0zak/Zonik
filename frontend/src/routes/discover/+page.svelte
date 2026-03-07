@@ -2,7 +2,8 @@
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { parseUTC } from '$lib/utils.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp } from 'lucide-svelte';
+	import { api } from '$lib/api.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -11,7 +12,7 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 
-	let activeTab = $state('top');
+	let activeTab = $state('foryou');
 
 	// Top Tracks state
 	let topTracks = $state([]);
@@ -28,6 +29,15 @@
 	// Similar Artists state
 	let similarArtists = $state([]);
 	let artistsLoading = $state(false);
+
+	// For You state
+	let recommendations = $state([]);
+	let recLoading = $state(false);
+	let recRefreshing = $state(false);
+	let tasteProfile = $state(null);
+	let profileExpanded = $state(false);
+	let recTotal = $state(0);
+	let recProfileComputedAt = $state(null);
 
 	// Search state
 	let searchQuery = $state('');
@@ -51,6 +61,7 @@
 	let schedRunning = $state({});
 
 	const tabs = [
+		{ key: 'foryou', label: 'For You', icon: Sparkles },
 		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
@@ -141,6 +152,7 @@
 		activeTab = tab;
 		sortColumn = null;
 		sortDir = null;
+		if (tab === 'foryou' && !recommendations.length && !recLoading) loadRecommendations();
 		if (tab === 'top' && !topTracks.length && !topLoading) scanTopTracks();
 		if (tab === 'similar' && !similarTracks.length && !similarLoading) scanSimilarTracks();
 		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
@@ -376,11 +388,12 @@
 				if (job.status === 'completed') {
 					schedRunning[name] = false;
 					schedTasks[name] = { ...schedTasks[name], last_run_at: new Date().toISOString() };
-					addToast(`${name.includes('top') ? 'Top Charts' : 'Similar Tracks'} scan completed`, 'success');
-					// Reload the tab data
+					const taskLabels = { lastfm_top_tracks: 'Top Charts', discover_similar: 'Similar Tracks', discover_artists: 'Similar Artists', recommendation_refresh: 'AI Recommendations' };
+					addToast(`${taskLabels[name] || name} completed`, 'success');
 					if (name === 'lastfm_top_tracks') scanTopTracks();
 					else if (name === 'discover_similar') scanSimilarTracks();
 					else if (name === 'discover_artists') scanSimilarArtists();
+					else if (name === 'recommendation_refresh') loadRecommendations();
 					return;
 				}
 				if (job.status === 'failed') {
@@ -402,6 +415,103 @@
 		schedTasks[name] = { ...t, config: { ...t.config, ...newConfig } };
 	}
 
+	// --- For You ---
+	async function loadRecommendations() {
+		recLoading = true;
+		try {
+			const [recData, profileData] = await Promise.all([
+				api.getRecommendations({ status: 'pending', limit: 50 }),
+				api.getTasteProfile(),
+			]);
+			recommendations = recData.items || [];
+			recTotal = recData.total || 0;
+			recProfileComputedAt = recData.profile_computed_at;
+			tasteProfile = profileData.exists ? profileData : null;
+		} catch (e) {
+			addToast('Failed to load recommendations', 'error');
+		} finally {
+			recLoading = false;
+		}
+	}
+
+	async function refreshRecs() {
+		recRefreshing = true;
+		try {
+			const data = await api.refreshRecommendations(100);
+			addToast('Generating recommendations — check Logs for progress', 'success');
+			if (data.job_id) {
+				for (let i = 0; i < 120; i++) {
+					await new Promise(r => setTimeout(r, 3000));
+					try {
+						const job = await fetch(`/api/jobs/${data.job_id}`).then(r => r.json());
+						if (job.status === 'completed') {
+							addToast('Recommendations ready!', 'success');
+							await loadRecommendations();
+							break;
+						}
+						if (job.status === 'failed') {
+							addToast('Recommendation refresh failed', 'error');
+							break;
+						}
+					} catch {}
+				}
+			}
+		} catch {
+			addToast('Failed to start refresh', 'error');
+		} finally {
+			recRefreshing = false;
+		}
+	}
+
+	async function recFeedback(rec, action) {
+		try {
+			await api.submitFeedback(rec.id, action);
+			if (action === 'thumbs_down' || action === 'dismiss') {
+				recommendations = recommendations.filter(r => r.id !== rec.id);
+			} else if (action === 'thumbs_up') {
+				recommendations = recommendations.map(r =>
+					r.id === rec.id ? { ...r, feedback: 'thumbs_up', status: 'accepted' } : r
+				);
+			}
+		} catch {
+			addToast('Failed to submit feedback', 'error');
+		}
+	}
+
+	async function downloadRec(rec) {
+		const key = `${rec.artist}::${rec.track}`.toLowerCase();
+		trackStatus[key] = 'downloading';
+		try {
+			const res = await fetch('/api/download/trigger', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ artist: rec.artist, track: rec.track }),
+			});
+			const data = await res.json();
+			if (data.error) { trackStatus[key] = 'failed'; return; }
+			trackStatus[key] = 'queued';
+			await api.submitFeedback(rec.id, 'download');
+			recommendations = recommendations.map(r =>
+				r.id === rec.id ? { ...r, status: 'downloaded' } : r
+			);
+			pollJob(data.job_id, key);
+		} catch {
+			trackStatus[key] = 'failed';
+		}
+	}
+
+	function scoreColor(score) {
+		if (score >= 0.7) return 'text-green-400';
+		if (score >= 0.4) return 'text-yellow-400';
+		return 'text-red-400';
+	}
+
+	function scoreBg(score) {
+		if (score >= 0.7) return 'bg-green-500/20 border-green-500/30';
+		if (score >= 0.4) return 'bg-yellow-500/20 border-yellow-500/30';
+		return 'bg-red-500/20 border-red-500/30';
+	}
+
 	onMount(async () => {
 		// Load scheduled task configs
 		try {
@@ -411,10 +521,8 @@
 			if (schedTasks.discover_similar?.count) similarLimit = schedTasks.discover_similar.count;
 		} catch {}
 
-		// Try loading cached results first, fall back to live scan
-		const hasCached = await loadCachedResults('lastfm_top_tracks', v => topTracks = v, v => topLimit = v, v => topLastScanned = v);
-		if (hasCached) await syncDownloadStatuses(topTracks);
-		else scanTopTracks();
+		// Load For You tab by default
+		loadRecommendations();
 	});
 </script>
 
@@ -511,7 +619,205 @@
 
 	<!-- Track lists -->
 	<div class="mt-4">
-		{#if activeTab === 'top'}
+		{#if activeTab === 'foryou'}
+			<!-- Taste Profile Summary -->
+			{#if tasteProfile}
+				<Card padding="p-4" class="mb-4">
+					<button onclick={() => profileExpanded = !profileExpanded}
+						class="w-full flex items-center justify-between">
+						<div class="flex items-center gap-3">
+							<Sparkles class="w-4 h-4 text-[var(--color-discover)]" />
+							<span class="text-sm font-medium text-[var(--text-primary)]">Your Taste Profile</span>
+							{#if recProfileComputedAt}
+								<span class="text-xs text-[var(--text-muted)] font-mono">{formatAge(recProfileComputedAt)}</span>
+							{/if}
+						</div>
+						<div class="flex items-center gap-3">
+							<span class="text-xs text-[var(--text-muted)]">{tasteProfile.track_count} tracks, {tasteProfile.favorite_count} favorites</span>
+							{#if profileExpanded}
+								<ChevronUp class="w-4 h-4 text-[var(--text-muted)]" />
+							{:else}
+								<ChevronDown class="w-4 h-4 text-[var(--text-muted)]" />
+							{/if}
+						</div>
+					</button>
+					{#if profileExpanded}
+						<div class="mt-3 pt-3 border-t border-[var(--border-subtle)] grid grid-cols-1 md:grid-cols-3 gap-4">
+							<!-- Genres -->
+							<div>
+								<span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium">Top Genres</span>
+								<div class="mt-2 space-y-1">
+									{#each Object.entries(tasteProfile.genre_distribution || {}).slice(0, 8) as [genre, pct]}
+										<div class="flex items-center gap-2">
+											<div class="flex-1 h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden">
+												<div class="h-full bg-[var(--color-discover)] rounded-full" style="width: {Math.round(pct * 100)}%"></div>
+											</div>
+											<span class="text-xs text-[var(--text-secondary)] w-24 truncate">{genre}</span>
+											<span class="text-xs text-[var(--text-muted)] font-mono w-8 text-right">{Math.round(pct * 100)}%</span>
+										</div>
+									{/each}
+								</div>
+							</div>
+							<!-- Top Artists -->
+							<div>
+								<span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium">Top Artists</span>
+								<div class="mt-2 space-y-1">
+									{#each (tasteProfile.top_artists || []).slice(0, 8) as artist}
+										<div class="flex items-center justify-between">
+											<span class="text-xs text-[var(--text-secondary)] truncate">{artist.name}</span>
+											<span class="text-xs text-[var(--text-muted)] font-mono">{artist.plays} plays</span>
+										</div>
+									{/each}
+								</div>
+							</div>
+							<!-- Audio Stats -->
+							<div>
+								<span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium">Audio Profile</span>
+								<div class="mt-2 space-y-2">
+									{#if tasteProfile.audio?.avg_bpm}
+										<div class="flex justify-between text-xs">
+											<span class="text-[var(--text-secondary)]">Avg BPM</span>
+											<span class="text-[var(--text-primary)] font-mono">{tasteProfile.audio.avg_bpm}{tasteProfile.audio.bpm_std ? ` ±${tasteProfile.audio.bpm_std}` : ''}</span>
+										</div>
+									{/if}
+									{#if tasteProfile.audio?.avg_energy != null}
+										<div class="flex justify-between text-xs">
+											<span class="text-[var(--text-secondary)]">Avg Energy</span>
+											<span class="text-[var(--text-primary)] font-mono">{(tasteProfile.audio.avg_energy * 100).toFixed(0)}%</span>
+										</div>
+									{/if}
+									{#if tasteProfile.audio?.avg_danceability != null}
+										<div class="flex justify-between text-xs">
+											<span class="text-[var(--text-secondary)]">Avg Danceability</span>
+											<span class="text-[var(--text-primary)] font-mono">{(tasteProfile.audio.avg_danceability * 100).toFixed(0)}%</span>
+										</div>
+									{/if}
+									<div class="flex justify-between text-xs">
+										<span class="text-[var(--text-secondary)]">Analyzed</span>
+										<span class="text-[var(--text-primary)] font-mono">{tasteProfile.analyzed_count} tracks</span>
+									</div>
+									{#if tasteProfile.has_clap_centroid}
+										<div class="flex items-center gap-1 text-xs text-green-400">
+											<Check class="w-3 h-3" /> CLAP vibe centroid active
+										</div>
+									{/if}
+								</div>
+							</div>
+						</div>
+					{/if}
+				</Card>
+			{/if}
+
+			<!-- Actions bar -->
+			<Card padding="p-4" class="mb-4">
+				<div class="flex items-center justify-between">
+					<div class="flex items-center gap-4">
+						<span class="text-2xl font-bold text-[var(--text-primary)]">{recTotal}</span>
+						<span class="text-xs text-[var(--text-muted)]">recommendations</span>
+					</div>
+					<Button variant="primary" size="sm" onclick={refreshRecs} loading={recRefreshing}>
+						<RefreshCw class="w-3.5 h-3.5" />
+						Refresh
+					</Button>
+				</div>
+			</Card>
+
+			<!-- Recommendation list -->
+			{#if recLoading && !recommendations.length}
+				<Card padding="p-0">
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each Array(8) as _}
+							<div class="px-4 py-4 flex items-center gap-4">
+								<Skeleton class="h-8 w-12 rounded" />
+								<div class="flex-1 space-y-1.5">
+									<Skeleton class="h-4 w-40" />
+									<Skeleton class="h-3 w-28" />
+								</div>
+								<Skeleton class="h-5 w-16 rounded-full" />
+							</div>
+						{/each}
+					</div>
+				</Card>
+			{:else if recommendations.length}
+				<Card padding="p-0">
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each recommendations as rec}
+							{@const recKey = `${rec.artist}::${rec.track}`.toLowerCase()}
+							{@const dlStatus = trackStatus[recKey] || null}
+							<div class="px-4 py-3 flex items-center gap-3 hover:bg-[var(--bg-hover)] transition-colors
+								{rec.status === 'downloaded' ? 'bg-green-500/5' : ''}
+								{rec.feedback === 'thumbs_up' ? 'bg-green-500/5' : ''}">
+								<!-- Score badge -->
+								<div class="flex-shrink-0 w-12 text-center">
+									<span class="inline-block px-2 py-0.5 rounded text-xs font-bold border {scoreBg(rec.score)} {scoreColor(rec.score)}">
+										{Math.round(rec.score * 100)}
+									</span>
+								</div>
+
+								<!-- Track info -->
+								<div class="flex-1 min-w-0">
+									<div class="flex items-center gap-2">
+										<span class="font-medium text-sm text-[var(--text-primary)] truncate">{rec.track}</span>
+										<span class="text-xs text-[var(--text-muted)] px-1.5 py-0.5 rounded bg-[var(--bg-hover)]">{rec.source}</span>
+									</div>
+									<div class="flex items-center gap-2 mt-0.5">
+										<span class="text-xs text-[var(--text-secondary)]">{rec.artist}</span>
+										{#if rec.lastfm_listeners}
+											<span class="text-xs text-[var(--text-muted)] font-mono">{rec.lastfm_listeners.toLocaleString()} listeners</span>
+										{/if}
+									</div>
+									{#if rec.explanation}
+										<p class="text-xs text-[var(--text-muted)] mt-0.5 truncate">{rec.explanation}</p>
+									{/if}
+								</div>
+
+								<!-- Actions -->
+								<div class="flex items-center gap-1.5 flex-shrink-0">
+									{#if rec.status === 'downloaded' || dlStatus === 'completed'}
+										<span class="text-xs text-green-400 flex items-center gap-1">
+											<Check class="w-3.5 h-3.5" /> Downloaded
+										</span>
+									{:else if dlStatus === 'downloading' || dlStatus === 'queued'}
+										<span class="text-xs text-blue-400 flex items-center gap-1">
+											<Loader2 class="w-3.5 h-3.5 animate-spin" />
+											{dlStatus === 'queued' ? 'Queued' : 'Downloading'}
+										</span>
+									{:else if dlStatus === 'failed'}
+										<button onclick={() => downloadRec(rec)} class="text-xs text-red-400 hover:text-red-300 underline">retry</button>
+									{:else}
+										<button onclick={() => downloadRec(rec)}
+											class="p-1.5 rounded hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
+											title="Download">
+											<Download class="w-4 h-4" />
+										</button>
+									{/if}
+
+									{#if rec.feedback === 'thumbs_up'}
+										<span class="p-1.5 text-green-400"><ThumbsUp class="w-4 h-4" /></span>
+									{:else if rec.feedback !== 'thumbs_down'}
+										<button onclick={() => recFeedback(rec, 'thumbs_up')}
+											class="p-1.5 rounded hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
+											title="Like">
+											<ThumbsUp class="w-4 h-4" />
+										</button>
+										<button onclick={() => recFeedback(rec, 'thumbs_down')}
+											class="p-1.5 rounded hover:bg-red-500/20 text-[var(--text-muted)] hover:text-red-400 transition-colors"
+											title="Not for me">
+											<ThumbsDown class="w-4 h-4" />
+										</button>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				</Card>
+			{:else}
+				<Card>
+					<EmptyState title="No recommendations yet" description="Click 'Refresh' to build your taste profile and generate personalized recommendations from Last.fm." />
+				</Card>
+			{/if}
+
+		{:else if activeTab === 'top'}
 			{#if topLoading && !topTracks.length}
 				<Card padding="p-0">
 					<div class="divide-y divide-[var(--border-subtle)]">
@@ -800,12 +1106,15 @@
 	</div>
 
 	<!-- Schedule -->
-	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar}
+	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar || schedTasks.recommendation_refresh}
 		<Card padding="p-4" class="mt-6">
 			<div class="flex items-center gap-2 mb-2">
 				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
 				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
 			</div>
+			{#if schedTasks.recommendation_refresh}
+				<ScheduleControl taskName="recommendation_refresh" label="AI Recommendations" enabled={schedTasks.recommendation_refresh.enabled} intervalHours={schedTasks.recommendation_refresh.interval_hours} runAt={schedTasks.recommendation_refresh.run_at} lastRunAt={schedTasks.recommendation_refresh.last_run_at} running={schedRunning.recommendation_refresh} onToggle={() => toggleSched('recommendation_refresh')} onUpdate={(u) => updateSched('recommendation_refresh', u)} onRun={() => runSched('recommendation_refresh')} />
+			{/if}
 			{#if schedTasks.lastfm_top_tracks}
 				<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} autoDownload={schedTasks.lastfm_top_tracks.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('lastfm_top_tracks')} />
 			{/if}

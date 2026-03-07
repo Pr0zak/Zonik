@@ -75,6 +75,17 @@ class SubsonicConfig(BaseModel):
     server_name: str = "Zonik"
 
 
+class AssistantConfig(BaseModel):
+    enabled: bool = True
+    w_artist_affinity: float = 0.25
+    w_genre_match: float = 0.20
+    w_lastfm_similar: float = 0.20
+    w_audio_match: float = 0.15
+    w_clap_similarity: float = 0.10
+    w_popularity: float = 0.05
+    w_novelty: float = 0.05
+
+
 class Settings(BaseModel):
     server: ServerConfig = ServerConfig()
     library: LibraryConfig = LibraryConfig()
@@ -85,6 +96,7 @@ class Settings(BaseModel):
     lastfm: LastfmConfig = LastfmConfig()
     analysis: AnalysisConfig = AnalysisConfig()
     subsonic: SubsonicConfig = SubsonicConfig()
+    assistant: AssistantConfig = AssistantConfig()
 
 
 CONFIG_PATHS = [

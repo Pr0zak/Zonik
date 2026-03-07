@@ -13,10 +13,12 @@ from backend.models.schedule import ScheduleTask
 from backend.models.blacklist import DownloadBlacklist
 from backend.models.stats import SoulseekSnapshot
 from backend.models.play_history import PlayHistory
+from backend.models.recommendation import Recommendation
+from backend.models.taste_profile import TasteProfile
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
     "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User",
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
-    "SoulseekSnapshot", "PlayHistory",
+    "SoulseekSnapshot", "PlayHistory", "Recommendation", "TasteProfile",
 ]

@@ -100,6 +100,18 @@ export const api = {
 	removeDuplicates: (removeIds, deleteFiles = false) =>
 		request('/library/cleanup/duplicates', { method: 'POST', body: JSON.stringify({ remove_ids: removeIds, delete_files: deleteFiles }) }),
 
+	// Recommendations
+	getRecommendations: (params = {}) => {
+		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+		const qs = new URLSearchParams(clean).toString();
+		return request(`/recommendations?${qs}`);
+	},
+	refreshRecommendations: (limit = 100) =>
+		request('/recommendations/refresh', { method: 'POST', body: JSON.stringify({ limit }) }),
+	submitFeedback: (recommendationId, action) =>
+		request('/recommendations/feedback', { method: 'POST', body: JSON.stringify({ recommendation_id: recommendationId, action }) }),
+	getTasteProfile: () => request('/recommendations/profile'),
+
 	// Music Map
 	getMapGraph: (params = {}) => {
 		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));

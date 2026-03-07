@@ -29,6 +29,7 @@ _TASK_LABELS = {
     "enrichment": "Enrichment",
     "audio_analysis": "Audio Analysis",
     "library_cleanup": "Library Cleanup",
+    "recommendation_refresh": "AI Recommendations",
 }
 
 
@@ -116,6 +117,21 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         elif task_name == "library_cleanup":
             from backend.services.cleanup import remove_orphaned_tracks
             result = await remove_orphaned_tracks(db)
+            job.result = json.dumps(result)
+
+        elif task_name == "recommendation_refresh":
+            from backend.services.recommender import refresh_recommendations
+            async def on_progress(current, total, description=""):
+                job.progress = current
+                job.total = total
+                await db.merge(job)
+                await db.commit()
+                await broadcast_job_update({
+                    "id": job_id, "type": "recommendation_refresh",
+                    "status": "running", "progress": current, "total": total,
+                    "description": description or "AI Recommendations",
+                })
+            result = await refresh_recommendations(db, on_progress=on_progress)
             job.result = json.dumps(result)
 
         job.status = "completed"
