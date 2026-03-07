@@ -519,8 +519,8 @@ async def _do_download_inner(db, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Cleanup skipped: {e}")
 
-async def enqueue_download(artist: str, track: str):
-    """Create an individual download job with semaphore queuing."""
+async def enqueue_download(artist: str, track: str) -> str:
+    """Create an individual download job with semaphore queuing. Returns job_id."""
     job_id = str(uuid.uuid4())
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track)
@@ -552,6 +552,7 @@ async def enqueue_download(artist: str, track: str):
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
             async with sem:
                 await _do_download_inner(sess, job, job_id, desc, dl_req)
+    return job_id
 
 
 @router.post("/bulk")

@@ -31,6 +31,7 @@ _TASK_LABELS = {
     "library_cleanup": "Library Cleanup",
     "recommendation_refresh": "AI Recommendations",
     "upgrade_scan": "Quality Upgrade Scan",
+    "remix_discovery": "Remix Discovery",
 }
 
 
@@ -138,6 +139,9 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         elif task_name == "upgrade_scan":
             await _run_upgrade_scan(db, job, count=count or 50, config=task_config)
 
+        elif task_name == "remix_discovery":
+            await _run_remix_discovery(db, job, count=count or 30, config=task_config)
+
         job.status = "completed"
     except Exception as e:
         log.error(f"Scheduled task {task_name} failed: {e}")
@@ -160,7 +164,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         if (
             job.status == "completed"
             and task_config.get("auto_download")
-            and task_name in ("lastfm_top_tracks", "discover_similar", "upgrade_scan")
+            and task_name in ("lastfm_top_tracks", "discover_similar", "upgrade_scan", "remix_discovery")
             and job.tracks
         ):
             try:
@@ -493,6 +497,15 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
     result = await db.execute(query)
     tracks = result.scalars().all()
 
+    # Create TrackUpgrade records (idempotent — skip existing pending/queued/downloading)
+    from backend.models.upgrade import TrackUpgrade
+    existing_upgrades = await db.execute(
+        select(TrackUpgrade.track_id).where(
+            TrackUpgrade.status.in_(["pending", "queued", "downloading"])
+        )
+    )
+    skip_ids = {r[0] for r in existing_upgrades.all()}
+
     upgrade_list = []
     for t in tracks:
         artist_name = t.artist.name if t.artist else "Unknown"
@@ -503,6 +516,17 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
             "format": t.format,
             "bitrate": t.bitrate,
         })
+        if t.id not in skip_ids:
+            db.add(TrackUpgrade(
+                id=str(uuid.uuid4()),
+                track_id=t.id,
+                original_format=t.format or "unknown",
+                original_bitrate=t.bitrate,
+                original_file_size=t.file_size,
+                reason=mode,
+                status="pending",
+                created_at=datetime.utcnow(),
+            ))
 
     job.total = len(tracks)
     job.progress = 0
@@ -521,3 +545,81 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
     })
 
     log.info(f"Upgrade scan ({mode}): found {len(tracks)} tracks")
+
+
+async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, config: dict | None = None):
+    """Find remixes of popular library tracks via Last.fm search."""
+    import asyncio
+    from backend.services.remix_discovery import find_remixes as _find_remixes
+    from backend.services.soulseek import normalize_text
+
+    cfg = config or {}
+    source = cfg.get("source", "popular")
+
+    # Pick source tracks
+    from sqlalchemy import func as sqlfunc
+    if source == "favorites":
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .join(Favorite, Favorite.track_id == Track.id)
+            .order_by(sqlfunc.random())
+            .limit(count)
+        )
+    else:  # popular (default)
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .where(Track.play_count > 0)
+            .order_by(Track.play_count.desc())
+            .limit(count)
+        )
+    source_tracks = result.scalars().all()
+
+    sem = asyncio.Semaphore(3)
+    all_remixes = []
+    seen: set[str] = set()
+
+    async def scan_one(t):
+        if not t.artist:
+            return []
+        async with sem:
+            return await _find_remixes(t.artist.name, t.title, limit=5)
+
+    tasks = [scan_one(t) for t in source_tracks]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for t, remix_list in zip(source_tracks, results):
+        if isinstance(remix_list, Exception):
+            continue
+        for r in remix_list:
+            key = normalize_text(f"{r['artist']} {r['name']}")
+            if key in seen:
+                continue
+            seen.add(key)
+            # Check if in library
+            lib_match = await db.execute(
+                select(Track.id).join(Artist, Track.artist_id == Artist.id).where(
+                    Track.title.ilike(r["name"]),
+                    Artist.name.ilike(r["artist"]),
+                ).limit(1)
+            )
+            in_library = lib_match.scalar_one_or_none() is not None
+            if not in_library:
+                all_remixes.append({
+                    "artist": r["artist"],
+                    "track": r["name"],
+                    "status": "missing",
+                    "version_type": r.get("version_type", "remix"),
+                    "source_track": t.title,
+                    "source_artist": t.artist.name if t.artist else "",
+                })
+
+    job.total = len(source_tracks)
+    job.progress = len(source_tracks)
+    job.tracks = json.dumps(all_remixes[:100])
+    job.result = json.dumps({
+        "source": source,
+        "tracks_scanned": len(source_tracks),
+        "remixes_found": len(all_remixes),
+    })
+
+    log.info(f"Remix discovery ({source}): scanned {len(source_tracks)} tracks, found {len(all_remixes)} remixes")

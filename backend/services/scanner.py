@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 import mutagen
@@ -537,12 +538,14 @@ async def import_downloaded_file(
                 await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
                 await db.commit()
                 log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
+                await _mark_upgrade_completed(db, existing.id, new_fmt, parsed["bitrate"], parsed["file_size"])
                 return new_track_id
             else:
                 from backend.database import update_fts_index
                 await update_fts_index(db, existing.id, existing.title, parsed["artist_name"], parsed["album_title"])
                 await db.commit()
                 log.info(f"[import] Upgraded in-place: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
+                await _mark_upgrade_completed(db, existing.id, new_fmt, parsed["bitrate"], parsed["file_size"])
                 return existing.id
         else:
             # Not an upgrade — check if it's a different version (remix etc)
@@ -552,6 +555,7 @@ async def import_downloaded_file(
             if existing_title == new_title:
                 # Exact same title, not an upgrade — skip (duplicate)
                 log.info(f"[import] Duplicate skipped (library has equal/better): {parsed['title']}")
+                await _mark_upgrade_failed(db, existing.id, "Downloaded file not higher quality")
                 src.unlink(missing_ok=True)
                 return None
             # Different version (remix, acoustic, live, etc.) — fall through to normal import
@@ -632,6 +636,49 @@ async def import_downloaded_file(
     await db.commit()
     log.info(f"[import] Indexed: {parsed['artist_name']} — {parsed['title']} → {rel_path}")
     return track_id
+
+
+async def _mark_upgrade_completed(db, track_id: str, fmt: str, bitrate: int | None, file_size: int | None):
+    """Mark a TrackUpgrade as completed after successful upgrade import."""
+    try:
+        from backend.models.upgrade import TrackUpgrade
+        result = await db.execute(
+            select(TrackUpgrade).where(
+                TrackUpgrade.track_id == track_id,
+                TrackUpgrade.status.in_(["queued", "downloading"]),
+            )
+        )
+        upgrade = result.scalar_one_or_none()
+        if upgrade:
+            upgrade.status = "completed"
+            upgrade.upgraded_format = fmt
+            upgrade.upgraded_bitrate = bitrate
+            upgrade.upgraded_file_size = file_size
+            upgrade.completed_at = datetime.utcnow()
+            await db.commit()
+            log.info(f"[import] TrackUpgrade {upgrade.id} marked completed")
+    except Exception as e:
+        log.debug(f"[import] TrackUpgrade update skipped: {e}")
+
+
+async def _mark_upgrade_failed(db, track_id: str, message: str):
+    """Mark a TrackUpgrade as failed when download is not an upgrade."""
+    try:
+        from backend.models.upgrade import TrackUpgrade
+        result = await db.execute(
+            select(TrackUpgrade).where(
+                TrackUpgrade.track_id == track_id,
+                TrackUpgrade.status.in_(["queued", "downloading"]),
+            )
+        )
+        upgrade = result.scalar_one_or_none()
+        if upgrade:
+            upgrade.status = "failed"
+            upgrade.error_message = message
+            await db.commit()
+            log.info(f"[import] TrackUpgrade {upgrade.id} marked failed: {message}")
+    except Exception as e:
+        log.debug(f"[import] TrackUpgrade update skipped: {e}")
 
 
 def cleanup_download_dir():
