@@ -263,6 +263,42 @@ async def test_service(service: str):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    elif service == "claude":
+        api_key = settings.assistant.claude_api_key
+        model = settings.assistant.claude_model
+        if not api_key:
+            return {"status": "error", "message": "No Claude API key configured"}
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 32,
+                        "messages": [{"role": "user", "content": "Reply with just the word 'ok'."}],
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    text = data.get("content", [{}])[0].get("text", "").strip().lower()
+                    return {"status": "ok", "message": f"Connected — {model}"}
+                elif resp.status_code == 401:
+                    return {"status": "error", "message": "Invalid API key"}
+                elif resp.status_code == 404:
+                    return {"status": "error", "message": f"Model not found: {model}"}
+                else:
+                    body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    msg = body.get("error", {}).get("message", f"HTTP {resp.status_code}")
+                    return {"status": "error", "message": msg}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     return {"status": "error", "message": f"Unknown service: {service}"}
 
 

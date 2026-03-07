@@ -807,6 +807,10 @@
 					</div>
 					<h2 class="text-base font-semibold text-[var(--text-primary)]">AI Assistant</h2>
 				</div>
+				<Button variant="default" size="sm" onclick={() => testConnection('claude')}>
+					<Wifi class="w-3.5 h-3.5" />
+					{testBtnLabel('claude', 'Test Connection')}
+				</Button>
 			</div>
 			<div class="space-y-3">
 				<div>
