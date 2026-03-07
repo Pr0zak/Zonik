@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import logging
 import os
-from concurrent.futures import BrokenProcessPool, ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 from backend.config import get_settings
