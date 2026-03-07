@@ -9,7 +9,8 @@
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock,
-		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw
+		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
+		ChevronDown, ChevronUp
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -71,6 +72,7 @@
 	// Schedule state
 	let schedTasks = $state({});
 	let schedRunning = $state({});
+	let schedExpanded = $state(false);
 
 	async function toggleSched(name) {
 		const t = schedTasks[name];
@@ -90,6 +92,14 @@
 			addToast('Task started', 'success');
 		} catch { addToast('Failed to run task', 'error'); }
 		finally { schedRunning[name] = false; }
+	}
+	async function toggleAutoDownload(name) {
+		const t = schedTasks[name];
+		if (!t) return;
+		const current = t.config?.auto_download || false;
+		const newConfig = { auto_download: !current };
+		await fetch(`/api/schedule/${name}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: newConfig }) });
+		schedTasks[name] = { ...t, config: { ...t.config, ...newConfig } };
 	}
 
 	// Cleanup state
@@ -640,6 +650,26 @@
 			{scanning ? 'Scanning...' : 'Scan'}
 		</Button>
 	</PageHeader>
+
+	<!-- Collapsible Schedule -->
+	{#if schedTasks.library_scan || schedTasks.upgrade_scan}
+		<button onclick={() => schedExpanded = !schedExpanded}
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			<Clock class="w-3.5 h-3.5" />
+			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
+			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
+		</button>
+		{#if schedExpanded}
+			<Card padding="p-4" class="mb-4">
+				{#if schedTasks.library_scan}
+					<ScheduleControl taskName="library_scan" label="Library Scan" enabled={schedTasks.library_scan.enabled} intervalHours={schedTasks.library_scan.interval_hours} runAt={schedTasks.library_scan.run_at} lastRunAt={schedTasks.library_scan.last_run_at} running={schedRunning.library_scan} onToggle={() => toggleSched('library_scan')} onUpdate={(u) => updateSched('library_scan', u)} onRun={() => runSched('library_scan')} />
+				{/if}
+				{#if schedTasks.upgrade_scan}
+					<ScheduleControl taskName="upgrade_scan" label="Quality Upgrade Scan" enabled={schedTasks.upgrade_scan.enabled} intervalHours={schedTasks.upgrade_scan.interval_hours} runAt={schedTasks.upgrade_scan.run_at} lastRunAt={schedTasks.upgrade_scan.last_run_at} count={schedTasks.upgrade_scan.count} running={schedRunning.upgrade_scan} onToggle={() => toggleSched('upgrade_scan')} onUpdate={(u) => updateSched('upgrade_scan', u)} onRun={() => runSched('upgrade_scan')} autoDownload={schedTasks.upgrade_scan.config?.auto_download} onToggleAutoDownload={() => toggleAutoDownload('upgrade_scan')} />
+				{/if}
+			</Card>
+		{/if}
+	{/if}
 
 	<!-- Upgrade Scanner -->
 	{#if showUpgrades}
@@ -1290,24 +1320,19 @@
 		{/if}
 	{/if}
 
-	<!-- Schedule -->
-	{#if schedTasks.library_scan || schedTasks.library_cleanup}
-		<Card padding="p-4" class="mt-6">
-			<div class="flex items-center gap-2 mb-2">
-				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
-				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
-			</div>
-			{#if schedTasks.library_scan}
-				<ScheduleControl taskName="library_scan" label="Library Scan" enabled={schedTasks.library_scan.enabled} intervalHours={schedTasks.library_scan.interval_hours} runAt={schedTasks.library_scan.run_at} lastRunAt={schedTasks.library_scan.last_run_at} running={schedRunning.library_scan} onToggle={() => toggleSched('library_scan')} onUpdate={(u) => updateSched('library_scan', u)} onRun={() => runSched('library_scan')} />
-			{/if}
-			{#if schedTasks.library_cleanup}
-				<ScheduleControl taskName="library_cleanup" label="Orphan Cleanup (scheduled)" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
-				<div class="flex items-center gap-2 mt-1.5 ml-1">
-					<AlertTriangle class="w-3 h-3 text-amber-400/70" />
-					<span class="text-[11px] text-amber-400/70">Destructive — removes orphaned database entries for files no longer on disk</span>
-				</div>
-			{/if}
-		</Card>
+	<!-- Pagination -->
+	{#if currentTotal > 0}
+		<div class="flex justify-center items-center gap-3 mt-4">
+			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
+				<ChevronLeft class="w-4 h-4" /> Prev
+			</Button>
+			<span class="text-sm text-[var(--text-muted)] font-mono">
+				{offset + 1}-{Math.min(offset + limit, currentTotal)} of {currentTotal}
+			</span>
+			<Button variant="secondary" size="sm" disabled={offset + limit >= currentTotal} onclick={nextPage}>
+				Next <ChevronRight class="w-4 h-4" />
+			</Button>
+		</div>
 	{/if}
 
 	<!-- Library Cleanup Tools — Danger Zone -->
@@ -1317,6 +1342,11 @@
 			<span class="text-xs text-amber-400/80 font-mono uppercase tracking-wider">Danger Zone</span>
 		</div>
 		<p class="text-[11px] text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
+		{#if schedTasks.library_cleanup}
+			<div class="mb-3 p-2 rounded border border-amber-500/15 bg-amber-500/5">
+				<ScheduleControl taskName="library_cleanup" label="Orphan Cleanup (scheduled)" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
+			</div>
+		{/if}
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
 			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'orphans' ? 'border-red-500/50 bg-red-500/10' : 'border-red-500/20 bg-[var(--bg-secondary)] hover:bg-red-500/5'}" onclick={() => previewCleanup('orphans')}>
 				<div class="flex items-center gap-2 mb-1">
@@ -1422,21 +1452,6 @@
 			</div>
 		{/if}
 	</Card>
-
-	<!-- Pagination -->
-	{#if currentTotal > 0}
-		<div class="flex justify-center items-center gap-3 mt-4">
-			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
-				<ChevronLeft class="w-4 h-4" /> Prev
-			</Button>
-			<span class="text-sm text-[var(--text-muted)] font-mono">
-				{offset + 1}-{Math.min(offset + limit, currentTotal)} of {currentTotal}
-			</span>
-			<Button variant="secondary" size="sm" disabled={offset + limit >= currentTotal} onclick={nextPage}>
-				Next <ChevronRight class="w-4 h-4" />
-			</Button>
-		</div>
-	{/if}
 </div>
 
 <!-- Track Action Menu -->

@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, inputClass } from '$lib/utils.js';
-	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight } from 'lucide-svelte';
+	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -16,6 +16,7 @@
 	let loading = $state(true);
 	let schedTasks = $state({});
 	let schedRunning = $state({});
+	let schedExpanded = $state(false);
 
 	// Detail view
 	let selectedPlaylist = $state(null);
@@ -163,6 +164,32 @@
 			{/if}
 		</Button>
 	</div>
+
+	<!-- Collapsible Schedule -->
+	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites || schedTasks.playlist_unfavorites}
+		<button onclick={() => schedExpanded = !schedExpanded}
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			<Clock class="w-3.5 h-3.5" />
+			<span class="font-mono uppercase tracking-wider">Auto-generate Schedule</span>
+			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
+		</button>
+		{#if schedExpanded}
+			<Card padding="p-4" class="mb-4">
+				{#if schedTasks.playlist_weekly_top}
+					<ScheduleControl taskName="playlist_weekly_top" label="Weekly Top" enabled={schedTasks.playlist_weekly_top.enabled} intervalHours={schedTasks.playlist_weekly_top.interval_hours} runAt={schedTasks.playlist_weekly_top.run_at} dayOfWeek={schedTasks.playlist_weekly_top.day_of_week} count={schedTasks.playlist_weekly_top.count} lastRunAt={schedTasks.playlist_weekly_top.last_run_at} running={schedRunning.playlist_weekly_top} onToggle={() => toggleSched('playlist_weekly_top')} onUpdate={(u) => updateSched('playlist_weekly_top', u)} onRun={() => runSched('playlist_weekly_top')} />
+				{/if}
+				{#if schedTasks.playlist_weekly_discover}
+					<ScheduleControl taskName="playlist_weekly_discover" label="Weekly Discover" enabled={schedTasks.playlist_weekly_discover.enabled} intervalHours={schedTasks.playlist_weekly_discover.interval_hours} runAt={schedTasks.playlist_weekly_discover.run_at} dayOfWeek={schedTasks.playlist_weekly_discover.day_of_week} count={schedTasks.playlist_weekly_discover.count} lastRunAt={schedTasks.playlist_weekly_discover.last_run_at} running={schedRunning.playlist_weekly_discover} onToggle={() => toggleSched('playlist_weekly_discover')} onUpdate={(u) => updateSched('playlist_weekly_discover', u)} onRun={() => runSched('playlist_weekly_discover')} />
+				{/if}
+				{#if schedTasks.playlist_favorites}
+					<ScheduleControl taskName="playlist_favorites" label="Favorites Playlist" enabled={schedTasks.playlist_favorites.enabled} intervalHours={schedTasks.playlist_favorites.interval_hours} runAt={schedTasks.playlist_favorites.run_at} lastRunAt={schedTasks.playlist_favorites.last_run_at} running={schedRunning.playlist_favorites} onToggle={() => toggleSched('playlist_favorites')} onUpdate={(u) => updateSched('playlist_favorites', u)} onRun={() => runSched('playlist_favorites')} />
+				{/if}
+				{#if schedTasks.playlist_unfavorites}
+					<ScheduleControl taskName="playlist_unfavorites" label="Unfavorites Playlist" enabled={schedTasks.playlist_unfavorites.enabled} intervalHours={schedTasks.playlist_unfavorites.interval_hours} runAt={schedTasks.playlist_unfavorites.run_at} lastRunAt={schedTasks.playlist_unfavorites.last_run_at} running={schedRunning.playlist_unfavorites} onToggle={() => toggleSched('playlist_unfavorites')} onUpdate={(u) => updateSched('playlist_unfavorites', u)} onRun={() => runSched('playlist_unfavorites')} />
+				{/if}
+			</Card>
+		{/if}
+	{/if}
 
 	{#if showGenerator}
 		<Card padding="p-4" class="mb-6">
@@ -339,25 +366,4 @@
 		</Card>
 	{/if}
 
-	<!-- Schedule -->
-	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites || schedTasks.playlist_unfavorites}
-		<Card padding="p-4" class="mt-6">
-			<div class="flex items-center gap-2 mb-2">
-				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
-				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-generate Schedule</span>
-			</div>
-			{#if schedTasks.playlist_weekly_top}
-				<ScheduleControl taskName="playlist_weekly_top" label="Weekly Top" enabled={schedTasks.playlist_weekly_top.enabled} intervalHours={schedTasks.playlist_weekly_top.interval_hours} runAt={schedTasks.playlist_weekly_top.run_at} dayOfWeek={schedTasks.playlist_weekly_top.day_of_week} count={schedTasks.playlist_weekly_top.count} lastRunAt={schedTasks.playlist_weekly_top.last_run_at} running={schedRunning.playlist_weekly_top} onToggle={() => toggleSched('playlist_weekly_top')} onUpdate={(u) => updateSched('playlist_weekly_top', u)} onRun={() => runSched('playlist_weekly_top')} />
-			{/if}
-			{#if schedTasks.playlist_weekly_discover}
-				<ScheduleControl taskName="playlist_weekly_discover" label="Weekly Discover" enabled={schedTasks.playlist_weekly_discover.enabled} intervalHours={schedTasks.playlist_weekly_discover.interval_hours} runAt={schedTasks.playlist_weekly_discover.run_at} dayOfWeek={schedTasks.playlist_weekly_discover.day_of_week} count={schedTasks.playlist_weekly_discover.count} lastRunAt={schedTasks.playlist_weekly_discover.last_run_at} running={schedRunning.playlist_weekly_discover} onToggle={() => toggleSched('playlist_weekly_discover')} onUpdate={(u) => updateSched('playlist_weekly_discover', u)} onRun={() => runSched('playlist_weekly_discover')} />
-			{/if}
-			{#if schedTasks.playlist_favorites}
-				<ScheduleControl taskName="playlist_favorites" label="Favorites Playlist" enabled={schedTasks.playlist_favorites.enabled} intervalHours={schedTasks.playlist_favorites.interval_hours} runAt={schedTasks.playlist_favorites.run_at} lastRunAt={schedTasks.playlist_favorites.last_run_at} running={schedRunning.playlist_favorites} onToggle={() => toggleSched('playlist_favorites')} onUpdate={(u) => updateSched('playlist_favorites', u)} onRun={() => runSched('playlist_favorites')} />
-			{/if}
-			{#if schedTasks.playlist_unfavorites}
-				<ScheduleControl taskName="playlist_unfavorites" label="Unfavorites Playlist" enabled={schedTasks.playlist_unfavorites.enabled} intervalHours={schedTasks.playlist_unfavorites.interval_hours} runAt={schedTasks.playlist_unfavorites.run_at} lastRunAt={schedTasks.playlist_unfavorites.last_run_at} running={schedRunning.playlist_unfavorites} onToggle={() => toggleSched('playlist_unfavorites')} onUpdate={(u) => updateSched('playlist_unfavorites', u)} onRun={() => runSched('playlist_unfavorites')} />
-			{/if}
-		</Card>
-	{/if}
 </div>

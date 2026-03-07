@@ -1,6 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { Search, X, Settings, RefreshCw, Bell } from 'lucide-svelte';
+	import { Search, X, RefreshCw, Bell } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { activeJobs, addToast } from '$lib/stores.js';
 
@@ -201,10 +201,4 @@
 		{/if}
 	</div>
 
-	<!-- Settings -->
-	<button onclick={() => goto('/settings')}
-		class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
-		title="Settings">
-		<Settings class="w-4 h-4" />
-	</button>
 </div>

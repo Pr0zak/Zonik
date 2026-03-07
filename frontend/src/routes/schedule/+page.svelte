@@ -18,7 +18,7 @@
 			icon: Music,
 			href: '/library',
 			color: 'var(--color-library)',
-			tasks: ['library_scan', 'library_cleanup'],
+			tasks: ['library_scan', 'library_cleanup', 'upgrade_scan'],
 		},
 		{
 			label: 'Analysis',
@@ -32,7 +32,7 @@
 			icon: Compass,
 			href: '/discover',
 			color: 'var(--color-discover)',
-			tasks: ['lastfm_top_tracks', 'discover_similar', 'discover_artists'],
+			tasks: ['lastfm_top_tracks', 'discover_similar', 'discover_artists', 'recommendation_refresh'],
 		},
 		{
 			label: 'Playlists',

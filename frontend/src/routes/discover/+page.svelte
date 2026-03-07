@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { parseUTC } from '$lib/utils.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -40,6 +40,42 @@
 	let recTotal = $state(0);
 	let recProfileComputedAt = $state(null);
 	let expandedScoreId = $state(null);
+	let recFilter = $state('all');
+	let previewAudio = $state(null);
+	let previewRecId = $state(null);
+
+	const sourceFilters = [
+		{ key: 'all', label: 'All' },
+		{ key: 'similar_track', label: 'Similar' },
+		{ key: 'similar_artist', label: 'Artists' },
+		{ key: 'tag', label: 'Genre' },
+		{ key: 'trending', label: 'Trending' },
+		{ key: 'claude', label: 'AI' },
+	];
+
+	let filteredRecs = $derived(
+		recFilter === 'all' ? recommendations : recommendations.filter(r => r.source === recFilter)
+	);
+
+	function sourceFilterCount(key) {
+		if (key === 'all') return recommendations.length;
+		return recommendations.filter(r => r.source === key).length;
+	}
+
+	function togglePreview(rec) {
+		if (!rec.preview_url) return;
+		if (previewRecId === rec.id) {
+			// Stop playing
+			if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+			previewRecId = null;
+			return;
+		}
+		if (previewAudio) { previewAudio.pause(); }
+		previewAudio = new Audio(rec.preview_url);
+		previewRecId = rec.id;
+		previewAudio.play();
+		previewAudio.onended = () => { previewRecId = null; previewAudio = null; };
+	}
 
 	// Search state
 	let searchQuery = $state('');
@@ -61,6 +97,7 @@
 	});
 	let schedTasks = $state({});
 	let schedRunning = $state({});
+	let schedExpanded = $state(false);
 
 	const tabs = [
 		{ key: 'foryou', label: 'For You', icon: Sparkles },
@@ -560,6 +597,32 @@
 <div class="max-w-6xl">
 	<PageHeader title="Discover" color="var(--color-discover)" />
 
+	<!-- Collapsible Schedule -->
+	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar || schedTasks.recommendation_refresh}
+		<button onclick={() => schedExpanded = !schedExpanded}
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			<Clock class="w-3.5 h-3.5" />
+			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
+			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
+		</button>
+		{#if schedExpanded}
+			<Card padding="p-4" class="mb-4">
+				{#if schedTasks.recommendation_refresh}
+					<ScheduleControl taskName="recommendation_refresh" label="AI Recommendations" enabled={schedTasks.recommendation_refresh.enabled} intervalHours={schedTasks.recommendation_refresh.interval_hours} runAt={schedTasks.recommendation_refresh.run_at} lastRunAt={schedTasks.recommendation_refresh.last_run_at} running={schedRunning.recommendation_refresh} onToggle={() => toggleSched('recommendation_refresh')} onUpdate={(u) => updateSched('recommendation_refresh', u)} onRun={() => runSched('recommendation_refresh')} />
+				{/if}
+				{#if schedTasks.lastfm_top_tracks}
+					<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} autoDownload={schedTasks.lastfm_top_tracks.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('lastfm_top_tracks')} />
+				{/if}
+				{#if schedTasks.discover_similar}
+					<ScheduleControl taskName="discover_similar" label="Similar Tracks Scan" enabled={schedTasks.discover_similar.enabled} intervalHours={schedTasks.discover_similar.interval_hours} runAt={schedTasks.discover_similar.run_at} count={schedTasks.discover_similar.count} lastRunAt={schedTasks.discover_similar.last_run_at} running={schedRunning.discover_similar} onToggle={() => toggleSched('discover_similar')} onUpdate={(u) => updateSched('discover_similar', u)} onRun={() => runSched('discover_similar')} autoDownload={schedTasks.discover_similar.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('discover_similar')} />
+				{/if}
+				{#if schedTasks.discover_artists}
+					<ScheduleControl taskName="discover_artists" label="Similar Artists Scan" enabled={schedTasks.discover_artists.enabled} intervalHours={schedTasks.discover_artists.interval_hours} runAt={schedTasks.discover_artists.run_at} count={schedTasks.discover_artists.count} lastRunAt={schedTasks.discover_artists.last_run_at} running={schedRunning.discover_artists} onToggle={() => toggleSched('discover_artists')} onUpdate={(u) => updateSched('discover_artists', u)} onRun={() => runSched('discover_artists')} />
+				{/if}
+			</Card>
+		{/if}
+	{/if}
+
 	<!-- Tabs -->
 	<div class="flex gap-1.5 mb-4 overflow-x-auto">
 		{#each tabs as tab}
@@ -741,7 +804,7 @@
 
 			<!-- Actions bar -->
 			<Card padding="p-4" class="mb-4">
-				<div class="flex items-center justify-between">
+				<div class="flex items-center justify-between mb-3">
 					<div class="flex items-center gap-4">
 						<span class="text-2xl font-bold text-[var(--text-primary)]">{recTotal}</span>
 						<span class="text-xs text-[var(--text-muted)]">recommendations</span>
@@ -760,6 +823,24 @@
 						{/if}
 					</div>
 				</div>
+				<!-- Source filter pills -->
+				{#if recommendations.length}
+					<div class="flex gap-1.5 flex-wrap">
+						{#each sourceFilters as sf}
+							{@const count = sourceFilterCount(sf.key)}
+							{#if count > 0 || sf.key === 'all'}
+								<button onclick={() => recFilter = sf.key}
+									class="px-2.5 py-1 rounded-full text-xs font-medium transition-colors
+										{recFilter === sf.key
+											? 'bg-[var(--color-discover)] text-white'
+											: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
+									{sf.label}
+									<span class="ml-1 opacity-70">{count}</span>
+								</button>
+							{/if}
+						{/each}
+					</div>
+				{/if}
 			</Card>
 
 			<!-- Recommendation list -->
@@ -768,6 +849,7 @@
 					<div class="divide-y divide-[var(--border-subtle)]">
 						{#each Array(8) as _}
 							<div class="px-4 py-4 flex items-center gap-4">
+								<Skeleton class="h-10 w-10 rounded" />
 								<Skeleton class="h-8 w-12 rounded" />
 								<div class="flex-1 space-y-1.5">
 									<Skeleton class="h-4 w-40" />
@@ -778,15 +860,36 @@
 						{/each}
 					</div>
 				</Card>
-			{:else if recommendations.length}
+			{:else if filteredRecs.length}
 				<Card padding="p-0">
 					<div class="divide-y divide-[var(--border-subtle)]">
-						{#each recommendations as rec}
+						{#each filteredRecs as rec}
 							{@const recKey = `${rec.artist}::${rec.track}`.toLowerCase()}
 							{@const dlStatus = trackStatus[recKey] || null}
 							<div class="px-4 py-3 flex items-center gap-3 hover:bg-[var(--bg-hover)] transition-colors
 								{rec.status === 'downloaded' ? 'bg-green-500/5' : ''}
 								{rec.feedback === 'thumbs_up' ? 'bg-green-500/5' : ''}">
+								<!-- Cover art -->
+								<div class="flex-shrink-0 w-10 h-10 rounded overflow-hidden bg-[var(--bg-hover)] relative group">
+									{#if rec.image_url}
+										<img src={rec.image_url} alt="" class="w-full h-full object-cover" loading="lazy" />
+									{:else}
+										<div class="w-full h-full flex items-center justify-center">
+											<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+									{#if rec.preview_url}
+										<button onclick={() => togglePreview(rec)}
+											class="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+											{#if previewRecId === rec.id}
+												<Pause class="w-4 h-4 text-white" />
+											{:else}
+												<Play class="w-4 h-4 text-white" />
+											{/if}
+										</button>
+									{/if}
+								</div>
+
 								<!-- Score badge (clickable for breakdown) -->
 								<div class="flex-shrink-0 w-12 text-center">
 									<button onclick={() => expandedScoreId = expandedScoreId === rec.id ? null : rec.id}
@@ -867,6 +970,10 @@
 							</div>
 						{/each}
 					</div>
+				</Card>
+			{:else if recommendations.length && !filteredRecs.length}
+				<Card>
+					<EmptyState title="No matching recommendations" description="No recommendations match this filter. Try a different source filter." />
 				</Card>
 			{:else}
 				<Card>
@@ -1162,26 +1269,4 @@
 		{/if}
 	</div>
 
-	<!-- Schedule -->
-	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar || schedTasks.recommendation_refresh}
-		<Card padding="p-4" class="mt-6">
-			<div class="flex items-center gap-2 mb-2">
-				<Clock class="w-4 h-4 text-[var(--text-muted)]" />
-				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
-			</div>
-			{#if schedTasks.recommendation_refresh}
-				<ScheduleControl taskName="recommendation_refresh" label="AI Recommendations" enabled={schedTasks.recommendation_refresh.enabled} intervalHours={schedTasks.recommendation_refresh.interval_hours} runAt={schedTasks.recommendation_refresh.run_at} lastRunAt={schedTasks.recommendation_refresh.last_run_at} running={schedRunning.recommendation_refresh} onToggle={() => toggleSched('recommendation_refresh')} onUpdate={(u) => updateSched('recommendation_refresh', u)} onRun={() => runSched('recommendation_refresh')} />
-			{/if}
-			{#if schedTasks.lastfm_top_tracks}
-				<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} autoDownload={schedTasks.lastfm_top_tracks.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('lastfm_top_tracks')} />
-			{/if}
-			{#if schedTasks.discover_similar}
-				<ScheduleControl taskName="discover_similar" label="Similar Tracks Scan" enabled={schedTasks.discover_similar.enabled} intervalHours={schedTasks.discover_similar.interval_hours} runAt={schedTasks.discover_similar.run_at} count={schedTasks.discover_similar.count} lastRunAt={schedTasks.discover_similar.last_run_at} running={schedRunning.discover_similar} onToggle={() => toggleSched('discover_similar')} onUpdate={(u) => updateSched('discover_similar', u)} onRun={() => runSched('discover_similar')} autoDownload={schedTasks.discover_similar.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('discover_similar')} />
-			{/if}
-			{#if schedTasks.discover_artists}
-				<ScheduleControl taskName="discover_artists" label="Similar Artists Scan" enabled={schedTasks.discover_artists.enabled} intervalHours={schedTasks.discover_artists.interval_hours} runAt={schedTasks.discover_artists.run_at} count={schedTasks.discover_artists.count} lastRunAt={schedTasks.discover_artists.last_run_at} running={schedRunning.discover_artists} onToggle={() => toggleSched('discover_artists')} onUpdate={(u) => updateSched('discover_artists', u)} onRun={() => runSched('discover_artists')} />
-			{/if}
-
-		</Card>
-	{/if}
 </div>

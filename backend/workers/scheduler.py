@@ -30,6 +30,7 @@ _TASK_LABELS = {
     "audio_analysis": "Audio Analysis",
     "library_cleanup": "Library Cleanup",
     "recommendation_refresh": "AI Recommendations",
+    "upgrade_scan": "Quality Upgrade Scan",
 }
 
 
@@ -134,6 +135,9 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             result = await refresh_recommendations(db, on_progress=on_progress)
             job.result = json.dumps(result)
 
+        elif task_name == "upgrade_scan":
+            await _run_upgrade_scan(db, job, count=count or 50, config=task_config)
+
         job.status = "completed"
     except Exception as e:
         log.error(f"Scheduled task {task_name} failed: {e}")
@@ -156,7 +160,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         if (
             job.status == "completed"
             and task_config.get("auto_download")
-            and task_name in ("lastfm_top_tracks", "discover_similar")
+            and task_name in ("lastfm_top_tracks", "discover_similar", "upgrade_scan")
             and job.tracks
         ):
             try:
@@ -418,3 +422,60 @@ async def _run_lastfm_loved_sync(db: AsyncSession, job: Job):
     job.total = result["total"]
     job.progress = result["synced"] + result["skipped"]
     job.result = json.dumps(result)
+
+
+async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config: dict | None = None):
+    """Find low-quality tracks and queue them for re-download from Soulseek."""
+    from sqlalchemy import func as sqlfunc
+
+    cfg = config or {}
+    mode = cfg.get("mode", "low_bitrate")
+    max_bitrate = cfg.get("max_bitrate", 256)
+
+    query = select(Track).options(
+        selectinload(Track.artist)
+    )
+
+    lossy_formats = ["mp3", "m4a", "ogg", "opus", "aac", "wma"]
+
+    if mode == "lossy_to_lossless":
+        query = query.where(Track.format.in_(lossy_formats))
+    elif mode == "all_lossy":
+        query = query.where(Track.format.in_(lossy_formats))
+    else:  # low_bitrate (default)
+        query = query.where(
+            (Track.bitrate.isnot(None)) & (Track.bitrate < max_bitrate * 1000)
+        )
+
+    query = query.order_by(Track.bitrate.asc().nullslast()).limit(count)
+    result = await db.execute(query)
+    tracks = result.scalars().all()
+
+    upgrade_list = []
+    for t in tracks:
+        artist_name = t.artist.name if t.artist else "Unknown"
+        upgrade_list.append({
+            "artist": artist_name,
+            "track": t.title,
+            "status": "missing",  # Expected by _auto_download_missing
+            "format": t.format,
+            "bitrate": t.bitrate,
+        })
+
+    job.total = len(tracks)
+    job.progress = 0
+    job.tracks = json.dumps(upgrade_list)
+    job.result = json.dumps({
+        "mode": mode,
+        "max_bitrate": max_bitrate if mode == "low_bitrate" else None,
+        "tracks_found": len(tracks),
+        "auto_download": cfg.get("auto_download", False),
+    })
+
+    await broadcast_job_update({
+        "id": job.id, "type": "upgrade_scan", "status": "running",
+        "progress": len(tracks), "total": len(tracks),
+        "description": f"Found {len(tracks)} tracks to upgrade",
+    })
+
+    log.info(f"Upgrade scan ({mode}): found {len(tracks)} tracks")

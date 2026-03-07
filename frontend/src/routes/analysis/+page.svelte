@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
-	import { AudioWaveform, Sparkles, Database, Search, Clock } from 'lucide-svelte';
+	import { AudioWaveform, Sparkles, Database, Search, Clock, ChevronDown, ChevronUp } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -16,6 +16,7 @@
 	let searching = $state(false);
 	let schedTasks = $state({});
 	let schedRunning = $state({});
+	let schedExpanded = $state(false);
 	let startingAnalysis = $state(false);
 	let startingEmbeddings = $state(false);
 	let startingEnrichment = $state(false);
@@ -188,6 +189,77 @@
 <div class="max-w-6xl">
 	<PageHeader title="Analysis" color="var(--color-analysis)" />
 
+	<!-- Collapsible Schedule -->
+	{#if schedTasks.audio_analysis || schedTasks.enrichment}
+		<button onclick={() => schedExpanded = !schedExpanded}
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			<Clock class="w-3.5 h-3.5" />
+			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
+			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
+		</button>
+		{#if schedExpanded}
+			<Card padding="p-4" class="mb-4">
+				{#if schedTasks.audio_analysis}
+					<ScheduleControl
+						taskName="audio_analysis"
+						label="Audio Analysis"
+						enabled={schedTasks.audio_analysis.enabled}
+						intervalHours={schedTasks.audio_analysis.interval_hours}
+						runAt={schedTasks.audio_analysis.run_at}
+						lastRunAt={schedTasks.audio_analysis.last_run_at}
+						running={schedRunning.audio_analysis}
+						onToggle={() => toggleSched('audio_analysis')}
+						onUpdate={(u) => updateSched('audio_analysis', u)}
+						onRun={() => runSched('audio_analysis')}
+					/>
+				{/if}
+				{#if schedTasks.enrichment}
+					<ScheduleControl
+						taskName="enrichment"
+						label="Enrichment"
+						enabled={schedTasks.enrichment.enabled}
+						intervalHours={schedTasks.enrichment.interval_hours}
+						runAt={schedTasks.enrichment.run_at}
+						lastRunAt={schedTasks.enrichment.last_run_at}
+						running={schedRunning.enrichment}
+						onToggle={() => toggleSched('enrichment')}
+						onUpdate={(u) => updateSched('enrichment', u)}
+						onRun={() => runSched('enrichment')}
+					/>
+				{/if}
+				<!-- Auto-run after scan toggles -->
+				<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-run after Library Scan</span>
+					<div class="mt-2 space-y-2">
+						{#if schedTasks.audio_analysis}
+							<label class="flex items-center gap-2 cursor-pointer">
+								<button onclick={() => toggleAutoAfterScan('audio_analysis')}
+									class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
+										{schedTasks.audio_analysis.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
+									<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
+										{schedTasks.audio_analysis.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
+								</button>
+								<span class="text-xs text-[var(--text-secondary)]">Audio Analysis</span>
+							</label>
+						{/if}
+						{#if schedTasks.enrichment}
+							<label class="flex items-center gap-2 cursor-pointer">
+								<button onclick={() => toggleAutoAfterScan('enrichment')}
+									class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
+										{schedTasks.enrichment.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
+									<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
+										{schedTasks.enrichment.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
+								</button>
+								<span class="text-xs text-[var(--text-secondary)]">Metadata Enrichment</span>
+							</label>
+						{/if}
+					</div>
+					<p class="text-[10px] text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
+				</div>
+			</Card>
+		{/if}
+	{/if}
+
 	{#if loading}
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
 			{#each Array(3) as _}
@@ -313,71 +385,6 @@
 				{/each}
 			</div>
 		{/if}
-	</Card>
-
-	<Card padding="p-4" class="mb-6">
-		<div class="flex items-center gap-2 mb-2">
-			<Clock class="w-4 h-4 text-[var(--text-muted)]" />
-			<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Schedule</span>
-		</div>
-		{#if schedTasks.audio_analysis}
-			<ScheduleControl
-				taskName="audio_analysis"
-				label="Audio Analysis"
-				enabled={schedTasks.audio_analysis.enabled}
-				intervalHours={schedTasks.audio_analysis.interval_hours}
-				runAt={schedTasks.audio_analysis.run_at}
-				lastRunAt={schedTasks.audio_analysis.last_run_at}
-				running={schedRunning.audio_analysis}
-				onToggle={() => toggleSched('audio_analysis')}
-				onUpdate={(u) => updateSched('audio_analysis', u)}
-				onRun={() => runSched('audio_analysis')}
-			/>
-		{/if}
-		{#if schedTasks.enrichment}
-			<ScheduleControl
-				taskName="enrichment"
-				label="Enrichment"
-				enabled={schedTasks.enrichment.enabled}
-				intervalHours={schedTasks.enrichment.interval_hours}
-				runAt={schedTasks.enrichment.run_at}
-				lastRunAt={schedTasks.enrichment.last_run_at}
-				running={schedRunning.enrichment}
-				onToggle={() => toggleSched('enrichment')}
-				onUpdate={(u) => updateSched('enrichment', u)}
-				onRun={() => runSched('enrichment')}
-			/>
-		{/if}
-
-		<!-- Auto-run after scan toggles -->
-		<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
-			<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-run after Library Scan</span>
-			<div class="mt-2 space-y-2">
-				{#if schedTasks.audio_analysis}
-					<label class="flex items-center gap-2 cursor-pointer">
-						<button onclick={() => toggleAutoAfterScan('audio_analysis')}
-							class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
-								{schedTasks.audio_analysis.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
-							<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
-								{schedTasks.audio_analysis.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
-						</button>
-						<span class="text-xs text-[var(--text-secondary)]">Audio Analysis</span>
-					</label>
-				{/if}
-				{#if schedTasks.enrichment}
-					<label class="flex items-center gap-2 cursor-pointer">
-						<button onclick={() => toggleAutoAfterScan('enrichment')}
-							class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
-								{schedTasks.enrichment.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
-							<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
-								{schedTasks.enrichment.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
-						</button>
-						<span class="text-xs text-[var(--text-secondary)]">Metadata Enrichment</span>
-					</label>
-				{/if}
-			</div>
-			<p class="text-[10px] text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
-		</div>
 	</Card>
 
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-4">

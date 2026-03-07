@@ -45,7 +45,7 @@ backend/
     config_api.py      # Services config + version/updates/upgrade endpoints
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
-    library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner, duplicates management
+    library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner, duplicates management, dashboard aggregation
     download.py        # Soulseek search/trigger/bulk + blacklist + stats + stats history + reputation reset
     discovery.py       # Last.fm charts, similar tracks/artists, remix discovery
     map.py             # Music Map graph API (genre/artist/track nodes, view modes: genre/play_heatmap/quality/duplicates)
@@ -73,10 +73,10 @@ backend/
   migrations/          # Alembic migrations
 frontend/
   src/routes/          # SvelteKit pages (14 routes)
-    +page.svelte       # Dashboard (stats, last scan, version, health, Soulseek P2P)
+    +page.svelte       # Dashboard (9 widgets: stat cards, quick actions, quality gauge, growth chart, storage, transfers, activity, favorites, duplicates, tasks, P2P, health)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner + remix discovery
     duplicates/        # Duplicate management — grouped cards, rich track details (format/bitrate/quality/plays), bulk remove, find upgrade
-    discover/          # Last.fm charts + inline download (per-track status, individual download queue), similar artists
+    discover/          # Last.fm charts + inline download, similar artists, For You tab (AI recs with cover art + source filters)
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
@@ -86,7 +86,7 @@ frontend/
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
-  src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell/settings icons), Player, Toast
+  src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell icons), Player, Toast
     ui/                # 10 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating
   src/lib/             # api.js, stores.js, utils.js, websocket.js
 deploy/                # Systemd service files
@@ -170,13 +170,13 @@ docs/                  # Installation, configuration, API reference, development
 - Enrichment: proper error logging per track, cancel support (checks job status each iteration), WebSocket progress every track
 - Enrichment progress: updates DB every 5 tracks (same session) so Logs page shows progress
 - Track search uses FTS5 (title, artist, album) with prefix matching; falls back to ILIKE if FTS returns nothing
-- Schedule controls distributed to section pages via reusable ScheduleControl component (Library, Analysis, Discover, Playlists, Settings)
-- Schedule page is summary/overview: groups tasks by section, shows status/interval/last run, links to respective pages
+- Schedule controls distributed to section pages via reusable ScheduleControl component in collapsible top area (Library, Analysis, Discover, Playlists, Settings)
+- Schedule page is summary/overview: groups tasks by section (incl. upgrade_scan + recommendation_refresh), shows status/interval/last run, links to respective pages
 - ScheduleControl component: compact row with toggle, label, interval select, time input, optional day/count, optional auto-download button, run button
 - Discover page: top tracks limit fetched from scheduled task config (default 100); per-track inline download with status (spinner/check/failed+retry)
 - Discovery library matching: joins Artist table, matches exact artist + title (case-insensitive) — not loose ILIKE %title%
 - Logs page: category filter tabs (All/Downloads/Library/Analysis/Discovery/Playlists), expanded job detail with colored status badges
-- TopBar: global search (typeahead library + P2P), sync button (library scan), notification bell (active jobs with progress, clickable → /logs?job=id), settings gear
+- TopBar: global search (typeahead library + P2P), sync button (library scan), notification bell (active jobs with progress, clickable → /logs?job=id)
 - Downloads page: single fuzzy search field (auto-splits "Artist - Track"), paginated P2P results (25/50/100 per page), downloads section above results
 - Library page: reads `?search=` URL param on mount for TopBar navigation integration
 - Favorites: total count displayed in PageHeader
@@ -247,6 +247,14 @@ docs/                  # Installation, configuration, API reference, development
 - Music Map Quality: recolors by avg_quality score (green=lossless → red=low quality), low-quality nodes get "Find Upgrades" action in detail panel
 - Music Map Duplicates: pulsing amber rings on artist nodes with duplicate tracks, link to Duplicates Manager in detail panel
 - Music Map graph_builder: artist nodes include play_count (sum), avg_bitrate, primary_format, avg_quality (FORMAT_QUALITY + bitrate)
+- Dashboard: 9 widgets — stat cards, quick actions (scan/recs/analysis/charts), quality health score (SVG circular gauge), library growth chart (30-day bar), storage by format, active transfers, recent activity feed, favorites + duplicates alert, scheduled tasks status
+- Dashboard API: GET /api/library/stats/dashboard returns growth, quality_score, storage, recent_activity, favorites, duplicates, scheduled_tasks in one call
+- Recommendation cover art: image_url + preview_url columns on Recommendation model, fetched from iTunes Search API (no key needed, 300x300 art + 30s preview)
+- Recommendation genre scoring: Last.fm tags fetched per candidate via track.getInfo, scored as weighted overlap with user's genre_distribution (replaces weak pattern matching)
+- Recommendation source filters: frontend pills (All/Similar/Artists/Genre/Trending/AI) filter by existing source field, with per-filter count badges
+- Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode + max_bitrate
+- Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)
+- Library page layout: pagination above schedule/danger zone sections; orphan cleanup ScheduleControl moved into Danger Zone card
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)

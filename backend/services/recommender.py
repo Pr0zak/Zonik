@@ -1,11 +1,14 @@
 """AI Music Assistant — taste profile builder, candidate sourcer, and scoring engine."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 
+import httpx
 import numpy as np
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -213,6 +216,67 @@ async def _get_blacklisted(db: AsyncSession) -> tuple[set[str], set[str]]:
     return bl_artists, bl_tracks
 
 
+async def _fetch_itunes_metadata(artist: str, track: str) -> dict:
+    """Fetch cover art and preview URL from iTunes Search API."""
+    try:
+        query = quote_plus(f"{artist} {track}")
+        url = f"https://itunes.apple.com/search?term={query}&media=music&entity=song&limit=1"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                return {}
+            r = results[0]
+            # Upgrade to 300x300 artwork
+            art_url = r.get("artworkUrl100", "")
+            if art_url:
+                art_url = art_url.replace("100x100", "300x300")
+            return {
+                "image_url": art_url or None,
+                "preview_url": r.get("previewUrl") or None,
+            }
+    except Exception as e:
+        log.debug(f"iTunes metadata error for {artist} - {track}: {e}")
+        return {}
+
+
+async def _batch_fetch_itunes(candidates: list[dict], max_concurrent: int = 5) -> None:
+    """Batch-fetch iTunes metadata for candidates (in-place update)."""
+    sem = asyncio.Semaphore(max_concurrent)
+
+    async def fetch_one(c):
+        async with sem:
+            meta = await _fetch_itunes_metadata(c["artist"], c["track"])
+            if meta:
+                c["image_url"] = meta.get("image_url")
+                c["preview_url"] = meta.get("preview_url")
+            # Rate limit: ~200ms between requests
+            await asyncio.sleep(0.2)
+
+    tasks = [fetch_one(c) for c in candidates]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    fetched = sum(1 for c in candidates if c.get("image_url"))
+    log.info(f"iTunes metadata: {fetched}/{len(candidates)} with cover art")
+
+
+async def _fetch_candidate_tags(candidates: list[dict]) -> None:
+    """Fetch Last.fm tags for candidates that don't have them yet (in-place update)."""
+    from backend.services.lastfm import get_track_info
+
+    for c in candidates:
+        if c.get("tags"):
+            continue
+        try:
+            info = await get_track_info(c["artist"], c["track"])
+            if info and info.get("tags"):
+                c["tags"] = info["tags"][:5]  # Top 5 tags
+        except Exception as e:
+            log.debug(f"Tag fetch error for {c['artist']} - {c['track']}: {e}")
+
+
 async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
     """Source recommendation candidates from Last.fm."""
     from backend.services.lastfm import (
@@ -363,20 +427,28 @@ def score_candidate(candidate: dict, profile: dict, clap_centroid: bytes | None 
         artist_affinity = 0.0
     breakdown["artist_affinity"] = round(artist_affinity, 3)
 
-    # Genre match (from source_detail or Last.fm tags — use source as proxy)
+    # Genre match — use Last.fm tags when available, fall back to source_detail
     genre_dist = profile.get("genre_distribution", {})
+    genre_dist_lower = {g.lower(): pct for g, pct in genre_dist.items()}
     genre_match = 0.0
-    # Check if candidate source_detail mentions a genre we like
-    source_detail = (candidate.get("source_detail") or "").lower()
-    for genre, pct in genre_dist.items():
-        if genre.lower() in source_detail:
-            genre_match = min(1.0, pct * 3)  # Boost: top genres get close to 1.0
-            break
-    if candidate["source"] == "tag":
-        # Tag-based candidates inherently match
-        for genre in genre_dist:
+    candidate_tags = [t.lower() for t in candidate.get("tags", [])]
+    if candidate_tags:
+        # Real tag comparison: weighted overlap with user's genre distribution
+        overlap = sum(genre_dist_lower.get(tag, 0) for tag in candidate_tags)
+        genre_match = min(1.0, overlap * 2.5)  # Normalize: 40% distribution match → 1.0
+    else:
+        # Fallback: pattern match against source_detail
+        source_detail = (candidate.get("source_detail") or "").lower()
+        for genre, pct in genre_dist.items():
             if genre.lower() in source_detail:
-                genre_match = max(genre_match, min(1.0, genre_dist[genre] * 4))
+                genre_match = min(1.0, pct * 3)
+                break
+    if candidate["source"] == "tag" and genre_match < 0.3:
+        # Tag-based candidates inherently match their genre
+        source_detail = (candidate.get("source_detail") or "").lower()
+        for genre_key, pct in genre_dist_lower.items():
+            if genre_key in source_detail:
+                genre_match = max(genre_match, min(1.0, pct * 4))
                 break
     breakdown["genre_match"] = round(genre_match, 3)
 
@@ -569,7 +641,7 @@ async def refresh_recommendations(
     on_progress=None,
 ) -> dict:
     """Full recommendation refresh: build profile, source, score, store."""
-    total_steps = 5 if use_claude else 4
+    total_steps = 6 if use_claude else 5
 
     if on_progress:
         await on_progress(0, total_steps, "Building taste profile...")
@@ -587,7 +659,14 @@ async def refresh_recommendations(
     candidates = await source_candidates(db, profile)
 
     if on_progress:
-        await on_progress(2, total_steps, f"Scoring {len(candidates)} candidates...")
+        await on_progress(2, total_steps, f"Fetching tags for {len(candidates)} candidates...")
+
+    # Step 2b: Fetch Last.fm tags for top candidates (improves genre scoring)
+    # Only fetch for first 200 to stay within rate limits
+    await _fetch_candidate_tags(candidates[:200])
+
+    if on_progress:
+        await on_progress(3, total_steps, f"Scoring {len(candidates)} candidates...")
 
     # Step 3: Load CLAP centroid + feedback multipliers
     tp = await db.get(TasteProfile, "default")
@@ -614,7 +693,7 @@ async def refresh_recommendations(
     claude_usage = None
     if use_claude:
         if on_progress:
-            await on_progress(3, total_steps, "Getting AI suggestions from Claude...")
+            await on_progress(4, total_steps, "Getting AI suggestions from Claude...")
         try:
             from backend.services.claude_ai import rerank_with_claude
             claude_result = await rerank_with_claude(profile, top[:50])
@@ -661,7 +740,12 @@ async def refresh_recommendations(
         except Exception as e:
             log.error(f"Claude integration error: {e}")
 
-    step = 4 if use_claude else 3
+    # Fetch iTunes metadata (cover art + preview URL) for top candidates
+    step = 5 if use_claude else 4
+    if on_progress:
+        await on_progress(step, total_steps, f"Fetching artwork for {len(top)} recommendations...")
+    await _batch_fetch_itunes(top)
+
     if on_progress:
         await on_progress(step, total_steps, "Saving recommendations...")
 
@@ -694,6 +778,8 @@ async def refresh_recommendations(
             explanation=_generate_explanation(c, c["breakdown"]),
             lastfm_listeners=c.get("lastfm_listeners"),
             lastfm_match=c.get("lastfm_match"),
+            image_url=c.get("image_url"),
+            preview_url=c.get("preview_url"),
             created_at=now,
             expires_at=expires,
         )

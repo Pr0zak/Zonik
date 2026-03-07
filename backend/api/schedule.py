@@ -29,6 +29,7 @@ DEFAULT_TASKS = [
     {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
     {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
     {"task_name": "recommendation_refresh", "interval_hours": 24, "run_at": "05:30"},
+    {"task_name": "upgrade_scan", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0, "count": 50},
 ]
 
 TASK_LABELS = {
@@ -45,6 +46,7 @@ TASK_LABELS = {
     "audio_analysis": "Audio Analysis",
     "library_cleanup": "Library Cleanup",
     "recommendation_refresh": "AI Recommendations",
+    "upgrade_scan": "Quality Upgrade Scan",
 }
 
 TASK_DESCRIPTIONS = {
@@ -61,6 +63,7 @@ TASK_DESCRIPTIONS = {
     "audio_analysis": "Run Essentia audio analysis (BPM, key, energy, danceability) on unanalyzed tracks.",
     "library_cleanup": "Remove orphaned database entries for files that no longer exist on disk.",
     "recommendation_refresh": "Build taste profile and generate personalized track recommendations from Last.fm.",
+    "upgrade_scan": "Find low-quality tracks (low bitrate, lossy formats) and automatically download better versions from Soulseek.",
 }
 
 

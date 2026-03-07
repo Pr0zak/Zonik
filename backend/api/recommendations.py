@@ -74,6 +74,8 @@ async def list_recommendations(
                 "explanation": r.explanation,
                 "lastfm_listeners": r.lastfm_listeners,
                 "lastfm_match": r.lastfm_match,
+                "image_url": r.image_url,
+                "preview_url": r.preview_url,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
             }
             for r in recs
@@ -109,9 +111,10 @@ async def refresh_recommendations(req: RefreshRequest, background_tasks: Backgro
             )
             db.add(job)
             await db.commit()
+            total_steps = 6 if req.use_claude else 5
             await broadcast_job_update({
                 "id": job_id, "type": "recommendation_refresh",
-                "status": "running", "progress": 0, "total": 4,
+                "status": "running", "progress": 0, "total": total_steps,
                 "description": "AI Recommendations",
             })
 
@@ -139,7 +142,7 @@ async def refresh_recommendations(req: RefreshRequest, background_tasks: Backgro
                 await db.commit()
                 await broadcast_job_update({
                     "id": job_id, "type": "recommendation_refresh",
-                    "status": job.status, "progress": 4, "total": 4,
+                    "status": job.status, "progress": total_steps, "total": total_steps,
                     "description": "AI Recommendations",
                 })
 

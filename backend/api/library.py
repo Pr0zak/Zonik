@@ -419,6 +419,154 @@ async def list_genres(db: AsyncSession = Depends(get_db)):
     return [{"name": name, "count": count} for name, count in result.all()]
 
 
+@router.get("/stats/dashboard")
+async def dashboard_stats(db: AsyncSession = Depends(get_db)):
+    """Aggregated dashboard data: growth, quality, recent activity, favorites, duplicates."""
+    from datetime import timedelta
+    from backend.models.favorite import Favorite
+    from backend.models.analysis import TrackAnalysis
+
+    now = datetime.utcnow()
+
+    # Library growth: tracks added per day over the last 30 days
+    cutoff_30d = now - timedelta(days=30)
+    growth_result = await db.execute(
+        select(
+            func.strftime("%Y-%m-%d", Track.created_at).label("day"),
+            func.count(Track.id).label("count"),
+        )
+        .where(Track.created_at >= cutoff_30d)
+        .group_by(func.strftime("%Y-%m-%d", Track.created_at))
+        .order_by(func.strftime("%Y-%m-%d", Track.created_at))
+    )
+    growth = [{"date": d, "count": c} for d, c in growth_result.all()]
+
+    # Quality health score
+    total_tracks = (await db.execute(select(func.count(Track.id)))).scalar() or 0
+    lossless_formats = ["flac", "wav", "alac", "aiff"]
+    lossless_count = (await db.execute(
+        select(func.count(Track.id)).where(Track.format.in_(lossless_formats))
+    )).scalar() or 0
+    avg_bitrate = (await db.execute(
+        select(func.avg(Track.bitrate)).where(Track.bitrate.isnot(None))
+    )).scalar() or 0
+    analyzed_count = (await db.execute(
+        select(func.count(TrackAnalysis.track_id))
+    )).scalar() or 0
+    low_quality_count = (await db.execute(
+        select(func.count(Track.id)).where(
+            Track.bitrate.isnot(None), Track.bitrate < 256000
+        )
+    )).scalar() or 0
+
+    pct_lossless = round(lossless_count / max(total_tracks, 1) * 100, 1)
+    pct_analyzed = round(analyzed_count / max(total_tracks, 1) * 100, 1)
+    # Quality score: 0-100 based on lossless %, avg bitrate, and low quality %
+    pct_low = low_quality_count / max(total_tracks, 1)
+    bitrate_score = min(1.0, (avg_bitrate or 0) / 900000)  # 900kbps = max
+    quality_score = round(
+        (pct_lossless / 100 * 0.5 + bitrate_score * 0.3 + (1 - pct_low) * 0.2) * 100, 1
+    )
+
+    # Storage breakdown by format
+    storage_result = await db.execute(
+        select(Track.format, func.sum(Track.file_size).label("size"), func.count(Track.id).label("cnt"))
+        .group_by(Track.format)
+        .order_by(func.sum(Track.file_size).desc())
+    )
+    storage_by_format = [
+        {"format": f or "unknown", "size": int(s or 0), "count": c}
+        for f, s, c in storage_result.all()
+    ]
+    total_size = sum(s["size"] for s in storage_by_format)
+
+    # Recent activity: last 15 completed jobs
+    recent_jobs_result = await db.execute(
+        select(Job.id, Job.type, Job.status, Job.started_at, Job.finished_at, Job.result)
+        .where(Job.finished_at.isnot(None))
+        .order_by(Job.finished_at.desc())
+        .limit(15)
+    )
+    recent_activity = []
+    for j_id, j_type, j_status, j_started, j_finished, j_result in recent_jobs_result.all():
+        recent_activity.append({
+            "id": j_id,
+            "type": j_type,
+            "status": j_status,
+            "finished_at": j_finished.isoformat() if j_finished else None,
+        })
+
+    # Favorites count + 5 most recent
+    fav_count = (await db.execute(
+        select(func.count(Favorite.id)).where(Favorite.track_id.isnot(None))
+    )).scalar() or 0
+    recent_favs_result = await db.execute(
+        select(Track.title, Artist.name)
+        .join(Favorite, Favorite.track_id == Track.id)
+        .outerjoin(Artist, Track.artist_id == Artist.id)
+        .order_by(Favorite.created_at.desc())
+        .limit(5)
+    )
+    recent_favorites = [
+        {"title": t, "artist": a or "Unknown"}
+        for t, a in recent_favs_result.all()
+    ]
+
+    # Duplicates summary
+    from backend.services.cleanup import find_duplicates_enriched
+    try:
+        dup_result = await find_duplicates_enriched(db)
+        dup_groups = len(dup_result.get("groups", []))
+        dup_reclaimable = dup_result.get("reclaimable_bytes", 0)
+    except Exception:
+        dup_groups = 0
+        dup_reclaimable = 0
+
+    # Scheduled tasks: next upcoming
+    from backend.models.schedule import ScheduleTask
+    sched_result = await db.execute(
+        select(ScheduleTask).where(ScheduleTask.enabled == True)
+    )
+    upcoming = []
+    for task in sched_result.scalars().all():
+        next_run = None
+        if task.last_run_at:
+            next_run = (task.last_run_at + timedelta(hours=task.interval_hours)).isoformat()
+        upcoming.append({
+            "task_name": task.task_name,
+            "run_at": task.run_at,
+            "interval_hours": task.interval_hours,
+            "last_run_at": task.last_run_at.isoformat() if task.last_run_at else None,
+            "next_run": next_run,
+        })
+
+    return {
+        "growth": growth,
+        "quality": {
+            "score": quality_score,
+            "pct_lossless": pct_lossless,
+            "pct_analyzed": pct_analyzed,
+            "avg_bitrate": int(avg_bitrate or 0),
+            "low_quality_count": low_quality_count,
+            "total_tracks": total_tracks,
+        },
+        "storage": {
+            "total_size": total_size,
+            "by_format": storage_by_format,
+        },
+        "recent_activity": recent_activity,
+        "favorites": {
+            "count": fav_count,
+            "recent": recent_favorites,
+        },
+        "duplicates": {
+            "groups": dup_groups,
+            "reclaimable_bytes": dup_reclaimable,
+        },
+        "upcoming_tasks": upcoming,
+    }
+
+
 @router.get("/stats/detailed")
 async def detailed_stats(db: AsyncSession = Depends(get_db)):
     """Detailed library statistics for the stats page."""
