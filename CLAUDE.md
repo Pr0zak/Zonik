@@ -46,7 +46,7 @@ backend/
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner, duplicates management, dashboard aggregation
-    download.py        # Soulseek search/trigger/bulk + blacklist + stats + stats history + reputation reset
+    download.py        # Soulseek search/trigger/bulk + enqueue_download helper + blacklist + stats + stats history + reputation reset
     discovery.py       # Last.fm charts, similar tracks/artists, remix discovery
     map.py             # Music Map graph API (genre/artist/track nodes, view modes: genre/play_heatmap/quality/duplicates)
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
@@ -88,7 +88,7 @@ frontend/
     settings/          # Service config, subsonic info, updates/upgrade
   src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell icons), Player, Toast
     ui/                # 10 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating
-  src/lib/             # api.js, stores.js, utils.js, websocket.js
+  src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js
 deploy/                # Systemd service files
 docs/                  # Installation, configuration, API reference, development guide
 ```
@@ -260,6 +260,12 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation stats: GET /api/recommendations/stats — conversion funnel (total/downloaded/thumbs_up/thumbs_down/by_source/downloads_by_source)
 - Recommendation bulk download: POST /api/recommendations/bulk-download with mode (top/above_score), count, min_score; creates individual download jobs per track
 - All download paths (trigger, bulk, recommendations, retry, auto-download) create individual per-track download jobs — no bulk_download job type
+- Download job creation: shared `enqueue_download(artist, track)` in download.py handles Job creation + semaphore queuing; used by bulk, retry (jobs.py), and recommendation bulk-download
+- Sort parameter security: allowlist sets (TRACK_SORT_COLUMNS, ARTIST_SORT_COLUMNS, ALBUM_SORT_COLUMNS) prevent arbitrary attribute access via getattr()
+- CORS: configurable via `cors_origins` list in [server] config (default `["*"]` for self-hosted)
+- Discovery batch matching: top_tracks, similar_by_track, find_remixes use single batched query instead of per-track N+1 loops
+- Cleanup request models: RemoveDupesRequest and OrganizeRequest (Pydantic) replace raw dict params in library.py
+- Database indexes: Track.artist_id, Track.album_id, Favorite.track_id/album_id/artist_id, Job.type, Job.status (migration h9i0j1k2l3m4)
 - Artwork batch fetching: POST /api/discovery/artwork/batch proxies iTunes Search API (CORS), 100 items max, 10 concurrent lookups; frontend debounces 50ms
 - Recommendation auto-download: configurable min_score + max_downloads in ScheduleTask.config; runs after recommendation_refresh completes
 - Last.fm user history: taste profile enriched with user.getTopArtists + user.getTopTracks when session_key exists (blended with local data)
@@ -284,6 +290,8 @@ docs/                  # Installation, configuration, API reference, development
 - Production URL: `http://10.0.0.205:3000` (CT 228)
 - Svelte 5 deprecation warnings (on:click → onclick) are harmless, builds succeed
 - `stores.js` exports: sidebarOpen, currentTrack, isPlaying, activeJobs, activeTransfers, toasts, updateAvailable, addToast, showShortcuts
+- `schedule.js` exports: createScheduleHelpers(getSchedTasks, setSchedTask, addToast) → {toggleSched, updateSched, runSched, toggleAutoDownload, updateSchedConfig}
+- `colors.js` exports: qualityColor (Tailwind class), qualityBarColor (Tailwind class), qualityHex (hex for D3), formatBadgeClass (format tier colors), FORMAT_HEX (chart colors)
 - CSS variable-based design system in `app.css` (layered backgrounds: --bg-primary/#0a0a0a → --bg-secondary → --bg-tertiary → --bg-hover)
 - Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, map=teal, schedule=orange, logs=violet, settings=slate)
 - Inter font via Google Fonts CDN; lucide-svelte icons throughout (tree-shakeable SVG icons)
