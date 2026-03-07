@@ -455,44 +455,215 @@ def _generate_explanation(candidate: dict, breakdown: dict) -> str:
 # 4. Full Refresh Pipeline
 # ---------------------------------------------------------------------------
 
+async def _get_feedback_multipliers(db: AsyncSession) -> dict[str, float]:
+    """Build feedback multipliers from historical thumbs up/down.
+
+    Returns {normalized_artist: multiplier} where:
+    - Artists with thumbs_up history get 1.2x
+    - Artists with thumbs_down history get 0.5x
+    """
+    multipliers: dict[str, float] = {}
+
+    # Liked recommendations boost the artist
+    liked = await db.execute(
+        select(Recommendation.artist)
+        .where(Recommendation.feedback == "thumbs_up")
+    )
+    for (artist,) in liked.all():
+        multipliers[_normalize(artist)] = 1.2
+
+    # Disliked recommendations suppress the artist
+    disliked = await db.execute(
+        select(Recommendation.artist)
+        .where(Recommendation.feedback == "thumbs_down")
+    )
+    for (artist,) in disliked.all():
+        multipliers[_normalize(artist)] = 0.5
+
+    return multipliers
+
+
+async def validate_downloaded_recommendations(db: AsyncSession) -> int:
+    """Validate downloaded recommendations against CLAP taste centroid.
+
+    Compares each downloaded rec's track embedding to the centroid.
+    Flags mismatches (cosine similarity < 0.3) by updating source_detail.
+    Returns count of validated tracks.
+    """
+    # Load taste profile centroid
+    tp = await db.get(TasteProfile, "default")
+    if not tp or not tp.clap_centroid:
+        return 0
+
+    centroid = np.frombuffer(tp.clap_centroid, dtype=np.float32)
+    if len(centroid) != 512:
+        return 0
+
+    # Find downloaded recommendations that haven't been validated yet
+    downloaded = (await db.execute(
+        select(Recommendation)
+        .where(
+            Recommendation.status == "downloaded",
+            Recommendation.feedback.is_(None),
+        )
+    )).scalars().all()
+
+    if not downloaded:
+        return 0
+
+    validated = 0
+    for rec in downloaded:
+        # Find the track in library by artist+title match
+        track_result = await db.execute(
+            select(Track.id)
+            .join(Artist, Track.artist_id == Artist.id)
+            .where(
+                func.lower(Track.title) == func.lower(rec.track),
+                func.lower(Artist.name) == func.lower(rec.artist),
+            )
+            .limit(1)
+        )
+        track_id = track_result.scalar_one_or_none()
+        if not track_id:
+            continue
+
+        # Get embedding
+        emb = await db.get(TrackEmbedding, track_id)
+        if not emb:
+            continue
+
+        try:
+            track_emb = np.frombuffer(emb.embedding, dtype=np.float32)
+            if len(track_emb) != 512:
+                continue
+
+            # Cosine similarity
+            dot = np.dot(centroid, track_emb)
+            norm = np.linalg.norm(centroid) * np.linalg.norm(track_emb)
+            similarity = float(dot / norm) if norm > 0 else 0
+
+            # Update score breakdown with CLAP validation
+            breakdown = json.loads(rec.score_breakdown) if rec.score_breakdown else {}
+            breakdown["clap_similarity"] = round(similarity, 3)
+            rec.score_breakdown = json.dumps(breakdown)
+
+            if similarity < 0.3:
+                rec.source_detail = (rec.source_detail or "") + f" [CLAP mismatch: {similarity:.0%}]"
+                log.info(f"CLAP mismatch for {rec.artist} - {rec.track}: {similarity:.3f}")
+
+            validated += 1
+        except Exception as e:
+            log.debug(f"CLAP validation error for {rec.artist} - {rec.track}: {e}")
+
+    if validated:
+        await db.commit()
+        log.info(f"CLAP-validated {validated} downloaded recommendations")
+
+    return validated
+
+
 async def refresh_recommendations(
     db: AsyncSession,
     limit: int = 100,
+    use_claude: bool = False,
     on_progress=None,
 ) -> dict:
     """Full recommendation refresh: build profile, source, score, store."""
+    total_steps = 5 if use_claude else 4
 
     if on_progress:
-        await on_progress(0, 4, "Building taste profile...")
+        await on_progress(0, total_steps, "Building taste profile...")
 
     # Step 1: Build taste profile
     profile = await build_taste_profile(db)
 
+    # Validate any previously downloaded recommendations via CLAP
+    clap_validated = await validate_downloaded_recommendations(db)
+
     if on_progress:
-        await on_progress(1, 4, "Sourcing candidates from Last.fm...")
+        await on_progress(1, total_steps, "Sourcing candidates from Last.fm...")
 
     # Step 2: Source candidates
     candidates = await source_candidates(db, profile)
 
     if on_progress:
-        await on_progress(2, 4, f"Scoring {len(candidates)} candidates...")
+        await on_progress(2, total_steps, f"Scoring {len(candidates)} candidates...")
 
-    # Step 3: Load CLAP centroid
+    # Step 3: Load CLAP centroid + feedback multipliers
     tp = await db.get(TasteProfile, "default")
     clap_centroid = tp.clap_centroid if tp else None
+    feedback_mults = await _get_feedback_multipliers(db)
 
     # Step 4: Score and rank
     scored = []
     for c in candidates:
         score, breakdown = score_candidate(c, profile, clap_centroid)
+        # Apply feedback multiplier
+        artist_key = _normalize(c["artist"])
+        mult = feedback_mults.get(artist_key, 1.0)
+        if mult != 1.0:
+            score = round(min(1.0, max(0.0, score * mult)), 3)
+            breakdown["feedback_multiplier"] = mult
         scored.append({**c, "score": score, "breakdown": breakdown})
 
     # Sort by score descending, take top N
     scored.sort(key=lambda x: x["score"], reverse=True)
     top = scored[:limit]
 
+    # Step 4b: Claude re-ranking (optional)
+    claude_usage = None
+    if use_claude:
+        if on_progress:
+            await on_progress(3, total_steps, "Getting AI suggestions from Claude...")
+        try:
+            from backend.services.claude_ai import rerank_with_claude
+            claude_result = await rerank_with_claude(profile, top[:50])
+
+            if "error" not in claude_result:
+                claude_usage = claude_result.get("usage")
+                # Merge Claude re-ranked scores and explanations
+                ranked = claude_result.get("ranked", [])
+                claude_map = {
+                    f"{_normalize(r['artist'])}::{_normalize(r['track'])}": r
+                    for r in ranked
+                }
+                for c in top:
+                    key = f"{_normalize(c['artist'])}::{_normalize(c['track'])}"
+                    if key in claude_map:
+                        cr = claude_map[key]
+                        c["score"] = cr.get("score", c["score"])
+                        c["breakdown"]["claude_score"] = cr.get("score", 0)
+                        if cr.get("explanation"):
+                            c["source_detail"] = cr["explanation"]
+
+                # Add Claude's additional suggestions
+                additional = claude_result.get("additional", [])
+                for a in additional:
+                    if not a.get("artist") or not a.get("track"):
+                        continue
+                    top.append({
+                        "artist": a["artist"],
+                        "track": a["track"],
+                        "source": "claude",
+                        "source_detail": a.get("explanation", "AI suggestion"),
+                        "score": a.get("score", 0.7),
+                        "breakdown": {"claude_score": a.get("score", 0.7)},
+                        "lastfm_listeners": None,
+                        "lastfm_match": None,
+                    })
+
+                # Re-sort after Claude adjustments
+                top.sort(key=lambda x: x["score"], reverse=True)
+                top = top[:limit]
+                log.info(f"Claude re-ranked {len(ranked)} candidates, added {len(additional)} suggestions")
+            else:
+                log.warning(f"Claude re-ranking failed: {claude_result['error']}")
+        except Exception as e:
+            log.error(f"Claude integration error: {e}")
+
+    step = 4 if use_claude else 3
     if on_progress:
-        await on_progress(3, 4, "Saving recommendations...")
+        await on_progress(step, total_steps, "Saving recommendations...")
 
     # Step 5: Expire old pending recommendations
     await db.execute(
@@ -531,10 +702,14 @@ async def refresh_recommendations(
     await db.commit()
 
     if on_progress:
-        await on_progress(4, 4, "Done")
+        await on_progress(total_steps, total_steps, "Done")
 
-    return {
+    result = {
         "candidates_sourced": len(candidates),
         "recommendations_saved": len(top),
         "top_score": top[0]["score"] if top else 0,
+        "clap_validated": clap_validated,
     }
+    if claude_usage:
+        result["claude_usage"] = claude_usage
+    return result

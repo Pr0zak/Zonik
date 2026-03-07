@@ -96,6 +96,9 @@ class ServiceConfig(BaseModel):
     lastfm_api_key: str = ""
     lastfm_write_api_key: str = ""
     lastfm_write_api_secret: str = ""
+    # AI Assistant
+    claude_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-20250514"
 
 
 @router.get("/services")
@@ -121,6 +124,8 @@ async def get_service_config():
         "lastfm_write_api_secret": settings.lastfm.write_api_secret,
         "lastfm_session_key": settings.lastfm.session_key,
         "lastfm_username": settings.lastfm.username,
+        "claude_api_key": settings.assistant.claude_api_key,
+        "claude_model": settings.assistant.claude_model,
     }
 
 
@@ -171,6 +176,14 @@ async def update_service_config(req: ServiceConfig):
     if req.naming_scheme:
         library["naming_scheme"] = req.naming_scheme
     raw["library"] = {**settings.library.model_dump(), **library}
+
+    # AI Assistant
+    assistant = raw.get("assistant", {})
+    if req.claude_api_key:
+        assistant["claude_api_key"] = req.claude_api_key
+    if req.claude_model:
+        assistant["claude_model"] = req.claude_model
+    raw["assistant"] = {**settings.assistant.model_dump(), **assistant}
 
     # Preserve other sections
     for section in ["server", "database", "redis", "analysis", "subsonic"]:

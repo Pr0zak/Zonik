@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass, formatDateTime } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -798,7 +798,47 @@
 			</div>
 		</Card>
 
-		<!-- 7. Database -->
+		<!-- 7. AI Assistant -->
+		<Card padding="p-4">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-discover) 15%, transparent)">
+						<Sparkles class="w-4 h-4" style="color: var(--color-discover)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">AI Assistant</h2>
+				</div>
+			</div>
+			<div class="space-y-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Claude API Key</label>
+					<div class="relative">
+						<input type={showField.claude_api_key ? 'text' : 'password'} bind:value={services.claude_api_key}
+							oninput={() => dirty = true}
+							placeholder="sk-ant-..."
+							class={inputClass} />
+						<button onclick={() => showField.claude_api_key = !showField.claude_api_key}
+							class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-secondary)]">
+							{#if showField.claude_api_key}
+								<EyeOff class="w-4 h-4" />
+							{:else}
+								<Eye class="w-4 h-4" />
+							{/if}
+						</button>
+					</div>
+					<p class="text-[10px] text-[var(--text-disabled)] mt-1">Optional. Enables AI re-ranking on the Discover &gt; For You tab. Uses ~$0.01-0.03 per call.</p>
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1">Model</label>
+					<select bind:value={services.claude_model} oninput={() => dirty = true}
+						class={inputClass}>
+						<option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+						<option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+					</select>
+				</div>
+			</div>
+		</Card>
+
+		<!-- 8. Database -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-3">

@@ -2,15 +2,6 @@
 
 ## Concept — Needs Design
 
-### AI Music Assistant
-An intelligent recommendation engine that suggests tracks to download based on your listening patterns, library composition, and taste profile. See `plans/ai-music-assistant.md` for full implementation plan.
-
-**Complexity: HIGH** — new service, new API, new UI, taste profiling, multiple data sources. Plan 2-3 sessions.
-
-**Depends on:** Play Stats (for play history signals), Audio Analysis (for CLAP embeddings)
-
----
-
 ### Multi-Library System
 Enable/disable entire collections of music (e.g., Christmas, Techno/Dance/Dub, Main Library). When a library is disabled, its tracks are hidden from Symfonium and the web UI. See `plans/multi-library.md` for full implementation plan.
 
@@ -26,6 +17,18 @@ Seasonal playlist feature — detect Christmas/holiday tracks in library and man
 ---
 
 ## Completed
+
+### AI Music Assistant ✅
+- Taste profile builder (genre histogram, top artists, favorites, audio analysis stats, CLAP centroid)
+- 4-strategy candidate sourcing from Last.fm (similar tracks, similar artists, tag-based, trending)
+- 7-signal weighted scoring engine (artist affinity, genre match, Last.fm similarity, audio match, CLAP similarity, popularity, novelty)
+- Feedback loop: thumbs up/down adjusts future scores (1.2x/0.5x per artist)
+- CLAP validation post-download (cosine similarity vs taste centroid, flags mismatches)
+- Claude API integration: on-demand re-ranking with natural-language explanations + additional suggestions
+- "For You" tab on Discover page with taste profile card, scored recommendations, score breakdown tooltip
+- Claude API key + model selector in Settings > AI Assistant
+- Scheduled task (daily 05:30) for automated recommendation refresh
+- `recommendations` and `taste_profiles` database tables
 
 ### Play Stats & Listening History Charts ✅
 - `play_history` table with timestamped scrobble events

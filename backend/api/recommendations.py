@@ -87,6 +87,7 @@ async def list_recommendations(
 class RefreshRequest(BaseModel):
     force: bool = False
     limit: int = 100
+    use_claude: bool = False
 
 
 @router.post("/refresh")
@@ -126,7 +127,7 @@ async def refresh_recommendations(req: RefreshRequest, background_tasks: Backgro
                         "description": desc or "AI Recommendations",
                     })
 
-                result = await _refresh(db, limit=req.limit, on_progress=on_progress)
+                result = await _refresh(db, limit=req.limit, use_claude=req.use_claude, on_progress=on_progress)
                 job.status = "completed"
                 job.result = json.dumps(result)
             except Exception as e:
@@ -188,6 +189,9 @@ async def get_profile(db: AsyncSession = Depends(get_db)):
     except Exception:
         profile_data = {}
 
+    from backend.config import get_settings
+    settings = get_settings()
+
     return {
         "exists": True,
         "computed_at": tp.computed_at.isoformat() if tp.computed_at else None,
@@ -195,6 +199,7 @@ async def get_profile(db: AsyncSession = Depends(get_db)):
         "favorite_count": tp.favorite_count,
         "analyzed_count": tp.analyzed_count,
         "has_clap_centroid": tp.clap_centroid is not None,
+        "has_claude_key": bool(settings.assistant.claude_api_key),
         "genre_distribution": profile_data.get("genre_distribution", {}),
         "top_artists": profile_data.get("top_artists", []),
         "favorite_artists": profile_data.get("favorite_artists", []),

@@ -106,8 +106,8 @@ export const api = {
 		const qs = new URLSearchParams(clean).toString();
 		return request(`/recommendations?${qs}`);
 	},
-	refreshRecommendations: (limit = 100) =>
-		request('/recommendations/refresh', { method: 'POST', body: JSON.stringify({ limit }) }),
+	refreshRecommendations: (limit = 100, useClaude = false) =>
+		request('/recommendations/refresh', { method: 'POST', body: JSON.stringify({ limit, use_claude: useClaude }) }),
 	submitFeedback: (recommendationId, action) =>
 		request('/recommendations/feedback', { method: 'POST', body: JSON.stringify({ recommendation_id: recommendationId, action }) }),
 	getTasteProfile: () => request('/recommendations/profile'),

@@ -77,6 +77,9 @@ class SubsonicConfig(BaseModel):
 
 class AssistantConfig(BaseModel):
     enabled: bool = True
+    claude_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-20250514"
+    max_suggestions_per_call: int = 20
     w_artist_affinity: float = 0.25
     w_genre_match: float = 0.20
     w_lastfm_similar: float = 0.20

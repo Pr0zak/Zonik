@@ -34,10 +34,12 @@
 	let recommendations = $state([]);
 	let recLoading = $state(false);
 	let recRefreshing = $state(false);
+	let aiRefreshing = $state(false);
 	let tasteProfile = $state(null);
 	let profileExpanded = $state(false);
 	let recTotal = $state(0);
 	let recProfileComputedAt = $state(null);
+	let expandedScoreId = $state(null);
 
 	// Search state
 	let searchQuery = $state('');
@@ -463,6 +465,35 @@
 		}
 	}
 
+	async function refreshRecsAI() {
+		aiRefreshing = true;
+		try {
+			const data = await api.refreshRecommendations(100, true);
+			addToast('Getting AI suggestions — check Logs for progress', 'success');
+			if (data.job_id) {
+				for (let i = 0; i < 120; i++) {
+					await new Promise(r => setTimeout(r, 3000));
+					try {
+						const job = await fetch(`/api/jobs/${data.job_id}`).then(r => r.json());
+						if (job.status === 'completed') {
+							addToast('AI recommendations ready!', 'success');
+							await loadRecommendations();
+							break;
+						}
+						if (job.status === 'failed') {
+							addToast('AI recommendation refresh failed', 'error');
+							break;
+						}
+					} catch {}
+				}
+			}
+		} catch {
+			addToast('Failed to start AI refresh', 'error');
+		} finally {
+			aiRefreshing = false;
+		}
+	}
+
 	async function recFeedback(rec, action) {
 		try {
 			await api.submitFeedback(rec.id, action);
@@ -715,10 +746,19 @@
 						<span class="text-2xl font-bold text-[var(--text-primary)]">{recTotal}</span>
 						<span class="text-xs text-[var(--text-muted)]">recommendations</span>
 					</div>
-					<Button variant="primary" size="sm" onclick={refreshRecs} loading={recRefreshing}>
-						<RefreshCw class="w-3.5 h-3.5" />
-						Refresh
-					</Button>
+					<div class="flex items-center gap-2">
+						<Button variant="primary" size="sm" onclick={refreshRecs} loading={recRefreshing}>
+							<RefreshCw class="w-3.5 h-3.5" />
+							Refresh
+						</Button>
+						{#if tasteProfile?.has_claude_key}
+							<Button variant="default" size="sm" onclick={refreshRecsAI} loading={aiRefreshing}
+								title="Re-rank with Claude AI (~$0.01-0.03)">
+								<Sparkles class="w-3.5 h-3.5" />
+								AI Suggestions
+							</Button>
+						{/if}
+					</div>
 				</div>
 			</Card>
 
@@ -747,11 +787,13 @@
 							<div class="px-4 py-3 flex items-center gap-3 hover:bg-[var(--bg-hover)] transition-colors
 								{rec.status === 'downloaded' ? 'bg-green-500/5' : ''}
 								{rec.feedback === 'thumbs_up' ? 'bg-green-500/5' : ''}">
-								<!-- Score badge -->
+								<!-- Score badge (clickable for breakdown) -->
 								<div class="flex-shrink-0 w-12 text-center">
-									<span class="inline-block px-2 py-0.5 rounded text-xs font-bold border {scoreBg(rec.score)} {scoreColor(rec.score)}">
+									<button onclick={() => expandedScoreId = expandedScoreId === rec.id ? null : rec.id}
+										class="inline-block px-2 py-0.5 rounded text-xs font-bold border cursor-pointer hover:opacity-80 transition-opacity {scoreBg(rec.score)} {scoreColor(rec.score)}"
+										title="Click to see score breakdown">
 										{Math.round(rec.score * 100)}
-									</span>
+									</button>
 								</div>
 
 								<!-- Track info -->
@@ -768,6 +810,21 @@
 									</div>
 									{#if rec.explanation}
 										<p class="text-xs text-[var(--text-muted)] mt-0.5 truncate">{rec.explanation}</p>
+									{/if}
+									<!-- Score breakdown (expandable) -->
+									{#if expandedScoreId === rec.id && rec.score_breakdown}
+										<div class="mt-2 pt-2 border-t border-[var(--border-subtle)] space-y-1">
+											{#each Object.entries(rec.score_breakdown) as [signal, value]}
+												<div class="flex items-center gap-2">
+													<span class="text-[10px] text-[var(--text-muted)] w-28 truncate capitalize">{signal.replace(/_/g, ' ')}</span>
+													<div class="flex-1 h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden max-w-[100px]">
+														<div class="h-full rounded-full transition-all {value > 0.6 ? 'bg-green-500' : value > 0.3 ? 'bg-yellow-500' : 'bg-red-500'}"
+															style="width: {Math.round(Math.min(1, value) * 100)}%"></div>
+													</div>
+													<span class="text-[10px] text-[var(--text-muted)] font-mono w-8 text-right">{typeof value === 'number' ? (value * 100).toFixed(0) : value}</span>
+												</div>
+											{/each}
+										</div>
 									{/if}
 								</div>
 
