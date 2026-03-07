@@ -301,7 +301,7 @@ docs/                  # Installation, configuration, API reference, development
 - Symfonium setup: generate API key in Settings > Users, use as password in Symfonium's Subsonic server config
 
 ## Infrastructure
-- CT 228 on pve5 (Zonik production)
+- CT 228 on pve5 (Zonik production) — venv at `/opt/zonik/venv/`, Alembic via `/opt/zonik/venv/bin/python -m alembic`
 - CT 224 on pve5 (slskd — Soulseek client, `10.0.0.116:5030` — optional when native client enabled)
 - CT 210 (Lidarr, `10.0.0.179:8686`)
 - Mount points: `/nfs/MUSIC` → `/music`, `/nfs/DOWNLOADS` → `/downloads`
