@@ -83,7 +83,9 @@ def generate_embedding(file_path: str) -> bytes | None:
         with torch.no_grad():
             outputs = model.get_audio_features(**inputs)
 
-        embedding = outputs[0].cpu().numpy().astype(np.float32)
+        # Use pooler_output (512-dim) — outputs[0] is last_hidden_state (full feature map)
+        pooled = outputs.pooler_output if hasattr(outputs, 'pooler_output') else outputs[0]
+        embedding = pooled.squeeze(0).cpu().numpy().astype(np.float32)
         # Normalize
         embedding = embedding / np.linalg.norm(embedding)
 
@@ -114,7 +116,8 @@ def generate_text_embedding(text: str) -> bytes | None:
         with torch.no_grad():
             outputs = model.get_text_features(**inputs)
 
-        embedding = outputs[0].cpu().numpy().astype(np.float32)
+        pooled = outputs.pooler_output if hasattr(outputs, 'pooler_output') else outputs[0]
+        embedding = pooled.squeeze(0).cpu().numpy().astype(np.float32)
         embedding = embedding / np.linalg.norm(embedding)
         return embedding.tobytes()
 
