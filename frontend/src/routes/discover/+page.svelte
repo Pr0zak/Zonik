@@ -1177,11 +1177,11 @@
 						<thead>
 							<tr class="border-b border-[var(--border-subtle)] text-left">
 								<th class="px-4 py-3 w-8 font-medium text-xs uppercase tracking-wider text-[var(--text-muted)]">#</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
 								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('artist')}>
 									Artist {sortIndicator('artist')}
 								</th>
@@ -1283,11 +1283,11 @@
 					<table class="w-full text-sm">
 						<thead>
 							<tr class="border-b border-[var(--border-subtle)] text-left">
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
 								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('artist')}>
 									Artist {sortIndicator('artist')}
 								</th>
@@ -1392,11 +1392,11 @@
 					<table class="w-full text-sm">
 						<thead>
 							<tr class="border-b border-[var(--border-subtle)] text-left">
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
 								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('artist')}>
 									Artist {sortIndicator('artist')}
 								</th>
@@ -1535,11 +1535,11 @@
 						<table class="w-full text-sm">
 							<thead>
 								<tr class="border-b border-[var(--border-subtle)]">
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 										onclick={() => toggleSort('name')}>
 										Track {sortIndicator('name')}
 									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 										onclick={() => toggleSort('artist')}>
 										Artist {sortIndicator('artist')}
 									</th>

@@ -813,29 +813,29 @@
 						<thead>
 							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
 								<th class="px-4 py-2 w-5">
-									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors"
+									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors"
 										title="Sort by quality">
 										{sortCol === 'quality' ? (sortAsc ? '↑' : '↓') : '◆'}
 									</button>
 								</th>
 								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
 								<th class="px-4 py-2 hidden md:table-cell">
-									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
 										User {sortCol === 'user' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2">
-									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
 										Format {sortCol === 'format' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2 hidden sm:table-cell">
-									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
 										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
 								<th class="px-4 py-2">
-									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider hover:text-[var(--text-primary)] transition-colors">
+									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
 										Size {sortCol === 'size' ? (sortAsc ? '↑' : '↓') : ''}
 									</button>
 								</th>
