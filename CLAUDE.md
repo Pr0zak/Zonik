@@ -4,7 +4,7 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) + ARQ/Redis
-- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 14 routes)
+- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 15 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
 - **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
 - **Discovery**: Last.fm API (similar tracks/artists, top charts, scrobbling)
@@ -40,14 +40,15 @@ backend/
   main.py              # FastAPI app, lifespan, router registration
   config.py            # Settings from zonik.toml (Pydantic models)
   database.py          # SQLAlchemy engine, FTS5 setup, search helpers
-  models/              # 16 SQLAlchemy models (Track, Artist, Album, PlayHistory, SoulseekSnapshot, etc.)
+  models/              # 17 SQLAlchemy models (Track, Artist, Album, PlayHistory, SoulseekSnapshot, TrackUpgrade, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
     config_api.py      # Services config + version/updates/upgrade endpoints
     jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner, duplicates management, dashboard aggregation
     download.py        # Soulseek search/trigger/bulk + enqueue_download helper + blacklist + stats + stats history + reputation reset
-    discovery.py       # Last.fm charts, similar tracks/artists, remix discovery
+    discovery.py       # Last.fm charts, similar tracks/artists, remix discovery, remix suggestions
+    upgrades.py        # Track upgrade tracking (scan, start, retry, skip, clear, stats)
     map.py             # Music Map graph API (genre/artist/track nodes, view modes: genre/play_heatmap/quality/duplicates)
     analysis.py        # Essentia/CLAP analysis queue + enrichment (all with WebSocket progress)
     schedule.py        # Cron scheduler management (task labels + descriptions)
@@ -72,11 +73,12 @@ backend/
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
-  src/routes/          # SvelteKit pages (14 routes)
+  src/routes/          # SvelteKit pages (15 routes)
     +page.svelte       # Dashboard (9 widgets: stat cards, quick actions, quality gauge, growth chart, storage, transfers, activity, favorites, duplicates, tasks, P2P, health)
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner + remix discovery
     duplicates/        # Duplicate management — grouped cards, rich track details (format/bitrate/quality/plays), bulk remove, find upgrade
-    discover/          # Last.fm charts + inline download, similar artists, For You tab (AI recs with cover art + source filters)
+    upgrades/          # Track upgrade tracking — scan, queue, status filters, before/after format badges, bulk actions
+    discover/          # Last.fm charts + inline download, similar artists, For You tab (AI recs with cover art + source filters), Remixes tab
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
     playlists/         # Playlist management
     favorites/         # Starred items (paginated, 25/page default)
@@ -241,7 +243,7 @@ docs/                  # Installation, configuration, API reference, development
 - Music Map backend: graph_builder.py builds nodes/edges, GET /api/map/graph with configurable caps (max_artists, min_genre_tracks, etc.)
 - Library list view: clickable artist/album cells navigate to filtered view (stopPropagation to prevent row play), removable filter pills
 - Timezone: parseUTC() in utils.js appends 'Z' to naive ISO strings from backend; formatDateTime() for absolute timestamps; applied across all pages
-- Per-section color coding includes map=teal (--color-map: #14b8a6), duplicates=amber (--color-duplicates: #f59e0b)
+- Per-section color coding includes map=teal (--color-map: #14b8a6), duplicates=amber (--color-duplicates: #f59e0b), upgrades=emerald (--color-upgrades: #10b981)
 - Duplicates page: dedicated /duplicates route with enriched grouped card view — cover art, format badges (color-coded by tier), bitrate, bit_depth/sample_rate, file size, quality score bar, play count, favorite heart, added date, file path
 - Duplicates API: GET /api/library/duplicates returns enriched groups with full track details + reclaimable_bytes; GET /api/library/duplicates/artists returns artist IDs with dupes (lightweight, for map overlay)
 - Duplicates: find_duplicates_enriched() in cleanup.py — includes album_id for cover art, is_best flag, quality_score, play_count, rating, is_favorite, created_at
@@ -270,6 +272,13 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation auto-download: configurable min_score + max_downloads in ScheduleTask.config; runs after recommendation_refresh completes
 - Last.fm user history: taste profile enriched with user.getTopArtists + user.getTopTracks when session_key exists (blended with local data)
 - Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode (low_bitrate/lossy_to_lossless/all_lossy) + max_bitrate via UI selectors
+- TrackUpgrade model: persistent upgrade tracking with status lifecycle (pending→queued→downloading→completed→failed→skipped), linked to download Jobs via job_id
+- Upgrade API: /api/upgrades — list (paginated, filterable), stats (counts + size delta), scan (idempotent, multi-mode), start, retry, skip, clear; scan skips existing pending/queued/downloading records
+- Upgrade pipeline integration: scanner.import_downloaded_file marks TrackUpgrade completed/failed on upgrade detection; enqueue_download() returns job_id for linking
+- Upgrades page: /upgrades route (emerald --color-upgrades: #10b981), stats bar, scan controls (4 modes + bitrate threshold + limit), status filter tabs, table with before→after format badges, bulk start/retry/clear, per-row actions
+- Remix discovery suggestions: GET /api/discovery/remix-suggestions (source: popular/favorites/random), rate-limited Last.fm search (Semaphore(3)), batch library match, version type detection
+- Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
+- Scheduled remix_discovery task: weekly Friday 04:00, scans library tracks for remixes via Last.fm, stores results as job.tracks JSON, auto-download support
 - Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
 - Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)
 - Library page layout: pagination above schedule/danger zone sections; orphan cleanup ScheduleControl moved into Danger Zone card
@@ -293,7 +302,7 @@ docs/                  # Installation, configuration, API reference, development
 - `schedule.js` exports: createScheduleHelpers(getSchedTasks, setSchedTask, addToast) → {toggleSched, updateSched, runSched, toggleAutoDownload, updateSchedConfig}
 - `colors.js` exports: qualityColor (Tailwind class), qualityBarColor (Tailwind class), qualityHex (hex for D3), formatBadgeClass (format tier colors), FORMAT_HEX (chart colors)
 - CSS variable-based design system in `app.css` (layered backgrounds: --bg-primary/#0a0a0a → --bg-secondary → --bg-tertiary → --bg-hover)
-- Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, analysis=pink, stats=cyan, map=teal, schedule=orange, logs=violet, settings=slate)
+- Per-section color coding (dashboard=indigo, library=purple, discover=green, downloads=blue, playlists=amber, favorites=red, upgrades=emerald, analysis=pink, stats=cyan, map=teal, schedule=orange, logs=violet, settings=slate)
 - Inter font via Google Fonts CDN; lucide-svelte icons throughout (tree-shakeable SVG icons)
 - 10 reusable UI components in `frontend/src/components/ui/`: Button (6 variants), Badge (5 variants), Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating
 - WebSocket connected in +layout.svelte on mount

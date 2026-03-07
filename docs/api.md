@@ -139,6 +139,7 @@ Base URL: `/api`
 | `/api/discovery/track-info?artist=&track=` | GET | Last.fm track info |
 | `/api/discovery/artist-info?artist=` | GET | Last.fm artist info |
 | `/api/discovery/similar-by-track?artist=&track=&limit=` | GET | Similar tracks to a specific track via Last.fm (with library status) |
+| `/api/discovery/remix-suggestions?source=&tracks_to_scan=&limit=` | GET | Find remixes across library tracks (source: popular/favorites/random) |
 | `/api/discovery/lastfm/auth-url` | GET | Last.fm OAuth URL |
 | `/api/discovery/lastfm/callback?token=` | GET | Exchange token for session |
 
@@ -222,8 +223,24 @@ Available scheduled tasks:
 | `playlist_weekly_top` | Auto-generate playlist of chart tracks found in library |
 | `playlist_weekly_discover` | Auto-generate discovery playlist with random library mix |
 | `playlist_favorites` | Rebuild Favorites playlist from all starred tracks |
-| `kimahub_favorites_sync` | Import liked tracks from KimaHub PostgreSQL into favorites |
 | `library_cleanup` | Remove orphaned database entries for deleted files |
+| `recommendation_refresh` | Build taste profile and score new track recommendations |
+| `upgrade_scan` | Find low-quality tracks and queue for re-download |
+| `remix_discovery` | Search for remixes of popular library tracks via Last.fm |
+
+### Upgrades
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/upgrades?status=&offset=&limit=&sort=&order=` | GET | List upgrade records (filterable by status) |
+| `/api/upgrades/stats` | GET | Counts by status + total size delta for completed |
+| `/api/upgrades/scan` | POST | Scan library for upgrade candidates `{modes: [...], max_bitrate?, limit?}` |
+| `/api/upgrades/start` | POST | Start downloading upgrades `{ids?: [...]}` (null = all pending) |
+| `/api/upgrades/{id}/retry` | POST | Reset failed upgrade to pending |
+| `/api/upgrades/{id}/skip` | POST | Mark upgrade as skipped |
+| `/api/upgrades/clear?status=` | DELETE | Remove records by status (completed/failed/skipped) |
+
+Scan modes: `low_bitrate`, `lossy_to_lossless`, `all_lossy`, `opus_to_flac`. Idempotent — skips tracks with existing pending/queued/downloading records.
 
 ### Jobs
 
