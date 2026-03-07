@@ -92,6 +92,7 @@
 
 	// Artwork cache — fetches from iTunes Search API
 	let artworkCache = $state({});
+	const artworkQueued = new Set(); // non-reactive, tracks what's been requested
 	let artworkQueue = [];
 	let artworkFlushTimer = null;
 
@@ -112,21 +113,19 @@
 			for (const b of batch) failed[b.key] = { image: null, preview: null };
 			artworkCache = { ...artworkCache, ...failed };
 		}
-		// Process remaining
 		if (artworkQueue.length) flushArtworkQueue();
 	}
 
 	function getArtwork(artist, track) {
 		const key = `${artist}::${track}`.toLowerCase();
-		const cached = artworkCache[key];
-		if (cached === undefined) {
-			artworkCache[key] = null; // mark as queued
+		if (artworkCache[key]) return artworkCache[key];
+		if (!artworkQueued.has(key)) {
+			artworkQueued.add(key);
 			artworkQueue.push({ artist, track, key });
-			// Debounce: wait 50ms to collect all render calls, then batch
 			clearTimeout(artworkFlushTimer);
 			artworkFlushTimer = setTimeout(() => flushArtworkQueue(), 50);
 		}
-		return cached;
+		return null;
 	}
 
 	// Shared
