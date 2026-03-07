@@ -311,22 +311,18 @@
 					<Sparkles class="w-4 h-4 text-[var(--color-analysis)]" />
 					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Vibe Embeddings</span>
 				</div>
-				<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.with_embeddings} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.total_tracks}</span></p>
-				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
-					<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
-				</div>
 				{#if embeddingsJob}
 					{@const ep = embeddingsProgress(embeddingsJob)}
-					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
-						<div class="flex items-center justify-between mb-1">
-							<span class="text-xs text-[var(--color-analysis)] font-medium animate-pulse">Running...</span>
-							<span class="text-xs text-[var(--text-muted)] font-mono">{ep.done}/{ep.total}</span>
-						</div>
-						<div class="h-1 bg-[var(--border-interactive)] rounded-full">
-							<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {ep.pct}%"></div>
-						</div>
+					<p class="text-2xl font-bold text-[var(--text-primary)]">{ep.done} <span class="text-sm text-[var(--text-muted)] font-normal">/ {ep.total}</span></p>
+					<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
+						<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {ep.pct}%"></div>
 					</div>
+					<span class="text-xs text-[var(--color-analysis)] font-medium animate-pulse mt-2 block">Running...</span>
 				{:else}
+					<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.with_embeddings} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.total_tracks}</span></p>
+					<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
+						<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
+					</div>
 					<Button variant="secondary" size="sm" class="mt-3 w-full" onclick={startEmbeddings} loading={startingEmbeddings}>
 						<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
 						{startingEmbeddings ? 'Starting...' : 'Generate Embeddings'}
