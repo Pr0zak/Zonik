@@ -81,6 +81,19 @@ async def list_schedule(db: AsyncSession = Depends(get_db)):
         await db.commit()
         result = await db.execute(select(ScheduleTask).order_by(ScheduleTask.task_name))
         tasks = result.scalars().all()
+    else:
+        # Backfill any new default tasks missing from existing DB
+        existing_names = {t.task_name for t in tasks}
+        added = False
+        for defn in DEFAULT_TASKS:
+            if defn["task_name"] not in existing_names:
+                task = ScheduleTask(**defn)
+                db.add(task)
+                added = True
+        if added:
+            await db.commit()
+            result = await db.execute(select(ScheduleTask).order_by(ScheduleTask.task_name))
+            tasks = result.scalars().all()
 
     return [
         {
