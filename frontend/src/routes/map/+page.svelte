@@ -379,15 +379,19 @@
 	}
 
 	function navigateToNode(node) {
-		if (!container || !zoomBehavior || node.x === undefined) return;
+		if (!container || !zoomBehavior) return;
+		// Find the simulation node (has x,y) by matching ID
+		const simNode = processedNodes?.find(n => n.id === node.id);
+		const target = simNode || node;
+		if (target.x === undefined) return;
 		const svgEl = d3.select(container).select('svg');
 		const width = container.clientWidth;
 		const height = container.clientHeight;
 		svgEl.transition().duration(750).call(
 			zoomBehavior.transform,
-			d3.zoomIdentity.translate(width / 2, height / 2).scale(1.5).translate(-node.x, -node.y)
+			d3.zoomIdentity.translate(width / 2, height / 2).scale(1.5).translate(-target.x, -target.y)
 		);
-		selectedNode = node;
+		selectedNode = target;
 		searchResults = [];
 		searchFocused = false;
 	}
@@ -501,39 +505,64 @@
 			<div bind:this={container} class="w-full h-full"></div>
 
 			<!-- Legend overlay -->
-			{#if viewMode === 'play_heatmap'}
-				<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2 backdrop-blur-sm">
-					<p class="text-[10px] text-[var(--text-muted)] mb-1.5 uppercase tracking-wider">Play Count</p>
-					<div class="flex items-center gap-1">
-						<span class="text-[10px] text-[var(--text-disabled)]">0</span>
-						<div class="w-24 h-2 rounded-full" style="background: linear-gradient(to right, #334155, #3b82f6, #f59e0b, #ef4444)"></div>
-						<span class="text-[10px] text-[var(--text-disabled)]">High</span>
-					</div>
-				</div>
-			{:else if viewMode === 'quality'}
-				<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2 backdrop-blur-sm">
-					<p class="text-[10px] text-[var(--text-muted)] mb-1.5 uppercase tracking-wider">Audio Quality</p>
-					<div class="flex items-center gap-2">
-						{#each [['#ef4444', 'Low'], ['#f97316', 'Mid'], ['#f59e0b', 'Good'], ['#84cc16', 'High'], ['#22c55e', 'Lossless']] as [color, label]}
-							<div class="flex items-center gap-1">
-								<div class="w-2 h-2 rounded-full" style="background: {color}"></div>
-								<span class="text-[10px] text-[var(--text-disabled)]">{label}</span>
-							</div>
-						{/each}
-					</div>
-				</div>
-			{:else if viewMode === 'duplicates'}
-				<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2 backdrop-blur-sm">
-					<p class="text-[10px] text-[var(--text-muted)] mb-1.5 uppercase tracking-wider">Duplicates</p>
-					<div class="flex items-center gap-2">
-						<div class="flex items-center gap-1">
-							<div class="w-3 h-3 rounded-full border-2 border-amber-400 bg-amber-400/30"></div>
-							<span class="text-[10px] text-[var(--text-disabled)]">Has duplicates</span>
+			<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2.5 backdrop-blur-sm max-w-xs">
+				{#if viewMode === 'genre'}
+					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Legend</p>
+					<div class="space-y-1.5">
+						<div class="flex items-center gap-2">
+							<div class="w-5 h-5 rounded-full bg-white/10 border border-white/20 flex-shrink-0"></div>
+							<span class="text-[11px] text-[var(--text-secondary)]">Genre cluster (size = track count)</span>
 						</div>
-						<span class="text-[10px] text-[var(--text-disabled)]">{duplicateArtistIds.size} artists</span>
+						<div class="flex items-center gap-2">
+							<div class="w-3 h-3 rounded-full bg-[var(--color-map)] flex-shrink-0 ml-1"></div>
+							<span class="text-[11px] text-[var(--text-secondary)]">Artist (colored by genre)</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<div class="relative ml-1 flex-shrink-0">
+								<div class="w-3 h-3 rounded-full bg-gray-500"></div>
+								<div class="w-1.5 h-1.5 rounded-full bg-red-500 absolute -top-0.5 -right-0.5"></div>
+							</div>
+							<span class="text-[11px] text-[var(--text-secondary)]">Favorited artist</span>
+						</div>
+						<div class="flex items-center gap-2">
+							<div class="w-5 border-t border-white/20 flex-shrink-0 ml-0.5"></div>
+							<span class="text-[11px] text-[var(--text-secondary)]">Genre connection</span>
+						</div>
 					</div>
-				</div>
-			{/if}
+				{:else if viewMode === 'play_heatmap'}
+					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Play Count</p>
+					<div class="space-y-1.5">
+						<div class="flex items-center gap-2">
+							<span class="text-[11px] text-[var(--text-disabled)]">0</span>
+							<div class="w-28 h-2.5 rounded-full" style="background: linear-gradient(to right, #334155, #3b82f6, #f59e0b, #ef4444)"></div>
+							<span class="text-[11px] text-[var(--text-disabled)]">High</span>
+						</div>
+						<p class="text-[10px] text-[var(--text-disabled)]">Artist nodes colored by total plays</p>
+					</div>
+				{:else if viewMode === 'quality'}
+					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Audio Quality</p>
+					<div class="space-y-1.5">
+						<div class="flex items-center gap-2.5 flex-wrap">
+							{#each [['#ef4444', 'Low'], ['#f97316', 'Mid'], ['#f59e0b', 'Good'], ['#84cc16', 'High'], ['#22c55e', 'Lossless']] as [color, label]}
+								<div class="flex items-center gap-1">
+									<div class="w-2.5 h-2.5 rounded-full" style="background: {color}"></div>
+									<span class="text-[11px] text-[var(--text-secondary)]">{label}</span>
+								</div>
+							{/each}
+						</div>
+						<p class="text-[10px] text-[var(--text-disabled)]">Based on format + bitrate score</p>
+					</div>
+				{:else if viewMode === 'duplicates'}
+					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Duplicates</p>
+					<div class="space-y-1.5">
+						<div class="flex items-center gap-2">
+							<div class="w-4 h-4 rounded-full border-2 border-amber-400 bg-amber-400/30 flex-shrink-0"></div>
+							<span class="text-[11px] text-[var(--text-secondary)]">Artist with duplicate tracks</span>
+						</div>
+						<p class="text-[10px] text-[var(--text-disabled)]">{duplicateArtistIds.size} artist{duplicateArtistIds.size !== 1 ? 's' : ''} affected</p>
+					</div>
+				{/if}
+			</div>
 		{/if}
 
 		<!-- Detail panel -->
