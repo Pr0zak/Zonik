@@ -257,23 +257,46 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
     async def download_one(artist, track, rec_id):
         job_id = str(uuid.uuid4())
         desc = f"{artist} — {track}"
-        req = DownloadRequest(artist=artist, track=track)
+        dl_req = DownloadRequest(artist=artist, track=track)
         async with async_session() as sess:
-            job = Job(
-                id=job_id, type="download", card="dl",
-                status="pending" if sem.locked() else "running",
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
-            )
-            sess.add(job)
-            await sess.commit()
-            await broadcast_job_update({
-                "id": job_id, "type": "download",
-                "status": job.status, "progress": 0, "total": 1,
-                "description": f"{'Queued' if job.status == 'pending' else 'Downloading'}: {desc}",
-            })
-            async with sem:
-                await _do_download_inner(sess, job_id, req)
+            if sem.locked():
+                job = Job(
+                    id=job_id, type="download", card="dl", status="pending",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
+                )
+                sess.add(job)
+                await sess.commit()
+                await broadcast_job_update({
+                    "id": job_id, "type": "download",
+                    "status": "pending", "progress": 0, "total": 1,
+                    "description": f"Queued: {desc}",
+                })
+                async with sem:
+                    job.status = "running"
+                    await sess.merge(job)
+                    await sess.commit()
+                    await broadcast_job_update({
+                        "id": job_id, "type": "download",
+                        "status": "running", "progress": 0, "total": 1,
+                        "description": desc,
+                    })
+                    await _do_download_inner(sess, job, job_id, desc, dl_req)
+            else:
+                job = Job(
+                    id=job_id, type="download", card="dl", status="running",
+                    started_at=datetime.utcnow(),
+                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
+                )
+                sess.add(job)
+                await sess.commit()
+                await broadcast_job_update({
+                    "id": job_id, "type": "download",
+                    "status": "running", "progress": 0, "total": 1,
+                    "description": desc,
+                })
+                async with sem:
+                    await _do_download_inner(sess, job, job_id, desc, dl_req)
 
     for r in recs:
         background_tasks.add_task(download_one, r.artist, r.track, r.id)
