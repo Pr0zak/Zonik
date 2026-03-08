@@ -733,9 +733,9 @@
 						<div class="flex items-center gap-4 ml-6 mt-1 mb-2">
 							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
 								Min Score
-								<input type="number" min="0.1" max="1.0" step="0.05"
-									value={schedTasks.recommendation_refresh.config?.min_score ?? 0.5}
-									onchange={(e) => updateSchedConfig('recommendation_refresh', { min_score: parseFloat(e.target.value) })}
+								<input type="number" min="10" max="100" step="5"
+									value={Math.round((schedTasks.recommendation_refresh.config?.min_score ?? 0.5) * 100)}
+									onchange={(e) => updateSchedConfig('recommendation_refresh', { min_score: parseInt(e.target.value) / 100 })}
 									class="w-16 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
 							</label>
 							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
