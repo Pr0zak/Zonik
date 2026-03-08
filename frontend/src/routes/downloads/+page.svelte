@@ -135,9 +135,14 @@
 		})
 	);
 
-	// Split into active (non-queued) and queued jobs
-	let activeJobs = $derived(visibleJobs.filter(j => j.status !== 'pending'));
-	let queuedJobs = $derived(visibleJobs.filter(j => j.status === 'pending'));
+	// Split into active (non-queued) and queued jobs based on friendly status
+	function isQueued(j) {
+		if (j.status === 'pending') return true;
+		const transfer = getTransferForJob(j);
+		return friendlyStatus(j, transfer) === 'queued';
+	}
+	let activeJobs = $derived(visibleJobs.filter(j => !isQueued(j)));
+	let queuedJobs = $derived(visibleJobs.filter(j => isQueued(j)));
 	let queueExpanded = $state(false);
 
 	function parseJobResult(job) {
