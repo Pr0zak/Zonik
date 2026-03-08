@@ -97,6 +97,17 @@ class ServiceConfig(BaseModel):
     # AI Assistant
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
+    # AI feature toggles
+    ai_reranking: bool = True
+    ai_search: bool = True
+    ai_playlist_gen: bool = True
+    ai_explanations: bool = True
+    ai_auto_tagging: bool = True
+    ai_mood_tags: bool = True
+    ai_insights: bool = True
+    ai_duplicate_resolver: bool = True
+    ai_download_advisor: bool = True
+    ai_playlist_curator: bool = True
 
 
 @router.get("/services")
@@ -124,6 +135,16 @@ async def get_service_config():
         "lastfm_username": settings.lastfm.username,
         "claude_api_key": settings.assistant.claude_api_key,
         "claude_model": settings.assistant.claude_model,
+        "ai_reranking": settings.assistant.ai_reranking,
+        "ai_search": settings.assistant.ai_search,
+        "ai_playlist_gen": settings.assistant.ai_playlist_gen,
+        "ai_explanations": settings.assistant.ai_explanations,
+        "ai_auto_tagging": settings.assistant.ai_auto_tagging,
+        "ai_mood_tags": settings.assistant.ai_mood_tags,
+        "ai_insights": settings.assistant.ai_insights,
+        "ai_duplicate_resolver": settings.assistant.ai_duplicate_resolver,
+        "ai_download_advisor": settings.assistant.ai_download_advisor,
+        "ai_playlist_curator": settings.assistant.ai_playlist_curator,
     }
 
 
@@ -181,6 +202,11 @@ async def update_service_config(req: ServiceConfig):
         assistant["claude_api_key"] = req.claude_api_key
     if req.claude_model:
         assistant["claude_model"] = req.claude_model
+    # AI feature toggles
+    for toggle in ["ai_reranking", "ai_search", "ai_playlist_gen", "ai_explanations",
+                    "ai_auto_tagging", "ai_mood_tags", "ai_insights",
+                    "ai_duplicate_resolver", "ai_download_advisor", "ai_playlist_curator"]:
+        assistant[toggle] = getattr(req, toggle)
     raw["assistant"] = {**settings.assistant.model_dump(), **assistant}
 
     # Preserve other sections
@@ -298,6 +324,18 @@ async def test_service(service: str):
             return {"status": "error", "message": str(e)}
 
     return {"status": "error", "message": f"Unknown service: {service}"}
+
+
+@router.get("/ai-usage")
+async def get_ai_usage():
+    """Get current session AI token usage stats."""
+    from backend.services.ai.client import get_usage
+    usage = await get_usage()
+    # Estimate cost (Claude Sonnet 4 pricing: $3/M input, $15/M output)
+    input_cost = (usage["input_tokens"] / 1_000_000) * 3.0
+    output_cost = (usage["output_tokens"] / 1_000_000) * 15.0
+    usage["estimated_cost_usd"] = round(input_cost + output_cost, 4)
+    return usage
 
 
 # --- Version / Update / Upgrade endpoints ---

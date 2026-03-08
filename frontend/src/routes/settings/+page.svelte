@@ -29,7 +29,18 @@
 		lastfm_api_key: '',
 		lastfm_write_api_key: '',
 		lastfm_write_api_secret: '',
+		ai_reranking: true,
+		ai_search: true,
+		ai_playlist_gen: true,
+		ai_explanations: true,
+		ai_auto_tagging: true,
+		ai_mood_tags: true,
+		ai_insights: true,
+		ai_duplicate_resolver: true,
+		ai_download_advisor: true,
+		ai_playlist_curator: true,
 	});
+	let aiUsage = $state(null);
 	let saving = $state(false);
 	let dirty = $state(false);
 	let showField = $state({});
@@ -66,6 +77,7 @@
 		fetch('/api/config/version').then(r => r.json()).then(d => versionInfo = d).catch(() => {});
 		fetch('/api/users').then(r => r.json()).then(d => users = d).catch(() => {});
 		fetch('/api/config/backups').then(r => r.json()).then(d => backups = d).catch(() => {});
+		fetch('/api/config/ai-usage').then(r => r.json()).then(d => aiUsage = d).catch(() => {});
 		fetch('/api/schedule').then(r => r.json()).then(tasks => {
 			for (const t of tasks) schedTasks[t.task_name] = t;
 		}).catch(() => {});
@@ -793,39 +805,84 @@
 						<Sparkles class="w-4 h-4" style="color: var(--color-discover)" />
 					</div>
 					<h2 class="text-base font-semibold text-[var(--text-primary)]">AI Assistant</h2>
+					{#if testDotColor('claude')}
+						<span class="w-2 h-2 rounded-full {testDotColor('claude')}"></span>
+					{/if}
 				</div>
-				<Button variant="default" size="sm" onclick={() => testConnection('claude')}>
-					<Wifi class="w-3.5 h-3.5" />
+				<Button variant="secondary" size="sm" onclick={() => testConnection('claude')}>
 					{testBtnLabel('claude', 'Test Connection')}
 				</Button>
 			</div>
 			<div class="space-y-3">
-				<div>
-					<label class="block text-xs text-[var(--text-muted)] mb-1">Claude API Key</label>
-					<div class="relative">
-						<input type={showField.claude_api_key ? 'text' : 'password'} bind:value={services.claude_api_key}
-							oninput={() => dirty = true}
-							placeholder="sk-ant-..."
-							class={inputClass} />
-						<button onclick={() => showField.claude_api_key = !showField.claude_api_key}
-							class="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-secondary)]">
-							{#if showField.claude_api_key}
-								<EyeOff class="w-4 h-4" />
-							{:else}
-								<Eye class="w-4 h-4" />
-							{/if}
-						</button>
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">Claude API Key</label>
+						<div class="relative">
+							<input type={showField.claude_api_key ? 'text' : 'password'} bind:value={services.claude_api_key}
+								oninput={() => dirty = true}
+								placeholder="sk-ant-..."
+								class="{inputClass} pr-8" />
+							<button onclick={() => showField.claude_api_key = !showField.claude_api_key}
+								class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+								{#if showField.claude_api_key}
+									<EyeOff class="w-4 h-4" />
+								{:else}
+									<Eye class="w-4 h-4" />
+								{/if}
+							</button>
+						</div>
 					</div>
-					<p class="text-[10px] text-[var(--text-disabled)] mt-1">Optional. Enables AI re-ranking on the Discover &gt; For You tab. Uses ~$0.01-0.03 per call.</p>
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1">Model</label>
+						<select bind:value={services.claude_model} oninput={() => dirty = true}
+							class={inputClass}>
+							<option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+							<option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+						</select>
+					</div>
 				</div>
-				<div>
-					<label class="block text-xs text-[var(--text-muted)] mb-1">Model</label>
-					<select bind:value={services.claude_model} oninput={() => dirty = true}
-						class={inputClass}>
-						<option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-						<option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
-					</select>
+
+				<!-- Usage stats -->
+				{#if aiUsage && aiUsage.requests > 0}
+					<div class="flex items-center gap-4 text-xs text-[var(--text-muted)] bg-[var(--bg-tertiary)] rounded-lg px-3 py-2">
+						<span>Session: <span class="text-[var(--text-secondary)] font-mono">{aiUsage.requests}</span> requests</span>
+						<span><span class="text-[var(--text-secondary)] font-mono">{(aiUsage.input_tokens + aiUsage.output_tokens).toLocaleString()}</span> tokens</span>
+						<span>~<span class="text-[var(--text-secondary)] font-mono">${aiUsage.estimated_cost_usd}</span></span>
+						{#if aiUsage.errors > 0}
+							<span class="text-red-400">{aiUsage.errors} errors</span>
+						{/if}
+					</div>
+				{/if}
+
+				<!-- Feature toggles -->
+				<div class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider mt-4 mb-2">AI Features</div>
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+					{#each [
+						{ key: 'ai_reranking', label: 'AI Re-ranking', desc: 'Claude re-ranks recommendations' },
+						{ key: 'ai_search', label: 'Natural Language Search', desc: 'Search with plain English' },
+						{ key: 'ai_playlist_gen', label: 'AI Playlist Generation', desc: 'Generate playlists from prompts' },
+						{ key: 'ai_explanations', label: 'Why? Explanations', desc: 'Deep recommendation explanations' },
+						{ key: 'ai_auto_tagging', label: 'Auto-Tagging', desc: 'AI genre tag suggestions' },
+						{ key: 'ai_mood_tags', label: 'Mood Tags', desc: 'CLAP-based mood labeling' },
+						{ key: 'ai_insights', label: 'Listening Insights', desc: 'Weekly AI listening summary' },
+						{ key: 'ai_duplicate_resolver', label: 'Duplicate Resolver', desc: 'AI picks best duplicate' },
+						{ key: 'ai_download_advisor', label: 'Download Advisor', desc: 'AI ranks search results' },
+						{ key: 'ai_playlist_curator', label: 'Playlist Curator', desc: 'AI ranks discovered playlists' },
+					] as toggle}
+						<div class="flex items-center justify-between py-1.5 px-2.5 rounded-md bg-[var(--bg-tertiary)]">
+							<div class="min-w-0">
+								<span class="text-sm text-[var(--text-secondary)]">{toggle.label}</span>
+								<p class="text-[10px] text-[var(--text-disabled)] truncate">{toggle.desc}</p>
+							</div>
+							<button type="button" onclick={() => { services[toggle.key] = !services[toggle.key]; markDirty(); }}
+								class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ml-3 {services[toggle.key] ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
+								role="switch" aria-checked={services[toggle.key]}>
+								<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services[toggle.key] ? 'translate-x-4' : 'translate-x-0.5'}"></span>
+							</button>
+						</div>
+					{/each}
 				</div>
+				<p class="text-[10px] text-[var(--text-disabled)]">Features require a Claude API key. Mood Tags uses CLAP locally (zero API cost) with optional Claude enhancement.</p>
 			</div>
 		</Card>
 

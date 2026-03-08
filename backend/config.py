@@ -88,6 +88,17 @@ class AssistantConfig(BaseModel):
     w_clap_similarity: float = 0.10
     w_popularity: float = 0.05
     w_novelty: float = 0.05
+    # AI feature toggles
+    ai_reranking: bool = True
+    ai_search: bool = True
+    ai_playlist_gen: bool = True
+    ai_explanations: bool = True
+    ai_auto_tagging: bool = True
+    ai_mood_tags: bool = True
+    ai_insights: bool = True
+    ai_duplicate_resolver: bool = True
+    ai_download_advisor: bool = True
+    ai_playlist_curator: bool = True
 
 
 class Settings(BaseModel):

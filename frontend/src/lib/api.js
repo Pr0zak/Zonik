@@ -112,4 +112,7 @@ export const api = {
 
 	// Music Map
 	getMapGraph: (params = {}) => request(buildUrl('/map/graph', params)),
+
+	// AI Usage
+	getAIUsage: () => request('/config/ai-usage'),
 };

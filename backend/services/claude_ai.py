@@ -4,13 +4,10 @@ from __future__ import annotations
 import json
 import logging
 
-import httpx
-
 from backend.config import get_settings
+from backend.services.ai.client import call_claude
 
 log = logging.getLogger(__name__)
-
-ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
 
 def build_prompt(profile: dict, candidates: list[dict]) -> str:
@@ -77,102 +74,25 @@ Return valid JSON with this exact structure:
 }}"""
 
 
-def parse_response(text: str) -> dict | None:
-    """Parse Claude's response, handling code blocks and malformed JSON."""
-    # Try to extract JSON from code blocks
-    if "```json" in text:
-        start = text.index("```json") + 7
-        end = text.index("```", start)
-        text = text[start:end].strip()
-    elif "```" in text:
-        start = text.index("```") + 3
-        end = text.index("```", start)
-        text = text[start:end].strip()
-
-    # Try direct parse
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Try to find JSON object in text
-    for i, ch in enumerate(text):
-        if ch == '{':
-            # Find matching closing brace
-            depth = 0
-            for j in range(i, len(text)):
-                if text[j] == '{':
-                    depth += 1
-                elif text[j] == '}':
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            return json.loads(text[i:j+1])
-                        except json.JSONDecodeError:
-                            break
-            break
-
-    log.warning("Failed to parse Claude response as JSON")
-    return None
-
-
 async def rerank_with_claude(
     profile: dict,
     candidates: list[dict],
 ) -> dict:
     """Send candidates to Claude for re-ranking. Returns parsed response or error."""
     settings = get_settings()
-    api_key = settings.assistant.claude_api_key
-    model = settings.assistant.claude_model
-
-    if not api_key:
-        return {"error": "No Claude API key configured"}
+    if not settings.assistant.ai_reranking:
+        return {"error": "AI re-ranking is disabled"}
 
     prompt = build_prompt(profile, candidates)
+    result = await call_claude(prompt, max_tokens=4096)
 
-    async with httpx.AsyncClient(timeout=60) as client:
-        try:
-            resp = await client.post(
-                ANTHROPIC_API_URL,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "max_tokens": 4096,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
+    if "error" in result:
+        return result
 
-            if resp.status_code != 200:
-                error_body = resp.text[:500]
-                log.error(f"Claude API error {resp.status_code}: {error_body}")
-                return {"error": f"Claude API returned {resp.status_code}"}
+    parsed = result.get("parsed")
+    if not parsed:
+        return {"error": "Failed to parse Claude response", "raw": result.get("text", "")[:500]}
 
-            data = resp.json()
-            content = data.get("content", [])
-            if not content:
-                return {"error": "Empty response from Claude"}
-
-            text = content[0].get("text", "")
-            usage = data.get("usage", {})
-
-            parsed = parse_response(text)
-            if not parsed:
-                return {"error": "Failed to parse Claude response", "raw": text[:500]}
-
-            # Add usage info
-            parsed["usage"] = {
-                "input_tokens": usage.get("input_tokens", 0),
-                "output_tokens": usage.get("output_tokens", 0),
-            }
-
-            return parsed
-
-        except httpx.TimeoutException:
-            return {"error": "Claude API request timed out"}
-        except Exception as e:
-            log.error(f"Claude API error: {e}")
-            return {"error": str(e)}
+    # Add usage info
+    parsed["usage"] = result.get("usage", {})
+    return parsed
