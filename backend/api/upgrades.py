@@ -202,70 +202,76 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
 
 
 async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):
-    """Process upgrade downloads one at a time to avoid exhausting DB connections."""
+    """Process upgrade downloads with bounded concurrency."""
+    import asyncio as _asyncio
     from backend.api.download import enqueue_download
     import json as _json
+    from backend.models.job import Job
 
-    for upgrade_id, artist, track in queue:
-        try:
-            job_id = str(uuid.uuid4())
+    sem = _asyncio.Semaphore(4)  # limit DB connections; actual download concurrency gated by _download_semaphore
 
-            # Mark as downloading
-            async with async_session() as db:
-                u = (await db.execute(
-                    select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
-                )).scalar_one_or_none()
-                if not u or u.status != "queued":
-                    continue
-                u.job_id = job_id
-                u.status = "downloading"
-                u.updated_at = datetime.utcnow()
-                await db.commit()
+    async def _do(upgrade_id: str, artist: str, track: str):
+        async with sem:
+            try:
+                job_id = str(uuid.uuid4())
 
-            # Download (blocks until complete)
-            await enqueue_download(artist, track, job_id=job_id)
-
-            # Update upgrade status based on job result
-            from backend.models.job import Job
-            async with async_session() as db:
-                job = (await db.execute(
-                    select(Job).where(Job.id == job_id)
-                )).scalar_one_or_none()
-
-                upgrade = (await db.execute(
-                    select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
-                )).scalar_one_or_none()
-
-                if upgrade and upgrade.status == "downloading":
-                    if job and job.status == "completed":
-                        upgrade.status = "completed"
-                        upgrade.completed_at = datetime.utcnow()
-                    elif job and job.status == "failed":
-                        err = ""
-                        if job.result:
-                            try:
-                                err = _json.loads(job.result).get("error", "")
-                            except Exception:
-                                err = str(job.result)
-                        upgrade.status = "failed"
-                        upgrade.error_message = err or "Download failed"
-                    upgrade.updated_at = datetime.utcnow()
+                # Mark as downloading
+                async with async_session() as db:
+                    u = (await db.execute(
+                        select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
+                    )).scalar_one_or_none()
+                    if not u or u.status != "queued":
+                        return
+                    u.job_id = job_id
+                    u.status = "downloading"
+                    u.updated_at = datetime.utcnow()
                     await db.commit()
 
-        except Exception as e:
-            log.warning(f"[upgrade] Failed to process {artist} — {track}: {e}")
-            try:
+                # Download (blocks until complete)
+                await enqueue_download(artist, track, job_id=job_id)
+
+                # Update upgrade status based on job result
                 async with async_session() as db:
+                    job = (await db.execute(
+                        select(Job).where(Job.id == job_id)
+                    )).scalar_one_or_none()
+
                     upgrade = (await db.execute(
                         select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
                     )).scalar_one_or_none()
-                    if upgrade and upgrade.status in ("queued", "downloading"):
-                        upgrade.status = "failed"
-                        upgrade.error_message = str(e)[:500]
+
+                    if upgrade and upgrade.status == "downloading":
+                        if job and job.status == "completed":
+                            upgrade.status = "completed"
+                            upgrade.completed_at = datetime.utcnow()
+                        elif job and job.status == "failed":
+                            err = ""
+                            if job.result:
+                                try:
+                                    err = _json.loads(job.result).get("error", "")
+                                except Exception:
+                                    err = str(job.result)
+                            upgrade.status = "failed"
+                            upgrade.error_message = err or "Download failed"
                         upgrade.updated_at = datetime.utcnow()
                         await db.commit()
-            except Exception:
-                pass
+
+            except Exception as e:
+                log.warning(f"[upgrade] Failed to process {artist} — {track}: {e}")
+                try:
+                    async with async_session() as db:
+                        upgrade = (await db.execute(
+                            select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
+                        )).scalar_one_or_none()
+                        if upgrade and upgrade.status in ("queued", "downloading"):
+                            upgrade.status = "failed"
+                            upgrade.error_message = str(e)[:500]
+                            upgrade.updated_at = datetime.utcnow()
+                            await db.commit()
+                except Exception:
+                    pass
+
+    await _asyncio.gather(*[_do(uid, a, t) for uid, a, t in queue])
 
 
 @router.post("/{upgrade_id}/retry")

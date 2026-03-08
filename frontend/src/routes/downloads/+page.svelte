@@ -547,7 +547,7 @@
 						{@const status = friendlyStatus(job, transfer)}
 						{@const jobResult = parseJobResult(job)}
 						{@const jobTracks = parseJobTracks(job)}
-						<div class="bg-[var(--bg-tertiary)] rounded-lg overflow-hidden group/job">
+						<div class="{status === 'completed' ? 'bg-emerald-500/5' : status === 'failed' ? 'bg-red-500/5' : status === 'downloading' ? 'bg-blue-500/5' : status === 'queued' ? 'bg-amber-500/5' : 'bg-[var(--bg-tertiary)]'} rounded-lg overflow-hidden group/job">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}</p>
@@ -686,7 +686,7 @@
 								</div>
 							{:else if job.status === 'running'}
 								<div class="h-1 bg-[var(--border-interactive)] overflow-hidden">
-									<div class="h-full bg-[var(--color-downloads)] animate-indeterminate w-1/3"></div>
+									<div class="h-full bg-[var(--text-muted)] animate-indeterminate w-1/3"></div>
 								</div>
 							{/if}
 							<!-- Expanded details -->
