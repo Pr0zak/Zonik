@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
+	import { formatBadgeClass } from '$lib/colors.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, formatSize, formatRelativeTime, formatDateTime, debounce } from '$lib/utils.js';
@@ -945,6 +946,9 @@
 								</button>
 							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}</p>
+							{#if track.format || track.bitrate}
+								<p class="text-[10px] text-[var(--text-disabled)] font-mono truncate">{track.format?.toUpperCase() || ''}{track.format && track.bitrate ? ' · ' : ''}{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : ''}</p>
+							{/if}
 						</div>
 					{/each}
 				</div>
@@ -964,6 +968,8 @@
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('title')}>Title {sort === 'title' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('format')}>Format {sort === 'format' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('bitrate')}>Bitrate {sort === 'bitrate' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-24 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('rating')}>Rating {sort === 'rating' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-20 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('created_at')}>Added {sort === 'created_at' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
@@ -1024,7 +1030,15 @@
 											<span class="text-[var(--text-muted)]">{track.album || '-'}</span>
 										{/if}
 									</td>
-									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
+									<td class="px-3 py-2 hidden xl:table-cell">
+									{#if track.format}
+										<span class="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
+									{:else}
+										<span class="text-[var(--text-disabled)]">—</span>
+									{/if}
+								</td>
+								<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : '—'}</td>
+								<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
 									<td class="px-3 py-2 hidden xl:table-cell" onclick={(e) => e.stopPropagation()}>
 										<StarRating rating={track.rating || 0} size="xs" onrate={async (r) => { await api.setRating(track.id, r); track.rating = r || null; }} />
 									</td>
