@@ -150,6 +150,23 @@
 	animation: indeterminate 1.5s ease-in-out infinite;
 }
 
+@keyframes search-sweep {
+	0% { left: -10%; opacity: 0; }
+	10% { opacity: 1; }
+	50% { left: 100%; opacity: 0.3; }
+	50.1% { left: 100%; opacity: 0; }
+	51% { left: 100%; opacity: 1; }
+	90% { opacity: 1; }
+	100% { left: -10%; opacity: 0.3; }
+}
+
+.animate-search {
+	position: absolute;
+	width: 20%;
+	animation: search-sweep 2s ease-in-out infinite;
+	background: linear-gradient(90deg, transparent, var(--text-muted), transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

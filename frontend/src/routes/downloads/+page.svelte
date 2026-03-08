@@ -685,8 +685,8 @@
 										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
 								</div>
 							{:else if job.status === 'running'}
-								<div class="h-1 bg-[var(--border-interactive)] overflow-hidden">
-									<div class="h-full bg-[var(--text-muted)] animate-indeterminate w-1/3"></div>
+								<div class="h-1 bg-[var(--border-interactive)] overflow-hidden relative">
+									<div class="h-full animate-search"></div>
 								</div>
 							{/if}
 							<!-- Expanded details -->
