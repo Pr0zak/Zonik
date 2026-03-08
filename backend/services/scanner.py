@@ -559,37 +559,41 @@ async def import_downloaded_file(
                 new_track.rating = existing.rating
                 old_track_id = existing.id
 
-                # Use raw SQL to migrate FK references (avoids ORM autoflush issues)
-                # Then delete old track, then add new track (avoids UNIQUE file_path conflict)
-                from sqlalchemy import update as sa_update
-                from backend.models.favorite import Favorite
-                from backend.models.play_history import PlayHistory
-                from backend.models.upgrade import TrackUpgrade
-
-                # Temporarily disable FK checks for the swap
+                # All operations via raw SQL to avoid ORM cascade/autoflush issues
+                # ORM db.delete() triggers relationship rules (e.g. blanking TrackAnalysis PK)
                 await db.execute(text("PRAGMA foreign_keys=OFF"))
 
-                # Migrate FK references via direct SQL (no autoflush)
+                # Migrate all FK references to new track ID
+                for tbl in ("favorites", "play_history", "track_upgrades", "playlist_tracks", "bookmarks"):
+                    await db.execute(
+                        text(f"UPDATE {tbl} SET track_id = :new WHERE track_id = :old"),
+                        {"new": new_track_id, "old": old_track_id},
+                    )
+                # Migrate or delete analysis/embedding (PK = track_id, can't just update)
+                for tbl in ("track_analysis", "track_embeddings"):
+                    await db.execute(
+                        text(f"DELETE FROM {tbl} WHERE track_id = :old"),
+                        {"old": old_track_id},
+                    )
+                # Update play_queue references
                 await db.execute(
-                    sa_update(Favorite).where(Favorite.track_id == old_track_id)
-                    .values(track_id=new_track_id)
-                )
-                await db.execute(
-                    sa_update(PlayHistory).where(PlayHistory.track_id == old_track_id)
-                    .values(track_id=new_track_id)
-                )
-                await db.execute(
-                    sa_update(TrackUpgrade).where(TrackUpgrade.track_id == old_track_id)
-                    .values(track_id=new_track_id)
+                    text("UPDATE play_queue SET current_track_id = :new WHERE current_track_id = :old"),
+                    {"new": new_track_id, "old": old_track_id},
                 )
 
-                # Delete old track, add new track (same file_path so must be sequential)
-                await db.delete(existing)
+                # Delete old track via raw SQL (avoids ORM relationship cascade)
+                await db.execute(
+                    text("DELETE FROM tracks WHERE id = :old"),
+                    {"old": old_track_id},
+                )
+                # Expunge the ORM object so it doesn't try to flush the deleted row
                 await db.flush()
+                db.expunge(existing)
+
+                # Add new track
                 db.add(new_track)
                 await db.flush()
 
-                # Re-enable FK checks
                 await db.execute(text("PRAGMA foreign_keys=ON"))
 
                 await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
