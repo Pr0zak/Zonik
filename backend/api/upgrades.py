@@ -221,6 +221,34 @@ async def _download_upgrade(upgrade_id: str, artist: str, track: str):
     # Now do the actual download (blocks until complete)
     await enqueue_download(artist, track, job_id=job_id)
 
+    # After download completes, check job status and update upgrade accordingly
+    from backend.models.job import Job
+    async with async_session() as db:
+        job = (await db.execute(
+            select(Job).where(Job.id == job_id)
+        )).scalar_one_or_none()
+
+        upgrade = (await db.execute(
+            select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
+        )).scalar_one_or_none()
+
+        if upgrade and upgrade.status == "downloading":
+            if job and job.status == "completed":
+                upgrade.status = "completed"
+                upgrade.completed_at = datetime.utcnow()
+            elif job and job.status == "failed":
+                import json
+                err = ""
+                if job.result:
+                    try:
+                        err = json.loads(job.result).get("error", "")
+                    except Exception:
+                        err = str(job.result)
+                upgrade.status = "failed"
+                upgrade.error_message = err or "Download failed"
+            upgrade.updated_at = datetime.utcnow()
+            await db.commit()
+
 
 @router.post("/{upgrade_id}/retry")
 async def retry_upgrade(upgrade_id: str, db: AsyncSession = Depends(get_db)):
