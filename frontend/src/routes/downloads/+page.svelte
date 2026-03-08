@@ -253,13 +253,15 @@
 		try {
 			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
 			jobs = data.items || data;
-			for (const j of jobs) {
-				if ((j.status === 'running' || j.status === 'pending' || !jobDetails[j.id])) {
-					try {
-						const detail = await api.getJob(j.id);
-						if (detail?.tracks) jobDetails[j.id] = JSON.parse(detail.tracks);
-					} catch (e) { console.error('Job detail load failed:', e); }
-				}
+			// Only fetch details for active jobs (running/pending) — completed/failed already have result in job.result
+			const needDetails = jobs.filter(j => (j.status === 'running' || j.status === 'pending') && !jobDetails[j.id]);
+			if (needDetails.length) {
+				const details = await Promise.allSettled(needDetails.map(j => api.getJob(j.id)));
+				details.forEach((r, i) => {
+					if (r.status === 'fulfilled' && r.value?.tracks) {
+						jobDetails[needDetails[i].id] = JSON.parse(r.value.tracks);
+					}
+				});
 			}
 		} catch (e) { console.error('Download history load failed:', e); }
 		finally { jobsLoading = false; }
@@ -422,6 +424,7 @@
 	let wsDescriptions = $state({});
 	let unsubJobUpdate;
 	let autoHideTimer;
+	let loadJobsTimer;
 
 	onMount(() => {
 		loadBlacklist();
@@ -436,21 +439,21 @@
 				for (const [key, rs] of Object.entries(resultStatuses)) {
 					if (rs.jobId === wsJob.id) {
 						if (wsJob.status === 'completed') resultStatuses[key] = { status: 'completed', jobId: wsJob.id };
-						else if (wsJob.status === 'failed') {
-							resultStatuses[key] = { status: 'failed', jobId: wsJob.id };
-							// Fetch job detail to get failed_sources for cooldown marking
-							try {
-								const detail = await api.getJob(wsJob.id);
-								// Job detail fetched for status tracking
-							} catch {}
-						}
+						else if (wsJob.status === 'failed') resultStatuses[key] = { status: 'failed', jobId: wsJob.id };
 						else if (wsJob.status === 'running') {
 							const desc = wsJob.description || '';
 							if (desc.includes('(attempt')) resultStatuses[key] = { status: 'searching', jobId: wsJob.id };
 						}
 					}
 				}
-				loadJobs();
+				// Update job in-place from WS data for instant UI feedback
+				const idx = jobs.findIndex(j => j.id === wsJob.id);
+				if (idx >= 0) {
+					jobs[idx] = { ...jobs[idx], status: wsJob.status, progress: wsJob.progress, total: wsJob.total, description: wsJob.description || jobs[idx].description, result: wsJob.result || jobs[idx].result, finished_at: wsJob.finished_at || jobs[idx].finished_at };
+				}
+				// Debounce full reload for new jobs and pagination updates
+				clearTimeout(loadJobsTimer);
+				loadJobsTimer = setTimeout(loadJobs, 2000);
 			}
 		});
 		autoHideTimer = setInterval(() => { jobs = [...jobs]; }, 30000);
@@ -472,6 +475,7 @@
 	onDestroy(() => {
 		if (unsubJobUpdate) unsubJobUpdate();
 		if (autoHideTimer) clearInterval(autoHideTimer);
+		clearTimeout(loadJobsTimer);
 	});
 </script>
 
