@@ -112,6 +112,19 @@ async def lifespan(app: FastAPI):
         if stuck.rowcount:
             await session.commit()
             log.info(f"Marked {stuck.rowcount} stuck jobs as failed on startup")
+
+    # Reset stuck upgrade records (queued/downloading lost their background tasks on restart)
+    async with async_session() as session:
+        from backend.models.upgrade import TrackUpgrade
+        stuck_upgrades = await session.execute(
+            update(TrackUpgrade)
+            .where(TrackUpgrade.status.in_(["queued", "downloading"]))
+            .values(status="pending", updated_at=datetime.utcnow())
+        )
+        if stuck_upgrades.rowcount:
+            await session.commit()
+            log.info(f"Reset {stuck_upgrades.rowcount} stuck upgrades to pending on startup")
+
     if settings.soulseek.username:
         try:
             from backend.soulseek import start_client

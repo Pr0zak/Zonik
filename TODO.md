@@ -9,6 +9,41 @@ Enable/disable entire collections of music (e.g., Christmas, Techno/Dance/Dub, M
 
 ---
 
+## Planned
+
+### AI Features V2 — Enhanced AI Integration
+8 new AI-powered features, each independently toggleable in Settings > AI Assistant. All use Claude API via shared client (`backend/services/ai/client.py`). See `plans/ai-features-v2.md` for full implementation plan.
+
+**Phase 1 — High Value (implement first):**
+- [ ] **Shared AI Client** — extract reusable Claude API wrapper from `claude_ai.py` with rate limiting (Semaphore(2)), token tracking, response parsing. Foundation for all features.
+- [ ] **Natural Language Search** — "find chill tracks from last week" or "songs like Radiohead but heavier". Claude interprets intent → structured DB query. CLAP text-to-audio similarity for mood queries. Integrates into TopBar search with auto-detection. `POST /api/search/ai`
+- [ ] **AI Playlist Generation** — "make a playlist for a late night drive". Claude picks tracks from library using analysis data (BPM, energy, danceability) + CLAP embeddings. Creates real Playlist record. `POST /api/playlists/ai-generate`
+- [ ] **Enhanced "Why?" Explanations** — click any recommendation for Claude-generated deep explanation with genre connections and similar artist reasoning. `POST /api/recommendations/{id}/explain`
+
+**Phase 2 — Smart Automation:**
+- [ ] **Smart Auto-Tagging** — fill empty genre/mood fields using Claude + Essentia analysis + MusicBrainz. Batch 10 tracks per call. Preview before apply. Schedulable task. `POST /api/tracks/ai-tag`
+- [ ] **Mood Tags** — auto-label tracks (energetic, melancholic, chill, dark, dreamy, etc.) using CLAP text-to-audio similarity (zero API cost) with optional Claude refinement. New `track_moods` table. Browseable mood filter in Library. `POST /api/tracks/ai-moods`
+- [ ] **Listening Insights** — weekly AI summary on Dashboard: "40% more electronic this week, taste trending toward ambient". Cached 24h. `GET /api/library/stats/insights`
+
+**Phase 3 — Advanced Integration:**
+- [ ] **AI Duplicate Resolver** — Claude analyzes which duplicate to keep based on mastering quality, metadata completeness, naming conventions. Returns recommendation with reasoning per group. `POST /api/library/duplicates/ai-resolve`
+- [ ] **Download Quality Advisor** — AI picks best Soulseek source when results are ambiguous. Analyzes filename patterns, format, reputation. Heuristic-first (Claude only for close calls). "AI Pick" badge on results.
+
+**Settings:** 8 toggles in Settings > AI Assistant (all default off/opt-in). Each flag gates UI visibility + API endpoints.
+
+**New files:** `backend/services/ai/` package (client.py + 1 module per feature), `backend/models/mood.py`, `backend/api/ai_search.py`
+**Modified:** config.py, config_api.py, settings page, TopBar, playlists page, discover page, library page, duplicates page, downloads page
+
+---
+
+### Mobile UI + Swipe Actions
+iOS-style swipe-to-reveal actions on all list/table rows for touch devices. Pure JS touch detection via Svelte `use:swipeRow` action + `<SwipeRow>` wrapper component. Table pages get parallel mobile card layouts. Touch-only (no desktop interference). See plan file for per-page action mappings.
+
+**Pages:** Library, Favorites, Downloads, Discover, Upgrades, Duplicates, Logs
+**Files:** `frontend/src/lib/swipe.js` (new), `frontend/src/components/ui/SwipeRow.svelte` (new), + 8 page modifications
+
+---
+
 ## Low Priority
 
 ### Christmas Auto-Playlist
