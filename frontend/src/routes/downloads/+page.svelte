@@ -129,12 +129,16 @@
 			const pa = STATUS_PRIORITY[a.status] ?? 1;
 			const pb = STATUS_PRIORITY[b.status] ?? 1;
 			if (pa !== pb) return pa - pb;
-			// Within same status group, sort by most recent first
 			const ta = a.started_at || a.created_at || '';
 			const tb = b.started_at || b.created_at || '';
 			return tb.localeCompare(ta);
 		})
 	);
+
+	// Split into active (non-queued) and queued jobs
+	let activeJobs = $derived(visibleJobs.filter(j => j.status !== 'pending'));
+	let queuedJobs = $derived(visibleJobs.filter(j => j.status === 'pending'));
+	let queueExpanded = $state(false);
 
 	function parseJobResult(job) {
 		if (!job.result) return null;
@@ -546,7 +550,32 @@
 				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
 			{:else}
 				<div class="space-y-2">
-					{#each visibleJobs as job (job.id)}
+					{#if queuedJobs.length > 0 && jobStatusFilter === 'all'}
+						<button onclick={() => queueExpanded = !queueExpanded}
+							class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors">
+							<Clock class="w-3.5 h-3.5 flex-shrink-0" />
+							<span class="font-medium">{queuedJobs.length} queued</span>
+							<span class="text-amber-400/60">waiting for download slot</span>
+							<span class="ml-auto flex-shrink-0">
+								{#if queueExpanded}
+									<ChevronUp class="w-3.5 h-3.5" />
+								{:else}
+									<ChevronDown class="w-3.5 h-3.5" />
+								{/if}
+							</span>
+						</button>
+						{#if queueExpanded}
+							<div class="space-y-1 pl-2 border-l-2 border-amber-500/20 ml-1">
+								{#each queuedJobs as job (job.id)}
+									<div class="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/5 text-xs group/job">
+										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}</span>
+										<Badge variant="warning"><Clock class="w-3 h-3 mr-0.5 inline-block" />queued</Badge>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					{/if}
+					{#each jobStatusFilter === 'all' ? activeJobs : visibleJobs as job (job.id)}
 						{@const transfer = getTransferForJob(job)}
 						{@const status = friendlyStatus(job, transfer)}
 						{@const jobResult = parseJobResult(job)}
