@@ -21,18 +21,40 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 - Upgrade production: `ssh root@pve5 "pct exec 228 -- bash -c 'cd /opt/zonik && bash upgrade.sh'"`
 
 ## Slash Commands (.claude/commands/ — local, gitignored)
+**Deployment:**
 - `/deploy` — push + upgrade CT 228 (with syntax/build checks)
 - `/commit-deploy <msg>` — stage + commit + push + upgrade in one flow
 - `/verify` — syntax check all modified Python + Svelte error check + frontend build
+- `/rollback` — revert last commit + push + upgrade (emergency undo, confirms first)
+- `/hotfix "file"` — scp a single backend file to production + restart (no rebuild)
+- `/diff-prod [file]` — compare local code vs deployed on CT 228
+
+**Monitoring:**
 - `/ct-status` — services, CPU, memory, disk, running jobs, analysis coverage
 - `/ct-logs [web|worker|pattern]` — check production logs (filterable by service or grep pattern)
+- `/ct-tail [pattern]` — tail recent logs with auto-grep and error highlighting
 - `/ct-jobs [running|failed|type]` — check job status on production
-- `/ct-fix-jobs` — mark stuck running/pending jobs as failed after crash/upgrade
-- `/ct-restart [web|worker|all]` — restart Zonik services on CT 228
-- `/ct-db "SQL"` — read-only SQL query on production database
+- `/ct-downloads` — download pipeline overview: active transfers, queued, failures, P2P status
+- `/ct-upgrades` — upgrade pipeline: status counts, stuck records, recent completions, size delta
 - `/ct-soulseek` — P2P client status: connection, transfers, reputation, recent downloads
+- `/ct-disk` — disk usage: music library, downloads, DB, cover cache, format breakdown
+- `/ct-connections` — DB pool health: WAL size, process memory, FD count, API responsiveness
+
+**Database:**
+- `/ct-db "SQL"` — read-only SQL query on production database
+- `/ct-query "table.column"` — inspect table schema or column value distribution
 - `/ct-migrate` — run Alembic migrations on production
+- `/ct-backup` — snapshot production DB (safe online backup)
+- `/migration "description"` — create new Alembic migration locally with preview
+
+**Debugging:**
+- `/ct-fix-jobs` — mark stuck running/pending jobs as failed after crash/upgrade
 - `/diagnose "issue"` — full investigation: services, logs, resources, API, DB
+- `/benchmark "/api/endpoint"` — time an API endpoint (3 runs, avg, TTFB)
+- `/test-api "/api/endpoint"` — curl a production endpoint and format JSON response
+
+**Code Quality:**
+- `/review` — review uncommitted changes for bugs, security, performance, style
 
 ## Project Structure
 ```
@@ -276,7 +298,7 @@ docs/                  # Installation, configuration, API reference, development
 - Download job creation: shared `enqueue_download(artist, track)` in download.py handles Job creation + semaphore queuing; used by bulk, retry (jobs.py), and recommendation bulk-download
 - Sort parameter security: allowlist sets (TRACK_SORT_COLUMNS, ARTIST_SORT_COLUMNS, ALBUM_SORT_COLUMNS) prevent arbitrary attribute access via getattr()
 - CORS: configurable via `cors_origins` list in [server] config (default `["*"]` for self-hosted)
-- Discovery batch matching: top_tracks, similar_by_track, find_remixes use single batched query instead of per-track N+1 loops
+- Discovery batch matching: _batch_library_match() helper in discovery.py — single batched query for all track lists (top_tracks, similar, remixes, search, remix_suggestions); takes name_key/artist_key params
 - Cleanup request models: RemoveDupesRequest and OrganizeRequest (Pydantic) replace raw dict params in library.py
 - Database indexes: Track.artist_id, Track.album_id, Favorite.track_id/album_id/artist_id, Job.type, Job.status (migration h9i0j1k2l3m4)
 - Artwork batch fetching: POST /api/discovery/artwork/batch proxies iTunes Search API (CORS), 100 items max, 10 concurrent lookups; frontend debounces 50ms
@@ -300,6 +322,15 @@ docs/                  # Installation, configuration, API reference, development
 - Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
 - Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)
 - Library page layout: pagination above schedule/danger zone sections
+- Performance: dashboard stats cached 5 minutes in-memory (_dashboard_cache); quality metrics combined into single query with case() aggregations
+- Performance: find_duplicates_enriched() uses single query with subquery join (not N+1 per group); groups tracks in-memory by (lower_title, artist_id)
+- Performance: is_blacklisted() uses SQL WHERE lower(artist) filter (not full table scan)
+- Performance: _find_existing_track() uses SQL-side lower(title)+lower(artist) filter (not Python loop over all tracks)
+- Performance: FTS updates batched every 50 tracks during scan (not per-track)
+- Performance: SQLite PRAGMAs in init_db — synchronous=NORMAL, cache_size=32MB, mmap_size=256MB
+- Performance: recommender build_taste_profile runs 7 independent DB queries via asyncio.gather()
+- Performance: Last.fm uses persistent httpx.AsyncClient with connection pooling (not new client per call)
+- Performance: api.js buildUrl() helper centralizes URL building with undefined/null filtering (8 call sites)
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
