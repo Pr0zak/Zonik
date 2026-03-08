@@ -139,6 +139,9 @@ docs/                  # Installation, configuration, API reference, development
 - Downloads page: sorted by status priority (queued → running → completed → failed), newest first within group
 - Downloads page: single fuzzy search field sends `query` or `artist`+`track` to backend; backend SearchRequest accepts all three fields
 - Downloads page: Active Transfers driven by WebSocket (no polling), paginated Download History from /api/jobs with type filter, cancel transfer + retry failed jobs
+- Downloads page: status-tinted backgrounds (emerald/red/blue/amber/neutral for completed/failed/downloading/queued/searching), searching bar uses radar-sweep animation
+- Downloads page: queued jobs collapse into amber summary bar ("{N} queued — waiting for download slot") when filter is "All"; uses friendlyStatus to catch running-but-waiting jobs; expands to show compact list
+- Downloads page performance: job details fetched in parallel (Promise.allSettled) only for active jobs; WS updates applied in-place for instant UI; full reload debounced to 2s
 - Transfer model includes speed (bytes/sec) and eta_seconds properties; /api/jobs supports offset + type (comma-separated) params
 - /api/download/cancel-transfer marks transfer FAILED, removes it, broadcasts update
 - Native Soulseek client: persistent singleton in FastAPI lifespan, feature-flagged via `use_native` config toggle
@@ -285,8 +288,8 @@ docs/                  # Installation, configuration, API reference, development
 - Upgrade pipeline integration: scanner.import_downloaded_file marks TrackUpgrade completed/failed on upgrade detection; enqueue_download() returns job_id for linking; _download_upgrade also checks job status after download and updates upgrade accordingly
 - Upgrade track swap: raw SQL for entire operation — PRAGMA foreign_keys=OFF, migrate all 7 FK tables (favorites, play_history, track_upgrades, playlist_tracks, bookmarks, track_analysis, track_embeddings), delete old track, add new track, re-enable FK. Avoids ORM cascade errors (TrackAnalysis PK blank-out) and UNIQUE file_path conflicts.
 - Upgrade queue persistence: startup lifespan resets stuck queued/downloading upgrades to pending with attempts=0 (BackgroundTasks are in-memory, lost on restart)
-- Upgrade queue processing: single background task processes entire queue sequentially — never spawn N background tasks for N upgrades (exhausts DB connection pool)
-- Bulk download queue: same pattern — /api/download/bulk uses single background task with sequential processing to avoid connection pool exhaustion (QueuePool limit 5+10 overflow)
+- Upgrade queue processing: single background task with Semaphore(4) bounded concurrency — never spawn N background tasks for N upgrades (exhausts DB connection pool)
+- Bulk download queue: same pattern — /api/download/bulk uses single background task with Semaphore(4) bounded concurrency to avoid connection pool exhaustion (QueuePool limit 5+10 overflow)
 - TrackUpgrade denormalized columns: track_title, track_artist stored at scan time — survives track ID changes when upgraded file gets new path/ID; serializer uses stored values as fallback when track FK is broken
 - enqueue_download accepts optional job_id parameter to pre-link upgrade records before download starts
 - DB connection pool pitfall: never spawn unbounded BackgroundTasks that each open async_session() — SQLAlchemy QueuePool has 5+10 limit, exceeding it hangs the entire app with TimeoutError
