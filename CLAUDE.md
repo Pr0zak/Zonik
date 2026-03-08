@@ -127,7 +127,8 @@ docs/                  # Installation, configuration, API reference, development
 - Library scan: pre-counts files, broadcasts progress via WebSocket every 50 files, stores JSON result
 - Library scan: uses db.get() for artist/album dedup (identity map aware), separate session for job completion
 - SQLite single-writer constraint: never use concurrent DB sessions for writes; progress updates go through WebSocket only
-- Library page: tabbed Tracks/Artists/Albums with grid (card art) and list view toggle
+- Library page: tabbed Tracks/Artists/Albums with grid (card art) and list view toggle; grid shows format+bitrate subtitle under artist
+- Library list view: column picker dropdown (Columns3 icon) toggles 9 columns (Artist, Album, Format, Bitrate, Plays, Rating, Added, Analyzed, Time); saved to localStorage; default: Artist, Album, Time; when Artist hidden, shows as subtitle under title
 - Cover art served via `/rest/getCoverArt?id=<track_or_album_id>` (subsonic endpoint)
 - URLSearchParams pitfall: filter out undefined/null values before passing to URLSearchParams (converts to literal "undefined")
 - Svelte curly brace pitfall: literal `{text}` in HTML attributes is interpreted as JS — use `placeholder={'{artist}'}` not `placeholder="{artist}"`
