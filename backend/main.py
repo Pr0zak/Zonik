@@ -119,7 +119,7 @@ async def lifespan(app: FastAPI):
         stuck_upgrades = await session.execute(
             update(TrackUpgrade)
             .where(TrackUpgrade.status.in_(["queued", "downloading"]))
-            .values(status="pending", updated_at=datetime.utcnow())
+            .values(status="pending", attempts=0, updated_at=datetime.utcnow())
         )
         if stuck_upgrades.rowcount:
             await session.commit()
