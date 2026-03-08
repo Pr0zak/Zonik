@@ -1564,7 +1564,13 @@
 							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				</div>
 			</div>
-			<p class="text-xs text-[var(--text-disabled)]">Changes are saved to both the database and the audio file tags.</p>
+			{#if editTrack?.file_path}
+			<div class="mt-1 px-2.5 py-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
+				<p class="text-[10px] text-[var(--text-disabled)] uppercase tracking-wider mb-0.5">File</p>
+				<p class="text-xs text-[var(--text-muted)] font-mono break-all">{editTrack.file_path}</p>
+			</div>
+		{/if}
+		<p class="text-xs text-[var(--text-disabled)]">Changes are saved to both the database and the audio file tags.</p>
 		</div>
 	{/snippet}
 	{#snippet footer()}
