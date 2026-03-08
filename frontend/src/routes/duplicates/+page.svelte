@@ -6,8 +6,9 @@
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatSize, formatRelativeTime, formatDateTime } from '$lib/utils.js';
 	import {
-		Copy, Play, Search, Download, Trash2, Check, Loader2,
-		ChevronDown, ChevronUp, Heart, Music, AlertTriangle, HardDrive, Clock
+		Copy, Play, Search, Download, Trash2, Check, Loader2, Filter,
+		ChevronDown, ChevronUp, Heart, Music, AlertTriangle, HardDrive, Clock,
+		ChevronsDown, ChevronsUp, Zap, ArrowDownUp, Layers, Star
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -23,7 +24,10 @@
 	let selected = $state(new Set());
 	let executing = $state(false);
 	let expandedGroups = $state(new Set());
-	let confirmModal = $state(null); // null | 'db' | 'files'
+	let confirmModal = $state(null); // null | 'db' | 'files' | 'auto-db' | 'auto-files'
+	let sortBy = $state('space');
+	let filterBy = $state('all');
+	let searchQuery = $state('');
 
 	function qualityPercent(score, maxScore) {
 		if (!maxScore) return 0;
@@ -58,6 +62,14 @@
 		expandedGroups = s;
 	}
 
+	function expandAll() {
+		expandedGroups = new Set(displayGroups.map((_, i) => i));
+	}
+
+	function collapseAll() {
+		expandedGroups = new Set();
+	}
+
 	function toggleTrack(id) {
 		const s = new Set(selected);
 		s.has(id) ? s.delete(id) : s.add(id);
@@ -66,12 +78,20 @@
 
 	function selectAllInferior() {
 		selected = new Set(
-			(data?.groups || []).flatMap(g => g.tracks.filter(t => !t.is_best).map(t => t.id))
+			(data?.groups || []).flatMap(g => g.tracks.filter(t => !t.is_best && !t.is_favorite).map(t => t.id))
 		);
 	}
 
 	function deselectAll() {
 		selected = new Set();
+	}
+
+	function autoResolve() {
+		const ids = (data?.groups || []).flatMap(g =>
+			g.tracks.filter(t => !t.is_best && !t.is_favorite).map(t => t.id)
+		);
+		selected = new Set(ids);
+		confirmModal = 'auto';
 	}
 
 	function findUpgrade(track) {
@@ -107,11 +127,100 @@
 		}
 	}
 
+	// --- Computed stats ---
+	let stats = $derived.by(() => {
+		const groups = data?.groups || [];
+		if (!groups.length) return null;
+		const formatMismatches = groups.filter(g => g.best_format !== g.worst_format).length;
+		const largestGroup = Math.max(...groups.map(g => g.count));
+		return {
+			totalGroups: groups.length,
+			totalExtra: data.total_duplicates,
+			reclaimable: data.reclaimable_bytes,
+			formatMismatches,
+			largestGroup,
+		};
+	});
+
+	// --- Sort + Filter ---
+	function sortGroups(groups, sort) {
+		const sorted = [...groups];
+		switch (sort) {
+			case 'space':
+				sorted.sort((a, b) => {
+					const aSpace = a.tracks.filter(t => !t.is_best).reduce((s, t) => s + (t.file_size || 0), 0);
+					const bSpace = b.tracks.filter(t => !t.is_best).reduce((s, t) => s + (t.file_size || 0), 0);
+					return bSpace - aSpace;
+				});
+				break;
+			case 'copies':
+				sorted.sort((a, b) => b.count - a.count);
+				break;
+			case 'gap':
+				sorted.sort((a, b) => {
+					const aGap = (a.tracks[0]?.quality_score || 0) - (a.tracks[a.tracks.length - 1]?.quality_score || 0);
+					const bGap = (b.tracks[0]?.quality_score || 0) - (b.tracks[b.tracks.length - 1]?.quality_score || 0);
+					return bGap - aGap;
+				});
+				break;
+			case 'artist':
+				sorted.sort((a, b) => a.artist.localeCompare(b.artist));
+				break;
+			case 'recent':
+				sorted.sort((a, b) => {
+					const aMax = Math.max(...a.tracks.map(t => t.created_at ? new Date(t.created_at).getTime() : 0));
+					const bMax = Math.max(...b.tracks.map(t => t.created_at ? new Date(t.created_at).getTime() : 0));
+					return bMax - aMax;
+				});
+				break;
+		}
+		return sorted;
+	}
+
+	function filterGroups(groups, filter) {
+		switch (filter) {
+			case 'format_mismatch':
+				return groups.filter(g => g.best_format !== g.worst_format);
+			case 'same_format':
+				return groups.filter(g => g.best_format === g.worst_format);
+			case 'has_favorites':
+				return groups.filter(g => g.tracks.some(t => t.is_favorite));
+			default:
+				return groups;
+		}
+	}
+
+	let displayGroups = $derived.by(() => {
+		let groups = data?.groups || [];
+		if (searchQuery.trim()) {
+			const q = searchQuery.trim().toLowerCase();
+			groups = groups.filter(g =>
+				g.artist.toLowerCase().includes(q) || g.title.toLowerCase().includes(q)
+			);
+		}
+		groups = filterGroups(groups, filterBy);
+		groups = sortGroups(groups, sortBy);
+		return groups;
+	});
+
 	let maxQuality = $derived(
 		data?.groups
 			? Math.max(...data.groups.flatMap(g => g.tracks.map(t => t.quality_score || 0)), 1)
 			: 1
 	);
+
+	// Count selected favorites for warning
+	let selectedFavCount = $derived.by(() => {
+		if (!data?.groups) return 0;
+		const allTracks = data.groups.flatMap(g => g.tracks);
+		return allTracks.filter(t => selected.has(t.id) && t.is_favorite).length;
+	});
+
+	let selectedTotalSize = $derived.by(() => {
+		if (!data?.groups) return 0;
+		const allTracks = data.groups.flatMap(g => g.tracks);
+		return allTracks.filter(t => selected.has(t.id)).reduce((s, t) => s + (t.file_size || 0), 0);
+	});
 
 	onMount(loadDuplicates);
 </script>
@@ -131,14 +240,75 @@
 			<EmptyState icon={Check} title="No duplicates" message="Your library has no duplicate tracks." />
 		</div>
 	{:else}
+		<!-- Stats Bar -->
+		{#if stats}
+			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
+				{#each [
+					{ label: 'Groups', value: stats.totalGroups, color: 'text-amber-400' },
+					{ label: 'Extra Files', value: stats.totalExtra, color: 'text-red-400' },
+					{ label: 'Reclaimable', value: formatSize(stats.reclaimable), color: 'text-emerald-400' },
+					{ label: 'Format Mismatches', value: stats.formatMismatches, color: 'text-purple-400' },
+					{ label: 'Largest Group', value: stats.largestGroup + ' copies', color: 'text-blue-400' },
+				] as stat}
+					<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-center">
+						<p class="text-lg font-bold {stat.color}">{stat.value}</p>
+						<p class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
+					</div>
+				{/each}
+			</div>
+		{/if}
+
+		<!-- Filter Pills -->
+		<div class="flex items-center gap-2 flex-wrap mt-4">
+			{#each [
+				{ value: 'all', label: 'All' },
+				{ value: 'format_mismatch', label: 'Format Mismatch' },
+				{ value: 'same_format', label: 'Same Format' },
+				{ value: 'has_favorites', label: 'Has Favorites' },
+			] as f}
+				<button
+					onclick={() => filterBy = f.value}
+					class="px-3 py-1.5 text-xs rounded-md transition-colors {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+				>
+					{f.label}
+				</button>
+			{/each}
+		</div>
+
 		<!-- Action bar -->
-		<div class="flex items-center justify-between mt-4 mb-3 sticky top-0 z-10 bg-[var(--bg-primary)] py-2 border-b border-[var(--border-subtle)]">
+		<div class="flex items-center justify-between mt-3 mb-3 sticky top-0 z-10 bg-[var(--bg-primary)] py-2 border-b border-[var(--border-subtle)]">
 			<div class="flex items-center gap-3">
 				<span class="text-sm text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
 				<button onclick={selectAllInferior} class="text-xs text-[var(--color-accent)] hover:underline">Select All Inferior</button>
 				<button onclick={deselectAll} class="text-xs text-[var(--text-muted)] hover:underline">Deselect All</button>
+				<span class="text-[var(--border-subtle)]">|</span>
+				<button onclick={expandAll} class="text-xs text-[var(--text-secondary)] hover:underline flex items-center gap-1">
+					<ChevronsDown class="w-3 h-3" /> Expand All
+				</button>
+				<button onclick={collapseAll} class="text-xs text-[var(--text-secondary)] hover:underline flex items-center gap-1">
+					<ChevronsUp class="w-3 h-3" /> Collapse All
+				</button>
 			</div>
 			<div class="flex items-center gap-2">
+				<!-- Search -->
+				<div class="relative">
+					<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+					<input type="text" bind:value={searchQuery} placeholder="Search artist or title..."
+						class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-48 focus:outline-none focus:border-[var(--color-accent)]" />
+				</div>
+				<!-- Sort -->
+				<select bind:value={sortBy}
+					class="text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-accent)]">
+					<option value="space">Reclaimable Space</option>
+					<option value="copies">Most Copies</option>
+					<option value="gap">Quality Gap</option>
+					<option value="artist">Artist A-Z</option>
+					<option value="recent">Recently Added</option>
+				</select>
+				<!-- Auto-Resolve -->
+				<Button variant="primary" size="sm" onclick={autoResolve}>
+					<Zap class="w-3.5 h-3.5 mr-1" /> Auto-Resolve
+				</Button>
 				{#if selected.size > 0}
 					<Button variant="warning" size="sm" onclick={() => confirmModal = 'db'}>
 						<Trash2 class="w-3.5 h-3.5 mr-1" /> Remove from DB
@@ -150,9 +320,14 @@
 			</div>
 		</div>
 
+		<!-- Results count -->
+		{#if displayGroups.length !== (data?.groups?.length || 0)}
+			<p class="text-xs text-[var(--text-muted)] mb-2">Showing {displayGroups.length} of {data.groups.length} groups</p>
+		{/if}
+
 		<!-- Duplicate groups -->
 		<div class="space-y-3">
-			{#each data.groups as group, gi}
+			{#each displayGroups as group, gi}
 				<Card padding="p-0" class="border border-[var(--border-subtle)] overflow-hidden">
 					<!-- Group header -->
 					<button onclick={() => toggleGroup(gi)}
@@ -168,7 +343,24 @@
 						{/if}
 						<div class="flex-1 min-w-0">
 							<p class="text-base font-semibold text-[var(--text-primary)] truncate">{group.artist} — {group.title}</p>
-							<p class="text-sm text-[var(--text-muted)]">{group.count} copies</p>
+							<p class="text-sm text-[var(--text-muted)]">
+								{group.count} copies
+								{#if group.best_format && group.worst_format && group.best_format !== group.worst_format}
+									<span class="mx-1.5 text-[var(--text-disabled)]">&middot;</span>
+									<span class="font-mono text-xs">
+										<span class="text-emerald-400">{group.best_format.toUpperCase()}{#if group.best_bitrate} {Math.round(group.best_bitrate / 1000)}k{/if}</span>
+										<span class="text-[var(--text-disabled)]"> vs </span>
+										<span class="text-red-400">{group.worst_format.toUpperCase()}{#if group.worst_bitrate} {Math.round(group.worst_bitrate / 1000)}k{/if}</span>
+									</span>
+								{:else if group.best_bitrate && group.worst_bitrate && group.best_bitrate > group.worst_bitrate * 2}
+									<span class="mx-1.5 text-[var(--text-disabled)]">&middot;</span>
+									<span class="font-mono text-xs">
+										<span class="text-emerald-400">{Math.round(group.best_bitrate / 1000)}k</span>
+										<span class="text-[var(--text-disabled)]"> vs </span>
+										<span class="text-red-400">{Math.round(group.worst_bitrate / 1000)}k</span>
+									</span>
+								{/if}
+							</p>
 						</div>
 						<Badge variant="warning">{group.count} versions</Badge>
 						{#if expandedGroups.has(gi)}
@@ -184,7 +376,7 @@
 							{#each group.tracks as track}
 								{@const qpct = qualityPercent(track.quality_score, maxQuality)}
 								<div class="px-4 py-3 transition-colors
-									{track.is_best ? 'bg-emerald-500/5' : selected.has(track.id) ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+									{track.is_best ? 'bg-emerald-500/5' : selected.has(track.id) ? (track.is_favorite ? 'bg-amber-500/5 border-l-2 border-l-amber-500' : 'bg-red-500/5') : 'hover:bg-[var(--bg-hover)]'}">
 
 									<!-- Row 1: Main info -->
 									<div class="flex items-center gap-3">
@@ -261,6 +453,14 @@
 										</div>
 									</div>
 
+									<!-- Favorite warning when selected -->
+									{#if !track.is_best && track.is_favorite && selected.has(track.id)}
+										<div class="flex items-center gap-1.5 mt-1.5 ml-[6.75rem] text-xs text-amber-400">
+											<AlertTriangle class="w-3 h-3" />
+											This track is favorited
+										</div>
+									{/if}
+
 									<!-- Row 2: Secondary details -->
 									<div class="flex items-center gap-4 mt-2 ml-[6.75rem] text-xs text-[var(--text-muted)]">
 										<!-- File path -->
@@ -310,27 +510,53 @@
 
 <!-- Confirmation Modal -->
 {#if confirmModal}
-	<Modal title="Confirm Removal" onclose={() => confirmModal = null}>
+	<Modal title={confirmModal === 'auto' ? 'Auto-Resolve Duplicates' : 'Confirm Removal'} onclose={() => confirmModal = null}>
 		<div class="space-y-3">
 			<div class="flex items-start gap-2 p-3 rounded bg-amber-500/10 border border-amber-500/30">
 				<AlertTriangle class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
 				<div>
-					<p class="text-sm text-[var(--text-primary)]">
-						{confirmModal === 'files'
-							? `This will remove ${selected.size} track${selected.size !== 1 ? 's' : ''} from the database AND delete the files from disk.`
-							: `This will remove ${selected.size} track${selected.size !== 1 ? 's' : ''} from the database. Files will remain on disk.`}
+					{#if confirmModal === 'auto'}
+						<p class="text-sm text-[var(--text-primary)]">
+							This will remove <span class="font-bold">{selected.size}</span> non-best track{selected.size !== 1 ? 's' : ''} across all groups, keeping the best quality version{selectedFavCount > 0 ? '' : ' and all favorited tracks'}.
+						</p>
+					{:else}
+						<p class="text-sm text-[var(--text-primary)]">
+							{confirmModal === 'files'
+								? `This will remove ${selected.size} track${selected.size !== 1 ? 's' : ''} from the database AND delete the files from disk.`
+								: `This will remove ${selected.size} track${selected.size !== 1 ? 's' : ''} from the database. Files will remain on disk.`}
+						</p>
+					{/if}
+					{#if selectedFavCount > 0}
+						<p class="text-xs text-amber-400 mt-1 flex items-center gap-1">
+							<Heart class="w-3 h-3 fill-amber-400" />
+							Includes {selectedFavCount} favorited track{selectedFavCount !== 1 ? 's' : ''}
+						</p>
+					{/if}
+					<p class="text-xs text-[var(--text-muted)] mt-1">
+						Space to reclaim: <span class="font-mono text-[var(--text-secondary)]">{formatSize(selectedTotalSize)}</span>
 					</p>
-					<p class="text-xs text-[var(--text-muted)] mt-1">This action cannot be undone.</p>
+					<p class="text-xs text-[var(--text-muted)] mt-0.5">This action cannot be undone.</p>
 				</div>
 			</div>
 			<div class="flex justify-end gap-2">
 				<Button variant="secondary" size="sm" onclick={() => confirmModal = null}>Cancel</Button>
-				<Button variant={confirmModal === 'files' ? 'danger' : 'warning'} size="sm"
-					disabled={executing}
-					onclick={() => executeRemoval(confirmModal === 'files')}>
-					{#if executing}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
-					{confirmModal === 'files' ? 'Delete Files' : 'Remove from DB'}
-				</Button>
+				{#if confirmModal === 'auto'}
+					<Button variant="warning" size="sm" disabled={executing} onclick={() => executeRemoval(false)}>
+						{#if executing}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+						Remove from DB
+					</Button>
+					<Button variant="danger" size="sm" disabled={executing} onclick={() => executeRemoval(true)}>
+						{#if executing}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+						Remove + Delete Files
+					</Button>
+				{:else}
+					<Button variant={confirmModal === 'files' ? 'danger' : 'warning'} size="sm"
+						disabled={executing}
+						onclick={() => executeRemoval(confirmModal === 'files')}>
+						{#if executing}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
+						{confirmModal === 'files' ? 'Delete Files' : 'Remove from DB'}
+					</Button>
+				{/if}
 			</div>
 		</div>
 	</Modal>

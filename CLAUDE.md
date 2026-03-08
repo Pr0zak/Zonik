@@ -247,8 +247,12 @@ docs/                  # Installation, configuration, API reference, development
 - Timezone: parseUTC() in utils.js appends 'Z' to naive ISO strings from backend; formatDateTime() for absolute timestamps; applied across all pages
 - Per-section color coding includes map=teal (--color-map: #14b8a6), duplicates=amber (--color-duplicates: #f59e0b), upgrades=emerald (--color-upgrades: #10b981)
 - Duplicates page: dedicated /duplicates route with enriched grouped card view — cover art, format badges (color-coded by tier), bitrate, bit_depth/sample_rate, file size, quality score bar, play count, favorite heart, added date, file path
+- Duplicates page: stats bar (5 cards: groups, extra files, reclaimable space, format mismatches, largest group), collapse/expand all, quality comparison in group headers (best vs worst format+bitrate)
+- Duplicates page: sort dropdown (reclaimable space/copies/quality gap/artist/recent), filter pills (all/format mismatch/same format/has favorites), search by artist/title
+- Duplicates page: Auto-Resolve button selects all non-best non-favorited tracks; favorites protection — selectAllInferior skips favorites, inline amber warning on selected favorites, amber left border
+- Duplicates page: enhanced confirmation modal shows selected count, favorited track warning, total reclaimable space; auto-resolve modal offers both Remove/Delete options
 - Duplicates API: GET /api/library/duplicates returns enriched groups with full track details + reclaimable_bytes; GET /api/library/duplicates/artists returns artist IDs with dupes (lightweight, for map overlay)
-- Duplicates: find_duplicates_enriched() in cleanup.py — includes album_id for cover art, is_best flag, quality_score, play_count, rating, is_favorite, created_at
+- Duplicates: find_duplicates_enriched() in cleanup.py — includes album_id for cover art, is_best flag, quality_score, play_count, rating, is_favorite, created_at, best_format/best_bitrate/worst_format/worst_bitrate per group
 - Duplicates: confirmation modal before destructive actions (Remove from DB vs Remove + Delete Files)
 - Library cleanup: dedup card replaced with link to /duplicates page (orphan cleanup and organize tools remain in Danger Zone)
 - Music Map view modes: Genre (default), Play Heatmap, Quality, Duplicates — view mode selector in header bar

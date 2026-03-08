@@ -225,6 +225,7 @@ async def find_duplicates_enriched(db: AsyncSession) -> dict:
             }
 
         best = scored[0]
+        worst = scored[-1]
         others = scored[1:]
         total_dupes += len(others)
         for t in others:
@@ -235,6 +236,10 @@ async def find_duplicates_enriched(db: AsyncSession) -> dict:
             "artist": best.artist.name if best.artist else "Unknown",
             "artist_id": artist_id,
             "count": len(tracks),
+            "best_format": best.format,
+            "best_bitrate": best.bitrate,
+            "worst_format": worst.format,
+            "worst_bitrate": worst.bitrate,
             "tracks": [_track_detail(best, is_best=True)] + [_track_detail(t) for t in others],
         })
 
