@@ -6,12 +6,10 @@
 	import { parseUTC } from '$lib/utils.js';
 	import {
 		ArrowUpCircle, Search, Play, SkipForward, RotateCcw, Trash2, Check, X,
-		Loader2, ArrowRight, ChevronDown
+		Loader2, ArrowRight
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
-	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
-	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 
@@ -19,9 +17,6 @@
 	let stats = $state(null);
 
 	// Scan controls
-	let scanModes = $state({ low_bitrate: true, lossy_to_lossless: false, all_lossy: false, opus_to_flac: false });
-	let scanMaxBitrate = $state(256);
-	let scanLimit = $state(200);
 	let scanning = $state(false);
 
 	// List
@@ -96,13 +91,7 @@
 	async function scanLibrary() {
 		scanning = true;
 		try {
-			const modes = Object.entries(scanModes).filter(([, v]) => v).map(([k]) => k);
-			if (!modes.length) {
-				addToast('Select at least one scan mode', 'warning');
-				scanning = false;
-				return;
-			}
-			const result = await api.scanUpgrades({ modes, max_bitrate: scanMaxBitrate, limit: scanLimit });
+			const result = await api.scanUpgrades({ modes: ['low_bitrate', 'all_lossy'], max_bitrate: 256, limit: 500 });
 			addToast(`Found ${result.created} tracks to upgrade`, 'success');
 			await loadStats();
 			await loadUpgrades();
@@ -277,53 +266,6 @@
 		{/if}
 	{/if}
 
-	<!-- Scan Controls -->
-	<Card>
-		<div class="p-4 space-y-4">
-			<h3 class="text-sm font-semibold text-[var(--text-primary)]">Scan Library for Upgrades</h3>
-			<div class="flex flex-wrap gap-4">
-				<label class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-					<input type="checkbox" bind:checked={scanModes.low_bitrate} class="rounded accent-emerald-500" />
-					Low Bitrate
-				</label>
-				<label class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-					<input type="checkbox" bind:checked={scanModes.lossy_to_lossless} class="rounded accent-emerald-500" />
-					Lossy to Lossless
-				</label>
-				<label class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-					<input type="checkbox" bind:checked={scanModes.all_lossy} class="rounded accent-emerald-500" />
-					All Lossy
-				</label>
-				<label class="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-					<input type="checkbox" bind:checked={scanModes.opus_to_flac} class="rounded accent-emerald-500" />
-					Opus to FLAC
-				</label>
-			</div>
-			<div class="flex flex-wrap items-end gap-4">
-				{#if scanModes.low_bitrate}
-					<div>
-						<label class="text-xs text-[var(--text-muted)] block mb-1">Max Bitrate (kbps)</label>
-						<input type="number" bind:value={scanMaxBitrate} min="64" max="512" step="32"
-							class="w-24 bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-sm text-[var(--text-primary)]" />
-					</div>
-				{/if}
-				<div>
-					<label class="text-xs text-[var(--text-muted)] block mb-1">Limit</label>
-					<input type="number" bind:value={scanLimit} min="10" max="500" step="10"
-						class="w-24 bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-sm text-[var(--text-primary)]" />
-				</div>
-				<Button variant="primary" onclick={scanLibrary} disabled={scanning}>
-					{#if scanning}
-						<Loader2 class="w-4 h-4 animate-spin" />
-					{:else}
-						<Search class="w-4 h-4" />
-					{/if}
-					Scan Library
-				</Button>
-			</div>
-		</div>
-	</Card>
-
 	<!-- Filter Tabs -->
 	<div class="flex items-center gap-2 flex-wrap">
 		{#each statusFilters as f}
@@ -351,8 +293,12 @@
 		{/each}
 	</div>
 
-	<!-- Bulk Actions -->
+	<!-- Actions -->
 	<div class="flex items-center gap-2 flex-wrap">
+		<Button variant="default" onclick={scanLibrary} disabled={scanning}>
+			{#if scanning}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Search class="w-4 h-4" />{/if}
+			Scan Library
+		</Button>
 		<Button variant="primary" onclick={startAll} disabled={starting || !stats?.pending}>
 			{#if starting}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Play class="w-4 h-4" />{/if}
 			Start All Pending

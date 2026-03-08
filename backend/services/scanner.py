@@ -532,6 +532,17 @@ async def import_downloaded_file(
                 for fav in favs:
                     fav.track_id = new_track_id
 
+                # Migrate play history to new track ID
+                from backend.models.play_history import PlayHistory
+                plays = (await db.execute(
+                    select(PlayHistory).where(PlayHistory.track_id == existing.id)
+                )).scalars().all()
+                for play in plays:
+                    play.track_id = new_track_id
+
+                # Carry over rating
+                new_track.rating = existing.rating
+
                 await db.delete(existing)
                 await db.flush()
                 db.add(new_track)
