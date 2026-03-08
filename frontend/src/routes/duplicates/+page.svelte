@@ -258,65 +258,68 @@
 			</div>
 		{/if}
 
-		<!-- Filter Pills -->
-		<div class="flex items-center gap-2 flex-wrap mt-4">
-			{#each [
-				{ value: 'all', label: 'All' },
-				{ value: 'format_mismatch', label: 'Format Mismatch' },
-				{ value: 'same_format', label: 'Same Format' },
-				{ value: 'has_favorites', label: 'Has Favorites' },
-			] as f}
-				<button
-					onclick={() => filterBy = f.value}
-					class="px-3 py-1.5 text-xs rounded-md transition-colors {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
-				>
-					{f.label}
-				</button>
-			{/each}
-		</div>
-
-		<!-- Action bar -->
-		<div class="flex items-center justify-between mt-3 mb-3 sticky top-0 z-10 bg-[var(--bg-primary)] py-2 border-b border-[var(--border-subtle)]">
-			<div class="flex items-center gap-3">
-				<span class="text-sm text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
-				<button onclick={selectAllInferior} class="text-xs text-[var(--color-accent)] hover:underline">Select All Inferior</button>
-				<button onclick={deselectAll} class="text-xs text-[var(--text-muted)] hover:underline">Deselect All</button>
-				<span class="text-[var(--border-subtle)]">|</span>
-				<button onclick={expandAll} class="text-xs text-[var(--text-secondary)] hover:underline flex items-center gap-1">
-					<ChevronsDown class="w-3 h-3" /> Expand All
-				</button>
-				<button onclick={collapseAll} class="text-xs text-[var(--text-secondary)] hover:underline flex items-center gap-1">
-					<ChevronsUp class="w-3 h-3" /> Collapse All
-				</button>
-			</div>
-			<div class="flex items-center gap-2">
-				<!-- Search -->
-				<div class="relative">
-					<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-					<input type="text" bind:value={searchQuery} placeholder="Search artist or title..."
-						class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-48 focus:outline-none focus:border-[var(--color-accent)]" />
+		<!-- Toolbar -->
+		<div class="sticky top-0 z-10 bg-[var(--bg-primary)] pt-3 pb-2 mt-3 mb-3 border-b border-[var(--border-subtle)] space-y-2">
+			<!-- Row 1: Filters + Search + Sort -->
+			<div class="flex items-center justify-between gap-3">
+				<div class="flex items-center gap-2 flex-wrap">
+					{#each [
+						{ value: 'all', label: 'All' },
+						{ value: 'format_mismatch', label: 'Format Mismatch' },
+						{ value: 'same_format', label: 'Same Format' },
+						{ value: 'has_favorites', label: 'Has Favorites' },
+					] as f}
+						<button
+							onclick={() => filterBy = f.value}
+							class="px-2.5 py-1 text-xs rounded-md transition-colors whitespace-nowrap {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+						>
+							{f.label}
+						</button>
+					{/each}
 				</div>
-				<!-- Sort -->
-				<select bind:value={sortBy}
-					class="text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] px-2.5 py-1.5 focus:outline-none focus:border-[var(--color-accent)]">
-					<option value="space">Reclaimable Space</option>
-					<option value="copies">Most Copies</option>
-					<option value="gap">Quality Gap</option>
-					<option value="artist">Artist A-Z</option>
-					<option value="recent">Recently Added</option>
-				</select>
-				<!-- Auto-Resolve -->
-				<Button variant="primary" size="sm" onclick={autoResolve}>
-					<Zap class="w-3.5 h-3.5 mr-1" /> Auto-Resolve
-				</Button>
-				{#if selected.size > 0}
-					<Button variant="warning" size="sm" onclick={() => confirmModal = 'db'}>
-						<Trash2 class="w-3.5 h-3.5 mr-1" /> Remove from DB
+				<div class="flex items-center gap-2 flex-shrink-0">
+					<div class="relative">
+						<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+						<input type="text" bind:value={searchQuery} placeholder="Search..."
+							class="pl-8 pr-3 py-1 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-36 focus:outline-none focus:border-[var(--color-accent)]" />
+					</div>
+					<select bind:value={sortBy}
+						class="text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] px-2 py-1 focus:outline-none focus:border-[var(--color-accent)]">
+						<option value="space">Reclaimable Space</option>
+						<option value="copies">Most Copies</option>
+						<option value="gap">Quality Gap</option>
+						<option value="artist">Artist A-Z</option>
+						<option value="recent">Recently Added</option>
+					</select>
+				</div>
+			</div>
+			<!-- Row 2: Selection controls + Actions -->
+			<div class="flex items-center justify-between gap-3">
+				<div class="flex items-center gap-2 text-xs">
+					<span class="text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
+					<button onclick={selectAllInferior} class="text-[var(--color-accent)] hover:underline whitespace-nowrap">Select Inferior</button>
+					<button onclick={deselectAll} class="text-[var(--text-muted)] hover:underline whitespace-nowrap">Deselect</button>
+					<span class="text-[var(--border-subtle)]">|</span>
+					<button onclick={expandAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
+						<ChevronsDown class="w-3 h-3" /> Expand
+					</button>
+					<button onclick={collapseAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
+						<ChevronsUp class="w-3 h-3" /> Collapse
+					</button>
+				</div>
+				<div class="flex items-center gap-2 flex-shrink-0">
+					<Button variant="primary" size="sm" onclick={autoResolve}>
+						<Zap class="w-3.5 h-3.5 mr-1" /> Auto-Resolve
 					</Button>
-					<Button variant="danger" size="sm" onclick={() => confirmModal = 'files'}>
-						<Trash2 class="w-3.5 h-3.5 mr-1" /> Remove + Delete Files
-					</Button>
-				{/if}
+					{#if selected.size > 0}
+						<Button variant="warning" size="sm" onclick={() => confirmModal = 'db'}>
+							<Trash2 class="w-3.5 h-3.5 mr-1" /> Remove
+						</Button>
+						<Button variant="danger" size="sm" onclick={() => confirmModal = 'files'}>
+							<Trash2 class="w-3.5 h-3.5 mr-1" /> Delete Files
+						</Button>
+					{/if}
+				</div>
 			</div>
 		</div>
 
