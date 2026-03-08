@@ -519,9 +519,9 @@ async def _do_download_inner(db, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Cleanup skipped: {e}")
 
-async def enqueue_download(artist: str, track: str) -> str:
+async def enqueue_download(artist: str, track: str, job_id: str | None = None) -> str:
     """Create an individual download job with semaphore queuing. Returns job_id."""
-    job_id = str(uuid.uuid4())
+    job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track)
     sem = _get_semaphore()

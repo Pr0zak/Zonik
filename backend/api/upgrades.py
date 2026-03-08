@@ -184,8 +184,8 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
     for u in upgrades:
         if u.attempts >= u.max_attempts:
             continue
-        artist_name = u.track.artist.name if u.track and u.track.artist else "Unknown"
-        track_title = u.track.title if u.track else "Unknown"
+        artist_name = u.track.artist.name if u.track and u.track.artist else (u.track_artist or "Unknown")
+        track_title = u.track.title if u.track else (u.track_title or "Unknown")
         u.status = "queued"
         u.attempts += 1
         u.updated_at = datetime.utcnow()
@@ -202,7 +202,11 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
 async def _download_upgrade(upgrade_id: str, artist: str, track: str):
     """Download an upgrade and link the job_id back."""
     from backend.api.download import enqueue_download
-    job_id = await enqueue_download(artist, track)
+
+    # Generate job_id upfront so we can link it before the download starts
+    job_id = str(uuid.uuid4())
+
+    # Mark as downloading before starting
     async with async_session() as db:
         result = await db.execute(
             select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
@@ -213,6 +217,9 @@ async def _download_upgrade(upgrade_id: str, artist: str, track: str):
             u.status = "downloading"
             u.updated_at = datetime.utcnow()
             await db.commit()
+
+    # Now do the actual download (blocks until complete)
+    await enqueue_download(artist, track, job_id=job_id)
 
 
 @router.post("/{upgrade_id}/retry")
