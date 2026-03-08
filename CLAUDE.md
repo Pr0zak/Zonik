@@ -252,6 +252,7 @@ docs/                  # Installation, configuration, API reference, development
 - Duplicates page: sort dropdown (reclaimable space/copies/quality gap/artist/recent), filter pills (all/format mismatch/same format/has favorites), search by artist/title
 - Duplicates page: Auto-Resolve button selects all non-best non-favorited tracks; favorites protection — selectAllInferior skips favorites, inline amber warning on selected favorites, amber left border
 - Duplicates page: enhanced confirmation modal shows selected count, favorited track warning, total reclaimable space; auto-resolve modal offers both Remove/Delete options
+- Two-row sticky toolbar pattern: row 1 = filters + search, row 2 = selection controls + action buttons; used on Duplicates page, reusable template for complex pages with many toolbar controls
 - Duplicates API: GET /api/library/duplicates returns enriched groups with full track details + reclaimable_bytes; GET /api/library/duplicates/artists returns artist IDs with dupes (lightweight, for map overlay)
 - Duplicates: find_duplicates_enriched() in cleanup.py — includes album_id for cover art, is_best flag, quality_score, play_count, rating, is_favorite, created_at, best_format/best_bitrate/worst_format/worst_bitrate per group
 - Duplicates: confirmation modal before destructive actions (Remove from DB vs Remove + Delete Files)
@@ -282,6 +283,8 @@ docs/                  # Installation, configuration, API reference, development
 - TrackUpgrade model: persistent upgrade tracking with status lifecycle (pending→queued→downloading→completed→failed→skipped), linked to download Jobs via job_id
 - Upgrade API: /api/upgrades — list (paginated, filterable), stats (counts + size delta), scan (idempotent, multi-mode), start, retry, skip, clear; scan skips existing pending/queued/downloading records
 - Upgrade pipeline integration: scanner.import_downloaded_file marks TrackUpgrade completed/failed on upgrade detection; enqueue_download() returns job_id for linking
+- Upgrade track migration FK ordering: add new track → flush → migrate FK references (favorites, play_history, upgrades) → flush → delete old track (satisfies FK constraints at every step; PRAGMA foreign_keys=ON)
+- TrackUpgrade denormalized columns: track_title, track_artist stored at scan time — survives track ID changes when upgraded file gets new path/ID; serializer uses stored values as fallback when track FK is broken
 - Upgrades page: /upgrades route (emerald --color-upgrades: #10b981), stats bar, scan controls (4 modes + bitrate threshold + limit), status filter tabs, table with before→after format badges, bulk start/retry/clear, per-row actions
 - Remix discovery suggestions: GET /api/discovery/remix-suggestions (source: popular/favorites/random), rate-limited Last.fm search (Semaphore(3)), batch library match, version type detection
 - Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
