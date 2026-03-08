@@ -387,7 +387,7 @@
 				<Skeleton class="h-12" />
 			{/each}
 		</div>
-	{:else if upgrades.length === 0}
+	{:else if upgrades.length === 0 && !activeFilter && !activeReason}
 		<EmptyState icon={ArrowUpCircle} title="No upgrades found" description="Scan your library to find tracks that could be upgraded to higher quality." />
 	{:else}
 		<div class="overflow-x-auto">
@@ -419,6 +419,13 @@
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-[var(--border-subtle)]">
+					{#if upgrades.length === 0}
+						<tr>
+							<td colspan="8" class="px-3 py-8 text-center text-sm text-[var(--text-muted)]">
+								No {activeFilter || ''} upgrades found{activeReason ? ` for ${reasonLabels[activeReason] || activeReason}` : ''}.
+							</td>
+						</tr>
+					{/if}
 					{#each upgrades as u (u.id)}
 						<tr class="hover:bg-[var(--bg-hover)] transition-colors">
 							<td class="px-3 py-2">

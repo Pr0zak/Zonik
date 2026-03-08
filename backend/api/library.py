@@ -517,7 +517,7 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
         select(Track.title, Artist.name)
         .join(Favorite, Favorite.track_id == Track.id)
         .outerjoin(Artist, Track.artist_id == Artist.id)
-        .order_by(Favorite.created_at.desc())
+        .order_by(Favorite.starred_at.desc())
         .limit(5)
     )
     recent_favorites = [
