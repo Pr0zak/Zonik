@@ -282,9 +282,11 @@ docs/                  # Installation, configuration, API reference, development
 - Quality upgrade scan: scheduled task (upgrade_scan, weekly Sun 06:00) finds low-quality tracks and auto-downloads upgrades from Soulseek; configurable mode (low_bitrate/lossy_to_lossless/all_lossy) + max_bitrate via UI selectors
 - TrackUpgrade model: persistent upgrade tracking with status lifecycle (pending→queued→downloading→completed→failed→skipped), linked to download Jobs via job_id
 - Upgrade API: /api/upgrades — list (paginated, filterable), stats (counts + size delta), scan (idempotent, multi-mode), start, retry, skip, clear; scan skips existing pending/queued/downloading records
-- Upgrade pipeline integration: scanner.import_downloaded_file marks TrackUpgrade completed/failed on upgrade detection; enqueue_download() returns job_id for linking
-- Upgrade track migration FK ordering: add new track → flush → migrate FK references (favorites, play_history, upgrades) → flush → delete old track (satisfies FK constraints at every step; PRAGMA foreign_keys=ON)
+- Upgrade pipeline integration: scanner.import_downloaded_file marks TrackUpgrade completed/failed on upgrade detection; enqueue_download() returns job_id for linking; _download_upgrade also checks job status after download and updates upgrade accordingly
+- Upgrade track swap: raw SQL for entire operation — PRAGMA foreign_keys=OFF, migrate all 7 FK tables (favorites, play_history, track_upgrades, playlist_tracks, bookmarks, track_analysis, track_embeddings), delete old track, add new track, re-enable FK. Avoids ORM cascade errors (TrackAnalysis PK blank-out) and UNIQUE file_path conflicts.
+- Upgrade queue persistence: startup lifespan resets stuck queued/downloading upgrades to pending (BackgroundTasks are in-memory, lost on restart)
 - TrackUpgrade denormalized columns: track_title, track_artist stored at scan time — survives track ID changes when upgraded file gets new path/ID; serializer uses stored values as fallback when track FK is broken
+- enqueue_download accepts optional job_id parameter to pre-link upgrade records before download starts
 - Upgrades page: /upgrades route (emerald --color-upgrades: #10b981), stats bar, scan controls (4 modes + bitrate threshold + limit), status filter tabs, table with before→after format badges, bulk start/retry/clear, per-row actions
 - Remix discovery suggestions: GET /api/discovery/remix-suggestions (source: popular/favorites/random), rate-limited Last.fm search (Semaphore(3)), batch library match, version type detection
 - Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
