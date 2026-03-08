@@ -571,6 +571,14 @@ async def import_downloaded_file(
                 for play in plays:
                     play.track_id = new_track_id
 
+                # Migrate upgrade records to new track ID
+                from backend.models.upgrade import TrackUpgrade
+                upgrades = (await db.execute(
+                    select(TrackUpgrade).where(TrackUpgrade.track_id == existing.id)
+                )).scalars().all()
+                for upg in upgrades:
+                    upg.track_id = new_track_id
+
                 # Carry over rating
                 new_track.rating = existing.rating
 
@@ -580,7 +588,7 @@ async def import_downloaded_file(
                 await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
                 await db.commit()
                 log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
-                await _mark_upgrade_completed(db, existing.id, new_fmt, parsed["bitrate"], parsed["file_size"])
+                await _mark_upgrade_completed(db, new_track_id, new_fmt, parsed["bitrate"], parsed["file_size"])
                 return new_track_id
             else:
                 from backend.database import update_fts_index
@@ -684,21 +692,17 @@ async def _mark_upgrade_completed(db, track_id: str, fmt: str, bitrate: int | No
     """Mark a TrackUpgrade as completed after successful upgrade import."""
     try:
         from backend.models.upgrade import TrackUpgrade
+        from sqlalchemy import update
         result = await db.execute(
-            select(TrackUpgrade).where(
-                TrackUpgrade.track_id == track_id,
-                TrackUpgrade.status.in_(["queued", "downloading"]),
-            )
+            update(TrackUpgrade)
+            .where(TrackUpgrade.track_id == track_id, TrackUpgrade.status.in_(["queued", "downloading"]))
+            .values(status="completed", upgraded_format=fmt, upgraded_bitrate=bitrate, upgraded_file_size=file_size, completed_at=datetime.utcnow())
         )
-        upgrade = result.scalar_one_or_none()
-        if upgrade:
-            upgrade.status = "completed"
-            upgrade.upgraded_format = fmt
-            upgrade.upgraded_bitrate = bitrate
-            upgrade.upgraded_file_size = file_size
-            upgrade.completed_at = datetime.utcnow()
+        if result.rowcount:
             await db.commit()
-            log.info(f"[import] TrackUpgrade {upgrade.id} marked completed")
+            log.info(f"[import] TrackUpgrade for {track_id} marked completed ({result.rowcount} rows)")
+        else:
+            log.debug(f"[import] No TrackUpgrade found for {track_id}")
     except Exception as e:
         log.debug(f"[import] TrackUpgrade update skipped: {e}")
 
@@ -707,18 +711,15 @@ async def _mark_upgrade_failed(db, track_id: str, message: str):
     """Mark a TrackUpgrade as failed when download is not an upgrade."""
     try:
         from backend.models.upgrade import TrackUpgrade
+        from sqlalchemy import update
         result = await db.execute(
-            select(TrackUpgrade).where(
-                TrackUpgrade.track_id == track_id,
-                TrackUpgrade.status.in_(["queued", "downloading"]),
-            )
+            update(TrackUpgrade)
+            .where(TrackUpgrade.track_id == track_id, TrackUpgrade.status.in_(["queued", "downloading"]))
+            .values(status="failed", error_message=message)
         )
-        upgrade = result.scalar_one_or_none()
-        if upgrade:
-            upgrade.status = "failed"
-            upgrade.error_message = message
+        if result.rowcount:
             await db.commit()
-            log.info(f"[import] TrackUpgrade {upgrade.id} marked failed: {message}")
+            log.info(f"[import] TrackUpgrade for {track_id} marked failed: {message}")
     except Exception as e:
         log.debug(f"[import] TrackUpgrade update skipped: {e}")
 
