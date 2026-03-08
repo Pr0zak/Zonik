@@ -193,12 +193,12 @@ docs/                  # Installation, configuration, API reference, development
 - Native Soulseek downloads: auto-fallback — when direct download fails, searches for up to 4 additional peers
 - Native Soulseek transfers: fuzzy filename matching in get_transfer (normalized keys + basename fallback + file size validation within 1MB tolerance)
 - Pagination: library defaults to 24 per page (multiples of 12 for even grid rows: 24/48/96/192); other lists default 25/page (25/50/100/200); Jobs API returns {items, total}
-- Library cleanup tools: three separate operations (orphan removal, deduplication, file organization) each with preview/dry-run before execution
+- Library cleanup tools: deduplication (via /duplicates page) and file organization (preview/dry-run before execution)
 - Cleanup dedup: per-track checkboxes (select/deselect all), file sizes displayed, only selected tracks removed
 - Cleanup organize: per-track checkboxes (select/deselect all), only selected files moved; uses configurable naming scheme
 - Naming scheme: configurable in Settings under Library, template vars {artist}/{album}/{track_number}/{title}, default "{artist}/{album}/{track_number} - {title}"
 - Cleanup service in backend/services/cleanup.py: find_orphaned_tracks, find_duplicates (quality scoring + file_size), preview_organize, execute_organize, _build_target_path
-- Scheduled library_cleanup task runs orphan removal only (safe default); dedup and organize are manual-only via UI
+- Library scan automatically removes orphaned DB entries (tracks whose files no longer exist) at end of scan; no separate orphan cleanup task
 - Track upgrade scanner: POST /api/library/upgrades/scan with modes (low_bitrate, lossy_to_lossless, all_lossy), triggers bulk Soulseek download
 - ScheduleControl last-run display: relative time ("2h ago") shown after label (not end of line), full timestamp on hover, guards against negative time diff
 - Auto-run after scan: analysis/enrichment tasks can be auto-triggered after library scan via ScheduleTask.config JSON {auto_after_scan: true}
@@ -230,7 +230,7 @@ docs/                  # Installation, configuration, API reference, development
 - Notification bell: clicking a job navigates to /logs?job=id with auto-expand
 - Logs page: reads ?job= URL param to auto-expand specific job on load
 - Library cleanup tools: "Danger Zone" section with amber border, DESTRUCTIVE/CAUTION tags on tool cards
-- Schedule page: danger tasks (library_cleanup) shown with amber dot, AlertTriangle icon, warning badge
+- Schedule page: DANGER_TASKS set (currently empty — library_cleanup removed, orphans handled by scan)
 - Logo: text-3xl font-bold tracking-[0.15em] (bigger + wider letter spacing)
 - Last.fm OAuth: auth button in Settings, auto-redirect callback with ?lastfm_auth=ok, token paste fallback
 - Play history: PlayHistory model (track_id FK, played_at, source), recorded on Subsonic scrobble + web play
@@ -254,7 +254,7 @@ docs/                  # Installation, configuration, API reference, development
 - Duplicates API: GET /api/library/duplicates returns enriched groups with full track details + reclaimable_bytes; GET /api/library/duplicates/artists returns artist IDs with dupes (lightweight, for map overlay)
 - Duplicates: find_duplicates_enriched() in cleanup.py — includes album_id for cover art, is_best flag, quality_score, play_count, rating, is_favorite, created_at, best_format/best_bitrate/worst_format/worst_bitrate per group
 - Duplicates: confirmation modal before destructive actions (Remove from DB vs Remove + Delete Files)
-- Library cleanup: dedup card replaced with link to /duplicates page (orphan cleanup and organize tools remain in Danger Zone)
+- Library cleanup: Danger Zone has dedup link (/duplicates) and organize tool; orphan cleanup merged into library scan
 - Music Map view modes: Genre (default), Play Heatmap, Quality, Duplicates — view mode selector in header bar
 - Music Map Play Heatmap: recolors artist nodes by total play_count (cold blue → warm orange → hot red gradient)
 - Music Map Quality: recolors by avg_quality score (green=lossless → red=low quality), low-quality nodes get "Find Upgrades" action in detail panel
@@ -287,7 +287,7 @@ docs/                  # Installation, configuration, API reference, development
 - Scheduled remix_discovery task: weekly Friday 04:00, scans library tracks for remixes via Last.fm, stores results as job.tracks JSON, auto-download support
 - Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
 - Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)
-- Library page layout: pagination above schedule/danger zone sections; orphan cleanup ScheduleControl moved into Danger Zone card
+- Library page layout: pagination above schedule/danger zone sections
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
