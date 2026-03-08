@@ -103,58 +103,49 @@ def _track_quality_score(track: Track) -> int:
 
 async def find_duplicates(db: AsyncSession) -> list[dict]:
     """Find duplicate tracks (same title + artist, case-insensitive)."""
-    # Find title+artist combinations with multiple tracks
-    result = await db.execute(
-        select(
-            func.lower(Track.title),
-            Track.artist_id,
-            func.count(Track.id),
-        )
+    # Single query: get all tracks that belong to duplicate groups
+    dupe_keys_sq = (
+        select(func.lower(Track.title).label("title_lower"), Track.artist_id)
         .where(Track.artist_id.isnot(None))
         .group_by(func.lower(Track.title), Track.artist_id)
         .having(func.count(Track.id) > 1)
+        .subquery()
     )
-    dupe_groups = result.all()
-    if not dupe_groups:
+    all_dupes_result = await db.execute(
+        select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+        .join(dupe_keys_sq, (func.lower(Track.title) == dupe_keys_sq.c.title_lower) & (Track.artist_id == dupe_keys_sq.c.artist_id))
+        .order_by(func.lower(Track.title), Track.artist_id, Track.bitrate.desc().nullslast())
+    )
+    all_tracks = all_dupes_result.scalars().all()
+    if not all_tracks:
         return []
 
+    # Group in-memory by (lower_title, artist_id)
+    from collections import defaultdict
+    grouped: dict[tuple, list] = defaultdict(list)
+    for t in all_tracks:
+        grouped[(t.title.lower() if t.title else "", t.artist_id)].append(t)
+
     groups = []
-    for title_lower, artist_id, count in dupe_groups:
-        tracks_result = await db.execute(
-            select(Track).options(selectinload(Track.artist), selectinload(Track.album))
-            .where(func.lower(Track.title) == title_lower, Track.artist_id == artist_id)
-            .order_by(Track.bitrate.desc().nullslast())
-        )
-        tracks = tracks_result.scalars().all()
+    for (_, _), tracks in grouped.items():
         if len(tracks) < 2:
             continue
-
-        # Score each track, best first
         scored = sorted(tracks, key=_track_quality_score, reverse=True)
         keep = scored[0]
         remove = scored[1:]
-
         groups.append({
             "title": keep.title,
             "artist": keep.artist.name if keep.artist else "Unknown",
             "count": len(tracks),
             "keep": {
-                "id": keep.id,
-                "file_path": keep.file_path,
-                "format": keep.format,
-                "bitrate": keep.bitrate,
-                "file_size": keep.file_size,
+                "id": keep.id, "file_path": keep.file_path, "format": keep.format,
+                "bitrate": keep.bitrate, "file_size": keep.file_size,
                 "quality_score": _track_quality_score(keep),
             },
             "remove": [
-                {
-                    "id": t.id,
-                    "file_path": t.file_path,
-                    "format": t.format,
-                    "bitrate": t.bitrate,
-                    "file_size": t.file_size,
-                    "quality_score": _track_quality_score(t),
-                }
+                {"id": t.id, "file_path": t.file_path, "format": t.format,
+                 "bitrate": t.bitrate, "file_size": t.file_size,
+                 "quality_score": _track_quality_score(t)}
                 for t in remove
             ],
         })
@@ -166,19 +157,21 @@ async def find_duplicates_enriched(db: AsyncSession) -> dict:
     """Find duplicate tracks with full track details for the duplicates page."""
     from backend.models.favorite import Favorite
 
-    # Find title+artist combinations with multiple tracks
-    result = await db.execute(
-        select(
-            func.lower(Track.title),
-            Track.artist_id,
-            func.count(Track.id),
-        )
+    # Single query: get all tracks belonging to duplicate groups (N+1 → 1 query)
+    dupe_keys_sq = (
+        select(func.lower(Track.title).label("title_lower"), Track.artist_id)
         .where(Track.artist_id.isnot(None))
         .group_by(func.lower(Track.title), Track.artist_id)
         .having(func.count(Track.id) > 1)
+        .subquery()
     )
-    dupe_groups = result.all()
-    if not dupe_groups:
+    all_dupes_result = await db.execute(
+        select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+        .join(dupe_keys_sq, (func.lower(Track.title) == dupe_keys_sq.c.title_lower) & (Track.artist_id == dupe_keys_sq.c.artist_id))
+        .order_by(func.lower(Track.title), Track.artist_id, Track.bitrate.desc().nullslast())
+    )
+    all_tracks = all_dupes_result.scalars().all()
+    if not all_tracks:
         return {"groups": [], "total_groups": 0, "total_duplicates": 0, "reclaimable_bytes": 0}
 
     # Get favorite track IDs
@@ -187,63 +180,52 @@ async def find_duplicates_enriched(db: AsyncSession) -> dict:
     )
     fav_track_ids = {r[0] for r in fav_result.all()}
 
+    # Group in-memory by (lower_title, artist_id)
+    from collections import defaultdict
+    grouped: dict[tuple, list] = defaultdict(list)
+    for t in all_tracks:
+        grouped[(t.title.lower() if t.title else "", t.artist_id)].append(t)
+
+    def _track_detail(t, is_best=False):
+        return {
+            "id": t.id, "title": t.title,
+            "artist": t.artist.name if t.artist else "Unknown",
+            "album": t.album.title if t.album else None,
+            "album_id": t.album_id, "format": t.format,
+            "bitrate": t.bitrate, "bit_depth": t.bit_depth,
+            "sample_rate": t.sample_rate, "file_size": t.file_size,
+            "file_path": t.file_path,
+            "quality_score": _track_quality_score(t),
+            "play_count": t.play_count or 0, "rating": t.rating,
+            "is_favorite": t.id in fav_track_ids,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "is_best": is_best,
+        }
+
     groups = []
     total_dupes = 0
     reclaimable = 0
 
-    for title_lower, artist_id, count in dupe_groups:
-        tracks_result = await db.execute(
-            select(Track).options(selectinload(Track.artist), selectinload(Track.album))
-            .where(func.lower(Track.title) == title_lower, Track.artist_id == artist_id)
-            .order_by(Track.bitrate.desc().nullslast())
-        )
-        tracks = tracks_result.scalars().all()
+    for (_, artist_id), tracks in grouped.items():
         if len(tracks) < 2:
             continue
-
         scored = sorted(tracks, key=_track_quality_score, reverse=True)
-
-        def _track_detail(t, is_best=False):
-            return {
-                "id": t.id,
-                "title": t.title,
-                "artist": t.artist.name if t.artist else "Unknown",
-                "album": t.album.title if t.album else None,
-                "album_id": t.album_id,
-                "format": t.format,
-                "bitrate": t.bitrate,
-                "bit_depth": t.bit_depth,
-                "sample_rate": t.sample_rate,
-                "file_size": t.file_size,
-                "file_path": t.file_path,
-                "quality_score": _track_quality_score(t),
-                "play_count": t.play_count or 0,
-                "rating": t.rating,
-                "is_favorite": t.id in fav_track_ids,
-                "created_at": t.created_at.isoformat() if t.created_at else None,
-                "is_best": is_best,
-            }
-
         best = scored[0]
         worst = scored[-1]
         others = scored[1:]
         total_dupes += len(others)
         for t in others:
             reclaimable += t.file_size or 0
-
         groups.append({
             "title": best.title,
             "artist": best.artist.name if best.artist else "Unknown",
             "artist_id": artist_id,
             "count": len(tracks),
-            "best_format": best.format,
-            "best_bitrate": best.bitrate,
-            "worst_format": worst.format,
-            "worst_bitrate": worst.bitrate,
+            "best_format": best.format, "best_bitrate": best.bitrate,
+            "worst_format": worst.format, "worst_bitrate": worst.bitrate,
             "tracks": [_track_detail(best, is_best=True)] + [_track_detail(t) for t in others],
         })
 
-    # Sort by group size descending
     groups.sort(key=lambda g: g["count"], reverse=True)
 
     return {

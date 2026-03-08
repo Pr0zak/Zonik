@@ -5,7 +5,7 @@ import hashlib
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_, func as sqfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,6 +20,45 @@ from backend.services.soulseek import normalize_text
 router = APIRouter()
 
 
+async def _batch_library_match(
+    db: AsyncSession,
+    items: list[dict],
+    name_key: str = "name",
+    artist_key: str = "artist",
+) -> None:
+    """Annotate a list of dicts with in_library/track_id via a single batched query.
+
+    Each item must have `name_key` (track name) and `artist_key` (artist name).
+    Adds `in_library: bool` and `track_id: str|None` in-place.
+    """
+    if not items:
+        return
+    conditions = [
+        and_(
+            sqfunc.lower(Track.title) == t[name_key].lower(),
+            sqfunc.lower(Artist.name) == t[artist_key].lower(),
+        )
+        for t in items
+        if t.get(name_key) and t.get(artist_key)
+    ]
+    if not conditions:
+        for t in items:
+            t["in_library"] = False
+            t["track_id"] = None
+        return
+    lib_result = await db.execute(
+        select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
+        .join(Artist, Track.artist_id == Artist.id)
+        .where(or_(*conditions))
+    )
+    lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
+    for t in items:
+        key = (t[name_key].lower(), t[artist_key].lower())
+        matched_id = lib_map.get(key)
+        t["in_library"] = matched_id is not None
+        t["track_id"] = matched_id
+
+
 @router.get("/top-tracks")
 async def top_tracks(
     limit: int = Query(50, le=200),
@@ -27,31 +66,8 @@ async def top_tracks(
     db: AsyncSession = Depends(get_db),
 ):
     """Get Last.fm top tracks chart, annotated with library presence."""
-    from sqlalchemy import or_, and_, func as sqfunc
-
     chart = await lastfm.get_top_tracks(limit=limit, page=page)
-
-    # Batch library match — single query for all chart tracks
-    if chart:
-        conditions = [
-            and_(
-                sqfunc.lower(Track.title) == t["name"].lower(),
-                sqfunc.lower(Artist.name) == t["artist"].lower(),
-            )
-            for t in chart
-        ]
-        lib_result = await db.execute(
-            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-            .join(Artist, Track.artist_id == Artist.id)
-            .where(or_(*conditions))
-        )
-        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-
-        for t in chart:
-            key = (t["name"].lower(), t["artist"].lower())
-            matched_id = lib_map.get(key)
-            t["in_library"] = matched_id is not None
-            t["track_id"] = matched_id
+    await _batch_library_match(db, chart)
 
     return {
         "tracks": chart,
@@ -99,29 +115,7 @@ async def similar_tracks(
             break
 
     similar = similar[:limit]
-
-    # Batch library match — single query for all similar tracks
-    if similar:
-        from sqlalchemy import or_, and_, func as sqfunc
-        conditions = [
-            and_(
-                sqfunc.lower(Track.title) == t["name"].lower(),
-                sqfunc.lower(Artist.name) == t["artist"].lower(),
-            )
-            for t in similar
-        ]
-        lib_result = await db.execute(
-            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-            .join(Artist, Track.artist_id == Artist.id)
-            .where(or_(*conditions))
-        )
-        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-
-        for t in similar:
-            key = (t["name"].lower(), t["artist"].lower())
-            matched_id = lib_map.get(key)
-            t["in_library"] = matched_id is not None
-            t["track_id"] = matched_id
+    await _batch_library_match(db, similar)
 
     return {
         "tracks": similar,
@@ -187,8 +181,6 @@ async def discovery_search(
     db: AsyncSession = Depends(get_db),
 ):
     """Search Last.fm for tracks and annotate with library presence."""
-    from sqlalchemy import or_, and_, func as sqfunc
-
     # Try "Artist - Track" split first for artist top tracks
     parts = [p.strip() for p in q.split(" - ", 1)]
     if len(parts) == 2 and parts[0] and parts[1]:
@@ -208,32 +200,7 @@ async def discovery_search(
                 tracks.append(t)
 
     tracks = tracks[:limit]
-
-    # Batch library match
-    if tracks:
-        conditions = [
-            and_(
-                sqfunc.lower(Track.title) == t["name"].lower(),
-                sqfunc.lower(Artist.name) == t["artist"].lower(),
-            )
-            for t in tracks
-        ]
-        lib_result = await db.execute(
-            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-            .join(Artist, Track.artist_id == Artist.id)
-            .where(or_(*conditions))
-        )
-        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-
-        for t in tracks:
-            key = (t["name"].lower(), t["artist"].lower())
-            matched_id = lib_map.get(key)
-            t["in_library"] = matched_id is not None
-            t["track_id"] = matched_id
-    else:
-        for t in tracks:
-            t["in_library"] = False
-            t["track_id"] = None
+    await _batch_library_match(db, tracks)
 
     return {
         "tracks": tracks,
@@ -270,31 +237,8 @@ async def similar_by_track(
     db: AsyncSession = Depends(get_db),
 ):
     """Get tracks similar to a specific track via Last.fm, annotated with library status."""
-    from sqlalchemy import or_, and_, func as sqfunc
-
     similar = await lastfm.get_similar_tracks(artist, track, limit=limit)
-
-    # Batch library match
-    if similar:
-        conditions = [
-            and_(
-                sqfunc.lower(Track.title) == t["name"].lower(),
-                sqfunc.lower(Artist.name) == t["artist"].lower(),
-            )
-            for t in similar
-        ]
-        lib_result = await db.execute(
-            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-            .join(Artist, Track.artist_id == Artist.id)
-            .where(or_(*conditions))
-        )
-        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-
-        for t in similar:
-            key = (t["name"].lower(), t["artist"].lower())
-            matched_id = lib_map.get(key)
-            t["in_library"] = matched_id is not None
-            t["track_id"] = matched_id
+    await _batch_library_match(db, similar)
 
     return {
         "tracks": similar[:limit],
@@ -313,31 +257,8 @@ async def find_remixes(
     """Find remixes, dubs, and edits of a track via Last.fm search."""
     from backend.services.remix_discovery import find_remixes as _find_remixes
 
-    from sqlalchemy import or_, and_, func as sqfunc
-
     remixes = await _find_remixes(artist, track, limit=limit)
-
-    # Batch library match
-    if remixes:
-        conditions = [
-            and_(
-                sqfunc.lower(Track.title) == r["name"].lower(),
-                sqfunc.lower(Artist.name) == r["artist"].lower(),
-            )
-            for r in remixes
-        ]
-        lib_result = await db.execute(
-            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-            .join(Artist, Track.artist_id == Artist.id)
-            .where(or_(*conditions))
-        )
-        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-
-        for r in remixes:
-            key = (r["name"].lower(), r["artist"].lower())
-            matched_id = lib_map.get(key)
-            r["in_library"] = matched_id is not None
-            r["track_id"] = matched_id
+    await _batch_library_match(db, remixes)
 
     return {
         "remixes": remixes,
@@ -355,7 +276,6 @@ async def remix_suggestions(
 ):
     """Find remixes across multiple library tracks for bulk discovery."""
     import asyncio
-    from sqlalchemy import func as sqfunc, or_, and_
     from backend.services.remix_discovery import find_remixes as _find_remixes
 
     # Pick source tracks
@@ -412,28 +332,7 @@ async def remix_suggestions(
             break
 
     all_remixes = all_remixes[:limit]
-
-    # Batch library match
-    if all_remixes:
-        conditions = [
-            and_(
-                sqfunc.lower(Track.title) == r["name"].lower(),
-                sqfunc.lower(Artist.name) == r["artist"].lower(),
-            )
-            for r in all_remixes
-        ]
-        lib_result = await db.execute(
-            select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-            .join(Artist, Track.artist_id == Artist.id)
-            .where(or_(*conditions))
-        )
-        lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-
-        for r in all_remixes:
-            key = (r["name"].lower(), r["artist"].lower())
-            matched_id = lib_map.get(key)
-            r["in_library"] = matched_id is not None
-            r["track_id"] = matched_id
+    await _batch_library_match(db, all_remixes)
 
     return {
         "remixes": all_remixes,

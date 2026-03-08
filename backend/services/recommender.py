@@ -34,63 +34,91 @@ log = logging.getLogger(__name__)
 async def build_taste_profile(db: AsyncSession) -> dict:
     """Build a taste profile from the user's library data."""
 
-    # Genre histogram (top 20)
-    genre_result = await db.execute(
-        select(Track.genre, func.count(Track.id).label("cnt"))
-        .where(Track.genre.isnot(None), Track.genre != "")
-        .group_by(Track.genre)
-        .order_by(func.count(Track.id).desc())
-        .limit(20)
+    # === Run independent queries in parallel via asyncio.gather ===
+    async def _genre_histogram():
+        r = await db.execute(
+            select(Track.genre, func.count(Track.id).label("cnt"))
+            .where(Track.genre.isnot(None), Track.genre != "")
+            .group_by(Track.genre)
+            .order_by(func.count(Track.id).desc())
+            .limit(20)
+        )
+        return r.all()
+
+    async def _top_artists():
+        r = await db.execute(
+            select(Artist.name, func.sum(Track.play_count).label("plays"))
+            .join(Track, Track.artist_id == Artist.id)
+            .group_by(Artist.id)
+            .order_by(func.sum(Track.play_count).desc())
+            .limit(20)
+        )
+        return [{"name": name, "plays": int(plays or 0)} for name, plays in r.all()]
+
+    async def _fav_artists():
+        r1 = await db.execute(
+            select(Artist.name).join(Favorite, Favorite.artist_id == Artist.id).distinct()
+        )
+        r2 = await db.execute(
+            select(Artist.name).join(Track, Track.artist_id == Artist.id)
+            .join(Favorite, Favorite.track_id == Track.id).distinct()
+        )
+        return list(set([r[0] for r in r1.all()] + [r[0] for r in r2.all()]))
+
+    async def _analysis_stats():
+        r = await db.execute(
+            select(
+                func.avg(TrackAnalysis.bpm),
+                func.avg(TrackAnalysis.energy),
+                func.avg(TrackAnalysis.danceability),
+                func.count(TrackAnalysis.track_id),
+            )
+            .join(Track, Track.id == TrackAnalysis.track_id)
+            .where(Track.play_count > 0)
+        )
+        return r.one()
+
+    async def _fav_and_top_ids():
+        r1 = await db.execute(
+            select(Favorite.track_id).where(Favorite.track_id.isnot(None))
+        )
+        r2 = await db.execute(
+            select(Track.id).where(Track.play_count > 0)
+            .order_by(Track.play_count.desc()).limit(50)
+        )
+        fav = [r[0] for r in r1.all()]
+        top = [r[0] for r in r2.all()]
+        return fav, top
+
+    async def _blacklisted():
+        r = await db.execute(
+            select(DownloadBlacklist.artist).where(DownloadBlacklist.track.is_(None)).distinct()
+        )
+        return [r[0] for r in r.all()]
+
+    async def _counts():
+        t = (await db.execute(select(func.count(Track.id)))).scalar() or 0
+        f = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
+        return t, f
+
+    # Fire all independent queries concurrently
+    (genre_rows, top_artists, all_fav_artists,
+     analysis_row, fav_top_ids, blacklisted_artists, counts) = await asyncio.gather(
+        _genre_histogram(), _top_artists(), _fav_artists(),
+        _analysis_stats(), _fav_and_top_ids(), _blacklisted(), _counts(),
     )
-    genre_rows = genre_result.all()
+
     total_genre_tracks = sum(r[1] for r in genre_rows)
     genre_distribution = {
         g: round(c / total_genre_tracks, 3) if total_genre_tracks else 0
         for g, c in genre_rows
     }
 
-    # Top artists by play_count (top 20)
-    artist_result = await db.execute(
-        select(Artist.name, func.sum(Track.play_count).label("plays"))
-        .join(Track, Track.artist_id == Artist.id)
-        .group_by(Artist.id)
-        .order_by(func.sum(Track.play_count).desc())
-        .limit(20)
-    )
-    top_artists = [{"name": name, "plays": int(plays or 0)} for name, plays in artist_result.all()]
+    avg_bpm, avg_energy, avg_dance, analyzed_count = analysis_row
+    fav_track_ids, top_played_ids = fav_top_ids
+    track_count, fav_count = counts
 
-    # Favorited artist names
-    fav_result = await db.execute(
-        select(Artist.name)
-        .join(Favorite, Favorite.artist_id == Artist.id)
-        .distinct()
-    )
-    favorite_artists = [r[0] for r in fav_result.all()]
-
-    # Also get favorited tracks' artists
-    fav_track_result = await db.execute(
-        select(Artist.name)
-        .join(Track, Track.artist_id == Artist.id)
-        .join(Favorite, Favorite.track_id == Track.id)
-        .distinct()
-    )
-    fav_track_artists = [r[0] for r in fav_track_result.all()]
-    all_fav_artists = list(set(favorite_artists + fav_track_artists))
-
-    # Audio analysis stats (from played tracks)
-    analysis_result = await db.execute(
-        select(
-            func.avg(TrackAnalysis.bpm),
-            func.avg(TrackAnalysis.energy),
-            func.avg(TrackAnalysis.danceability),
-            func.count(TrackAnalysis.track_id),
-        )
-        .join(Track, Track.id == TrackAnalysis.track_id)
-        .where(Track.play_count > 0)
-    )
-    avg_bpm, avg_energy, avg_dance, analyzed_count = analysis_result.one()
-
-    # BPM std dev
+    # BPM std dev (depends on avg_bpm from above)
     bpm_std = None
     if avg_bpm:
         std_result = await db.execute(
@@ -105,19 +133,6 @@ async def build_taste_profile(db: AsyncSession) -> dict:
     # CLAP centroid (average embedding of favorites + most-played)
     clap_centroid = None
     clap_count = 0
-    # Get favorite track IDs
-    fav_ids_result = await db.execute(
-        select(Favorite.track_id).where(Favorite.track_id.isnot(None))
-    )
-    fav_track_ids = [r[0] for r in fav_ids_result.all()]
-
-    # Get top played track IDs
-    top_played_result = await db.execute(
-        select(Track.id).where(Track.play_count > 0)
-        .order_by(Track.play_count.desc()).limit(50)
-    )
-    top_played_ids = [r[0] for r in top_played_result.all()]
-
     centroid_ids = list(set(fav_track_ids + top_played_ids))
     if centroid_ids:
         emb_result = await db.execute(
@@ -136,16 +151,6 @@ async def build_taste_profile(db: AsyncSession) -> dict:
             centroid = np.mean(embeddings, axis=0)
             clap_centroid = centroid.tobytes()
             clap_count = len(embeddings)
-
-    # Blacklisted artists
-    bl_result = await db.execute(
-        select(DownloadBlacklist.artist).where(DownloadBlacklist.track.is_(None)).distinct()
-    )
-    blacklisted_artists = [r[0] for r in bl_result.all()]
-
-    # Counts
-    track_count = (await db.execute(select(func.count(Track.id)))).scalar() or 0
-    fav_count = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
 
     # Last.fm user history (if authenticated)
     lastfm_top_artists = []

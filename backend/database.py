@@ -37,10 +37,13 @@ async def get_db():
 
 
 async def init_db():
-    """Enable WAL mode, create tables, and set up FTS5."""
+    """Enable WAL mode, performance PRAGMAs, create tables, and set up FTS5."""
     async with engine.begin() as conn:
         await conn.exec_driver_sql("PRAGMA journal_mode=WAL")
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        await conn.exec_driver_sql("PRAGMA synchronous=NORMAL")
+        await conn.exec_driver_sql("PRAGMA cache_size=-32000")  # 32MB cache
+        await conn.exec_driver_sql("PRAGMA mmap_size=268435456")  # 256MB mmap
         await conn.run_sync(Base.metadata.create_all)
 
         # Create FTS5 virtual table for full-text search

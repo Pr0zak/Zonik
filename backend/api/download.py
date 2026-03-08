@@ -49,13 +49,17 @@ router = APIRouter()
 async def is_blacklisted(db: AsyncSession, artist: str, track: str) -> str | None:
     """Check if artist/track is blacklisted. Returns reason or None."""
     artist_norm = normalize_text(artist)
-    result = await db.execute(select(DownloadBlacklist))
+    # SQL-filtered: only fetch entries matching this artist (not full table scan)
+    result = await db.execute(
+        select(DownloadBlacklist).where(
+            func.lower(DownloadBlacklist.artist) == artist_norm.lower()
+        )
+    )
     for entry in result.scalars().all():
-        if normalize_text(entry.artist) == artist_norm:
-            if entry.track is None:
-                return entry.reason or "Artist blacklisted"
-            if normalize_text(entry.track) == normalize_text(track):
-                return entry.reason or "Track blacklisted"
+        if entry.track is None:
+            return entry.reason or "Artist blacklisted"
+        if normalize_text(entry.track) == normalize_text(track):
+            return entry.reason or "Track blacklisted"
     return None
 
 

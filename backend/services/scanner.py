@@ -250,6 +250,8 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
     result = await db.execute(select(Track.file_path))
     existing_paths = {row[0] for row in result.all()}
 
+    fts_batch: list[tuple] = []
+
     for file_path in audio_files:
         stats["scanned"] += 1
         parsed = parse_audio_file(file_path, music_dir)
@@ -330,18 +332,25 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
             db.add(track)
             stats["added"] += 1
 
-        # Update FTS index
-        from backend.database import update_fts_index
-        await update_fts_index(
-            db, track_id, parsed["title"],
-            parsed["artist_name"], parsed["album_title"],
-        )
+        # Accumulate FTS updates for batching
+        fts_batch.append((track_id, parsed["title"], parsed["artist_name"], parsed["album_title"]))
 
-        # Flush periodically and report progress
+        # Flush DB + FTS batch every 50 tracks
         if stats["scanned"] % 50 == 0:
+            from backend.database import update_fts_index
+            for fts_tid, fts_title, fts_artist, fts_album in fts_batch:
+                await update_fts_index(db, fts_tid, fts_title, fts_artist, fts_album)
+            fts_batch.clear()
             await db.flush()
             if progress_callback:
                 await progress_callback(stats, total_files)
+
+    # Flush remaining FTS batch
+    if fts_batch:
+        from backend.database import update_fts_index
+        for fts_tid, fts_title, fts_artist, fts_album in fts_batch:
+            await update_fts_index(db, fts_tid, fts_title, fts_artist, fts_album)
+        fts_batch.clear()
 
     await db.commit()
 
@@ -413,21 +422,19 @@ async def _find_existing_track(db: AsyncSession, title: str, artist_name: str) -
         return None
     norm_title = _normalize_title(title)
     norm_artist = _normalize_title(artist_name)
-    if not norm_title:
+    if not norm_title or not norm_artist:
         return None
 
-    # Search by exact artist+title first
-    if norm_artist:
-        result = await db.execute(
-            select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                Track.title.isnot(None),
-            )
-        )
-        for track in result.scalars().all():
-            if _normalize_title(track.title) == norm_title:
-                artist_obj = await db.get(Artist, track.artist_id) if track.artist_id else None
-                if artist_obj and _normalize_title(artist_obj.name) == norm_artist:
-                    return track
+    # SQL-side case-insensitive match (avoids loading all tracks into Python)
+    result = await db.execute(
+        select(Track).join(Artist, Track.artist_id == Artist.id).where(
+            func.lower(Track.title) == title.lower(),
+            func.lower(Artist.name) == artist_name.lower(),
+        ).limit(10)
+    )
+    for track in result.scalars().all():
+        if _normalize_title(track.title) == norm_title:
+            return track
     return None
 
 

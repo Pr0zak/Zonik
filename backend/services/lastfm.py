@@ -19,6 +19,20 @@ LASTFM_BASE = "https://ws.audioscrobbler.com/2.0/"
 _last_call: float = 0
 _rate_lock = asyncio.Lock()
 
+# Persistent HTTP client (reuses TCP connections across calls)
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Get or create the persistent Last.fm HTTP client."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30,
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _http_client
+
 
 async def _rate_limit(min_interval: float = 0.35):
     """Async rate limiter for Last.fm API."""
@@ -41,19 +55,19 @@ async def lastfm_api(method: str, params: dict | None = None) -> dict | None:
 
     url = f"{LASTFM_BASE}?{urllib.parse.urlencode(p)}"
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            resp = await client.get(url)
-            if resp.status_code == 429:
-                log.warning("Last.fm rate limited, backing off 5s")
-                await asyncio.sleep(5)
-                return None
-            if resp.status_code != 200:
-                return None
-            return resp.json()
-        except Exception as e:
-            log.warning(f"Last.fm API error: {e}")
+    try:
+        client = _get_http_client()
+        resp = await client.get(url)
+        if resp.status_code == 429:
+            log.warning("Last.fm rate limited, backing off 5s")
+            await asyncio.sleep(5)
             return None
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+    except Exception as e:
+        log.warning(f"Last.fm API error: {e}")
+        return None
 
 
 def _api_sig(params: dict) -> str:
@@ -76,16 +90,16 @@ async def lastfm_write(method: str, params: dict, session_key: str) -> dict:
 
     data = urllib.parse.urlencode(p).encode()
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        try:
-            resp = await client.post(LASTFM_BASE, content=data,
-                                     headers={"Content-Type": "application/x-www-form-urlencoded"})
-            body = resp.text
-            if 'status="ok"' in body:
-                return {"status": "ok"}
-            return {"error": True, "message": body[:200]}
-        except Exception as e:
-            return {"error": True, "message": str(e)}
+    try:
+        client = _get_http_client()
+        resp = await client.post(LASTFM_BASE, content=data,
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+        body = resp.text
+        if 'status="ok"' in body:
+            return {"status": "ok"}
+        return {"error": True, "message": body[:200]}
+    except Exception as e:
+        return {"error": True, "message": str(e)}
 
 
 # --- High-level API methods ---

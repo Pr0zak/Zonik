@@ -432,9 +432,22 @@ async def list_genres(db: AsyncSession = Depends(get_db)):
     return [{"name": name, "count": count} for name, count in result.all()]
 
 
+# --- Dashboard cache (5-minute TTL) ---
+_dashboard_cache: dict | None = None
+_dashboard_cache_time: float = 0
+_DASHBOARD_CACHE_TTL = 300  # 5 minutes
+
+
 @router.get("/stats/dashboard")
 async def dashboard_stats(db: AsyncSession = Depends(get_db)):
     """Aggregated dashboard data: growth, quality, recent activity, favorites, duplicates."""
+    import time as _time
+    global _dashboard_cache, _dashboard_cache_time
+
+    now_ts = _time.monotonic()
+    if _dashboard_cache and (now_ts - _dashboard_cache_time) < _DASHBOARD_CACHE_TTL:
+        return _dashboard_cache
+
     from datetime import timedelta
     from backend.models.favorite import Favorite
     from backend.models.analysis import TrackAnalysis
@@ -454,34 +467,35 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
     )
     growth = [{"date": d, "count": c} for d, c in growth_result.all()]
 
-    # Quality health score
-    total_tracks = (await db.execute(select(func.count(Track.id)))).scalar() or 0
+    # === Combined quality metrics (5 queries → 1) ===
     lossless_formats = ["flac", "wav", "alac", "aiff"]
-    lossless_count = (await db.execute(
-        select(func.count(Track.id)).where(Track.format.in_(lossless_formats))
-    )).scalar() or 0
-    avg_bitrate = (await db.execute(
-        select(func.avg(Track.bitrate)).where(Track.bitrate.isnot(None))
-    )).scalar() or 0
+    quality_result = await db.execute(
+        select(
+            func.count(Track.id),
+            func.sum(case((Track.format.in_(lossless_formats), 1), else_=0)),
+            func.avg(case((Track.bitrate.isnot(None), Track.bitrate), else_=None)),
+            func.sum(case((Track.bitrate.isnot(None) & (Track.bitrate < 256000), 1), else_=0)),
+        )
+    )
+    row = quality_result.one()
+    total_tracks = row[0] or 0
+    lossless_count = int(row[1] or 0)
+    avg_bitrate = row[2] or 0
+    low_quality_count = int(row[3] or 0)
+
     analyzed_count = (await db.execute(
         select(func.count(TrackAnalysis.track_id))
-    )).scalar() or 0
-    low_quality_count = (await db.execute(
-        select(func.count(Track.id)).where(
-            Track.bitrate.isnot(None), Track.bitrate < 256000
-        )
     )).scalar() or 0
 
     pct_lossless = round(lossless_count / max(total_tracks, 1) * 100, 1)
     pct_analyzed = round(analyzed_count / max(total_tracks, 1) * 100, 1)
-    # Quality score: 0-100 based on lossless %, avg bitrate, and low quality %
     pct_low = low_quality_count / max(total_tracks, 1)
-    bitrate_score = min(1.0, (avg_bitrate or 0) / 900000)  # 900kbps = max
+    bitrate_score = min(1.0, (avg_bitrate or 0) / 900000)
     quality_score = round(
         (pct_lossless / 100 * 0.5 + bitrate_score * 0.3 + (1 - pct_low) * 0.2) * 100, 1
     )
 
-    # Storage breakdown by format
+    # Storage breakdown by format (also gives total_tracks count per format)
     storage_result = await db.execute(
         select(Track.format, func.sum(Track.file_size).label("size"), func.count(Track.id).label("cnt"))
         .group_by(Track.format)
@@ -525,12 +539,42 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
         for t, a in recent_favs_result.all()
     ]
 
-    # Duplicates summary
-    from backend.services.cleanup import find_duplicates_enriched
+    # Duplicates summary (lightweight count query instead of full enriched scan)
     try:
-        dup_result = await find_duplicates_enriched(db)
-        dup_groups = len(dup_result.get("groups", []))
-        dup_reclaimable = dup_result.get("reclaimable_bytes", 0)
+        dup_count_result = await db.execute(
+            select(func.count())
+            .select_from(
+                select(func.lower(Track.title), Track.artist_id)
+                .where(Track.artist_id.isnot(None))
+                .group_by(func.lower(Track.title), Track.artist_id)
+                .having(func.count(Track.id) > 1)
+                .subquery()
+            )
+        )
+        dup_groups = dup_count_result.scalar() or 0
+        # Estimate reclaimable: avg file size × extra tracks
+        if dup_groups > 0:
+            dup_extra_result = await db.execute(
+                select(func.sum(Track.file_size))
+                .where(
+                    Track.id.notin_(
+                        select(func.min(Track.id))
+                        .where(Track.artist_id.isnot(None))
+                        .group_by(func.lower(Track.title), Track.artist_id)
+                        .having(func.count(Track.id) > 1)
+                    ),
+                    Track.artist_id.isnot(None),
+                    func.lower(Track.title).in_(
+                        select(func.lower(Track.title))
+                        .where(Track.artist_id.isnot(None))
+                        .group_by(func.lower(Track.title), Track.artist_id)
+                        .having(func.count(Track.id) > 1)
+                    ),
+                )
+            )
+            dup_reclaimable = dup_extra_result.scalar() or 0
+        else:
+            dup_reclaimable = 0
     except Exception:
         dup_groups = 0
         dup_reclaimable = 0
@@ -553,7 +597,7 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
             "next_run": next_run,
         })
 
-    return {
+    result = {
         "growth": growth,
         "quality": {
             "score": quality_score,
@@ -578,6 +622,10 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
         },
         "upcoming_tasks": upcoming,
     }
+
+    _dashboard_cache = result
+    _dashboard_cache_time = now_ts
+    return result
 
 
 @router.get("/stats/detailed")

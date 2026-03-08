@@ -9,6 +9,12 @@ async function request(path, options = {}) {
 	return res.json();
 }
 
+function buildUrl(path, params = {}) {
+	const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
+	const qs = new URLSearchParams(clean).toString();
+	return qs ? `${path}?${qs}` : path;
+}
+
 export const api = {
 	// Library
 	getStats: () => request('/library/stats'),
@@ -17,11 +23,7 @@ export const api = {
 	getGenres: () => request('/library/genres'),
 
 	// Tracks
-	getTracks: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/tracks?${qs}`);
-	},
+	getTracks: (params = {}) => request(buildUrl('/tracks', params)),
 	getTrack: (id) => request(`/tracks/${id}`),
 	deleteTrack: (id) => request(`/tracks/${id}`, { method: 'DELETE' }),
 	updateTrack: (id, data) => request(`/tracks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -30,16 +32,8 @@ export const api = {
 	bulkAnalyzeTracks: (ids) => request('/tracks/bulk-analyze', { method: 'POST', body: JSON.stringify({ track_ids: ids }) }),
 
 	// Artists & Albums
-	getArtists: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/library/artists?${qs}`);
-	},
-	getAlbums: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/library/albums?${qs}`);
-	},
+	getArtists: (params = {}) => request(buildUrl('/library/artists', params)),
+	getAlbums: (params = {}) => request(buildUrl('/library/albums', params)),
 
 	// Favorites
 	getFavorites: (offset = 0, limit = 25) => request(`/favorites?offset=${offset}&limit=${limit}`),
@@ -56,11 +50,7 @@ export const api = {
 	deletePlaylist: (id) => request(`/playlists/${id}`, { method: 'DELETE' }),
 
 	// Jobs
-	getJobs: async (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/jobs?${qs}`);
-	},
+	getJobs: (params = {}) => request(buildUrl('/jobs', params)),
 	getActiveJobs: () => request('/jobs/active'),
 	getJob: (id) => request(`/jobs/${id}`),
 	retryJob: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
@@ -101,11 +91,7 @@ export const api = {
 		request('/library/cleanup/duplicates', { method: 'POST', body: JSON.stringify({ remove_ids: removeIds, delete_files: deleteFiles }) }),
 
 	// Recommendations
-	getRecommendations: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/recommendations?${qs}`);
-	},
+	getRecommendations: (params = {}) => request(buildUrl('/recommendations', params)),
 	refreshRecommendations: (limit = 100, useClaude = false) =>
 		request('/recommendations/refresh', { method: 'POST', body: JSON.stringify({ limit, use_claude: useClaude }) }),
 	submitFeedback: (recommendationId, action) =>
@@ -113,11 +99,7 @@ export const api = {
 	getTasteProfile: () => request('/recommendations/profile'),
 
 	// Upgrades
-	getUpgrades: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/upgrades?${qs}`);
-	},
+	getUpgrades: (params = {}) => request(buildUrl('/upgrades', params)),
 	getUpgradeStats: () => request('/upgrades/stats'),
 	scanUpgrades: (data) => request('/upgrades/scan', { method: 'POST', body: JSON.stringify(data) }),
 	startUpgrades: (data = {}) => request('/upgrades/start', { method: 'POST', body: JSON.stringify(data) }),
@@ -126,16 +108,8 @@ export const api = {
 	clearUpgrades: (status = 'completed') => request(`/upgrades/clear?status=${status}`, { method: 'DELETE' }),
 
 	// Remix Suggestions
-	getRemixSuggestions: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/discovery/remix-suggestions?${qs}`);
-	},
+	getRemixSuggestions: (params = {}) => request(buildUrl('/discovery/remix-suggestions', params)),
 
 	// Music Map
-	getMapGraph: (params = {}) => {
-		const clean = Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== null));
-		const qs = new URLSearchParams(clean).toString();
-		return request(`/map/graph?${qs}`);
-	},
+	getMapGraph: (params = {}) => request(buildUrl('/map/graph', params)),
 };
