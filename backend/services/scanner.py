@@ -13,7 +13,7 @@ from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
@@ -559,36 +559,39 @@ async def import_downloaded_file(
                 new_track.rating = existing.rating
                 old_track_id = existing.id
 
-                # Add new track first (so FK references can point to it)
+                # Use raw SQL to migrate FK references (avoids ORM autoflush issues)
+                # Then delete old track, then add new track (avoids UNIQUE file_path conflict)
+                from sqlalchemy import update as sa_update
+                from backend.models.favorite import Favorite
+                from backend.models.play_history import PlayHistory
+                from backend.models.upgrade import TrackUpgrade
+
+                # Temporarily disable FK checks for the swap
+                await db.execute(text("PRAGMA foreign_keys=OFF"))
+
+                # Migrate FK references via direct SQL (no autoflush)
+                await db.execute(
+                    sa_update(Favorite).where(Favorite.track_id == old_track_id)
+                    .values(track_id=new_track_id)
+                )
+                await db.execute(
+                    sa_update(PlayHistory).where(PlayHistory.track_id == old_track_id)
+                    .values(track_id=new_track_id)
+                )
+                await db.execute(
+                    sa_update(TrackUpgrade).where(TrackUpgrade.track_id == old_track_id)
+                    .values(track_id=new_track_id)
+                )
+
+                # Delete old track, add new track (same file_path so must be sequential)
+                await db.delete(existing)
+                await db.flush()
                 db.add(new_track)
                 await db.flush()
 
-                # Migrate FK references from old track → new track
-                from backend.models.favorite import Favorite
-                favs = (await db.execute(
-                    select(Favorite).where(Favorite.track_id == old_track_id)
-                )).scalars().all()
-                for fav in favs:
-                    fav.track_id = new_track_id
+                # Re-enable FK checks
+                await db.execute(text("PRAGMA foreign_keys=ON"))
 
-                from backend.models.play_history import PlayHistory
-                plays = (await db.execute(
-                    select(PlayHistory).where(PlayHistory.track_id == old_track_id)
-                )).scalars().all()
-                for play in plays:
-                    play.track_id = new_track_id
-
-                from backend.models.upgrade import TrackUpgrade
-                upgrades = (await db.execute(
-                    select(TrackUpgrade).where(TrackUpgrade.track_id == old_track_id)
-                )).scalars().all()
-                for upg in upgrades:
-                    upg.track_id = new_track_id
-
-                await db.flush()
-
-                # Now safe to delete old track (no more FK references)
-                await db.delete(existing)
                 await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
                 await db.commit()
                 log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
