@@ -10,7 +10,7 @@
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
-		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock,
+		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock, Columns3,
 		Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
 		ChevronDown, ChevronUp
 	} from 'lucide-svelte';
@@ -37,6 +37,42 @@
 	const limitOptions = [24, 48, 96, 192];
 	let loading = $state(true);
 	let viewMode = $state('grid');
+
+	// Column visibility (persisted in localStorage)
+	const ALL_COLUMNS = [
+		{ id: 'artist', label: 'Artist', default: true },
+		{ id: 'album', label: 'Album', default: true },
+		{ id: 'format', label: 'Format', default: false },
+		{ id: 'bitrate', label: 'Bitrate', default: false },
+		{ id: 'plays', label: 'Plays', default: false },
+		{ id: 'rating', label: 'Rating', default: false },
+		{ id: 'added', label: 'Added', default: false },
+		{ id: 'analyzed', label: 'Analyzed', default: false },
+		{ id: 'time', label: 'Time', default: true },
+	];
+	const DEFAULT_COLS = new Set(ALL_COLUMNS.filter(c => c.default).map(c => c.id));
+
+	function loadColumns() {
+		try {
+			const saved = localStorage.getItem('zonik_library_columns');
+			if (saved) return new Set(JSON.parse(saved));
+		} catch {}
+		return new Set(DEFAULT_COLS);
+	}
+
+	let visibleCols = $state(loadColumns());
+	let showColPicker = $state(false);
+
+	function toggleColumn(id) {
+		const s = new Set(visibleCols);
+		s.has(id) ? s.delete(id) : s.add(id);
+		visibleCols = s;
+		localStorage.setItem('zonik_library_columns', JSON.stringify([...s]));
+	}
+
+	function colVisible(id) {
+		return visibleCols.has(id);
+	}
 
 	// Tracks state
 	let tracks = $state([]);
@@ -837,6 +873,34 @@
 			</button>
 		</div>
 
+		<!-- Column picker -->
+		{#if viewMode === 'list'}
+			<div class="relative ml-1">
+				<button onclick={() => showColPicker = !showColPicker}
+					class="p-1.5 rounded-md transition-colors border border-[var(--border-subtle)] {showColPicker ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
+					title="Toggle columns">
+					<Columns3 class="w-4 h-4" />
+				</button>
+				{#if showColPicker}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<div class="fixed inset-0 z-20" onclick={() => showColPicker = false}></div>
+					<div class="absolute right-0 top-full mt-1 z-30 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl p-2 min-w-[160px]"
+						onclick={(e) => e.stopPropagation()}>
+						<p class="text-[10px] text-[var(--text-disabled)] uppercase tracking-wider px-2 py-1">Columns</p>
+						{#each ALL_COLUMNS as col}
+							<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] cursor-pointer text-xs text-[var(--text-secondary)]">
+								<input type="checkbox" checked={visibleCols.has(col.id)}
+									onchange={() => toggleColumn(col.id)}
+									class="rounded accent-[var(--color-accent)] cursor-pointer" />
+								{col.label}
+							</label>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		<!-- Select mode toggle (tracks tab only) -->
 		{#if tab === 'tracks' && !selectMode}
 			<Button variant="secondary" size="sm" onclick={toggleSelectMode}>
@@ -966,15 +1030,17 @@
 								{/if}
 								<th class="px-3 py-2.5 w-10"></th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('title')}>Title {sort === 'title' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-24 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('rating')}>Rating {sort === 'rating' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-20 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('created_at')}>Added {sort === 'created_at' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
+								{#if colVisible('artist')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>{/if}
+								{#if colVisible('album')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap">Album</th>{/if}
+								{#if colVisible('format')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('format')}>Format {sort === 'format' ? (order === 'asc' ? '↑' : '↓') : ''}</th>{/if}
+								{#if colVisible('bitrate')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('bitrate')}>Bitrate {sort === 'bitrate' ? (order === 'asc' ? '↑' : '↓') : ''}</th>{/if}
+								{#if colVisible('plays')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>{/if}
+								{#if colVisible('rating')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap w-24 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('rating')}>Rating {sort === 'rating' ? (order === 'asc' ? '↑' : '↓') : ''}</th>{/if}
+								{#if colVisible('added')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap w-20 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('created_at')}>Added {sort === 'created_at' ? (order === 'asc' ? '↑' : '↓') : ''}</th>{/if}
+								{#if colVisible('analyzed')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
 									<AudioWaveform class="w-3.5 h-3.5 inline" /> {sort === 'analyzed' ? (order === 'asc' ? '↑' : '↓') : ''}
-								</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16">Time</th>
+								</th>{/if}
+								{#if colVisible('time')}<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap w-16">Time</th>{/if}
 								<th class="px-3 py-2.5 w-10"></th>
 							</tr>
 						</thead>
@@ -998,50 +1064,66 @@
 										</div>
 									</td>
 									<td class="px-3 py-2">
-										<div class="flex items-center gap-2">
-											<p class="font-medium text-[var(--text-primary)] truncate max-w-xs">{track.title}</p>
-											{#if track.format}
-												<span class="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)} flex-shrink-0">{track.format.toUpperCase()}{#if track.bitrate} {Math.round(track.bitrate / 1000)}k{/if}</span>
+										<p class="font-medium text-[var(--text-primary)] truncate max-w-xs">{track.title}</p>
+										{#if !colVisible('artist')}
+											<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || '-'}</p>
+										{/if}
+									</td>
+									{#if colVisible('artist')}
+										<td class="px-3 py-2 truncate max-w-[200px]">
+											{#if track.artist_id}
+												<button class="text-[var(--text-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors text-left truncate max-w-full"
+													onclick={(e) => { e.stopPropagation(); filterArtistId = track.artist_id; filterArtistName = track.artist; filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }}>
+													{track.artist || '-'}
+												</button>
+											{:else}
+												<span class="text-[var(--text-secondary)]">{track.artist || '-'}</span>
 											{/if}
-										</div>
-										{#if track.artist_id}
-											<button class="text-xs text-[var(--text-muted)] md:hidden truncate hover:text-[var(--color-accent)] hover:underline"
-												onclick={(e) => { e.stopPropagation(); filterArtistId = track.artist_id; filterArtistName = track.artist; filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }}>
-												{track.artist || '-'}
-											</button>
-										{:else}
-											<p class="text-xs text-[var(--text-muted)] md:hidden truncate">{track.artist || '-'}</p>
-										{/if}
-									</td>
-									<td class="px-3 py-2 hidden md:table-cell truncate max-w-[200px]">
-										{#if track.artist_id}
-											<button class="text-[var(--text-secondary)] hover:text-[var(--color-accent)] hover:underline transition-colors text-left truncate max-w-full"
-												onclick={(e) => { e.stopPropagation(); filterArtistId = track.artist_id; filterArtistName = track.artist; filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }}>
-												{track.artist || '-'}
-											</button>
-										{:else}
-											<span class="text-[var(--text-secondary)]">{track.artist || '-'}</span>
-										{/if}
-									</td>
-									<td class="px-3 py-2 hidden lg:table-cell truncate max-w-[200px]">
-										{#if track.album_id}
-											<button class="text-[var(--text-muted)] hover:text-[var(--color-accent)] hover:underline transition-colors text-left truncate max-w-full"
-												onclick={(e) => { e.stopPropagation(); filterAlbumId = track.album_id; filterAlbumName = track.album; filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }}>
-												{track.album || '-'}
-											</button>
-										{:else}
-											<span class="text-[var(--text-muted)]">{track.album || '-'}</span>
-										{/if}
-									</td>
-									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
-									<td class="px-3 py-2 hidden xl:table-cell" onclick={(e) => e.stopPropagation()}>
-										<StarRating rating={track.rating || 0} size="xs" onrate={async (r) => { await api.setRating(track.id, r); track.rating = r || null; }} />
-									</td>
-									<td class="px-3 py-2 text-[var(--text-muted)] text-xs hidden xl:table-cell" title={track.created_at ? formatDateTime(track.created_at) : ''}>{track.created_at ? formatRelativeTime(track.created_at) : '-'}</td>
-									<td class="px-3 py-2 hidden xl:table-cell text-center" title={track.analyzed ? 'Analyzed' : 'Not analyzed'}>
-										<AudioWaveform class="w-3.5 h-3.5 inline {track.analyzed ? 'text-pink-400' : 'text-[var(--text-disabled)] opacity-30'}" />
-									</td>
-									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{formatDuration(track.duration)}</td>
+										</td>
+									{/if}
+									{#if colVisible('album')}
+										<td class="px-3 py-2 truncate max-w-[200px]">
+											{#if track.album_id}
+												<button class="text-[var(--text-muted)] hover:text-[var(--color-accent)] hover:underline transition-colors text-left truncate max-w-full"
+													onclick={(e) => { e.stopPropagation(); filterAlbumId = track.album_id; filterAlbumName = track.album; filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }}>
+													{track.album || '-'}
+												</button>
+											{:else}
+												<span class="text-[var(--text-muted)]">{track.album || '-'}</span>
+											{/if}
+										</td>
+									{/if}
+									{#if colVisible('format')}
+										<td class="px-3 py-2">
+											{#if track.format}
+												<span class="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
+											{:else}
+												<span class="text-[var(--text-disabled)]">—</span>
+											{/if}
+										</td>
+									{/if}
+									{#if colVisible('bitrate')}
+										<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs">{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : '—'}</td>
+									{/if}
+									{#if colVisible('plays')}
+										<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs">{track.play_count || 0}</td>
+									{/if}
+									{#if colVisible('rating')}
+										<td class="px-3 py-2" onclick={(e) => e.stopPropagation()}>
+											<StarRating rating={track.rating || 0} size="xs" onrate={async (r) => { await api.setRating(track.id, r); track.rating = r || null; }} />
+										</td>
+									{/if}
+									{#if colVisible('added')}
+										<td class="px-3 py-2 text-[var(--text-muted)] text-xs" title={track.created_at ? formatDateTime(track.created_at) : ''}>{track.created_at ? formatRelativeTime(track.created_at) : '-'}</td>
+									{/if}
+									{#if colVisible('analyzed')}
+										<td class="px-3 py-2 text-center" title={track.analyzed ? 'Analyzed' : 'Not analyzed'}>
+											<AudioWaveform class="w-3.5 h-3.5 inline {track.analyzed ? 'text-pink-400' : 'text-[var(--text-disabled)] opacity-30'}" />
+										</td>
+									{/if}
+									{#if colVisible('time')}
+										<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs">{formatDuration(track.duration)}</td>
+									{/if}
 									<td class="px-3 py-2 w-20">
 										<div class="flex items-center gap-0.5">
 											<button onclick={(e) => toggleFav('track', track.id, e)}
