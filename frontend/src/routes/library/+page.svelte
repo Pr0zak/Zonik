@@ -968,12 +968,10 @@
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('title')}>Title {sort === 'title' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('artist_id')}>Artist {sort === 'artist_id' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell">Album</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16 whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('format')}>Format {sort === 'format' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16 whitespace-nowrap cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('bitrate')}>Bitrate {sort === 'bitrate' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-16 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('play_count')}>Plays {sort === 'play_count' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-24 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('rating')}>Rating {sort === 'rating' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-20 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('created_at')}>Added {sort === 'created_at' ? (order === 'asc' ? '↑' : '↓') : ''}</th>
-								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden xl:table-cell w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
+								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-12 cursor-pointer hover:text-[var(--text-body)]" onclick={() => toggleSort('analyzed')} title="Audio analysis status">
 									<AudioWaveform class="w-3.5 h-3.5 inline" /> {sort === 'analyzed' ? (order === 'asc' ? '↑' : '↓') : ''}
 								</th>
 								<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider hidden lg:table-cell w-16">Time</th>
@@ -1000,7 +998,12 @@
 										</div>
 									</td>
 									<td class="px-3 py-2">
-										<p class="font-medium text-[var(--text-primary)] truncate max-w-xs">{track.title}</p>
+										<div class="flex items-center gap-2">
+											<p class="font-medium text-[var(--text-primary)] truncate max-w-xs">{track.title}</p>
+											{#if track.format}
+												<span class="text-[9px] font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)} flex-shrink-0">{track.format.toUpperCase()}{#if track.bitrate} {Math.round(track.bitrate / 1000)}k{/if}</span>
+											{/if}
+										</div>
 										{#if track.artist_id}
 											<button class="text-xs text-[var(--text-muted)] md:hidden truncate hover:text-[var(--color-accent)] hover:underline"
 												onclick={(e) => { e.stopPropagation(); filterArtistId = track.artist_id; filterArtistName = track.artist; filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }}>
@@ -1030,15 +1033,7 @@
 											<span class="text-[var(--text-muted)]">{track.album || '-'}</span>
 										{/if}
 									</td>
-									<td class="px-3 py-2 hidden lg:table-cell">
-									{#if track.format}
-										<span class="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
-									{:else}
-										<span class="text-[var(--text-disabled)]">—</span>
-									{/if}
-								</td>
-								<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden lg:table-cell">{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : '—'}</td>
-								<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
+									<td class="px-3 py-2 text-[var(--text-muted)] font-mono text-xs hidden xl:table-cell">{track.play_count || 0}</td>
 									<td class="px-3 py-2 hidden xl:table-cell" onclick={(e) => e.stopPropagation()}>
 										<StarRating rating={track.rating || 0} size="xs" onrate={async (r) => { await api.setRating(track.id, r); track.rating = r || null; }} />
 									</td>
