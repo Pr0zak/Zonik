@@ -558,13 +558,26 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None) -
 @router.post("/bulk")
 async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTasks):
     """Download multiple tracks as individual download jobs."""
+    queue = []
     for t in req.tracks:
         artist = t.get("artist", "")
         track = t.get("track", "")
         if artist and track:
-            background_tasks.add_task(enqueue_download, artist, track)
+            queue.append((artist, track))
 
-    return {"ok": True, "total": len(req.tracks)}
+    if queue:
+        background_tasks.add_task(_process_bulk_download_queue, queue)
+
+    return {"ok": True, "total": len(queue)}
+
+
+async def _process_bulk_download_queue(queue: list[tuple[str, str]]):
+    """Process bulk downloads one at a time to avoid exhausting DB connections."""
+    for artist, track in queue:
+        try:
+            await enqueue_download(artist, track)
+        except Exception as e:
+            log.warning(f"[bulk] Failed to download {artist} — {track}: {e}")
 
 
 class CancelTransferRequest(BaseModel):
