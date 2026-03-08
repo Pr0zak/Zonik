@@ -555,36 +555,40 @@ async def import_downloaded_file(
                     replay_gain_album=parsed["replay_gain_album"],
                     play_count=existing.play_count,
                 )
-                # Migrate favorites to new track ID
+                # Carry over rating
+                new_track.rating = existing.rating
+                old_track_id = existing.id
+
+                # Add new track first (so FK references can point to it)
+                db.add(new_track)
+                await db.flush()
+
+                # Migrate FK references from old track → new track
                 from backend.models.favorite import Favorite
                 favs = (await db.execute(
-                    select(Favorite).where(Favorite.track_id == existing.id)
+                    select(Favorite).where(Favorite.track_id == old_track_id)
                 )).scalars().all()
                 for fav in favs:
                     fav.track_id = new_track_id
 
-                # Migrate play history to new track ID
                 from backend.models.play_history import PlayHistory
                 plays = (await db.execute(
-                    select(PlayHistory).where(PlayHistory.track_id == existing.id)
+                    select(PlayHistory).where(PlayHistory.track_id == old_track_id)
                 )).scalars().all()
                 for play in plays:
                     play.track_id = new_track_id
 
-                # Migrate upgrade records to new track ID
                 from backend.models.upgrade import TrackUpgrade
                 upgrades = (await db.execute(
-                    select(TrackUpgrade).where(TrackUpgrade.track_id == existing.id)
+                    select(TrackUpgrade).where(TrackUpgrade.track_id == old_track_id)
                 )).scalars().all()
                 for upg in upgrades:
                     upg.track_id = new_track_id
 
-                # Carry over rating
-                new_track.rating = existing.rating
-
-                await db.delete(existing)
                 await db.flush()
-                db.add(new_track)
+
+                # Now safe to delete old track (no more FK references)
+                await db.delete(existing)
                 await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
                 await db.commit()
                 log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
