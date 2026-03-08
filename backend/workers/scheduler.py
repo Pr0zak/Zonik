@@ -515,6 +515,8 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
             db.add(TrackUpgrade(
                 id=str(uuid.uuid4()),
                 track_id=t.id,
+                track_title=t.title,
+                track_artist=t.artist.name if t.artist else None,
                 original_format=t.format or "unknown",
                 original_bitrate=t.bitrate,
                 original_file_size=t.file_size,

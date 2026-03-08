@@ -21,6 +21,8 @@ class TrackUpgrade(Base):
     upgraded_format: Mapped[str | None] = mapped_column(String)
     upgraded_bitrate: Mapped[int | None] = mapped_column(Integer)
     upgraded_file_size: Mapped[int | None] = mapped_column(Integer)
+    track_title: Mapped[str | None] = mapped_column(String)
+    track_artist: Mapped[str | None] = mapped_column(String)
     reason: Mapped[str] = mapped_column(String, nullable=False)  # low_bitrate, lossy_to_lossless, opus_to_flac, all_lossy
     error_message: Mapped[str | None] = mapped_column(Text)
     job_id: Mapped[str | None] = mapped_column(String)  # link to download Job (plain string, not FK)

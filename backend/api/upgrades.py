@@ -152,6 +152,8 @@ async def scan_upgrades(req: ScanRequest, db: AsyncSession = Depends(get_db)):
             db.add(TrackUpgrade(
                 id=str(uuid.uuid4()),
                 track_id=t.id,
+                track_title=t.title,
+                track_artist=t.artist.name if t.artist else None,
                 original_format=t.format or "unknown",
                 original_bitrate=t.bitrate,
                 original_file_size=t.file_size,
@@ -260,14 +262,14 @@ async def clear_upgrades(status: str = "completed", db: AsyncSession = Depends(g
 
 
 def _serialize(u: TrackUpgrade) -> dict:
-    artist_name = ""
-    track_title = ""
+    artist_name = u.track_artist or ""
+    track_title = u.track_title or ""
     album_id = None
     if u.track:
-        track_title = u.track.title or ""
+        track_title = u.track.title or track_title
         album_id = u.track.album_id
         if u.track.artist:
-            artist_name = u.track.artist.name
+            artist_name = u.track.artist.name or artist_name
     return {
         "id": u.id,
         "track_id": u.track_id,
