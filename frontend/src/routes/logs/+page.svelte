@@ -28,7 +28,7 @@
 	const categories = [
 		{ key: 'all', label: 'All' },
 		{ key: 'downloads', label: 'Downloads', types: ['download', 'bulk_download'] },
-		{ key: 'library', label: 'Library', types: ['library_scan', 'library_cleanup'] },
+		{ key: 'library', label: 'Library', types: ['library_scan'] },
 		{ key: 'analysis', label: 'Analysis', types: ['audio_analysis', 'enrichment'] },
 		{ key: 'discovery', label: 'Discovery', types: ['lastfm_top_tracks', 'discover_similar', 'discover_artists', 'lastfm_sync'] },
 		{ key: 'playlists', label: 'Playlists', types: ['playlist_weekly_top', 'playlist_weekly_discover', 'playlist_favorites'] },

@@ -27,7 +27,7 @@ DEFAULT_TASKS = [
     {"task_name": "playlist_favorites", "interval_hours": 24, "run_at": "01:00"},
     {"task_name": "playlist_unfavorites", "interval_hours": 24, "run_at": "01:30"},
     {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
-    {"task_name": "library_cleanup", "interval_hours": 168, "run_at": "07:00", "day_of_week": 6},
+
     {"task_name": "recommendation_refresh", "interval_hours": 24, "run_at": "05:30"},
     {"task_name": "upgrade_scan", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0, "count": 50},
     {"task_name": "remix_discovery", "interval_hours": 168, "run_at": "04:00", "day_of_week": 5, "count": 30},
@@ -45,7 +45,7 @@ TASK_LABELS = {
     "playlist_favorites": "Favorites Playlist",
     "playlist_unfavorites": "Non-Favorites Playlist",
     "audio_analysis": "Audio Analysis",
-    "library_cleanup": "Orphan Cleanup",
+
     "recommendation_refresh": "Music Discovery AI",
     "upgrade_scan": "Quality Upgrade Scan",
     "remix_discovery": "Remix Discovery",
@@ -63,7 +63,7 @@ TASK_DESCRIPTIONS = {
     "playlist_favorites": "Rebuild the Favorites playlist from all currently starred tracks.",
     "playlist_unfavorites": "Rebuild the Non-Favorites playlist from all tracks that are not starred.",
     "audio_analysis": "Run Essentia audio analysis (BPM, key, energy, danceability) on tracks that haven't been analyzed yet.",
-    "library_cleanup": "Remove orphaned database entries for files that no longer exist on disk.",
+
     "recommendation_refresh": "Build a taste profile from your library (genres, artists, audio features, Last.fm history), then find and score new tracks via similar artists, genre matching, and trending charts. Optionally re-ranks with Claude AI.",
     "upgrade_scan": "Find low-quality tracks (low bitrate, lossy formats) and search Soulseek for higher-quality replacements.",
     "remix_discovery": "Search for remixes, edits, and alternate versions of popular tracks in your library.",

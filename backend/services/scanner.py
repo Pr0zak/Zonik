@@ -13,7 +13,7 @@ from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
-from sqlalchemy import select
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import get_settings
@@ -345,14 +345,45 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
 
     await db.commit()
 
-    # Update album track counts
-    from sqlalchemy import func
+    # Remove orphaned tracks (DB entries whose files no longer exist)
+    stats["orphans_removed"] = 0
+    if existing_paths:
+        orphan_result = await db.execute(
+            select(Track.id).where(Track.file_path.in_(existing_paths))
+        )
+        orphan_ids = [row[0] for row in orphan_result.all()]
+        if orphan_ids:
+            from backend.models.favorite import Favorite
+            from backend.models.playlist import PlaylistTrack
+            await db.execute(delete(Favorite).where(Favorite.track_id.in_(orphan_ids)))
+            await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(orphan_ids)))
+            await db.execute(delete(Track).where(Track.id.in_(orphan_ids)))
+            stats["orphans_removed"] = len(orphan_ids)
+            log.info(f"Removed {len(orphan_ids)} orphaned tracks")
+
+    # Update album track counts + clean up empty albums/artists
     albums = (await db.execute(select(Album))).scalars().all()
     for album in albums:
         count = (await db.execute(
             select(func.count(Track.id)).where(Track.album_id == album.id)
         )).scalar()
         album.track_count = count
+
+    # Remove empty albums and artists
+    empty_albums = (await db.execute(
+        select(Album.id).outerjoin(Track, Track.album_id == Album.id)
+        .group_by(Album.id).having(func.count(Track.id) == 0)
+    )).scalars().all()
+    if empty_albums:
+        await db.execute(delete(Album).where(Album.id.in_(empty_albums)))
+
+    empty_artists = (await db.execute(
+        select(Artist.id).outerjoin(Track, Track.artist_id == Artist.id)
+        .group_by(Artist.id).having(func.count(Track.id) == 0)
+    )).scalars().all()
+    if empty_artists:
+        await db.execute(delete(Artist).where(Artist.id.in_(empty_artists)))
+
     await db.commit()
 
     log.info(f"Scan complete: {stats}")

@@ -28,7 +28,7 @@ _TASK_LABELS = {
     "library_scan": "Library Scan",
     "enrichment": "Enrichment",
     "audio_analysis": "Audio Analysis",
-    "library_cleanup": "Library Cleanup",
+
     "recommendation_refresh": "AI Recommendations",
     "upgrade_scan": "Quality Upgrade Scan",
     "remix_discovery": "Remix Discovery",
@@ -115,11 +115,6 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             await db.commit()
             if failed_count:
                 job.result = json.dumps({"analyzed": len(tracks) - failed_count, "failed": failed_count})
-
-        elif task_name == "library_cleanup":
-            from backend.services.cleanup import remove_orphaned_tracks
-            result = await remove_orphaned_tracks(db)
-            job.result = json.dumps(result)
 
         elif task_name == "recommendation_refresh":
             from backend.services.recommender import refresh_recommendations

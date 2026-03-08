@@ -39,7 +39,7 @@
 		bulk_download: 'Bulk Download',
 		audio_analysis: 'Audio Analysis',
 		enrichment: 'Enrichment',
-		library_cleanup: 'Library Cleanup',
+
 		recommendation_refresh: 'AI Recommendations',
 		lastfm_top_tracks: 'Top Charts',
 		discover_similar: 'Similar Tracks',

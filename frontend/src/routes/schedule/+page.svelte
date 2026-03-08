@@ -18,7 +18,7 @@
 			icon: Music,
 			href: '/library',
 			color: 'var(--color-library)',
-			tasks: ['library_scan', 'library_cleanup', 'upgrade_scan'],
+			tasks: ['library_scan', 'upgrade_scan'],
 		},
 		{
 			label: 'Analysis',
@@ -50,7 +50,7 @@
 		},
 	];
 
-	const DANGER_TASKS = new Set(['library_cleanup']);
+	const DANGER_TASKS = new Set();
 
 	let taskMap = $derived(Object.fromEntries(tasks.map(t => [t.task_name, t])));
 

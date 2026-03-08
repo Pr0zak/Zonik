@@ -10,7 +10,7 @@
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock,
-		FileSearch, Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
+		Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
 		ChevronDown, ChevronUp
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -82,7 +82,7 @@
 	);
 
 	// Cleanup state
-	let cleanupTab = $state(null); // 'orphans' | 'duplicates' | 'organize'
+	let cleanupTab = $state(null); // 'organize'
 	let cleanupLoading = $state(false);
 	let cleanupPreview = $state(null);
 	let cleanupExecuting = $state(false);
@@ -135,18 +135,6 @@
 		organizeSelected = organizeSelected.size === allIds.length ? new Set() : new Set(allIds);
 	}
 
-	async function executeOrphans() {
-		cleanupExecuting = true;
-		try {
-			const res = await fetch('/api/library/cleanup/orphans', { method: 'POST' });
-			const result = await res.json();
-			addToast(`Removed ${result.removed} orphaned tracks`, 'success');
-			cleanupPreview = null;
-			cleanupTab = null;
-			loadData();
-		} catch { addToast('Cleanup failed', 'error'); }
-		finally { cleanupExecuting = false; }
-	}
 
 	async function executeDuplicates(deleteFiles = false) {
 		const removeIds = [...dedupSelected];
@@ -1340,20 +1328,7 @@
 			<span class="text-xs text-amber-400/80 font-mono uppercase tracking-wider">Danger Zone</span>
 		</div>
 		<p class="text-[11px] text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
-		{#if schedTasks.library_cleanup}
-			<div class="mb-3 p-2 rounded border border-amber-500/15 bg-amber-500/5">
-				<ScheduleControl taskName="library_cleanup" label="Orphan Cleanup (scheduled)" enabled={schedTasks.library_cleanup.enabled} intervalHours={schedTasks.library_cleanup.interval_hours} runAt={schedTasks.library_cleanup.run_at} lastRunAt={schedTasks.library_cleanup.last_run_at} running={schedRunning.library_cleanup} onToggle={() => toggleSched('library_cleanup')} onUpdate={(u) => updateSched('library_cleanup', u)} onRun={() => runSched('library_cleanup')} />
-			</div>
-		{/if}
-		<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'orphans' ? 'border-red-500/50 bg-red-500/10' : 'border-red-500/20 bg-[var(--bg-secondary)] hover:bg-red-500/5'}" onclick={() => previewCleanup('orphans')}>
-				<div class="flex items-center gap-2 mb-1">
-					<FileSearch class="w-4 h-4 text-red-400" />
-					<span class="text-sm font-medium text-[var(--text-primary)]">Orphan Cleanup</span>
-					<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 font-mono">DESTRUCTIVE</span>
-				</div>
-				<p class="text-xs text-[var(--text-muted)]">Remove database entries for files that no longer exist on disk.</p>
-			</button>
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
 			<a href="/duplicates" class="text-left p-3 rounded-lg border transition-colors border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5">
 				<div class="flex items-center gap-2 mb-1">
 					<Copy class="w-4 h-4 text-amber-400" />
@@ -1376,31 +1351,6 @@
 			<div class="flex items-center gap-2 p-4 text-[var(--text-muted)]">
 				<Loader2 class="w-4 h-4 animate-spin" />
 				<span class="text-sm">Scanning library...</span>
-			</div>
-		{:else if cleanupTab === 'orphans' && cleanupPreview}
-			<div class="border border-[var(--border-primary)] rounded-lg p-3">
-				<div class="flex items-center justify-between mb-2">
-					<span class="text-sm font-medium text-[var(--text-primary)]">
-						{cleanupPreview.count} orphaned track{cleanupPreview.count !== 1 ? 's' : ''} found
-					</span>
-					{#if cleanupPreview.count > 0}
-						<Button variant="danger" size="sm" disabled={cleanupExecuting} onclick={executeOrphans}>
-							{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
-							Remove All
-						</Button>
-					{/if}
-				</div>
-				{#if cleanupPreview.orphans?.length}
-					<div class="max-h-64 overflow-y-auto space-y-1">
-						{#each cleanupPreview.orphans as orphan}
-							<div class="text-xs text-[var(--text-muted)] font-mono truncate py-1 border-b border-[var(--border-primary)] last:border-0">
-								{orphan.file_path}
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<p class="text-sm text-emerald-400">No orphaned tracks found. Library is clean.</p>
-				{/if}
 			</div>
 		{:else if cleanupTab === 'organize' && cleanupPreview}
 			<div class="border border-[var(--border-primary)] rounded-lg p-3">
