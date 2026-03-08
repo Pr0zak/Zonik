@@ -29,6 +29,9 @@
 	let total = $state(0);
 	let loading = $state(true);
 	let activeFilter = $state(null);
+	let activeReason = $state(null);
+	let sortCol = $state('created_at');
+	let sortOrder = $state('desc');
 	let offset = $state(0);
 	let perPage = $state(25);
 	let starting = $state(false);
@@ -55,10 +58,18 @@
 
 	const reasonLabels = {
 		low_bitrate: 'Low Bitrate',
-		lossy_to_lossless: 'Lossy',
-		opus_to_flac: 'Opus',
-		all_lossy: 'Lossy',
+		lossy_to_lossless: 'Lossy → Lossless',
+		opus_to_flac: 'Opus → FLAC',
+		all_lossy: 'All Lossy',
 	};
+
+	const reasonFilters = [
+		{ value: null, label: 'All Reasons' },
+		{ value: 'low_bitrate', label: 'Low Bitrate' },
+		{ value: 'lossy_to_lossless', label: 'Lossy → Lossless' },
+		{ value: 'opus_to_flac', label: 'Opus → FLAC' },
+		{ value: 'all_lossy', label: 'All Lossy' },
+	];
 
 	async function loadStats() {
 		try {
@@ -69,8 +80,9 @@
 	async function loadUpgrades() {
 		loading = true;
 		try {
-			const params = { offset, limit: perPage, order: 'desc' };
+			const params = { offset, limit: perPage, sort: sortCol, order: sortOrder };
 			if (activeFilter) params.status = activeFilter;
+			if (activeReason) params.reason = activeReason;
 			const data = await api.getUpgrades(params);
 			upgrades = data.items;
 			total = data.total;
@@ -167,6 +179,30 @@
 		offset = 0;
 		selected = new Set();
 		loadUpgrades();
+	}
+
+	function setReason(r) {
+		activeReason = r;
+		offset = 0;
+		selected = new Set();
+		loadUpgrades();
+	}
+
+	function toggleSort(col) {
+		if (sortCol === col) {
+			if (sortOrder === 'desc') sortOrder = 'asc';
+			else if (sortOrder === 'asc') { sortCol = 'created_at'; sortOrder = 'desc'; }
+		} else {
+			sortCol = col;
+			sortOrder = 'desc';
+		}
+		offset = 0;
+		loadUpgrades();
+	}
+
+	function sortIndicator(col) {
+		if (sortCol !== col) return '';
+		return sortOrder === 'asc' ? ' ↑' : ' ↓';
 	}
 
 	function changePage(newOffset) {
@@ -304,6 +340,15 @@
 				{/if}
 			</button>
 		{/each}
+		<span class="text-[var(--border-subtle)]">|</span>
+		{#each reasonFilters as r}
+			<button
+				onclick={() => setReason(r.value)}
+				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeReason === r.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+			>
+				{r.label}
+			</button>
+		{/each}
 	</div>
 
 	<!-- Bulk Actions -->
@@ -354,12 +399,22 @@
 								checked={upgrades.filter(u => u.status === 'pending').length > 0 && upgrades.filter(u => u.status === 'pending').every(u => selected.has(u.id))}
 								class="rounded accent-emerald-500" />
 						</th>
-						<th class="px-3 py-2 text-left">Track</th>
-						<th class="px-3 py-2 text-left">Current</th>
+						<th class="px-3 py-2 text-left whitespace-nowrap">
+							<button onclick={() => toggleSort('created_at')} class="hover:text-[var(--text-primary)] transition-colors">Track{sortIndicator('created_at')}</button>
+						</th>
+						<th class="px-3 py-2 text-left whitespace-nowrap">
+							<button onclick={() => toggleSort('original_format')} class="hover:text-[var(--text-primary)] transition-colors">Current{sortIndicator('original_format')}</button>
+						</th>
 						<th class="px-3 py-2 text-left">Result</th>
-						<th class="px-3 py-2 text-left">Status</th>
-						<th class="px-3 py-2 text-left">Reason</th>
-						<th class="px-3 py-2 text-center">Tries</th>
+						<th class="px-3 py-2 text-left whitespace-nowrap">
+							<button onclick={() => toggleSort('status')} class="hover:text-[var(--text-primary)] transition-colors">Status{sortIndicator('status')}</button>
+						</th>
+						<th class="px-3 py-2 text-left whitespace-nowrap">
+							<button onclick={() => toggleSort('reason')} class="hover:text-[var(--text-primary)] transition-colors">Reason{sortIndicator('reason')}</button>
+						</th>
+						<th class="px-3 py-2 text-center whitespace-nowrap">
+							<button onclick={() => toggleSort('attempts')} class="hover:text-[var(--text-primary)] transition-colors">Tries{sortIndicator('attempts')}</button>
+						</th>
 						<th class="px-3 py-2 text-right">Actions</th>
 					</tr>
 				</thead>

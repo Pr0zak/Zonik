@@ -153,8 +153,8 @@
 		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
-		{ key: 'search', label: 'Search', icon: Search },
 		{ key: 'remixes', label: 'Remixes', icon: Disc3 },
+		{ key: 'search', label: 'Search', icon: Search },
 	];
 
 	function trackKey(t) {

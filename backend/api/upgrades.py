@@ -40,22 +40,27 @@ class ClearRequest(BaseModel):
 @router.get("")
 async def list_upgrades(
     status: str | None = None,
+    reason: str | None = None,
     offset: int = 0,
     limit: int = 25,
     sort: str = "created_at",
     order: str = "desc",
     db: AsyncSession = Depends(get_db),
 ):
-    """List upgrade records with optional status filter."""
+    """List upgrade records with optional status and reason filters."""
     query = select(TrackUpgrade).options(selectinload(TrackUpgrade.track).selectinload(Track.artist))
 
     if status:
         query = query.where(TrackUpgrade.status == status)
+    if reason:
+        query = query.where(TrackUpgrade.reason == reason)
 
     # Count
     count_q = select(func.count(TrackUpgrade.id))
     if status:
         count_q = count_q.where(TrackUpgrade.status == status)
+    if reason:
+        count_q = count_q.where(TrackUpgrade.reason == reason)
     total = (await db.execute(count_q)).scalar() or 0
 
     # Sort
