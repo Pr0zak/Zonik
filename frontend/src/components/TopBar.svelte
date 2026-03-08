@@ -1,6 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { Search, X, RefreshCw, Bell } from 'lucide-svelte';
+	import { Search, X, RefreshCw, Bell, Sparkles } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { activeJobs, addToast } from '$lib/stores.js';
 
@@ -12,27 +12,51 @@
 	let syncing = $state(false);
 	let debounceTimer;
 	let inputEl;
+	let isNL = $state(false);
+	let aiResults = $state([]);
 
 	let activeDownloads = $derived(
 		$activeJobs.filter(j => j.type === 'download' || j.type === 'bulk_download')
 	);
 	let runningJobs = $derived($activeJobs.filter(j => j.status === 'running'));
 
+	// Simple NL detection heuristic (mirrors backend)
+	function looksLikeNL(q) {
+		if (q.length < 8) return false;
+		const nlWords = /\b(find|show|get|give|play)\b.*\b(me|some|all)\b/i;
+		const moodWords = /\b(chill|upbeat|energetic|mellow|dark|happy|sad|relaxing|ambient)\b.*\b(track|song|music)\b/i;
+		const timeWords = /\bfrom\s+(last|this)\s+(week|month|year)\b/i;
+		const topWords = /\b(top|best|most)\s+(played|rated|popular)\b/i;
+		return nlWords.test(q) || moodWords.test(q) || timeWords.test(q) || topWords.test(q) || (q.split(' ').length > 4 && !q.includes(' - '));
+	}
+
 	function onInput() {
 		clearTimeout(debounceTimer);
 		if (!query.trim()) {
 			results = [];
+			aiResults = [];
 			showResults = false;
+			isNL = false;
 			return;
 		}
+		isNL = looksLikeNL(query.trim());
 		debounceTimer = setTimeout(async () => {
 			loading = true;
 			try {
-				const data = await api.getTracks({ search: query.trim(), limit: 8 });
-				results = (data.tracks || data || []).slice(0, 8);
-				showResults = results.length > 0;
+				if (isNL) {
+					const data = await api.aiSearch(query.trim(), 8);
+					aiResults = data.tracks || [];
+					results = [];
+					showResults = aiResults.length > 0;
+				} else {
+					const data = await api.getTracks({ search: query.trim(), limit: 8 });
+					results = (data.tracks || data || []).slice(0, 8);
+					aiResults = [];
+					showResults = results.length > 0;
+				}
 			} catch {
 				results = [];
+				aiResults = [];
 			} finally {
 				loading = false;
 			}
@@ -61,6 +85,12 @@
 		}
 	}
 
+	function goToAITrack(track) {
+		showResults = false;
+		query = '';
+		goto(`/library?search=${encodeURIComponent(track.title)}`);
+	}
+
 	function onKeydown(e) {
 		if (e.key === 'Escape') {
 			showResults = false;
@@ -68,7 +98,14 @@
 			inputEl?.blur();
 		} else if (e.key === 'Enter') {
 			if (query.trim()) {
-				goToDownloads();
+				if (isNL && aiResults.length) {
+					// Navigate to library with search
+					goto(`/library?search=${encodeURIComponent(query.trim())}`);
+					showResults = false;
+					query = '';
+				} else {
+					goToDownloads();
+				}
 			}
 		}
 	}
@@ -92,7 +129,11 @@
 
 <div class="relative flex-1 max-w-xl">
 	<div class="relative">
-		<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
+		{#if isNL}
+			<Sparkles class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-400" />
+		{:else}
+			<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
+		{/if}
 		<input
 			bind:this={inputEl}
 			type="text"
@@ -116,7 +157,23 @@
 
 	{#if showResults}
 		<div class="absolute top-full left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
-			{#if results.length}
+			{#if aiResults.length}
+				<div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-amber-400 border-b border-[var(--border-subtle)] flex items-center gap-1.5">
+					<Sparkles class="w-3 h-3" /> AI Results
+				</div>
+				{#each aiResults as track}
+					<button onclick={() => goToAITrack(track)}
+						class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[var(--bg-hover)] transition-colors">
+						<div class="flex-1 min-w-0">
+							<p class="text-sm text-[var(--text-primary)] truncate">{track.title}</p>
+							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
+						</div>
+						{#if track.genre}
+							<span class="text-[10px] text-[var(--text-disabled)] font-mono">{track.genre}</span>
+						{/if}
+					</button>
+				{/each}
+			{:else if results.length}
 				<div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--text-disabled)] border-b border-[var(--border-subtle)]">Library</div>
 				{#each results as track}
 					<button onclick={() => goToTrack(track)}

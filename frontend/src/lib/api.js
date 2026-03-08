@@ -115,4 +115,12 @@ export const api = {
 
 	// AI Usage
 	getAIUsage: () => request('/config/ai-usage'),
+
+	// AI Search
+	aiSearch: (query, limit = 50) => request('/search/ai', { method: 'POST', body: JSON.stringify({ query, limit }) }),
+	detectNL: (query) => request('/search/detect-nl', { method: 'POST', body: JSON.stringify({ query }) }),
+
+	// AI Playlist Generation
+	aiGeneratePlaylist: (prompt, name = null, limit = 30) =>
+		request('/playlists/ai-generate', { method: 'POST', body: JSON.stringify({ prompt, name, limit }) }),
 };

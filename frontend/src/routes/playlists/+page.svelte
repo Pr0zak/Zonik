@@ -4,7 +4,7 @@
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, inputClass } from '$lib/utils.js';
-	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-svelte';
+	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -34,6 +34,33 @@
 	let genValue = $state('');
 	let genLimit = $state(50);
 	let generating = $state(false);
+
+	// AI generate
+	let showAIGen = $state(false);
+	let aiPrompt = $state('');
+	let aiName = $state('');
+	let aiLimit = $state(30);
+	let aiGenerating = $state(false);
+
+	async function aiGeneratePlaylist() {
+		if (!aiPrompt.trim()) return;
+		aiGenerating = true;
+		try {
+			const data = await api.aiGeneratePlaylist(aiPrompt.trim(), aiName.trim() || null, aiLimit);
+			if (data.error) {
+				addToast(data.error, 'error');
+			} else {
+				addToast(`Created "${data.name}" with ${data.track_count} tracks`, 'success');
+				playlists = await api.getPlaylists();
+				showAIGen = false;
+				aiPrompt = ''; aiName = '';
+			}
+		} catch (e) {
+			addToast('Failed to generate playlist', 'error');
+		} finally {
+			aiGenerating = false;
+		}
+	}
 
 	const ruleOptions = [
 		{ value: 'genre', label: 'Genre', needsValue: true, placeholder: 'e.g. Electronic' },
@@ -143,13 +170,22 @@
 <div class="max-w-6xl">
 	<div class="flex items-center justify-between mb-6">
 		<PageHeader title="Playlists" color="var(--color-playlists)" />
-		<Button onclick={() => showGenerator = !showGenerator} variant="secondary" size="sm">
-			{#if showGenerator}
-				<span class="flex items-center gap-1.5">Hide Generator</span>
-			{:else}
-				<span class="flex items-center gap-1.5"><Wand2 class="w-4 h-4" /> Smart Playlist</span>
-			{/if}
-		</Button>
+		<div class="flex items-center gap-2">
+			<Button onclick={() => { showAIGen = !showAIGen; if (showAIGen) showGenerator = false; }} variant="secondary" size="sm">
+				{#if showAIGen}
+					<span class="flex items-center gap-1.5">Hide AI</span>
+				{:else}
+					<span class="flex items-center gap-1.5"><Sparkles class="w-4 h-4 text-amber-400" /> AI Generate</span>
+				{/if}
+			</Button>
+			<Button onclick={() => { showGenerator = !showGenerator; if (showGenerator) showAIGen = false; }} variant="secondary" size="sm">
+				{#if showGenerator}
+					<span class="flex items-center gap-1.5">Hide Generator</span>
+				{:else}
+					<span class="flex items-center gap-1.5"><Wand2 class="w-4 h-4" /> Smart Playlist</span>
+				{/if}
+			</Button>
+		</div>
 	</div>
 
 	<!-- Collapsible Schedule -->
@@ -176,6 +212,43 @@
 				{/if}
 			</Card>
 		{/if}
+	{/if}
+
+	{#if showAIGen}
+		<Card padding="p-4" class="mb-6">
+			<div class="flex items-center gap-2 mb-4">
+				<Sparkles class="w-4 h-4 text-amber-400" />
+				<h3 class="text-base font-semibold text-[var(--text-primary)]">AI Playlist Generator</h3>
+			</div>
+			<p class="text-xs text-[var(--text-muted)] mb-3">Describe the playlist you want in plain English. AI will pick tracks from your library.</p>
+			<div class="space-y-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1.5">Prompt</label>
+					<input type="text" bind:value={aiPrompt} placeholder="e.g. Make a playlist for a late night drive" class={inputClass} />
+				</div>
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1.5">Name (optional)</label>
+						<input type="text" bind:value={aiName} placeholder="Auto-generated if empty" class={inputClass} />
+					</div>
+					<div>
+						<label class="block text-xs text-[var(--text-muted)] mb-1.5">Max Tracks: {aiLimit}</label>
+						<div class="flex items-center gap-3">
+							<input type="range" bind:value={aiLimit} min="10" max="100" step="5" class="flex-1 accent-amber-500" />
+							<Badge>{aiLimit}</Badge>
+						</div>
+					</div>
+				</div>
+			</div>
+			<div class="mt-4 flex justify-end">
+				<Button onclick={aiGeneratePlaylist} disabled={!aiPrompt.trim() || aiGenerating} variant="primary" size="sm">
+					<span class="flex items-center gap-1.5">
+						<Sparkles class="w-4 h-4" />
+						{aiGenerating ? 'Generating...' : 'Generate with AI'}
+					</span>
+				</Button>
+			</div>
+		</Card>
 	{/if}
 
 	{#if showGenerator}

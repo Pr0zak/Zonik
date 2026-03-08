@@ -115,6 +115,20 @@ async def generate_smart_playlist(req: SmartPlaylistRequest, db: AsyncSession = 
     return {"id": playlist.id, "name": playlist.name, "track_count": len(tracks)}
 
 
+class AIPlaylistRequest(BaseModel):
+    prompt: str
+    name: str | None = None
+    limit: int = 30
+
+
+@router.post("/ai-generate")
+async def ai_generate_playlist(req: AIPlaylistRequest, db: AsyncSession = Depends(get_db)):
+    """Generate a playlist from a natural language prompt using AI."""
+    from backend.services.ai.playlist_gen import generate_playlist
+    result = await generate_playlist(db, req.prompt, name=req.name, limit=req.limit)
+    return result
+
+
 @router.get("/{playlist_id}")
 async def get_playlist(playlist_id: str, db: AsyncSession = Depends(get_db)):
     from backend.models.track import Track
