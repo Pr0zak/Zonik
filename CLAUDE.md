@@ -284,9 +284,12 @@ docs/                  # Installation, configuration, API reference, development
 - Upgrade API: /api/upgrades — list (paginated, filterable), stats (counts + size delta), scan (idempotent, multi-mode), start, retry, skip, clear; scan skips existing pending/queued/downloading records
 - Upgrade pipeline integration: scanner.import_downloaded_file marks TrackUpgrade completed/failed on upgrade detection; enqueue_download() returns job_id for linking; _download_upgrade also checks job status after download and updates upgrade accordingly
 - Upgrade track swap: raw SQL for entire operation — PRAGMA foreign_keys=OFF, migrate all 7 FK tables (favorites, play_history, track_upgrades, playlist_tracks, bookmarks, track_analysis, track_embeddings), delete old track, add new track, re-enable FK. Avoids ORM cascade errors (TrackAnalysis PK blank-out) and UNIQUE file_path conflicts.
-- Upgrade queue persistence: startup lifespan resets stuck queued/downloading upgrades to pending (BackgroundTasks are in-memory, lost on restart)
+- Upgrade queue persistence: startup lifespan resets stuck queued/downloading upgrades to pending with attempts=0 (BackgroundTasks are in-memory, lost on restart)
+- Upgrade queue processing: single background task processes entire queue sequentially — never spawn N background tasks for N upgrades (exhausts DB connection pool)
+- Bulk download queue: same pattern — /api/download/bulk uses single background task with sequential processing to avoid connection pool exhaustion (QueuePool limit 5+10 overflow)
 - TrackUpgrade denormalized columns: track_title, track_artist stored at scan time — survives track ID changes when upgraded file gets new path/ID; serializer uses stored values as fallback when track FK is broken
 - enqueue_download accepts optional job_id parameter to pre-link upgrade records before download starts
+- DB connection pool pitfall: never spawn unbounded BackgroundTasks that each open async_session() — SQLAlchemy QueuePool has 5+10 limit, exceeding it hangs the entire app with TimeoutError
 - Upgrades page: /upgrades route (emerald --color-upgrades: #10b981), stats bar, scan controls (4 modes + bitrate threshold + limit), status filter tabs, table with before→after format badges, bulk start/retry/clear, per-row actions
 - Remix discovery suggestions: GET /api/discovery/remix-suggestions (source: popular/favorites/random), rate-limited Last.fm search (Semaphore(3)), batch library match, version type detection
 - Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
