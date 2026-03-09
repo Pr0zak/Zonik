@@ -35,6 +35,8 @@ def get_engine():
     return create_async_engine(
         f"sqlite+aiosqlite:///{db_path}",
         echo=False,
+        pool_size=10,
+        max_overflow=20,
         connect_args={"check_same_thread": False},
     )
 
