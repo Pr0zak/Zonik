@@ -161,7 +161,7 @@ docs/                  # Installation, configuration, API reference, development
 - URLSearchParams pitfall: filter out undefined/null values before passing to URLSearchParams (converts to literal "undefined")
 - Svelte curly brace pitfall: literal `{text}` in HTML attributes is interpreted as JS — use `placeholder={'{artist}'}` not `placeholder="{artist}"`
 - Library page: heart buttons on tracks/artists/albums in both grid and list views; 3-dot context menu on tracks (Find Similar, Edit Info, Favorite, Delete)
-- Track edit: PUT /api/tracks/{id} updates DB + writes tags to audio file via mutagen (title, genre, year, track_number)
+- Track edit: PUT /api/tracks/{id} updates DB + writes tags to audio file via mutagen (title, genre, year, track_number); edit modal fetches full track details (file_path, sample_rate, bit_depth) via api.getTrack() and shows file info panel
 - Favorites: /api/favorites/ids returns track_ids/album_ids/artist_ids sets for fast client-side lookup
 - Favorites import: /api/favorites/import accepts [{title, artist, file_path?}] and matches by file_path MD5 or title+artist
 - Downloads page: sorted by status priority (queued → running → completed → failed), newest first within group
@@ -250,7 +250,7 @@ docs/                  # Installation, configuration, API reference, development
 - Download import upgrade detection: import_downloaded_file checks for existing track with same normalized title+artist, compares quality (FORMAT_QUALITY rank + file size), upgrades or skips duplicates
 - Download cleanup: cleanup_download_dir() runs after every download — removes zero-byte and non-audio orphan files
 - Library "Added" column: sortable by created_at (defaults desc), shows formatRelativeTime() with full timestamp tooltip
-- Library context menu: "Find Upgrade" navigates to /downloads?artist=X&track=Y; bulk "Find Upgrades" triggers POST /api/download/bulk
+- Library context menu: "Find Upgrade" opens in-page Soulseek search modal (auto-searches on open, shows results with format/bitrate/size, per-result download + "Auto Best" button); bulk "Find Upgrades" triggers POST /api/download/bulk
 - User API keys: per-user subsonic_api_key for Symfonium token auth; generate/revoke/copy/eye-toggle in Settings > User Management
 - Last.fm favorites sync: scheduled task pushes Zonik starred tracks → Last.fm loved tracks (incremental, skips already-loved)
 - Last.fm auth: callback saves session_key + username to zonik.toml; session_key and username in [lastfm] config
@@ -302,6 +302,7 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation bulk download: POST /api/recommendations/bulk-download with mode (top/above_score), count, min_score; creates individual download jobs per track
 - All download paths (trigger, bulk, recommendations, retry, auto-download) create individual per-track download jobs — no bulk_download job type
 - Download job creation: shared `enqueue_download(artist, track)` in download.py handles Job creation + semaphore queuing; used by bulk, retry (jobs.py), and recommendation bulk-download
+- Download dedup: _find_existing_download() checks for pending/running jobs with same artist+track before creating new job; both trigger_download() and enqueue_download() return existing job_id instead of duplicating
 - Sort parameter security: allowlist sets (TRACK_SORT_COLUMNS, ARTIST_SORT_COLUMNS, ALBUM_SORT_COLUMNS) prevent arbitrary attribute access via getattr()
 - CORS: configurable via `cors_origins` list in [server] config (default `["*"]` for self-hosted)
 - Discovery batch matching: _batch_library_match() helper in discovery.py — single batched query for all track lists (top_tracks, similar, remixes, search, remix_suggestions); takes name_key/artist_key params
@@ -324,7 +325,7 @@ docs/                  # Installation, configuration, API reference, development
 - DB connection pool pitfall: never spawn unbounded BackgroundTasks that each open async_session() — SQLAlchemy QueuePool has 5+10 limit, exceeding it hangs the entire app with TimeoutError
 - Upgrades page: /upgrades route (emerald --color-upgrades: #10b981), stats bar, scan controls (4 modes + bitrate threshold + limit), status filter tabs, table with before→after format badges, bulk start/retry/clear, per-row actions
 - Remix discovery suggestions: GET /api/discovery/remix-suggestions (source: popular/favorites/random), rate-limited Last.fm search (Semaphore(3)), batch library match, version type detection
-- Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
+- Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type filter pills with counts, version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
 - Scheduled remix_discovery task: weekly Friday 04:00, scans library tracks for remixes via Last.fm, stores results as job.tracks JSON, auto-download support
 - Schedule task backfill: list_schedule auto-adds new DEFAULT_TASKS missing from existing DB (not just on empty table)
 - Section page schedule controls: collapsible "Schedule & Automation" area at top of Library, Discover, Analysis, Playlists pages (collapsed by default)
@@ -342,7 +343,9 @@ docs/                  # Installation, configuration, API reference, development
 - PostgreSQL search: tracks_search table with tsvector column + GIN index mirrors FTS5 virtual table; update_fts_index() uses INSERT ON CONFLICT for PG, DELETE+INSERT for SQLite; search_fts() uses plainto_tsquery + ts_rank for PG
 - database_compat.py: dialect-aware SQL helpers — date_trunc (strftime vs func.date_trunc), extract_hour (strftime('%H') vs extract(hour)), duration_seconds (julianday vs EXTRACT(EPOCH))
 - AI services package: backend/services/ai/ — shared client (client.py) with Semaphore(2) rate limiting + token tracking + persistent httpx; 1 module per feature (mood_tagger.py, playlist_curator.py, etc.)
-- AI shared client: backend/services/ai/client.py wraps Claude API with asyncio.Semaphore(2), tracks input/output tokens per call, reusable across all 10 AI features
+- AI shared client: backend/services/ai/client.py wraps Claude API with asyncio.Semaphore(2), tracks input/output tokens per call, reusable across all 10 AI features; JSON parser handles unclosed code blocks (try/except on index) and JSON arrays (scans for both `{` and `[`)
+- AI model pitfall: Track model has NO `bpm` column — BPM lives on TrackAnalysis model, requires outerjoin; Track uses `duration_seconds` not `duration`; AI services (playlist_gen.py, nl_search.py) must join TrackAnalysis for BPM filtering
+- AI duplicate resolver pitfall: find_duplicates_enriched() returns a dict `{"groups": [...]}`, not a list — must extract `.get("groups", [])` before slicing/iterating
 - Mood tags: CLAP text-to-audio similarity for zero-cost mood tagging (no API calls); 15 mood vocabulary (energetic, calm, melancholic, happy, dark, romantic, aggressive, dreamy, uplifting, mysterious, nostalgic, playful, intense, peaceful, ethereal); top_k=3 moods per track
 - TrackMood model: track_id (PK, FK), moods (comma-separated), primary_mood, confidence (float), source ("clap"/"ai"), created_at; migration k2l3m4n5o6p7
 - Mood tagger: _get_mood_embeddings() lazily computes CLAP text embeddings (cached globally); tag_tracks_with_moods() scores via cosine similarity, upserts TrackMood records
@@ -353,6 +356,8 @@ docs/                  # Installation, configuration, API reference, development
 - AI playlist curator: backend/services/ai/playlist_curator.py — rank_playlists() scores by taste alignment + novelty, review_import() evaluates track compatibility
 - Config: SpotifyConfig (client_id, client_secret) and AppleMusicConfig (developer_token) in config.py; web-configurable in Settings
 - Rate limiting: token bucket middleware (backend/middleware/rate_limit.py), per-IP tracking, configurable rate_limit_rps + rate_limit_burst in ServerConfig
+- Stats page layout: music stats first (overview, processing, formats, artists, genres, bitrate, years, most played, listening history), then "System" divider line, then system stats (DB & Backend, Job Pipeline, Soulseek P2P)
+- Stats page DB & Backend tile: shows database backend type, file size, WAL size, total rows, Python version, PID (from /api/library/stats/detailed)
 - Job pipeline dashboard: GET /api/jobs/dashboard returns status counts, type distribution, hourly timeline, avg duration; Chart.js donut + bar charts on Stats page
 - SwipeRow mobile component: frontend/src/components/ui/SwipeRow.svelte + frontend/src/lib/swipe.js; Svelte action for touch swipe detection (horizontal-only, clamped -150 to 150px); dispatches swipemove event, calls onSwipeLeft/onSwipeRight
 - Responsive tables: hidden sm:/md:/lg:table-cell classes on less-critical columns (Upgrades: Result/Reason/Tries, Logs: Progress/Started)

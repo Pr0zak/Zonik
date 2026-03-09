@@ -266,6 +266,86 @@
 	let remixLoading = $state(false);
 	let remixDownloadStatus = $state({}); // { "artist|name": "downloading"|"done"|"failed" }
 
+	// Find Upgrade modal
+	let showUpgrade = $state(false);
+	let upgradeTrack = $state(null);
+	let upgradeSearching = $state(false);
+	let upgradeResults = $state([]);
+	let upgradeSearchDone = $state(false);
+	let upgradeStatuses = $state({}); // key → { status, jobId }
+
+	async function openUpgradeModal(track) {
+		closeMenu();
+		upgradeTrack = track;
+		showUpgrade = true;
+		upgradeResults = [];
+		upgradeSearchDone = false;
+		upgradeStatuses = {};
+		// Auto-search on open
+		await searchUpgrade(track);
+	}
+
+	async function searchUpgrade(track) {
+		upgradeSearching = true;
+		upgradeResults = [];
+		upgradeSearchDone = false;
+		try {
+			const body = { artist: track.artist_name || track.artist || '', track: track.title || '' };
+			const data = await fetch('/api/download/search', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(body)
+			}).then(r => r.json());
+			upgradeResults = data.results || [];
+			upgradeSearchDone = true;
+			if (!upgradeResults.length) addToast('No upgrade sources found', 'warning');
+		} catch (e) {
+			addToast('Search failed: ' + e.message, 'error');
+		} finally {
+			upgradeSearching = false;
+		}
+	}
+
+	async function downloadUpgrade(result) {
+		const key = result.username + result.filename;
+		upgradeStatuses[key] = { status: 'downloading' };
+		upgradeStatuses = { ...upgradeStatuses };
+		try {
+			const artist = upgradeTrack?.artist_name || upgradeTrack?.artist || '';
+			const track = upgradeTrack?.title || '';
+			const resp = await fetch('/api/download/trigger', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ artist, track, username: result.username, filename: result.filename })
+			}).then(r => r.json());
+			if (resp.error) {
+				upgradeStatuses[key] = { status: 'failed' };
+			} else {
+				upgradeStatuses[key] = { status: 'done', jobId: resp.job_id };
+				addToast('Download started', 'success');
+			}
+		} catch (e) {
+			upgradeStatuses[key] = { status: 'failed' };
+			addToast('Download failed', 'error');
+		}
+		upgradeStatuses = { ...upgradeStatuses };
+	}
+
+	async function autoDownloadUpgrade() {
+		try {
+			const artist = upgradeTrack?.artist_name || upgradeTrack?.artist || '';
+			const track = upgradeTrack?.title || '';
+			await fetch('/api/download/trigger', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ artist, track })
+			}).then(r => r.json());
+			addToast('Auto-download started — best source selected', 'success');
+		} catch (e) {
+			addToast('Download failed', 'error');
+		}
+	}
+
 	// Track action menu
 	let menuTrack = $state(null);
 	let menuPos = $state({ x: 0, y: 0 });
@@ -1411,7 +1491,7 @@
 			<Disc3 class="w-3.5 h-3.5 text-teal-400" /> Find Remixes
 		</button>
 		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
-			onclick={() => { const t = menuTrack; closeMenu(); goto(`/downloads?artist=${encodeURIComponent(t.artist || '')}&track=${encodeURIComponent(t.title || '')}`); }}>
+			onclick={() => { openUpgradeModal(menuTrack); }}>
 			<Download class="w-3.5 h-3.5 text-green-400" /> Find Upgrade
 		</button>
 		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
@@ -1646,5 +1726,88 @@
 		<span class="text-xs text-[var(--text-muted)]">
 			{remixes.length} remixes found &middot; {remixes.filter(r => r.in_library).length} in library
 		</span>
+	{/snippet}
+</Modal>
+
+<Modal bind:open={showUpgrade} title="Find Upgrade">
+	{#snippet children()}
+		{#if upgradeTrack}
+			<div class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-[var(--bg-secondary)]">
+				{#if coverUrl(upgradeTrack.id)}
+					<img src={coverUrl(upgradeTrack.id)} alt="" class="w-12 h-12 rounded object-cover" />
+				{/if}
+				<div class="flex-1 min-w-0">
+					<p class="text-sm font-medium text-[var(--text-primary)] truncate">{upgradeTrack.title}</p>
+					<p class="text-xs text-[var(--text-muted)]">{upgradeTrack.artist_name || upgradeTrack.artist || 'Unknown'}</p>
+				</div>
+				<div class="flex items-center gap-2 flex-shrink-0">
+					{#if upgradeTrack.format}
+						<Badge variant={upgradeTrack.format === 'flac' ? 'success' : upgradeTrack.format === 'mp3' ? 'warning' : 'default'}>{upgradeTrack.format?.toUpperCase()}</Badge>
+					{/if}
+					{#if upgradeTrack.bitrate}
+						<span class="text-xs text-[var(--text-muted)]">{Math.round(upgradeTrack.bitrate / 1000)}k</span>
+					{/if}
+				</div>
+			</div>
+		{/if}
+		{#if upgradeSearching}
+			<div class="flex items-center justify-center gap-2 py-8">
+				<Loader2 class="w-5 h-5 animate-spin text-[var(--text-muted)]" />
+				<span class="text-sm text-[var(--text-muted)]">Searching Soulseek...</span>
+			</div>
+		{:else if upgradeSearchDone && upgradeResults.length}
+			<div class="flex items-center justify-between mb-3">
+				<span class="text-xs text-[var(--text-muted)]">{upgradeResults.length} sources found</span>
+				<Button variant="success" size="sm" onclick={autoDownloadUpgrade}>
+					<Download class="w-3.5 h-3.5" /> Auto (Best)
+				</Button>
+			</div>
+			<div class="space-y-1 max-h-80 overflow-y-auto">
+				{#each upgradeResults as result}
+					{@const key = result.username + result.filename}
+					{@const ext = result.filename?.split('.').pop()?.toUpperCase() || '?'}
+					{@const st = upgradeStatuses[key]}
+					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--bg-hover)] transition-colors group">
+						<div class="flex-1 min-w-0">
+							<p class="text-sm text-[var(--text-primary)] truncate" title={result.filename}>{result.filename?.split(/[/\\]/).pop()}</p>
+							<p class="text-xs text-[var(--text-muted)]">
+								{result.username}
+								{#if result.bit_rate} &middot; {Math.round(result.bit_rate / 1000)}kbps{/if}
+								{#if result.file_size} &middot; {formatSize(result.file_size)}{/if}
+								{#if result.queue_length !== undefined} &middot; Queue: {result.queue_length}{/if}
+							</p>
+						</div>
+						<Badge variant={ext === 'FLAC' ? 'success' : ext === 'MP3' ? 'warning' : 'default'}>{ext}</Badge>
+						{#if st?.status === 'downloading'}
+							<Badge variant="info"><Loader2 class="w-3 h-3 animate-spin inline" /></Badge>
+						{:else if st?.status === 'done'}
+							<Badge variant="success"><Check class="w-3 h-3 inline" /></Badge>
+						{:else if st?.status === 'failed'}
+							<Button variant="danger" size="sm" onclick={() => downloadUpgrade(result)}>
+								<RotateCcw class="w-3 h-3" />
+							</Button>
+						{:else}
+							<Button variant="ghost" size="sm" onclick={() => downloadUpgrade(result)}>
+								<Download class="w-3.5 h-3.5" />
+							</Button>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{:else if upgradeSearchDone}
+			<EmptyState icon={Download} title="No sources found" subtitle="No Soulseek peers have this track available right now" />
+		{/if}
+	{/snippet}
+	{#snippet footer()}
+		<div class="flex items-center justify-between w-full">
+			<span class="text-xs text-[var(--text-muted)]">
+				{#if upgradeSearchDone}{upgradeResults.length} results{/if}
+			</span>
+			{#if upgradeSearchDone}
+				<Button variant="ghost" size="sm" onclick={() => searchUpgrade(upgradeTrack)}>
+					<RotateCcw class="w-3 h-3" /> Re-search
+				</Button>
+			{/if}
+		</div>
 	{/snippet}
 </Modal>

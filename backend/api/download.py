@@ -46,6 +46,30 @@ from backend.api.websocket import broadcast_job_update
 router = APIRouter()
 
 
+async def _find_existing_download(db: AsyncSession, artist: str, track: str) -> str | None:
+    """Check if a pending/running download already exists for this artist+track. Returns job_id or None."""
+    result = await db.execute(
+        select(Job.id, Job.tracks).where(
+            Job.type == "download",
+            Job.status.in_(["pending", "running"]),
+        )
+    )
+    artist_lower = artist.strip().lower()
+    track_lower = track.strip().lower()
+    for job_id, tracks_json in result.all():
+        if not tracks_json:
+            continue
+        try:
+            tracks = json.loads(tracks_json)
+            for t in tracks:
+                if (t.get("artist", "").strip().lower() == artist_lower
+                        and t.get("track", "").strip().lower() == track_lower):
+                    return job_id
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return None
+
+
 async def is_blacklisted(db: AsyncSession, artist: str, track: str) -> str | None:
     """Check if artist/track is blacklisted. Returns reason or None."""
     artist_norm = normalize_text(artist)
@@ -193,6 +217,12 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     reason = await is_blacklisted(db, req.artist, req.track)
     if reason:
         return {"error": "blacklisted", "reason": reason}
+
+    # Dedup: skip if same artist+track already pending/running
+    existing = await _find_existing_download(db, req.artist, req.track)
+    if existing:
+        log.info(f"[download] Dedup: {req.artist} — {req.track} already in job {existing}")
+        return {"status": "already_downloading", "job_id": existing}
 
     job_id = str(uuid.uuid4())
 
@@ -544,6 +574,13 @@ async def _do_download_inner(db, job, job_id, desc, req):
 
 async def enqueue_download(artist: str, track: str, job_id: str | None = None) -> str:
     """Create an individual download job with semaphore queuing. Returns job_id."""
+    # Dedup: skip if same artist+track already pending/running
+    async with async_session() as check_sess:
+        existing = await _find_existing_download(check_sess, artist, track)
+        if existing:
+            log.info(f"[download] Dedup: {artist} — {track} already in job {existing}")
+            return existing
+
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track)

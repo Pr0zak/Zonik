@@ -116,6 +116,15 @@ All infrastructure items completed:
 
 ## Low Priority
 
+### Pushover Notifications
+Push notifications via Pushover API for key events: download complete/failed, library scan finished, upgrade found, scheduled task completion. Configurable per-event toggles in Settings.
+
+**Backend:** `backend/services/pushover.py` (new) — send_notification(title, message, priority), event hooks in download completion, scan completion, upgrade scanner. Config: `[pushover]` section in zonik.toml (user_key, api_token, enabled events).
+
+**Frontend:** Pushover card in Settings page with user key, API token, test button, per-event toggles.
+
+---
+
 ### Christmas Auto-Playlist
 Seasonal playlist feature — detect Christmas/holiday tracks in library and manage them as a toggleable collection. See `plans/christmas-playlist.md` for full implementation plan.
 
