@@ -123,4 +123,11 @@ export const api = {
 	// AI Playlist Generation
 	aiGeneratePlaylist: (prompt, name = null, limit = 30) =>
 		request('/playlists/ai-generate', { method: 'POST', body: JSON.stringify({ prompt, name, limit }) }),
+
+	// AI Features
+	explainRecommendation: (id) => request(`/recommendations/${id}/explain`, { method: 'POST' }),
+	aiTagTracks: (trackIds) => request('/tracks/ai-tag', { method: 'POST', body: JSON.stringify({ track_ids: trackIds }) }),
+	applyAITags: (tags) => request('/tracks/ai-tag/apply', { method: 'POST', body: JSON.stringify({ tags }) }),
+	getInsights: () => request('/library/stats/insights'),
+	aiResolveDuplicates: () => request('/library/duplicates/ai-resolve', { method: 'POST' }),
 };

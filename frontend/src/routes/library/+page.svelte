@@ -12,7 +12,7 @@
 		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock, Columns3,
 		Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
-		ChevronDown, ChevronUp
+		ChevronDown, ChevronUp, Sparkles
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -532,6 +532,34 @@
 		} catch (e) { addToast('Bulk analyze failed: ' + e.message, 'error'); }
 	}
 
+	let aiTagLoading = $state(false);
+	let aiTagResults = $state(null);
+
+	async function bulkAITag() {
+		if (!selected.size) return;
+		aiTagLoading = true;
+		try {
+			const data = await api.aiTagTracks([...selected]);
+			if (data.error) { addToast(data.error, 'error'); return; }
+			aiTagResults = data.suggestions || [];
+			if (!aiTagResults.length) { addToast('No tag suggestions', 'info'); return; }
+			addToast(`Got tag suggestions for ${aiTagResults.length} track(s)`, 'success');
+		} catch (e) { addToast('AI tagging failed: ' + e.message, 'error'); }
+		finally { aiTagLoading = false; }
+	}
+
+	async function applyAITags() {
+		if (!aiTagResults?.length) return;
+		const tags = aiTagResults.map(s => ({ track_id: s.id, genre: s.suggested_genres[0] })).filter(t => t.genre);
+		try {
+			const data = await api.applyAITags(tags);
+			addToast(`Applied tags to ${data.applied} track(s)`, 'success');
+			aiTagResults = null;
+			selected = new Set();
+			await loadTracks();
+		} catch (e) { addToast('Failed to apply tags: ' + e.message, 'error'); }
+	}
+
 	async function bulkFindUpgrades() {
 		if (!selected.size) return;
 		const selectedTracks = tracks.filter(t => selected.has(t.id));
@@ -935,6 +963,9 @@
 				</Button>
 				<Button variant="success" size="sm" onclick={bulkFindUpgrades}>
 					<Download class="w-3.5 h-3.5" /> Find Upgrades
+				</Button>
+				<Button variant="secondary" size="sm" loading={aiTagLoading} onclick={bulkAITag}>
+					<Sparkles class="w-3.5 h-3.5 text-amber-400" /> AI Tag
 				</Button>
 			{/if}
 			<div class="flex-1"></div>

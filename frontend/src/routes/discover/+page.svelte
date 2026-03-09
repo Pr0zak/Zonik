@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { parseUTC } from '$lib/utils.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3 } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3, HelpCircle } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -51,6 +51,19 @@
 	let previewKey = $state(null);
 	let recStats = $state(null);
 	let showBulkMenu = $state(false);
+	let explainId = $state(null);
+	let explainData = $state(null);
+	let explainLoading = $state(false);
+
+	async function explainRec(rec) {
+		if (explainId === rec.id) { explainId = null; return; }
+		explainId = rec.id;
+		explainLoading = true;
+		try {
+			explainData = await api.explainRecommendation(rec.id);
+		} catch { explainData = { error: 'Failed to get explanation' }; }
+		finally { explainLoading = false; }
+	}
 
 	const sourceFilters = [
 		{ key: 'all', label: 'All' },
@@ -1128,7 +1141,12 @@
 										</button>
 									{/if}
 
-									{#if rec.feedback === 'thumbs_up'}
+									<button onclick={() => explainRec(rec)}
+									class="p-1.5 rounded hover:bg-amber-500/20 text-[var(--text-muted)] hover:text-amber-400 transition-colors"
+									title="Why this?">
+									<HelpCircle class="w-4 h-4" />
+								</button>
+								{#if rec.feedback === 'thumbs_up'}
 										<span class="p-1.5 text-green-400"><ThumbsUp class="w-4 h-4" /></span>
 									{:else if rec.feedback !== 'thumbs_down'}
 										<button onclick={() => recFeedback(rec, 'thumbs_up')}
@@ -1144,6 +1162,31 @@
 									{/if}
 								</div>
 							</div>
+							{#if explainId === rec.id}
+								<div class="px-4 pb-3 animate-fade-slide-in">
+									{#if explainLoading}
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+											<Loader2 class="w-3 h-3 animate-spin" /> Analyzing...
+										</div>
+									{:else if explainData?.error}
+										<p class="text-xs text-red-400">{explainData.error}</p>
+									{:else if explainData}
+										<div class="bg-[var(--bg-tertiary)] rounded-lg p-3 text-sm">
+											<p class="text-[var(--text-body)] mb-2">{explainData.explanation}</p>
+											{#if explainData.factors?.length}
+												<ul class="space-y-0.5">
+													{#each explainData.factors as factor}
+														<li class="text-xs text-[var(--text-muted)] flex items-start gap-1.5">
+															<Sparkles class="w-3 h-3 text-amber-400 mt-0.5 shrink-0" />
+															{factor}
+														</li>
+													{/each}
+												</ul>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/if}
 						{/each}
 					</div>
 				</Card>

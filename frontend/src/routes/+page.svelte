@@ -23,6 +23,7 @@
 	let dashboard = $state(null);
 	let loading = $state(true);
 	let transfers = $state([]);
+	let insights = $state(null);
 
 	const unsubTransfers = activeTransfers.subscribe(v => { transfers = v; });
 	onDestroy(unsubTransfers);
@@ -111,6 +112,8 @@
 		} finally {
 			loading = false;
 		}
+		// Load AI insights separately (may be slow)
+		api.getInsights().then(d => insights = d).catch(() => {});
 	});
 </script>
 
@@ -424,6 +427,32 @@
 				</Card>
 			{/if}
 		</div>
+
+		<!-- AI Insights -->
+		{#if insights && !insights.error && insights.summary}
+			<Card padding="p-4" class="mb-6">
+				<div class="flex items-center justify-between mb-3">
+					<div class="flex items-center gap-2">
+						<Sparkles class="w-4 h-4 text-amber-400" />
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Weekly Insights</h2>
+					</div>
+					{#if insights.play_count}
+						<Badge>{insights.play_count} plays this week</Badge>
+					{/if}
+				</div>
+				<p class="text-sm text-[var(--text-body)] mb-3">{insights.summary}</p>
+				{#if insights.highlights?.length}
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+						{#each insights.highlights as highlight}
+							<div class="flex items-start gap-2 py-1">
+								<Sparkles class="w-3 h-3 text-amber-400/60 mt-0.5 shrink-0" />
+								<span class="text-xs text-[var(--text-secondary)]">{highlight}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</Card>
+		{/if}
 
 		<!-- Row 6: Soulseek P2P + System Health + Version/Scan -->
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">

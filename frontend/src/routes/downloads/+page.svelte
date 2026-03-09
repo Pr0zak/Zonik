@@ -917,9 +917,14 @@
 										</span>
 									</td>
 									<td class="px-4 py-2">
-										<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
-											{r.extension.toUpperCase()}
-										</Badge>
+										<div class="flex items-center gap-1">
+											<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
+												{r.extension.toUpperCase()}
+											</Badge>
+											{#if r.ai_pick}
+												<Badge variant="warning">AI Pick</Badge>
+											{/if}
+										</div>
 									</td>
 									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
 										{formatBitrate(r.bitrate) || '—'}

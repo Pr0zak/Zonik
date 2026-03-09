@@ -145,6 +145,25 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
         format_order = {"flac": 0, "wav": 1, "alac": 1, "mp3": 2, "m4a": 3, "ogg": 3, "opus": 3}
         results.sort(key=lambda r: (format_order.get(r["extension"], 9), -r.get("rep_score", 0), not r["slots_free"], -r["size"]))
 
+        # Optional AI scoring
+        from backend.config import get_settings
+        ai_settings = get_settings().assistant
+        if ai_settings.ai_download_advisor and ai_settings.claude_api_key and len(results) > 3:
+            try:
+                from backend.services.ai.download_advisor import rank_search_results
+                ai_result = await rank_search_results(artist, track, results[:15])
+                if "ranked" in ai_result and ai_result["ranked"]:
+                    # Merge AI scores into results
+                    ai_map = {r.get("filename", ""): r for r in ai_result["ranked"]}
+                    for r in results:
+                        ai = ai_map.get(r["filename"])
+                        if ai:
+                            r["ai_score"] = ai.get("ai_score")
+                            r["ai_reason"] = ai.get("ai_reason", "")
+                            r["ai_pick"] = ai.get("ai_pick", False)
+            except Exception as e:
+                log.debug("AI download advisor error: %s", e)
+
         return {"results": results, "count": len(results), "users": len(users)}
 
     # Legacy slskd fallback — limited results

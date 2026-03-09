@@ -252,6 +252,33 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
     return {"ok": True, "count": len(recs)}
 
 
+@router.post("/{rec_id}/explain")
+async def explain(rec_id: str, db: AsyncSession = Depends(get_db)):
+    """Get AI explanation for why a track was recommended."""
+    rec = await db.get(Recommendation, rec_id)
+    if not rec:
+        return {"error": "Recommendation not found"}
+
+    # Get taste profile for context
+    tp = await db.get(TasteProfile, "default")
+    profile_summary = {}
+    if tp:
+        try:
+            profile_summary = json.loads(tp.profile_data)
+        except Exception:
+            pass
+
+    from backend.services.ai.explainer import explain_recommendation
+    result = await explain_recommendation(
+        track_artist=rec.artist,
+        track_title=rec.track,
+        score=rec.score,
+        source=rec.source,
+        profile_summary=profile_summary,
+    )
+    return result
+
+
 @router.get("/profile")
 async def get_profile(db: AsyncSession = Depends(get_db)):
     """Get the current taste profile summary."""

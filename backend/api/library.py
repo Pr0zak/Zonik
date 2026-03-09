@@ -306,6 +306,19 @@ async def get_duplicate_artist_ids(db: AsyncSession = Depends(get_db)):
     return {"artist_ids": artist_ids, "count": len(artist_ids)}
 
 
+@router.post("/duplicates/ai-resolve")
+async def ai_resolve_duplicates(db: AsyncSession = Depends(get_db)):
+    """Get AI recommendations for which duplicates to keep."""
+    from backend.services.cleanup import find_duplicates_enriched
+    from backend.services.ai.duplicate_resolver import resolve_duplicates
+
+    groups = await find_duplicates_enriched(db)
+    if not groups:
+        return {"recommendations": [], "message": "No duplicates found"}
+
+    return await resolve_duplicates(groups)
+
+
 @router.post("/cleanup/duplicates/preview")
 async def preview_duplicates(db: AsyncSession = Depends(get_db)):
     """Preview duplicate tracks."""
@@ -740,6 +753,13 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
         "most_played": most_played,
         "job_stats": job_stats,
     }
+
+
+@router.get("/stats/insights")
+async def get_insights(db: AsyncSession = Depends(get_db)):
+    """Get AI-generated listening insights for the week."""
+    from backend.services.ai.insights import generate_insights
+    return await generate_insights(db)
 
 
 @router.get("/stats/play-history")

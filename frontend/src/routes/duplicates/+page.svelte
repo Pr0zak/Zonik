@@ -8,7 +8,7 @@
 	import {
 		Copy, Play, Search, Download, Trash2, Check, Loader2, Filter,
 		ChevronDown, ChevronUp, Heart, Music, AlertTriangle, HardDrive, Clock,
-		ChevronsDown, ChevronsUp, Zap, ArrowDownUp, Layers, Star
+		ChevronsDown, ChevronsUp, Zap, ArrowDownUp, Layers, Star, Sparkles
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -92,6 +92,24 @@
 		);
 		selected = new Set(ids);
 		confirmModal = 'auto';
+	}
+
+	let aiResolveLoading = $state(false);
+	let aiRecommendations = $state(null);
+
+	async function aiResolve() {
+		aiResolveLoading = true;
+		try {
+			const data = await api.aiResolveDuplicates();
+			if (data.error) { addToast(data.error, 'error'); return; }
+			aiRecommendations = data.recommendations || [];
+			if (!aiRecommendations.length) { addToast('No AI recommendations', 'info'); return; }
+			// Auto-select AI-recommended removals
+			const removeIds = new Set(aiRecommendations.flatMap(r => r.remove_ids || []));
+			selected = removeIds;
+			addToast(`AI suggests removing ${removeIds.size} tracks`, 'success');
+		} catch (e) { addToast('AI resolve failed: ' + e.message, 'error'); }
+		finally { aiResolveLoading = false; }
 	}
 
 	function findUpgrade(track) {
@@ -308,6 +326,9 @@
 					</button>
 				</div>
 				<div class="flex items-center gap-2 flex-shrink-0">
+					<Button variant="secondary" size="sm" loading={aiResolveLoading} onclick={aiResolve}>
+						<Sparkles class="w-3.5 h-3.5 mr-1 text-amber-400" /> AI Resolve
+					</Button>
 					<Button variant="primary" size="sm" onclick={autoResolve}>
 						<Zap class="w-3.5 h-3.5 mr-1" /> Auto-Resolve
 					</Button>

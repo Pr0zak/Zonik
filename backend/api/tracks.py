@@ -339,6 +339,28 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
     return {"deleted": deleted}
 
 
+class AITagRequest(BaseModel):
+    track_ids: list[str]
+
+
+class ApplyTagsRequest(BaseModel):
+    tags: list[dict]  # [{track_id, genre}]
+
+
+@router.post("/ai-tag")
+async def ai_tag_tracks(req: AITagRequest, db: AsyncSession = Depends(get_db)):
+    """Get AI genre tag suggestions for selected tracks."""
+    from backend.services.ai.auto_tagger import suggest_tags
+    return await suggest_tags(db, req.track_ids)
+
+
+@router.post("/ai-tag/apply")
+async def apply_ai_tags(req: ApplyTagsRequest, db: AsyncSession = Depends(get_db)):
+    """Apply AI-suggested genre tags to tracks."""
+    from backend.services.ai.auto_tagger import apply_tags
+    return await apply_tags(db, req.tags)
+
+
 class BulkAnalyzeRequest(BaseModel):
     track_ids: list[str]
 
