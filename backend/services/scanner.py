@@ -668,8 +668,16 @@ async def import_downloaded_file(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / src.name
 
-    # Handle name collision
+    # Handle name collision — if same filename exists, it's likely a duplicate
     if dest.exists() and dest != src:
+        # Compare file sizes — if similar (within 10%), it's the same file
+        existing_size = dest.stat().st_size
+        new_size = src.stat().st_size
+        if existing_size > 0 and abs(existing_size - new_size) / existing_size < 0.10:
+            log.info(f"[import] Skipping duplicate file (same name, similar size): {src.name}")
+            src.unlink(missing_ok=True)
+            return None
+        # Different size — genuinely different file, add suffix
         stem, ext = dest.stem, dest.suffix
         for i in range(1, 100):
             dest = dest_dir / f"{stem} ({i}){ext}"
