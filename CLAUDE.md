@@ -3,7 +3,7 @@
 Self-hosted music backend serving Symfonium via OpenSubsonic API.
 
 ## Stack
-- **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) + ARQ/Redis
+- **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) or PostgreSQL + ARQ/Redis
 - **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 15 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
 - **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
@@ -61,11 +61,14 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 backend/
   main.py              # FastAPI app, lifespan, router registration
   config.py            # Settings from zonik.toml (Pydantic models)
-  database.py          # SQLAlchemy engine, FTS5 setup, search helpers
-  models/              # 17 SQLAlchemy models (Track, Artist, Album, PlayHistory, SoulseekSnapshot, TrackUpgrade, etc.)
+  database.py          # SQLAlchemy engine, FTS5/tsvector setup, search helpers (SQLite + PostgreSQL)
+  database_compat.py   # Dialect-aware SQL helpers (date_trunc, extract_hour, duration_seconds)
+  models/              # 18 SQLAlchemy models (Track, Artist, Album, PlayHistory, SoulseekSnapshot, TrackUpgrade, TrackMood, etc.)
   api/                 # REST API routes (tracks, library, download, discovery, config, etc.)
-    config_api.py      # Services config + version/updates/upgrade endpoints
-    jobs.py            # Job listing ({items,total} paginated), details, retry failed downloads
+    config_api.py      # Services config + version/updates/upgrade + AI usage endpoints
+    jobs.py            # Job listing ({items,total} paginated), details, retry, dashboard aggregation
+    ai_search.py       # AI natural language search + NL detection
+    playlist_import.py # External playlist fetch/search/import (Spotify, Apple Music, Deezer)
     tracks.py          # Track CRUD + search + bulk actions + metadata edit (writes file tags via mutagen)
     library.py         # Library stats, scan, artists/albums, cleanup (orphans/dedup/organize), upgrade scanner, duplicates management, dashboard aggregation
     download.py        # Soulseek search/trigger/bulk + enqueue_download helper + blacklist + stats + stats history + reputation reset
@@ -91,7 +94,10 @@ backend/
     shares.py          # Library file sharing — scan music dir, build compressed file list for peers
   models/
     stats.py           # SoulseekSnapshot model — periodic P2P stat snapshots for charting
-  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, graph_builder (play/quality data), remix_discovery, etc.)
+  services/            # Business logic (scanner, soulseek facade, lastfm, artwork, cleanup, graph_builder, remix_discovery, etc.)
+    ai/                # AI feature modules — client.py (shared Claude wrapper), mood_tagger.py, playlist_curator.py
+    playlist_import.py # External playlist fetch/parse (Spotify, Apple Music, Deezer)
+  middleware/          # Rate limiting (token bucket, per-IP)
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
@@ -100,19 +106,19 @@ frontend/
     library/           # Card/list views for Tracks, Artists, Albums with art + similar tracks + favorites + track edit modal + cleanup tools + upgrade scanner + remix discovery
     duplicates/        # Duplicate management — grouped cards, rich track details (format/bitrate/quality/plays), bulk remove, find upgrade
     upgrades/          # Track upgrade tracking — scan, queue, status filters, before/after format badges, bulk actions
-    discover/          # Last.fm charts + inline download, similar artists, For You tab (AI recs with cover art + source filters), Remixes tab
+    discover/          # Last.fm charts + inline download, similar artists, For You tab (AI recs), Remixes tab, Playlists tab (external playlist discovery)
     downloads/         # Single-field P2P search with format filters, paginated results, WS-driven transfers, download history, blacklist
-    playlists/         # Playlist management
+    playlists/         # Playlist management + Import tab (external playlist URL/search/import)
     favorites/         # Starred items (paginated, 25/page default)
     analysis/          # Audio analysis, vibe embeddings, enrichment with real-time progress
-    stats/             # Library statistics + Soulseek P2P stats (8 tiles + peer reputation grid + reset) + P2P history charts + Listening History charts (Chart.js)
+    stats/             # Library statistics + Soulseek P2P stats + P2P history charts + Listening History charts + Job Pipeline dashboard (donut + timeline)
     map/               # Music Map — D3.js force-directed graph with 4 view modes (genre/play heatmap/quality/duplicates)
     schedule/          # Schedule overview — groups tasks by section with links to Library/Analysis/Discover/Playlists/Settings
     logs/              # Job history with category filters + server-side pagination (25/page default) + expandable detail
     settings/          # Service config, subsonic info, updates/upgrade
   src/components/      # Sidebar (update indicator, GitHub link, active jobs, transfer mini-progress), TopBar (search + sync/bell icons), Player, Toast
-    ui/                # 10 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating
-  src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js
+    ui/                # 11 reusable components: Button, Badge, Card, Skeleton, FormInput, Modal, EmptyState, PageHeader, ScheduleControl, StarRating, SwipeRow
+  src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js, swipe.js
 deploy/                # Systemd service files
 docs/                  # Installation, configuration, API reference, development guide
 ```
@@ -248,7 +254,7 @@ docs/                  # Installation, configuration, API reference, development
 - User API keys: per-user subsonic_api_key for Symfonium token auth; generate/revoke/copy/eye-toggle in Settings > User Management
 - Last.fm favorites sync: scheduled task pushes Zonik starred tracks → Last.fm loved tracks (incremental, skips already-loved)
 - Last.fm auth: callback saves session_key + username to zonik.toml; session_key and username in [lastfm] config
-- Settings page: 8 separate Card sections with icon badges; sticky save bar; Share Library moved to Library section; Last.fm Sync moved into Last.fm card; Subsonic styled as info-only
+- Settings page: 10 separate Card sections with icon badges; sticky save bar; Share Library moved to Library section; Last.fm Sync moved into Last.fm card; Subsonic styled as info-only; Spotify + Apple Music sections for playlist import
 - Sortable tables pattern: all list/table views with sortable columns must use slim ↑/↓ arrows (not ▲/▼), click cycles asc→desc→clear; `whitespace-nowrap` required on all sortable th/button elements to prevent arrow wrapping; Discover uses toggleSort()+sortIndicator()+sortTracks(), Library uses toggleSort()+server-side sort params, Downloads uses toggleSort()+client-side sort — always follow this pattern for new sortable lists
 - Discover page: iTunes artwork thumbnails on all track tabs (For You, Top Tracks, Similar Tracks, Remixes) via client-side cache; Music icon fallback
 - Discover artwork pattern: all track tabs must use `{@const art = getArtwork(artist, name)}` + button with hover play/pause overlay for 30s iTunes preview; For You uses rec.image_url/preview_url directly; Search and Similar Artists are text-only (no artwork)
@@ -301,6 +307,7 @@ docs/                  # Installation, configuration, API reference, development
 - Discovery batch matching: _batch_library_match() helper in discovery.py — single batched query for all track lists (top_tracks, similar, remixes, search, remix_suggestions); takes name_key/artist_key params
 - Cleanup request models: RemoveDupesRequest and OrganizeRequest (Pydantic) replace raw dict params in library.py
 - Database indexes: Track.artist_id, Track.album_id, Favorite.track_id/album_id/artist_id, Job.type, Job.status (migration h9i0j1k2l3m4)
+- Latest migration: k2l3m4n5o6p7 (add track_moods table)
 - Artwork batch fetching: POST /api/discovery/artwork/batch proxies iTunes Search API (CORS), 100 items max, 10 concurrent lookups; frontend debounces 50ms
 - Recommendation auto-download: configurable min_score + max_downloads in ScheduleTask.config; runs after recommendation_refresh completes
 - Last.fm user history: taste profile enriched with user.getTopArtists + user.getTopTracks when session_key exists (blended with local data)
@@ -331,6 +338,25 @@ docs/                  # Installation, configuration, API reference, development
 - Performance: recommender build_taste_profile runs 7 independent DB queries via asyncio.gather()
 - Performance: Last.fm uses persistent httpx.AsyncClient with connection pooling (not new client per call)
 - Performance: api.js buildUrl() helper centralizes URL building with undefined/null filtering (8 call sites)
+- PostgreSQL optional backend: DatabaseConfig.backend ("sqlite"/"postgresql") + DatabaseConfig.url; get_engine() returns asyncpg pool (size=10, overflow=20) or aiosqlite; init_db() conditionally applies SQLite PRAGMAs or PG tsvector setup
+- PostgreSQL search: tracks_search table with tsvector column + GIN index mirrors FTS5 virtual table; update_fts_index() uses INSERT ON CONFLICT for PG, DELETE+INSERT for SQLite; search_fts() uses plainto_tsquery + ts_rank for PG
+- database_compat.py: dialect-aware SQL helpers — date_trunc (strftime vs func.date_trunc), extract_hour (strftime('%H') vs extract(hour)), duration_seconds (julianday vs EXTRACT(EPOCH))
+- AI services package: backend/services/ai/ — shared client (client.py) with Semaphore(2) rate limiting + token tracking + persistent httpx; 1 module per feature (mood_tagger.py, playlist_curator.py, etc.)
+- AI shared client: backend/services/ai/client.py wraps Claude API with asyncio.Semaphore(2), tracks input/output tokens per call, reusable across all 10 AI features
+- Mood tags: CLAP text-to-audio similarity for zero-cost mood tagging (no API calls); 15 mood vocabulary (energetic, calm, melancholic, happy, dark, romantic, aggressive, dreamy, uplifting, mysterious, nostalgic, playful, intense, peaceful, ethereal); top_k=3 moods per track
+- TrackMood model: track_id (PK, FK), moods (comma-separated), primary_mood, confidence (float), source ("clap"/"ai"), created_at; migration k2l3m4n5o6p7
+- Mood tagger: _get_mood_embeddings() lazily computes CLAP text embeddings (cached globally); tag_tracks_with_moods() scores via cosine similarity, upserts TrackMood records
+- Playlist import: backend/services/playlist_import.py — URL auto-detection via regex (Spotify, Apple Music, Deezer); fetch_playlist() unified dispatcher; match_tracks_to_library() exact title+artist join
+- Playlist import sources: Spotify (client_credentials flow, paginated up to 500 tracks), Apple Music (developer token), Deezer (public API, no auth)
+- Playlist import API: backend/api/playlist_import.py — POST fetch (URL → parsed tracks + library match), POST search (multi-source), POST import (create playlist + optional download missing), POST ai-review
+- Playlist discovery: POST /api/discovery/playlists builds queries from taste profile (top genres + artists), searches Deezer/Spotify, returns ranked results
+- AI playlist curator: backend/services/ai/playlist_curator.py — rank_playlists() scores by taste alignment + novelty, review_import() evaluates track compatibility
+- Config: SpotifyConfig (client_id, client_secret) and AppleMusicConfig (developer_token) in config.py; web-configurable in Settings
+- Rate limiting: token bucket middleware (backend/middleware/rate_limit.py), per-IP tracking, configurable rate_limit_rps + rate_limit_burst in ServerConfig
+- Job pipeline dashboard: GET /api/jobs/dashboard returns status counts, type distribution, hourly timeline, avg duration; Chart.js donut + bar charts on Stats page
+- SwipeRow mobile component: frontend/src/components/ui/SwipeRow.svelte + frontend/src/lib/swipe.js; Svelte action for touch swipe detection (horizontal-only, clamped -150 to 150px); dispatches swipemove event, calls onSwipeLeft/onSwipeRight
+- Responsive tables: hidden sm:/md:/lg:table-cell classes on less-critical columns (Upgrades: Result/Reason/Tries, Logs: Progress/Started)
+- Settings page: 10 sections (Library, Soulseek, Last.fm, Lidarr, Spotify, Apple Music, Subsonic, Users, Database, Updates) — Spotify + Apple Music credential cards added for playlist import
 
 ## Important Files
 - `zonik.toml` — Local config with real API keys (NEVER commit)
@@ -376,3 +402,8 @@ docs/                  # Installation, configuration, API reference, development
 - Last.fm: Read API + Write API (scrobble, love) with method signatures (set via web UI)
 - Lidarr: Secondary download source (set via web UI)
 - MusicBrainz: Metadata enrichment (1 req/sec rate limit)
+- Spotify: Playlist import via client credentials flow (client_id + client_secret in Settings)
+- Apple Music: Playlist import via developer token (set in Settings)
+- Deezer: Playlist import + discovery via public API (no auth needed)
+- Claude API: AI features (search, playlists, tagging, moods, insights, duplicate resolver, download advisor, playlist curator) via shared client with Semaphore(2)
+- iTunes Search API: Cover art + 30s preview URLs for recommendations and discover (no key needed)
