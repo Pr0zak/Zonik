@@ -8,7 +8,7 @@ import re
 import shutil
 from pathlib import Path
 
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -95,7 +95,7 @@ async def remove_orphaned_tracks(db: AsyncSession) -> dict:
 
     # Delete FTS entries
     for tid in orphan_ids:
-        await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (tid,))
+        await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": tid})
 
     # Delete tracks
     await db.execute(delete(Track).where(Track.id.in_(orphan_ids)))
@@ -302,7 +302,7 @@ async def remove_duplicates(db: AsyncSession, remove_ids: list[str], delete_file
     await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(remove_ids)))
     await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(remove_ids)))
     for rid in remove_ids:
-        await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (rid,))
+        await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": rid})
     await db.execute(delete(Track).where(Track.id.in_(remove_ids)))
 
     files_deleted = 0

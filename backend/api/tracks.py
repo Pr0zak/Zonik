@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 
 log = logging.getLogger(__name__)
 from pydantic import BaseModel
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -327,7 +327,7 @@ async def delete_track(track_id: str, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(TrackMood).where(TrackMood.track_id == track_id))
     await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id == track_id))
     # Remove FTS entry
-    await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (track_id,))
+    await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": track_id})
     await db.execute(delete(Track).where(Track.id == track_id))
     await db.commit()
     return {"ok": True}
@@ -370,7 +370,7 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
             await db.execute(delete(Bookmark).where(Bookmark.track_id == track_id))
             await db.execute(delete(TrackMood).where(TrackMood.track_id == track_id))
             await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id == track_id))
-            await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (track_id,))
+            await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": track_id})
             await db.delete(track)
             deleted += 1
     await db.commit()

@@ -426,7 +426,7 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
             await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(orphan_ids)))
             await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(orphan_ids)))
             for tid in orphan_ids:
-                await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (tid,))
+                await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": tid})
             await db.execute(delete(Track).where(Track.id.in_(orphan_ids)))
             stats["orphans_removed"] = len(orphan_ids)
             log.info(f"Removed {len(orphan_ids)} orphaned tracks")
