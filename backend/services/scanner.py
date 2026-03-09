@@ -79,6 +79,36 @@ def _get_int_tag(audio, keys: list[str], default=None) -> int | None:
         return default
 
 
+def _parse_filename(stem: str) -> dict:
+    """Parse artist, title, and track number from a filename stem.
+
+    Handles common patterns:
+      '03 - Artist - Title'
+      'Artist - Title'
+      '03. Artist - Title'
+      '126 - 7A - Artist - Title'  (Beatport style)
+    """
+    import re
+    result: dict = {}
+    s = stem.strip()
+
+    # Strip leading track number (01, 03., 126 - 7A -)
+    m = re.match(r"^(\d{1,3})[\s.\-]+(?:\d+[A-Za-z][\s.\-]+)?(.*)$", s)
+    if m:
+        result["track_number"] = int(m.group(1))
+        s = m.group(2).strip()
+
+    # Split on " - " (the standard artist-title separator)
+    parts = re.split(r"\s+[-–—]\s+", s, maxsplit=1)
+    if len(parts) == 2:
+        result["artist"] = parts[0].strip()
+        result["title"] = parts[1].strip()
+    else:
+        result["title"] = s
+
+    return result
+
+
 def parse_audio_file(file_path: Path, music_dir: Path) -> dict | None:
     """Parse tags from an audio file, return a dict of track fields."""
     if file_path.stat().st_size == 0:
@@ -101,10 +131,26 @@ def parse_audio_file(file_path: Path, music_dir: Path) -> dict | None:
     sample_rate = getattr(info, "sample_rate", None)
     bit_depth = getattr(info, "bits_per_sample", None)
 
-    title = _get_tag(audio, ["title"]) or file_path.stem
+    title = _get_tag(audio, ["title"])
     artist_name = _get_tag(audio, ["artist", "albumartist"])
     album_title = _get_tag(audio, ["album"])
     track_number = _get_int_tag(audio, ["tracknumber"])
+
+    # Fallback: parse "Artist - Title" from filename when tags are missing
+    if not title or not artist_name:
+        parsed_name = _parse_filename(file_path.stem)
+        if not title:
+            title = parsed_name.get("title") or file_path.stem
+        if not artist_name:
+            artist_name = parsed_name.get("artist")
+        if not track_number and parsed_name.get("track_number"):
+            track_number = parsed_name["track_number"]
+        if not album_title:
+            # Try parent folder as album (e.g., "Artist/Album/01 - Title.flac")
+            parent = file_path.parent.name
+            grandparent = file_path.parent.parent.name if file_path.parent.parent != music_dir else None
+            if grandparent and parent != grandparent:
+                album_title = parent
     disc_number = _get_int_tag(audio, ["discnumber"], default=1)
     genre = _get_tag(audio, ["genre"])
     year_str = _get_tag(audio, ["date", "year"])

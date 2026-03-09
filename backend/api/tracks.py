@@ -445,3 +445,103 @@ async def get_moods(track_ids: str | None = None):
     from backend.services.ai.mood_tagger import get_track_moods
     ids = track_ids.split(",") if track_ids else None
     return await get_track_moods(ids)
+
+
+class RepairTagsRequest(BaseModel):
+    track_ids: list[str] | None = None  # None = all tracks with missing artist
+    dry_run: bool = True
+
+
+@router.post("/repair-tags")
+async def repair_tags(req: RepairTagsRequest, db: AsyncSession = Depends(get_db)):
+    """Repair tags by parsing artist/title from filenames for tracks with missing metadata.
+
+    Targets tracks where artist is NULL but the filename contains 'Artist - Title'.
+    Also writes corrected tags to the audio file.
+    """
+    import hashlib
+    from pathlib import Path
+    from backend.config import get_settings
+    from backend.services.scanner import _parse_filename
+    from backend.database import update_fts_index
+
+    settings = get_settings()
+    music_dir = Path(settings.library.music_dir)
+
+    if req.track_ids:
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .where(Track.id.in_(req.track_ids))
+        )
+    else:
+        # Find all tracks with no artist
+        result = await db.execute(
+            select(Track).options(selectinload(Track.artist))
+            .where(Track.artist_id.is_(None))
+        )
+    tracks = result.scalars().all()
+
+    repairs = []
+    applied = 0
+
+    for t in tracks:
+        if not t.file_path:
+            continue
+        stem = Path(t.file_path).stem
+        parsed = _parse_filename(stem)
+        if not parsed.get("artist"):
+            continue
+
+        new_artist = parsed["artist"]
+        new_title = parsed.get("title", t.title)
+        old_title = t.title
+        old_artist = t.artist.name if t.artist else None
+
+        repair = {
+            "track_id": t.id,
+            "file_path": t.file_path,
+            "old_title": old_title,
+            "old_artist": old_artist,
+            "new_title": new_title,
+            "new_artist": new_artist,
+        }
+        repairs.append(repair)
+
+        if not req.dry_run:
+            # Find or create artist
+            artist_key = new_artist.lower().strip()
+            artist_id = hashlib.md5(artist_key.encode()).hexdigest()
+            existing_artist = await db.get(Artist, artist_id)
+            if not existing_artist:
+                existing_artist = Artist(id=artist_id, name=new_artist)
+                db.add(existing_artist)
+                await db.flush()
+
+            t.title = new_title
+            t.artist_id = artist_id
+
+            # Write tags to file
+            try:
+                import mutagen
+                full_path = music_dir / t.file_path
+                if full_path.exists():
+                    audio = mutagen.File(str(full_path), easy=True)
+                    if audio is not None:
+                        audio["title"] = new_title
+                        audio["artist"] = new_artist
+                        audio.save()
+            except Exception as e:
+                log.warning(f"[repair] Could not write tags to {t.file_path}: {e}")
+
+            await update_fts_index(db, t.id, new_title, new_artist, t.album.title if t.album else None)
+            applied += 1
+
+    if not req.dry_run and applied:
+        await db.commit()
+
+    return {
+        "repairs": repairs,
+        "total": len(repairs),
+        "applied": applied if not req.dry_run else 0,
+        "dry_run": req.dry_run,
+    }
