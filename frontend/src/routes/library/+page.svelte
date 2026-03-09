@@ -80,6 +80,7 @@
 	let sort = $state('title');
 	let order = $state('asc');
 	let analyzedFilter = $state(''); // '', 'yes', 'no'
+	let flaggedFilter = $state(false); // show only rating=1 tracks
 	let filterArtistId = $state('');
 	let filterArtistName = $state('');
 	let filterAlbumId = $state('');
@@ -437,7 +438,7 @@
 		loading = true;
 		try {
 			if (tab === 'tracks') {
-				const result = await api.getTracks({ offset, limit, sort, order, search: search || undefined, analyzed: analyzedFilter || undefined, artist_id: filterArtistId || undefined, album_id: filterAlbumId || undefined });
+				const result = await api.getTracks({ offset, limit, sort, order, search: search || undefined, analyzed: analyzedFilter || undefined, artist_id: filterArtistId || undefined, album_id: filterAlbumId || undefined, rating: flaggedFilter ? 'flagged' : undefined });
 				tracks = result.tracks;
 				trackTotal = result.total;
 			} else if (tab === 'artists') {
@@ -812,6 +813,14 @@
 				</button>
 			</span>
 		{/if}
+		{#if flaggedFilter}
+			<span class="inline-flex items-center gap-1 bg-red-500/10 text-xs text-red-400 border border-red-500/30 rounded px-2 py-1 ml-2">
+				<Trash2 class="w-3 h-3" /> Flagged for Deletion
+				<button onclick={() => { flaggedFilter = false; offset = 0; loadData(); }} class="text-red-400/60 hover:text-red-300 ml-0.5">
+					<X class="w-3 h-3" />
+				</button>
+			</span>
+		{/if}
 
 		<!-- Per-page select -->
 		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
@@ -862,6 +871,9 @@
 
 		<!-- Select mode toggle (tracks tab only) -->
 		{#if tab === 'tracks' && !selectMode}
+			<Button variant={flaggedFilter ? 'danger' : 'secondary'} size="sm" onclick={() => { flaggedFilter = !flaggedFilter; offset = 0; loadData(); }}>
+				<Trash2 class="w-3.5 h-3.5" /> Flagged
+			</Button>
 			<Button variant="secondary" size="sm" onclick={toggleSelectMode}>
 				<CheckSquare class="w-3.5 h-3.5" /> Select
 			</Button>

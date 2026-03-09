@@ -32,6 +32,7 @@ async def list_tracks(
     artist_id: str | None = None,
     album_id: str | None = None,
     analyzed: str | None = None,  # "yes", "no", or None (all)
+    rating: str | None = None,  # "1", "flagged" (=1), or None (all)
     db: AsyncSession = Depends(get_db),
 ):
     # Subquery for analyzed track IDs
@@ -64,6 +65,8 @@ async def list_tracks(
         query = query.where(Track.id.notin_(analyzed_ids_sq))
     elif analyzed == "yes":
         query = query.where(Track.id.in_(analyzed_ids_sq))
+    if rating == "flagged" or rating == "1":
+        query = query.where(Track.rating == 1)
 
     # Sorting
     if sort == "analyzed":
@@ -113,6 +116,8 @@ async def list_tracks(
         count_q = count_q.where(Track.id.notin_(analyzed_ids_sq))
     elif analyzed == "yes":
         count_q = count_q.where(Track.id.in_(analyzed_ids_sq))
+    if rating == "flagged" or rating == "1":
+        count_q = count_q.where(Track.rating == 1)
     total = (await db.execute(count_q)).scalar() or 0
 
     return {
