@@ -286,6 +286,7 @@
 		if (tab === 'similar' && !similarTracks.length && !similarLoading) scanSimilarTracks();
 		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
 		if (tab === 'remixes' && !remixes.length && !remixLoading) loadRemixes();
+		if (tab === 'playlists' && !discPlaylists.length && !discPlaylistsLoading) loadDiscoverPlaylists();
 	}
 
 	let sortedTopTracks = $derived(sortTracks(topTracks));
