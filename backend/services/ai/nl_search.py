@@ -13,6 +13,7 @@ from backend.config import get_settings
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
+from backend.models.analysis import TrackAnalysis
 from backend.services.ai.client import call_claude
 
 log = logging.getLogger(__name__)
@@ -105,10 +106,12 @@ async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50) 
         query = query.join(Artist, Track.artist_id == Artist.id, isouter=True)
         conditions.append(func.lower(Artist.name).contains(filters["artist"].lower()))
 
-    if filters.get("min_bpm"):
-        conditions.append(Track.bpm >= filters["min_bpm"])
-    if filters.get("max_bpm"):
-        conditions.append(Track.bpm <= filters["max_bpm"])
+    if filters.get("min_bpm") or filters.get("max_bpm"):
+        query = query.outerjoin(TrackAnalysis, Track.id == TrackAnalysis.track_id)
+        if filters.get("min_bpm"):
+            conditions.append(TrackAnalysis.bpm >= filters["min_bpm"])
+        if filters.get("max_bpm"):
+            conditions.append(TrackAnalysis.bpm <= filters["max_bpm"])
 
     if filters.get("min_bitrate"):
         conditions.append(Track.bitrate >= filters["min_bitrate"] * 1000)
@@ -161,8 +164,7 @@ async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50) 
             "genre": t.genre,
             "format": t.format,
             "bitrate": t.bitrate,
-            "bpm": t.bpm,
-            "duration": t.duration,
+            "duration": t.duration_seconds,
             "play_count": t.play_count,
             "rating": t.rating,
             "file_path": t.file_path,
