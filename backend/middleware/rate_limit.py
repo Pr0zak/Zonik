@@ -19,11 +19,12 @@ class RateLimiter(BaseHTTPMiddleware):
         paths: Optional list of path prefixes to rate-limit (default: /api/)
     """
 
-    def __init__(self, app, rate: float = 10, burst: int = 30, paths: list[str] | None = None):
+    def __init__(self, app, rate: float = 10, burst: int = 30, paths: list[str] | None = None, exclude: list[str] | None = None):
         super().__init__(app)
         self.rate = rate
         self.burst = burst
         self.paths = paths or ["/api/"]
+        self.exclude = exclude or ["/api/download/", "/rest/"]
         self._buckets: dict[str, tuple[float, float]] = defaultdict(lambda: (burst, time.monotonic()))
 
     def _get_key(self, request: Request) -> str:
@@ -35,6 +36,8 @@ class RateLimiter(BaseHTTPMiddleware):
 
     def _should_limit(self, path: str) -> bool:
         """Check if this path should be rate-limited."""
+        if any(path.startswith(p) for p in self.exclude):
+            return False
         return any(path.startswith(p) for p in self.paths)
 
     def _consume(self, key: str) -> bool:
