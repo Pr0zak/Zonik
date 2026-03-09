@@ -5,7 +5,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -34,12 +34,26 @@ def get_engine():
     # SQLite is file-based so connection pooling provides no benefit
     db_path = Path(settings.database.path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return create_async_engine(
+    eng = create_async_engine(
         f"sqlite+aiosqlite:///{db_path}",
         echo=False,
         poolclass=NullPool,
         connect_args={"check_same_thread": False},
     )
+
+    # Set PRAGMAs on every new connection (NullPool creates fresh connections)
+    @event.listens_for(eng.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA busy_timeout=30000")  # 30s wait for locks
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA cache_size=-32000")
+        cursor.execute("PRAGMA mmap_size=268435456")
+        cursor.close()
+
+    return eng
 
 
 engine = get_engine()
