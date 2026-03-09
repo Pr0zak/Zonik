@@ -134,31 +134,35 @@ async def call_claude(
             return {"error": str(e)}
 
 
-def _parse_json(text: str) -> dict | None:
+def _parse_json(text: str) -> dict | list | None:
     """Parse JSON from Claude's response, handling code blocks."""
     # Extract from code blocks
-    if "```json" in text:
-        start = text.index("```json") + 7
-        end = text.index("```", start)
-        text = text[start:end].strip()
-    elif "```" in text:
-        start = text.index("```") + 3
-        end = text.index("```", start)
-        text = text[start:end].strip()
+    try:
+        if "```json" in text:
+            start = text.index("```json") + 7
+            end = text.index("```", start)
+            text = text[start:end].strip()
+        elif "```" in text:
+            start = text.index("```") + 3
+            end = text.index("```", start)
+            text = text[start:end].strip()
+    except ValueError:
+        pass  # Unclosed code block — try parsing raw text
 
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Find JSON object in text
+    # Find JSON object or array in text
     for i, ch in enumerate(text):
-        if ch == '{':
+        if ch in ('{', '['):
+            open_ch, close_ch = ('{', '}') if ch == '{' else ('[', ']')
             depth = 0
             for j in range(i, len(text)):
-                if text[j] == '{':
+                if text[j] == open_ch:
                     depth += 1
-                elif text[j] == '}':
+                elif text[j] == close_ch:
                     depth -= 1
                     if depth == 0:
                         try:
