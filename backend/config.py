@@ -23,7 +23,9 @@ class LibraryConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    path: str = "/opt/zonik/data/zonik.db"
+    backend: str = "sqlite"  # "sqlite" or "postgresql"
+    path: str = "/opt/zonik/data/zonik.db"  # SQLite path
+    url: str = ""  # PostgreSQL URL (e.g., postgresql+asyncpg://user:pass@host/db)
 
 
 class RedisConfig(BaseModel):
