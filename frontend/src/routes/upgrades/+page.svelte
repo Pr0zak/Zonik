@@ -351,14 +351,14 @@
 						<th class="px-3 py-2 text-left whitespace-nowrap">
 							<button onclick={() => toggleSort('original_format')} class="hover:text-[var(--text-primary)] transition-colors">Current{sortIndicator('original_format')}</button>
 						</th>
-						<th class="px-3 py-2 text-left">Result</th>
+						<th class="px-3 py-2 text-left hidden md:table-cell">Result</th>
 						<th class="px-3 py-2 text-left whitespace-nowrap">
 							<button onclick={() => toggleSort('status')} class="hover:text-[var(--text-primary)] transition-colors">Status{sortIndicator('status')}</button>
 						</th>
-						<th class="px-3 py-2 text-left whitespace-nowrap">
+						<th class="px-3 py-2 text-left whitespace-nowrap hidden lg:table-cell">
 							<button onclick={() => toggleSort('reason')} class="hover:text-[var(--text-primary)] transition-colors">Reason{sortIndicator('reason')}</button>
 						</th>
-						<th class="px-3 py-2 text-center whitespace-nowrap">
+						<th class="px-3 py-2 text-center whitespace-nowrap hidden sm:table-cell">
 							<button onclick={() => toggleSort('attempts')} class="hover:text-[var(--text-primary)] transition-colors">Tries{sortIndicator('attempts')}</button>
 						</th>
 						<th class="px-3 py-2 text-right">Actions</th>
@@ -399,7 +399,7 @@
 									<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.original_bitrate)}</span>
 								</div>
 							</td>
-							<td class="px-3 py-2">
+							<td class="px-3 py-2 hidden md:table-cell">
 								{#if u.status === 'completed' && u.upgraded_format}
 									<div class="flex items-center gap-2">
 										<ArrowRight class="w-3 h-3 text-emerald-400" />
@@ -418,10 +418,10 @@
 									<Loader2 class="w-3 h-3 text-indigo-400 animate-spin inline ml-1" />
 								{/if}
 							</td>
-							<td class="px-3 py-2">
+							<td class="px-3 py-2 hidden lg:table-cell">
 								<span class="text-xs text-[var(--text-muted)]">{reasonLabels[u.reason] || u.reason}</span>
 							</td>
-							<td class="px-3 py-2 text-center">
+							<td class="px-3 py-2 text-center hidden sm:table-cell">
 								<span class="text-xs text-[var(--text-muted)]">{u.attempts}/{u.max_attempts}</span>
 							</td>
 							<td class="px-3 py-2 text-right">

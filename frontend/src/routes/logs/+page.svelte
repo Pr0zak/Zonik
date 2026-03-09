@@ -220,9 +220,9 @@
 					<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Type</th>
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
-						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Progress</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Progress</th>
 						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Duration</th>
-						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Started</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Started</th>
 					</tr>
 				</thead>
 				<tbody class="divide-y divide-[var(--border-subtle)]">
@@ -259,7 +259,7 @@
 									{/if}
 								</div>
 							</td>
-							<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs">
+							<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs hidden sm:table-cell">
 								{#if job.total}
 									{job.progress}/{job.total}
 								{:else}
@@ -269,7 +269,7 @@
 							<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">
 								{formatJobDuration(job.started_at, job.finished_at)}
 							</td>
-							<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono">
+							<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden sm:table-cell">
 								{job.started_at ? formatDateTime(job.started_at) : '-'}
 							</td>
 						</tr>
