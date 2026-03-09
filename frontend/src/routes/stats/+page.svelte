@@ -508,62 +508,6 @@
 			</Card>
 		</div>
 
-		<!-- Database & Backend -->
-		{#if data.database || data.backend}
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-				{#if data.database}
-					<Card padding="p-4">
-						<div class="flex items-center gap-2 mb-3">
-							<Database class="w-4 h-4 text-[var(--color-stats)]" />
-							<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Database</h3>
-						</div>
-						<div class="space-y-2">
-							<div class="flex justify-between text-sm">
-								<span class="text-[var(--text-muted)]">Backend</span>
-								<span class="text-[var(--text-primary)] font-mono">{data.database.backend === 'postgresql' ? 'PostgreSQL' : 'SQLite'}</span>
-							</div>
-							{#if data.database.file_size_bytes}
-								<div class="flex justify-between text-sm">
-									<span class="text-[var(--text-muted)]">DB Size</span>
-									<span class="text-[var(--text-primary)] font-mono">{formatSize(data.database.file_size_bytes)}</span>
-								</div>
-							{/if}
-							{#if data.database.wal_size_bytes}
-								<div class="flex justify-between text-sm">
-									<span class="text-[var(--text-muted)]">WAL Size</span>
-									<span class="text-[var(--text-primary)] font-mono">{formatSize(data.database.wal_size_bytes)}</span>
-								</div>
-							{/if}
-							{#if data.database.total_rows}
-								<div class="flex justify-between text-sm">
-									<span class="text-[var(--text-muted)]">Total Rows</span>
-									<span class="text-[var(--text-primary)] font-mono">{data.database.total_rows.toLocaleString()}</span>
-								</div>
-							{/if}
-						</div>
-					</Card>
-				{/if}
-				{#if data.backend}
-					<Card padding="p-4">
-						<div class="flex items-center gap-2 mb-3">
-							<Server class="w-4 h-4 text-[var(--color-stats)]" />
-							<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Backend</h3>
-						</div>
-						<div class="space-y-2">
-							<div class="flex justify-between text-sm">
-								<span class="text-[var(--text-muted)]">Python</span>
-								<span class="text-[var(--text-primary)] font-mono">{data.backend.python_version}</span>
-							</div>
-							<div class="flex justify-between text-sm">
-								<span class="text-[var(--text-muted)]">Process ID</span>
-								<span class="text-[var(--text-primary)] font-mono">{data.backend.pid}</span>
-							</div>
-						</div>
-					</Card>
-				{/if}
-			</div>
-		{/if}
-
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
 			<!-- Formats -->
 			<Card padding="p-4">
@@ -740,6 +684,69 @@
 					</div>
 				{/if}
 			</Card>
+		{/if}
+
+		<!-- System Stats Section -->
+		<div class="flex items-center gap-3 mb-6 mt-4">
+			<div class="h-px flex-1 bg-[var(--border-subtle)]"></div>
+			<span class="text-xs font-mono uppercase tracking-wider text-[var(--text-disabled)]">System</span>
+			<div class="h-px flex-1 bg-[var(--border-subtle)]"></div>
+		</div>
+
+		<!-- Database & Backend -->
+		{#if data.database || data.backend}
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+				{#if data.database}
+					<Card padding="p-4">
+						<div class="flex items-center gap-2 mb-3">
+							<Database class="w-4 h-4 text-[var(--color-stats)]" />
+							<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Database</h3>
+						</div>
+						<div class="space-y-2">
+							<div class="flex justify-between text-sm">
+								<span class="text-[var(--text-muted)]">Backend</span>
+								<span class="text-[var(--text-primary)] font-mono">{data.database.backend === 'postgresql' ? 'PostgreSQL' : 'SQLite'}</span>
+							</div>
+							{#if data.database.file_size_bytes}
+								<div class="flex justify-between text-sm">
+									<span class="text-[var(--text-muted)]">DB Size</span>
+									<span class="text-[var(--text-primary)] font-mono">{formatSize(data.database.file_size_bytes)}</span>
+								</div>
+							{/if}
+							{#if data.database.wal_size_bytes}
+								<div class="flex justify-between text-sm">
+									<span class="text-[var(--text-muted)]">WAL Size</span>
+									<span class="text-[var(--text-primary)] font-mono">{formatSize(data.database.wal_size_bytes)}</span>
+								</div>
+							{/if}
+							{#if data.database.total_rows}
+								<div class="flex justify-between text-sm">
+									<span class="text-[var(--text-muted)]">Total Rows</span>
+									<span class="text-[var(--text-primary)] font-mono">{data.database.total_rows.toLocaleString()}</span>
+								</div>
+							{/if}
+						</div>
+					</Card>
+				{/if}
+				{#if data.backend}
+					<Card padding="p-4">
+						<div class="flex items-center gap-2 mb-3">
+							<Server class="w-4 h-4 text-[var(--color-stats)]" />
+							<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Backend</h3>
+						</div>
+						<div class="space-y-2">
+							<div class="flex justify-between text-sm">
+								<span class="text-[var(--text-muted)]">Python</span>
+								<span class="text-[var(--text-primary)] font-mono">{data.backend.python_version}</span>
+							</div>
+							<div class="flex justify-between text-sm">
+								<span class="text-[var(--text-muted)]">Process ID</span>
+								<span class="text-[var(--text-primary)] font-mono">{data.backend.pid}</span>
+							</div>
+						</div>
+					</Card>
+				{/if}
+			</div>
 		{/if}
 
 		<!-- Job Stats -->
