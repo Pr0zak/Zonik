@@ -20,6 +20,38 @@ from backend.models.album import Album
 log = logging.getLogger(__name__)
 
 
+def _normalize_for_dedup(s: str) -> str:
+    """Normalize a string for dedup matching — strips feat, parentheticals, punctuation."""
+    if not s:
+        return ""
+    s = s.lower().strip()
+    # Strip track numbers from start
+    s = re.sub(r"^\d{1,3}[\s.\-]+", "", s)
+    # Strip parentheticals and brackets
+    s = re.sub(r"\s*\(.*?\)\s*", " ", s)
+    s = re.sub(r"\s*\[.*?\]\s*", " ", s)
+    # Strip "feat." / "ft." / "featuring" and everything after
+    s = re.sub(r"\s*(feat\.?|ft\.?|featuring)\s.*", "", s)
+    # Non-alphanum
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _normalize_artist_for_dedup(name: str) -> str:
+    """Normalize artist name — strips feat, separators, sorts multi-artist."""
+    if not name:
+        return ""
+    s = name.lower().strip()
+    # Remove feat/ft suffix
+    s = re.sub(r"\s*(feat\.?|ft\.?|featuring)\s.*", "", s)
+    # Split on common separators and take primary artist
+    parts = re.split(r"\s*[,&/×x]\s*", s)
+    # Use first/primary artist only for matching
+    s = parts[0].strip() if parts else s
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 # --- Orphan Cleanup ---
 
 async def find_orphaned_tracks(db: AsyncSession) -> list[dict]:
@@ -102,29 +134,25 @@ def _track_quality_score(track: Track) -> int:
 
 
 async def find_duplicates(db: AsyncSession) -> list[dict]:
-    """Find duplicate tracks (same title + artist, case-insensitive)."""
-    # Single query: get all tracks that belong to duplicate groups
-    dupe_keys_sq = (
-        select(func.lower(Track.title).label("title_lower"), Track.artist_id)
-        .where(Track.artist_id.isnot(None))
-        .group_by(func.lower(Track.title), Track.artist_id)
-        .having(func.count(Track.id) > 1)
-        .subquery()
-    )
-    all_dupes_result = await db.execute(
+    """Find duplicate tracks (normalized title + artist matching)."""
+    # Load all tracks with artist for normalized matching
+    all_result = await db.execute(
         select(Track).options(selectinload(Track.artist), selectinload(Track.album))
-        .join(dupe_keys_sq, (func.lower(Track.title) == dupe_keys_sq.c.title_lower) & (Track.artist_id == dupe_keys_sq.c.artist_id))
-        .order_by(func.lower(Track.title), Track.artist_id, Track.bitrate.desc().nullslast())
+        .order_by(Track.bitrate.desc().nullslast())
     )
-    all_tracks = all_dupes_result.scalars().all()
+    all_tracks = all_result.scalars().all()
     if not all_tracks:
         return []
 
-    # Group in-memory by (lower_title, artist_id)
+    # Group by normalized (title, artist) — catches cross-artist dupes
     from collections import defaultdict
     grouped: dict[tuple, list] = defaultdict(list)
     for t in all_tracks:
-        grouped[(t.title.lower() if t.title else "", t.artist_id)].append(t)
+        norm_title = _normalize_for_dedup(t.title or "")
+        artist_name = t.artist.name if t.artist else ""
+        norm_artist = _normalize_artist_for_dedup(artist_name)
+        if norm_title and norm_artist:
+            grouped[(norm_title, norm_artist)].append(t)
 
     groups = []
     for (_, _), tracks in grouped.items():
@@ -154,23 +182,20 @@ async def find_duplicates(db: AsyncSession) -> list[dict]:
 
 
 async def find_duplicates_enriched(db: AsyncSession) -> dict:
-    """Find duplicate tracks with full track details for the duplicates page."""
-    from backend.models.favorite import Favorite
+    """Find duplicate tracks with full track details for the duplicates page.
 
-    # Single query: get all tracks belonging to duplicate groups (N+1 → 1 query)
-    dupe_keys_sq = (
-        select(func.lower(Track.title).label("title_lower"), Track.artist_id)
-        .where(Track.artist_id.isnot(None))
-        .group_by(func.lower(Track.title), Track.artist_id)
-        .having(func.count(Track.id) > 1)
-        .subquery()
-    )
-    all_dupes_result = await db.execute(
+    Uses normalized title + artist matching to catch cross-folder and cross-artist
+    duplicates (e.g., 'Artist feat. X' vs 'Artist & X', different folder structures).
+    """
+    from backend.models.favorite import Favorite
+    from collections import defaultdict
+
+    # Load ALL tracks with artist/album (we need to normalize in Python)
+    all_result = await db.execute(
         select(Track).options(selectinload(Track.artist), selectinload(Track.album))
-        .join(dupe_keys_sq, (func.lower(Track.title) == dupe_keys_sq.c.title_lower) & (Track.artist_id == dupe_keys_sq.c.artist_id))
-        .order_by(func.lower(Track.title), Track.artist_id, Track.bitrate.desc().nullslast())
+        .order_by(Track.bitrate.desc().nullslast())
     )
-    all_tracks = all_dupes_result.scalars().all()
+    all_tracks = all_result.scalars().all()
     if not all_tracks:
         return {"groups": [], "total_groups": 0, "total_duplicates": 0, "reclaimable_bytes": 0}
 
@@ -180,11 +205,14 @@ async def find_duplicates_enriched(db: AsyncSession) -> dict:
     )
     fav_track_ids = {r[0] for r in fav_result.all()}
 
-    # Group in-memory by (lower_title, artist_id)
-    from collections import defaultdict
+    # Group by normalized (title, artist) — catches cross-artist dupes
     grouped: dict[tuple, list] = defaultdict(list)
     for t in all_tracks:
-        grouped[(t.title.lower() if t.title else "", t.artist_id)].append(t)
+        norm_title = _normalize_for_dedup(t.title or "")
+        artist_name = t.artist.name if t.artist else ""
+        norm_artist = _normalize_artist_for_dedup(artist_name)
+        if norm_title and norm_artist:
+            grouped[(norm_title, norm_artist)].append(t)
 
     def _track_detail(t, is_best=False):
         return {

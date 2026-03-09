@@ -15,6 +15,7 @@ from mutagen.oggopus import OggOpus
 from mutagen.oggvorbis import OggVorbis
 from sqlalchemy import select, delete, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.config import get_settings
 from backend.models.track import Track
@@ -417,7 +418,12 @@ def _quality_rank(fmt: str, file_size: int) -> tuple[int, int]:
 
 
 async def _find_existing_track(db: AsyncSession, title: str, artist_name: str) -> Track | None:
-    """Find an existing library track with the same normalized title and artist."""
+    """Find an existing library track with the same normalized title and artist.
+
+    Uses two-pass matching:
+    1. Exact SQL match (fast, covers most cases)
+    2. Normalized fuzzy match (catches 'feat.' variations, cross-artist dupes)
+    """
     if not title:
         return None
     norm_title = _normalize_title(title)
@@ -425,7 +431,7 @@ async def _find_existing_track(db: AsyncSession, title: str, artist_name: str) -
     if not norm_title or not norm_artist:
         return None
 
-    # SQL-side case-insensitive match (avoids loading all tracks into Python)
+    # Pass 1: Exact SQL match (fast)
     result = await db.execute(
         select(Track).join(Artist, Track.artist_id == Artist.id).where(
             func.lower(Track.title) == title.lower(),
@@ -435,6 +441,30 @@ async def _find_existing_track(db: AsyncSession, title: str, artist_name: str) -
     for track in result.scalars().all():
         if _normalize_title(track.title) == norm_title:
             return track
+
+    # Pass 2: Normalized match — strips feat, parentheticals, punctuation
+    # Use LIKE with the core title to get candidates, then filter in Python
+    from backend.services.cleanup import _normalize_for_dedup, _normalize_artist_for_dedup
+    norm_t = _normalize_for_dedup(title)
+    norm_a = _normalize_artist_for_dedup(artist_name)
+    if not norm_t or not norm_a:
+        return None
+
+    # Get candidate tracks with similar titles (SQL LIKE on first few words)
+    core_words = norm_t.split()[:3]
+    if not core_words:
+        return None
+    like_pattern = f"%{core_words[0]}%"
+    result2 = await db.execute(
+        select(Track).options(selectinload(Track.artist)).where(
+            func.lower(Track.title).like(like_pattern),
+        ).limit(100)
+    )
+    for track in result2.scalars().all():
+        if (_normalize_for_dedup(track.title or "") == norm_t
+                and _normalize_artist_for_dedup(track.artist.name if track.artist else "") == norm_a):
+            return track
+
     return None
 
 
