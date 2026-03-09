@@ -211,58 +211,30 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
 
 
 async def _auto_download_missing(missing: list[dict], source: str):
-    """Trigger individual download jobs for each missing track."""
+    """Trigger individual download jobs for each missing track via enqueue_download.
+    Uses enqueue_download which has short-lived DB sessions to avoid pool exhaustion."""
     import asyncio
-    from backend.database import async_session
-    from backend.api.download import _do_download_inner, _get_semaphore, DownloadRequest
+    from backend.api.download import enqueue_download
 
     total = len(missing)
     log.info(f"Auto-downloading {total} missing tracks from {source}")
 
-    sem = _get_semaphore()
+    # Map scheduler source to download source label
+    dl_source = {"lastfm_top_tracks": "discovery", "discover_similar": "similar", "remix_discovery": "remix", "recommendation_refresh": "recommendation", "upgrade_scan": "upgrade"}.get(source, "discovery")
+
+    sem = asyncio.Semaphore(4)  # limit concurrency of enqueue calls
 
     async def download_one(t: dict):
         artist = t.get("artist", "")
         track = t.get("track", "")
         if not artist or not track:
             return
-        job_id = str(uuid.uuid4())
-        desc = f"{artist} — {track}"
-        # Map scheduler source to download card
-        dl_source = {"lastfm_top_tracks": "discovery", "discover_similar": "similar", "remix_discovery": "remix", "recommendation_refresh": "recommendation", "upgrade_scan": "upgrade"}.get(source, "discovery")
-        card = f"dl:{dl_source}"
-        req = DownloadRequest(artist=artist, track=track, source=dl_source)
+        async with sem:
+            try:
+                await enqueue_download(artist, track, source=dl_source)
+            except Exception as e:
+                log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
 
-        async with async_session() as db:
-            # If queue is full, show as queued
-            if sem.locked():
-                job = Job(
-                    id=job_id, type="download", card=card, status="pending",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
-                )
-                db.add(job)
-                await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
-                async with sem:
-                    job.status = "running"
-                    await db.merge(job)
-                    await db.commit()
-                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                    await _do_download_inner(db, job, job_id, desc, req)
-            else:
-                job = Job(
-                    id=job_id, type="download", card=card, status="running",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
-                )
-                db.add(job)
-                await db.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                async with sem:
-                    await _do_download_inner(db, job, job_id, desc, req)
-
-    # Fire all downloads concurrently — semaphore handles the queue limit
     tasks = [asyncio.create_task(download_one(t)) for t in missing]
     await asyncio.gather(*tasks, return_exceptions=True)
 

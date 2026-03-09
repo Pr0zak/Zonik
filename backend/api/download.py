@@ -236,44 +236,30 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     job_id = str(uuid.uuid4())
 
     async def do_download():
-        import asyncio
-        from backend.soulseek import get_client
-        from backend.soulseek.protocol.types import TransferState
-        from backend.services.scanner import import_downloaded_file
-        async with async_session() as db:
-            desc = f"{req.artist} — {req.track}"
-            sem = _get_semaphore()
+        desc = f"{req.artist} — {req.track}"
+        card = f"dl:{req.source}" if req.source else "dl"
+        sem = _get_semaphore()
 
-            # If semaphore is full, show as queued
-            if sem.locked():
-                card = f"dl:{req.source}" if req.source else "dl"
-                job = Job(
-                    id=job_id, type="download", card=card, status="pending",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued"}]),
-                )
-                db.add(job)
-                await db.commit()
-                db.expunge(job)
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
-                async with sem:
-                    job.status = "running"
-                    await _save_job_obj(job)
-                    await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                    await _do_download_inner(None, job, job_id, desc, req)
-            else:
-                card = f"dl:{req.source}" if req.source else "dl"
-                job = Job(
-                    id=job_id, type="download", card=card, status="running",
-                    started_at=datetime.utcnow(),
-                    tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "pending"}]),
-                )
-                db.add(job)
-                await db.commit()
-                db.expunge(job)
+        # Create job with short-lived session
+        initial_status = "pending" if sem.locked() else "running"
+        async with async_session() as db:
+            job = Job(
+                id=job_id, type="download", card=card, status=initial_status,
+                started_at=datetime.utcnow(),
+                tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued" if initial_status == "pending" else "pending"}]),
+            )
+            db.add(job)
+            await db.commit()
+            db.expunge(job)
+        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+
+        # Wait for semaphore — no DB session held
+        async with sem:
+            if job.status == "pending":
+                job.status = "running"
+                await _save_job_obj(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                async with sem:
-                    await _do_download_inner(None, job, job_id, desc, req)
+            await _do_download_inner(None, job, job_id, desc, req)
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
@@ -307,9 +293,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         for _ in range(timeout_polls):
             await asyncio.sleep(2)
             if check_cancel:
-                await db.refresh(job)
-                if job.status == "failed":
-                    return "cancelled", None, "Cancelled by user"
+                async with async_session() as cancel_sess:
+                    fresh = (await cancel_sess.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none()
+                    if fresh and fresh.status == "failed":
+                        return "cancelled", None, "Cancelled by user"
             transfer = client.transfers.get_transfer(username, filename)
             if not transfer:
                 return "failed", None, "Transfer removed"
