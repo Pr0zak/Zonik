@@ -137,4 +137,12 @@ export const api = {
 	// Mood Tags
 	tagMoods: (trackIds) => request('/tracks/ai-moods', { method: 'POST', body: JSON.stringify({ track_ids: trackIds }) }),
 	getMoods: (trackIds = null) => request(buildUrl('/tracks/moods', { track_ids: trackIds?.join(',') })),
+
+	// Playlist Import
+	fetchExternalPlaylist: (url, source = null) =>
+		request('/playlists/import/fetch', { method: 'POST', body: JSON.stringify({ url, source }) }),
+	searchExternalPlaylists: (query, sources = null, limit = 10) =>
+		request('/playlists/import/search', { method: 'POST', body: JSON.stringify({ query, sources, limit }) }),
+	importExternalPlaylist: (name, tracks, downloadMissing = false) =>
+		request('/playlists/import/import', { method: 'POST', body: JSON.stringify({ name, tracks, download_missing: downloadMissing }) }),
 };

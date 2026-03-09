@@ -74,6 +74,15 @@ class AnalysisConfig(BaseModel):
     max_analysis_workers: int = 2
 
 
+class SpotifyConfig(BaseModel):
+    client_id: str = ""
+    client_secret: str = ""
+
+
+class AppleMusicConfig(BaseModel):
+    developer_token: str = ""
+
+
 class SubsonicConfig(BaseModel):
     server_name: str = "Zonik"
 
@@ -112,6 +121,8 @@ class Settings(BaseModel):
     lidarr: LidarrConfig = LidarrConfig()
     lastfm: LastfmConfig = LastfmConfig()
     analysis: AnalysisConfig = AnalysisConfig()
+    spotify: SpotifyConfig = SpotifyConfig()
+    apple_music: AppleMusicConfig = AppleMusicConfig()
     subsonic: SubsonicConfig = SubsonicConfig()
     assistant: AssistantConfig = AssistantConfig()
 
