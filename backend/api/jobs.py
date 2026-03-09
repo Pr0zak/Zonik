@@ -261,11 +261,14 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
 
     from backend.api.download import enqueue_download
 
+    # Preserve original source from job card (e.g. "dl:upgrade" → "upgrade")
+    source = job.card.split(":", 1)[1] if job.card and ":" in job.card else None
+
     for t in failed_tracks:
         artist = t.get("artist", "")
         track = t.get("track", "")
         if artist and track:
-            background_tasks.add_task(enqueue_download, artist, track)
+            background_tasks.add_task(enqueue_download, artist, track, source=source)
 
     return {"ok": True, "total": len(failed_tracks)}
 

@@ -316,7 +316,7 @@
 			const resp = await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist, track, username: result.username, filename: result.filename })
+				body: JSON.stringify({ artist, track, username: result.username, filename: result.filename, source: 'upgrade' })
 			}).then(r => r.json());
 			if (resp.error) {
 				upgradeStatuses[key] = { status: 'failed' };
@@ -338,7 +338,7 @@
 			await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist, track })
+				body: JSON.stringify({ artist, track, source: 'upgrade' })
 			}).then(r => r.json());
 			addToast('Auto-download started — best source selected', 'success');
 		} catch (e) {
@@ -610,7 +610,7 @@
 			const resp = await fetch('/api/download/bulk', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ tracks: items }),
+				body: JSON.stringify({ tracks: items, source: 'upgrade' }),
 			});
 			const data = await resp.json();
 			addToast(`Searching upgrades for ${items.length} track(s)`, 'success');
@@ -669,7 +669,7 @@
 		const key = `${t.artist}::${t.name}`.toLowerCase();
 		similarDownloading = new Set([...similarDownloading, key]);
 		try {
-			await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name }) });
+			await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name, source: 'similar' }) });
 			addToast(`Downloading ${t.name}`, 'success');
 		} catch { addToast('Download failed', 'error'); similarDownloading.delete(key); similarDownloading = new Set(similarDownloading); }
 	}
@@ -680,7 +680,7 @@
 		let started = 0;
 		for (const t of missing) {
 			try {
-				await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name }) });
+				await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name, source: 'similar' }) });
 				started++;
 			} catch { /* individual failures tracked via WS */ }
 		}
@@ -1696,7 +1696,7 @@
 								onclick={async () => {
 									remixDownloadStatus[rkey] = 'downloading';
 									try {
-										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name }) });
+										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name, source: 'remix' }) });
 										remixDownloadStatus[rkey] = 'done';
 									} catch { remixDownloadStatus[rkey] = 'failed'; addToast('Download failed', 'error'); }
 								}}>
@@ -1707,7 +1707,7 @@
 								onclick={async () => {
 									remixDownloadStatus[rkey] = 'downloading';
 									try {
-										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name }) });
+										await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: remix.artist, track: remix.name, source: 'remix' }) });
 										remixDownloadStatus[rkey] = 'done';
 										addToast(`Downloading ${remix.name}`, 'success');
 									} catch { remixDownloadStatus[rkey] = 'failed'; addToast('Download failed', 'error'); }

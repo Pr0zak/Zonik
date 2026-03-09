@@ -105,10 +105,12 @@ class DownloadRequest(BaseModel):
     track: str
     username: str | None = None
     filename: str | None = None
+    source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
 
 
 class BulkDownloadRequest(BaseModel):
     tracks: list[dict]  # [{artist, track}, ...]
+    source: str | None = None
 
 
 @router.post("/search")
@@ -244,8 +246,9 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
             # If semaphore is full, show as queued
             if sem.locked():
+                card = f"dl:{req.source}" if req.source else "dl"
                 job = Job(
-                    id=job_id, type="download", card="dl", status="pending",
+                    id=job_id, type="download", card=card, status="pending",
                     started_at=datetime.utcnow(),
                     tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued"}]),
                 )
@@ -259,8 +262,9 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                     await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
                     await _do_download_inner(None, job, job_id, desc, req)
             else:
+                card = f"dl:{req.source}" if req.source else "dl"
                 job = Job(
-                    id=job_id, type="download", card="dl", status="running",
+                    id=job_id, type="download", card=card, status="running",
                     started_at=datetime.utcnow(),
                     tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "pending"}]),
                 )
@@ -584,7 +588,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Cleanup skipped: {e}")
 
-async def enqueue_download(artist: str, track: str, job_id: str | None = None) -> str:
+async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None) -> str:
     """Create an individual download job with semaphore queuing. Returns job_id."""
     # Dedup: skip if same artist+track already pending/running
     async with async_session() as check_sess:
@@ -595,14 +599,15 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None) -
 
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
-    dl_req = DownloadRequest(artist=artist, track=track)
+    dl_req = DownloadRequest(artist=artist, track=track, source=source)
     sem = _get_semaphore()
 
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
     initial_status = "pending" if sem.locked() else "running"
+    card = f"dl:{source}" if source else "dl"
     async with async_session() as sess:
         job = Job(
-            id=job_id, type="download", card="dl", status=initial_status,
+            id=job_id, type="download", card=card, status=initial_status,
             started_at=datetime.utcnow(),
             tracks=json.dumps([{"artist": artist, "track": track, "status": "queued" if initial_status == "pending" else "pending"}]),
         )
@@ -635,19 +640,19 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             queue.append((artist, track))
 
     if queue:
-        background_tasks.add_task(_process_bulk_download_queue, queue)
+        background_tasks.add_task(_process_bulk_download_queue, queue, req.source)
 
     return {"ok": True, "total": len(queue)}
 
 
-async def _process_bulk_download_queue(queue: list[tuple[str, str]]):
+async def _process_bulk_download_queue(queue: list[tuple[str, str]], source: str | None = None):
     """Process bulk downloads with bounded concurrency (matches download semaphore)."""
     sem = asyncio.Semaphore(4)  # limit DB connections; actual download concurrency gated by _download_semaphore
 
     async def _do(artist: str, track: str):
         async with sem:
             try:
-                await enqueue_download(artist, track)
+                await enqueue_download(artist, track, source=source)
             except Exception as e:
                 log.warning(f"[bulk] Failed to download {artist} — {track}: {e}")
 

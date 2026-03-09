@@ -156,6 +156,19 @@
 		return ext;
 	}
 
+	const SOURCE_LABELS = {
+		'dl:upgrade': 'Upgrade',
+		'dl:discovery': 'Discovery',
+		'dl:similar': 'Similar',
+		'dl:remix': 'Remix',
+		'dl:recommendation': 'For You',
+		'dl:playlist': 'Playlist',
+		'dl:manual': 'Manual',
+	};
+	function sourceLabel(job) {
+		return SOURCE_LABELS[job.card] || '';
+	}
+
 	let jobStatusCounts = $derived({
 		all: jobs.filter(j => !hiddenJobIds.has(j.id)).length,
 		queued: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'pending').length,
@@ -397,6 +410,7 @@
 					artist, track,
 					username: result.username,
 					filename: result.filename,
+					source: 'manual',
 				})
 			}).then(r => r.json());
 			resultStatuses[key] = { status: 'searching', jobId: resp.job_id };
@@ -415,7 +429,7 @@
 			await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist, track })
+				body: JSON.stringify({ artist, track, source: 'manual' })
 			}).then(r => r.json());
 			addToast('Auto-download started', 'success');
 		} catch (e) {
@@ -572,7 +586,7 @@
 							<div class="space-y-1 pl-2 border-l-2 border-amber-500/20 ml-1">
 								{#each queuedJobs as job (job.id)}
 									<div class="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/5 text-xs group/job">
-										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}</span>
+										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}{#if sourceLabel(job)}<span class="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}</span>
 										<Badge variant="warning"><Clock class="w-3 h-3 mr-0.5 inline-block" />queued</Badge>
 									</div>
 								{/each}
@@ -587,7 +601,10 @@
 						<div class="{status === 'completed' ? 'bg-emerald-500/5' : status === 'failed' ? 'bg-red-500/5' : status === 'downloading' ? 'bg-blue-500/5' : status === 'queued' ? 'bg-amber-500/5' : 'bg-[var(--bg-tertiary)]'} rounded-lg overflow-hidden group/job">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
-									<p class="text-sm text-[var(--text-primary)] font-medium truncate">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}</p>
+									<p class="text-sm text-[var(--text-primary)] font-medium truncate">
+										{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}
+										{#if sourceLabel(job)}<span class="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
+									</p>
 									{#if job.status === 'completed' && (jobResult || jobTracks?.[0])}
 										{@const t = jobTracks?.[0]}
 										{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}

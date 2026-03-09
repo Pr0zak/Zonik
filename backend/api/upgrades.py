@@ -228,7 +228,7 @@ async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):
                     await db.commit()
 
                 # Download (blocks until complete)
-                await enqueue_download(artist, track, job_id=job_id)
+                await enqueue_download(artist, track, job_id=job_id, source="upgrade")
 
                 # Update upgrade status based on job result
                 async with async_session() as db:

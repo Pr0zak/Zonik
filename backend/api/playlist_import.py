@@ -96,7 +96,7 @@ async def import_playlist(req: ImportRequest, db: AsyncSession = Depends(get_db)
         for t in matched_tracks:
             if not t.get("in_library") and t.get("title") and t.get("artist"):
                 try:
-                    await enqueue_download(t["artist"], t["title"])
+                    await enqueue_download(t["artist"], t["title"], source="playlist")
                     download_jobs += 1
                 except Exception:
                     pass

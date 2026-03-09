@@ -247,7 +247,7 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
     await db.commit()
 
     for r in recs:
-        background_tasks.add_task(enqueue_download, r.artist, r.track)
+        background_tasks.add_task(enqueue_download, r.artist, r.track, source="recommendation")
 
     return {"ok": True, "count": len(recs)}
 

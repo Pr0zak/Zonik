@@ -436,7 +436,7 @@
 				await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: r.artist, track: r.name })
+					body: JSON.stringify({ artist: r.artist, track: r.name, source: 'remix' })
 				});
 				trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'downloading';
 			} catch {
@@ -490,7 +490,7 @@
 			const res = await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist: t.artist, track: t.name }),
+				body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery' }),
 			});
 			const data = await res.json();
 			if (data.error) {
@@ -530,7 +530,7 @@
 				await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: t.artist, track: t.name })
+					body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery' })
 				});
 				trackStatus[trackKey(t)] = 'downloading';
 				started++;
@@ -721,7 +721,7 @@
 			const res = await fetch('/api/download/trigger', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist: rec.artist, track: rec.track }),
+				body: JSON.stringify({ artist: rec.artist, track: rec.track, source: 'recommendation' }),
 			});
 			const data = await res.json();
 			if (data.error) { trackStatus[key] = 'failed'; return; }

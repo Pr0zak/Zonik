@@ -228,13 +228,16 @@ async def _auto_download_missing(missing: list[dict], source: str):
             return
         job_id = str(uuid.uuid4())
         desc = f"{artist} — {track}"
-        req = DownloadRequest(artist=artist, track=track)
+        # Map scheduler source to download card
+        dl_source = {"lastfm_top_tracks": "discovery", "discover_similar": "similar", "remix_discovery": "remix", "recommendation_refresh": "recommendation", "upgrade_scan": "upgrade"}.get(source, "discovery")
+        card = f"dl:{dl_source}"
+        req = DownloadRequest(artist=artist, track=track, source=dl_source)
 
         async with async_session() as db:
             # If queue is full, show as queued
             if sem.locked():
                 job = Job(
-                    id=job_id, type="download", card="dl", status="pending",
+                    id=job_id, type="download", card=card, status="pending",
                     started_at=datetime.utcnow(),
                     tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
                 )
@@ -249,7 +252,7 @@ async def _auto_download_missing(missing: list[dict], source: str):
                     await _do_download_inner(db, job, job_id, desc, req)
             else:
                 job = Job(
-                    id=job_id, type="download", card="dl", status="running",
+                    id=job_id, type="download", card=card, status="running",
                     started_at=datetime.utcnow(),
                     tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
                 )
