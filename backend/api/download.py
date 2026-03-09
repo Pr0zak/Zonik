@@ -585,33 +585,28 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None) -
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track)
     sem = _get_semaphore()
+
+    # Create job with short-lived session (don't hold connection while waiting for semaphore)
+    initial_status = "pending" if sem.locked() else "running"
     async with async_session() as sess:
-        if sem.locked():
-            job = Job(
-                id=job_id, type="download", card="dl", status="pending",
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": artist, "track": track, "status": "queued"}]),
-            )
-            sess.add(job)
-            await sess.commit()
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
-            async with sem:
+        job = Job(
+            id=job_id, type="download", card="dl", status=initial_status,
+            started_at=datetime.utcnow(),
+            tracks=json.dumps([{"artist": artist, "track": track, "status": "queued" if initial_status == "pending" else "pending"}]),
+        )
+        sess.add(job)
+        await sess.commit()
+    await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+
+    # Wait for semaphore slot — no DB session held during wait
+    async with sem:
+        async with async_session() as sess:
+            job = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one()
+            if job.status == "pending":
                 job.status = "running"
-                await sess.merge(job)
                 await sess.commit()
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                await _do_download_inner(sess, job, job_id, desc, dl_req)
-        else:
-            job = Job(
-                id=job_id, type="download", card="dl", status="running",
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": artist, "track": track, "status": "pending"}]),
-            )
-            sess.add(job)
-            await sess.commit()
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-            async with sem:
-                await _do_download_inner(sess, job, job_id, desc, dl_req)
+            await _do_download_inner(sess, job, job_id, desc, dl_req)
     return job_id
 
 
