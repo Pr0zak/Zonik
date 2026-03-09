@@ -411,8 +411,22 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
         if orphan_ids:
             from backend.models.favorite import Favorite
             from backend.models.playlist import PlaylistTrack
+            from backend.models.analysis import TrackAnalysis
+            from backend.models.embedding import TrackEmbedding
+            from backend.models.play_history import PlayHistory
+            from backend.models.bookmark import Bookmark
+            from backend.models.mood import TrackMood
+            from backend.models.upgrade import TrackUpgrade
             await db.execute(delete(Favorite).where(Favorite.track_id.in_(orphan_ids)))
+            await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(orphan_ids)))
+            await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(orphan_ids)))
+            await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(orphan_ids)))
             await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(orphan_ids)))
+            await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(orphan_ids)))
+            await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(orphan_ids)))
+            await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(orphan_ids)))
+            for tid in orphan_ids:
+                await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (tid,))
             await db.execute(delete(Track).where(Track.id.in_(orphan_ids)))
             stats["orphans_removed"] = len(orphan_ids)
             log.info(f"Removed {len(orphan_ids)} orphaned tracks")

@@ -78,15 +78,24 @@ async def remove_orphaned_tracks(db: AsyncSession) -> dict:
     # Delete related records first
     from backend.models.favorite import Favorite
     from backend.models.playlist import PlaylistTrack
+    from backend.models.analysis import TrackAnalysis
+    from backend.models.embedding import TrackEmbedding
+    from backend.models.play_history import PlayHistory
+    from backend.models.bookmark import Bookmark
+    from backend.models.mood import TrackMood
+    from backend.models.upgrade import TrackUpgrade
     await db.execute(delete(Favorite).where(Favorite.track_id.in_(orphan_ids)))
+    await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(orphan_ids)))
+    await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(orphan_ids)))
+    await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(orphan_ids)))
     await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(orphan_ids)))
+    await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(orphan_ids)))
+    await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(orphan_ids)))
+    await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(orphan_ids)))
 
     # Delete FTS entries
-    from backend.database import engine
-    from sqlalchemy import text
-    async with engine.begin() as conn:
-        for tid in orphan_ids:
-            await conn.execute(text("DELETE FROM tracks_fts WHERE rowid IN (SELECT rowid FROM tracks_fts WHERE tracks_fts MATCH :tid)"), {"tid": tid})
+    for tid in orphan_ids:
+        await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (tid,))
 
     # Delete tracks
     await db.execute(delete(Track).where(Track.id.in_(orphan_ids)))
@@ -278,8 +287,22 @@ async def remove_duplicates(db: AsyncSession, remove_ids: list[str], delete_file
     # Delete related records
     from backend.models.favorite import Favorite
     from backend.models.playlist import PlaylistTrack
+    from backend.models.analysis import TrackAnalysis
+    from backend.models.embedding import TrackEmbedding
+    from backend.models.play_history import PlayHistory
+    from backend.models.bookmark import Bookmark
+    from backend.models.mood import TrackMood
+    from backend.models.upgrade import TrackUpgrade
     await db.execute(delete(Favorite).where(Favorite.track_id.in_(remove_ids)))
+    await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(remove_ids)))
+    await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(remove_ids)))
+    await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(remove_ids)))
     await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(remove_ids)))
+    await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(remove_ids)))
+    await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(remove_ids)))
+    await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(remove_ids)))
+    for rid in remove_ids:
+        await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (rid,))
     await db.execute(delete(Track).where(Track.id.in_(remove_ids)))
 
     files_deleted = 0

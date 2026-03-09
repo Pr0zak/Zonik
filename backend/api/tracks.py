@@ -309,6 +309,25 @@ async def delete_track(track_id: str, db: AsyncSession = Depends(get_db)):
     if file_path.exists():
         file_path.unlink()
 
+    # Clean up FK-dependent records before deleting track
+    from backend.models.favorite import Favorite
+    from backend.models.analysis import TrackAnalysis
+    from backend.models.embedding import TrackEmbedding
+    from backend.models.play_history import PlayHistory
+    from backend.models.playlist import PlaylistTrack
+    from backend.models.bookmark import Bookmark
+    from backend.models.mood import TrackMood
+    from backend.models.upgrade import TrackUpgrade
+    await db.execute(delete(Favorite).where(Favorite.track_id == track_id))
+    await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id == track_id))
+    await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id == track_id))
+    await db.execute(delete(PlayHistory).where(PlayHistory.track_id == track_id))
+    await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id == track_id))
+    await db.execute(delete(Bookmark).where(Bookmark.track_id == track_id))
+    await db.execute(delete(TrackMood).where(TrackMood.track_id == track_id))
+    await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id == track_id))
+    # Remove FTS entry
+    await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (track_id,))
     await db.execute(delete(Track).where(Track.id == track_id))
     await db.commit()
     return {"ok": True}
@@ -325,6 +344,15 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
     from backend.config import get_settings
     settings = get_settings()
 
+    from backend.models.favorite import Favorite
+    from backend.models.analysis import TrackAnalysis
+    from backend.models.embedding import TrackEmbedding
+    from backend.models.play_history import PlayHistory
+    from backend.models.playlist import PlaylistTrack
+    from backend.models.bookmark import Bookmark
+    from backend.models.mood import TrackMood
+    from backend.models.upgrade import TrackUpgrade
+
     deleted = 0
     for track_id in req.track_ids:
         result = await db.execute(select(Track).where(Track.id == track_id))
@@ -333,6 +361,16 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
             file_path = Path(settings.library.music_dir) / track.file_path
             if file_path.exists():
                 file_path.unlink()
+            # Clean up FK-dependent records
+            await db.execute(delete(Favorite).where(Favorite.track_id == track_id))
+            await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id == track_id))
+            await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id == track_id))
+            await db.execute(delete(PlayHistory).where(PlayHistory.track_id == track_id))
+            await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id == track_id))
+            await db.execute(delete(Bookmark).where(Bookmark.track_id == track_id))
+            await db.execute(delete(TrackMood).where(TrackMood.track_id == track_id))
+            await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id == track_id))
+            await db.exec_driver_sql("DELETE FROM tracks_fts WHERE track_id = ?", (track_id,))
             await db.delete(track)
             deleted += 1
     await db.commit()
