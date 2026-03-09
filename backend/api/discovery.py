@@ -501,3 +501,17 @@ async def discover_playlists(req: PlaylistDiscoverRequest, db: AsyncSession = De
                 all_results.append(r)
 
     return {"playlists": all_results[:req.limit], "queries": queries}
+
+
+@router.post("/playlists/ai-rank")
+async def ai_rank_playlists(playlists: list[dict], db: AsyncSession = Depends(get_db)):
+    """AI-rank discovered playlists by taste compatibility."""
+    from backend.services.ai.playlist_curator import rank_playlists
+    from backend.services.recommender import build_taste_profile
+
+    profile = await build_taste_profile(db)
+    summary = f"Top genres: {', '.join(g['name'] for g in profile.get('genres', [])[:5])}. " \
+              f"Top artists: {', '.join(a['name'] for a in profile.get('top_artists', [])[:5])}."
+
+    ranked = await rank_playlists(playlists, summary)
+    return {"playlists": ranked}

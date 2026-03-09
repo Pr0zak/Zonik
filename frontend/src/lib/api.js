@@ -141,6 +141,10 @@ export const api = {
 	// Playlist Discovery
 	discoverPlaylists: (limit = 10) =>
 		request('/discovery/playlists', { method: 'POST', body: JSON.stringify({ limit }) }),
+	aiRankPlaylists: (playlists) =>
+		request('/discovery/playlists/ai-rank', { method: 'POST', body: JSON.stringify(playlists) }),
+	aiReviewImport: (tracks) =>
+		request('/playlists/import/ai-review', { method: 'POST', body: JSON.stringify({ tracks }) }),
 
 	// Playlist Import
 	fetchExternalPlaylist: (url, source = null) =>

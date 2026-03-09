@@ -93,6 +93,18 @@
 		finally { importCreating = false; }
 	}
 
+	let aiReview = $state(null);
+	let aiReviewLoading = $state(false);
+
+	async function reviewImport() {
+		if (!importPreview?.tracks?.length) return;
+		aiReviewLoading = true;
+		try {
+			aiReview = await api.aiReviewImport(importPreview.tracks);
+		} catch (e) { addToast('AI review failed', 'error'); }
+		finally { aiReviewLoading = false; }
+	}
+
 	async function previewSearchResult(result) {
 		importFetching = true;
 		importPreview = null;
@@ -372,8 +384,24 @@
 						{/if}
 					</div>
 
+					<!-- AI Review -->
+					{#if aiReview}
+						<div class="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+							<div class="flex items-center gap-2 mb-1">
+								<Sparkles class="w-3.5 h-3.5 text-amber-400" />
+								<span class="text-xs font-medium text-amber-400">AI Review: {Math.round((aiReview.overall_score || 0) * 100)}% match</span>
+							</div>
+							{#if aiReview.summary}
+								<p class="text-xs text-[var(--text-muted)]">{aiReview.summary}</p>
+							{/if}
+						</div>
+					{/if}
+
 					<div class="flex items-center gap-2 justify-end">
-						<Button variant="secondary" size="sm" onclick={() => { importPreview = null; }}>Cancel</Button>
+						<Button variant="secondary" size="sm" loading={aiReviewLoading} onclick={reviewImport}>
+							<Sparkles class="w-3.5 h-3.5 text-amber-400" /> AI Review
+						</Button>
+						<Button variant="secondary" size="sm" onclick={() => { importPreview = null; aiReview = null; }}>Cancel</Button>
 						<Button variant="primary" size="sm" loading={importCreating} onclick={() => importPlaylist(false)}>
 							Import Matched
 						</Button>

@@ -108,3 +108,20 @@ async def import_playlist(req: ImportRequest, db: AsyncSession = Depends(get_db)
         "total": len(matched_tracks),
         "download_jobs": download_jobs,
     }
+
+
+class AIReviewRequest(BaseModel):
+    tracks: list[dict]
+
+
+@router.post("/ai-review")
+async def ai_review_import(req: AIReviewRequest, db: AsyncSession = Depends(get_db)):
+    """AI review of imported tracks for taste compatibility."""
+    from backend.services.ai.playlist_curator import review_import
+    from backend.services.recommender import build_taste_profile
+
+    profile = await build_taste_profile(db)
+    summary = f"Top genres: {', '.join(g['name'] for g in profile.get('genres', [])[:5])}. " \
+              f"Top artists: {', '.join(a['name'] for a in profile.get('top_artists', [])[:5])}."
+
+    return await review_import(req.tracks, summary)

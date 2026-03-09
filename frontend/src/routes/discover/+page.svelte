@@ -47,6 +47,13 @@
 			const data = await api.discoverPlaylists(20);
 			discPlaylists = data.playlists || [];
 			discQueries = data.queries || [];
+			// Try AI ranking
+			if (discPlaylists.length > 1) {
+				try {
+					const ranked = await api.aiRankPlaylists(discPlaylists);
+					if (ranked.playlists) discPlaylists = ranked.playlists;
+				} catch {}
+			}
 		} catch (e) { addToast('Failed to discover playlists: ' + e.message, 'error'); }
 		finally { discPlaylistsLoading = false; }
 	}
@@ -1731,7 +1738,16 @@
 											<span class="text-[10px] text-[var(--text-disabled)]">matched: {pl.matched_query}</span>
 										{/if}
 									</div>
-									<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
+									{#if pl.ai_score}
+										<div class="flex flex-col items-end flex-shrink-0">
+											<span class="text-xs font-mono {pl.ai_score >= 0.7 ? 'text-emerald-400' : pl.ai_score >= 0.4 ? 'text-amber-400' : 'text-[var(--text-muted)]'}">{Math.round(pl.ai_score * 100)}%</span>
+											{#if pl.ai_reason}
+												<span class="text-[9px] text-[var(--text-disabled)] max-w-28 truncate" title={pl.ai_reason}>{pl.ai_reason}</span>
+											{/if}
+										</div>
+									{:else}
+										<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
+									{/if}
 								</div>
 							</Card>
 						</a>
