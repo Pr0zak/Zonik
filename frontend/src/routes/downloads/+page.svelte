@@ -262,8 +262,10 @@
 		try {
 			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
 			jobs = data.items || data;
-			// Only fetch details for active jobs (running/pending) — completed/failed already have result in job.result
-			const needDetails = jobs.filter(j => (j.status === 'running' || j.status === 'pending') && !jobDetails[j.id]);
+			// Only fetch details for active RUNNING jobs (not queued/pending) — limit to 10 to avoid hammering API
+			const needDetails = jobs
+				.filter(j => j.status === 'running' && !jobDetails[j.id])
+				.slice(0, 10);
 			if (needDetails.length) {
 				const details = await Promise.allSettled(needDetails.map(j => api.getJob(j.id)));
 				details.forEach((r, i) => {
@@ -460,9 +462,11 @@
 				if (idx >= 0) {
 					jobs[idx] = { ...jobs[idx], status: wsJob.status, progress: wsJob.progress, total: wsJob.total, description: wsJob.description || jobs[idx].description, result: wsJob.result || jobs[idx].result, finished_at: wsJob.finished_at || jobs[idx].finished_at };
 				}
-				// Debounce full reload for new jobs and pagination updates
+				// Debounce full reload — longer delay when many active jobs to avoid API hammering
 				clearTimeout(loadJobsTimer);
-				loadJobsTimer = setTimeout(loadJobs, 2000);
+				const activeCount = jobs.filter(j => j.status === 'running' || j.status === 'pending').length;
+				const debounceMs = activeCount > 20 ? 10000 : activeCount > 5 ? 5000 : 2000;
+				loadJobsTimer = setTimeout(loadJobs, debounceMs);
 			}
 		});
 		autoHideTimer = setInterval(() => { jobs = [...jobs]; }, 30000);
