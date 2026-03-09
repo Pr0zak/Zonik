@@ -588,6 +588,13 @@ async def _restart_services():
     )
 
 
+@router.post("/restart")
+async def restart_app():
+    """Restart Zonik services."""
+    asyncio.create_task(_restart_services())
+    return {"ok": True, "message": "Restarting..."}
+
+
 @router.post("/upgrade")
 async def trigger_upgrade(db: AsyncSession = Depends(get_db)):
     """Trigger an upgrade by running upgrade.sh in the background."""

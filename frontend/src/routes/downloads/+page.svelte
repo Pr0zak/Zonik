@@ -105,7 +105,6 @@
 	let jobStatusFilter = $state('all');
 	let jobDetails = $state({});
 	const PAGE_LIMIT = 20;
-	const AUTO_HIDE_MS = 5 * 60 * 1000;
 
 	let hiddenJobIds = $state(new Set(
 		JSON.parse(localStorage.getItem('hiddenDownloadJobs') || '[]')
@@ -116,10 +115,6 @@
 	let visibleJobs = $derived(
 		jobs.filter(j => {
 			if (hiddenJobIds.has(j.id)) return false;
-			if (j.status === 'completed' && j.finished_at) {
-				const age = Date.now() - new Date(j.finished_at).getTime();
-				if (age >= AUTO_HIDE_MS) return false;
-			}
 			if (jobStatusFilter !== 'all') {
 				const friendly = j.status === 'pending' ? 'queued' : j.status;
 				if (friendly !== jobStatusFilter) return false;

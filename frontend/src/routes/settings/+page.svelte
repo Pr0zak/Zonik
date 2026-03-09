@@ -54,6 +54,7 @@
 	let upgradeJobId = $state(null);
 	let upgradeJob = $state(null);
 	let upgrading = $state(false);
+	let restarting = $state(false);
 
 	let schedTasks = $state({});
 	let lastfmSession = $state({ username: '', authenticated: false });
@@ -113,6 +114,28 @@
 			addToast('Failed to check for updates: ' + e.message, 'error');
 		} finally {
 			checkingUpdates = false;
+		}
+	}
+
+	async function restartApp() {
+		if (!confirm('Restart Zonik? The app will be briefly unavailable.')) return;
+		restarting = true;
+		try {
+			await fetch('/api/config/restart', { method: 'POST' });
+			addToast('Restarting...', 'success');
+			const reloadCheck = setInterval(async () => {
+				try {
+					await fetch('/api/config/version');
+					clearInterval(reloadCheck);
+					restarting = false;
+					window.location.reload();
+				} catch {
+					// still restarting
+				}
+			}, 3000);
+		} catch {
+			addToast('Restart failed', 'error');
+			restarting = false;
 		}
 	}
 
@@ -1013,6 +1036,10 @@
 								Upgrade Now
 							</Button>
 						{/if}
+						<Button variant="ghost" size="sm" loading={restarting} onclick={restartApp}>
+							<RotateCcw class="w-3.5 h-3.5" />
+							Restart
+						</Button>
 					</div>
 				{/if}
 

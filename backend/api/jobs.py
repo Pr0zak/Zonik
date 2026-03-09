@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -53,7 +53,13 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
         if status_list:
             base = base.where(Job.status.in_(status_list))
     total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar()
-    query = base.order_by(Job.started_at.desc()).offset(offset).limit(limit)
+    # Active jobs (running/pending) first, then by date
+    status_priority = case(
+        (Job.status == "running", 0),
+        (Job.status == "pending", 1),
+        else_=2,
+    )
+    query = base.order_by(status_priority, Job.started_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     jobs = result.scalars().all()
     items = []
