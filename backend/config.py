@@ -12,6 +12,8 @@ class ServerConfig(BaseModel):
     port: int = 3000
     secret_key: str = "change-me"
     cors_origins: list[str] = ["*"]
+    rate_limit_rps: float = 10.0
+    rate_limit_burst: int = 30
 
 
 class LibraryConfig(BaseModel):

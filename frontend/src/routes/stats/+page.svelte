@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { formatSize, formatDuration, parseUTC } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -16,6 +16,12 @@
 	let history = $state(null);
 	let historyHours = $state(24);
 	let loading = $state(true);
+
+	let jobDashboard = $state(null);
+	let jobStatusChartEl = $state(null);
+	let jobTimelineChartEl = $state(null);
+	let jobStatusChart = null;
+	let jobTimelineChart = null;
 
 	let playHistory = $state(null);
 	let playPeriod = $state('7d');
@@ -76,6 +82,73 @@
 	function formatDateTimestamp(iso) {
 		const d = parseUTC(iso);
 		return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function destroyJobCharts() {
+		jobStatusChart?.destroy(); jobStatusChart = null;
+		jobTimelineChart?.destroy(); jobTimelineChart = null;
+	}
+
+	function buildJobCharts() {
+		if (!jobDashboard) return;
+		destroyJobCharts();
+
+		const STATUS_COLORS = {
+			completed: '#10b981',
+			failed: '#ef4444',
+			running: '#3b82f6',
+			pending: '#f59e0b',
+			cancelled: '#6b7280',
+		};
+
+		// Status distribution donut
+		if (jobStatusChartEl && Object.keys(jobDashboard.status_counts).length) {
+			const entries = Object.entries(jobDashboard.status_counts).filter(([, v]) => v > 0);
+			jobStatusChart = new Chart(jobStatusChartEl, {
+				type: 'doughnut',
+				data: {
+					labels: entries.map(([k]) => k.charAt(0).toUpperCase() + k.slice(1)),
+					datasets: [{
+						data: entries.map(([, v]) => v),
+						backgroundColor: entries.map(([k]) => STATUS_COLORS[k] || '#6b7280'),
+						borderWidth: 0,
+					}],
+				},
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					cutout: '65%',
+					animation: { duration: 300 },
+					plugins: {
+						legend: {
+							position: 'right',
+							labels: { color: '#9ca3af', font: { size: 11, family: 'Inter' }, boxWidth: 12, padding: 8 },
+						},
+						tooltip: chartDefaults.plugins.tooltip,
+					},
+				},
+			});
+		}
+
+		// Hourly timeline
+		if (jobTimelineChartEl && jobDashboard.hourly_timeline?.length) {
+			const labels = jobDashboard.hourly_timeline.map(h => `${String(h.hour).padStart(2, '0')}:00`);
+			jobTimelineChart = new Chart(jobTimelineChartEl, {
+				type: 'bar',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Jobs',
+						data: jobDashboard.hourly_timeline.map(h => h.count),
+						backgroundColor: 'rgba(139, 92, 246, 0.6)',
+						borderColor: '#8b5cf6',
+						borderWidth: 1,
+						borderRadius: 3,
+					}],
+				},
+				options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, legend: { display: false } } },
+			});
+		}
 	}
 
 	function destroyPlayCharts() {
@@ -147,6 +220,7 @@
 		speedChart?.destroy(); speedChart = null;
 		bandwidthChart?.destroy(); bandwidthChart = null;
 		destroyPlayCharts();
+		destroyJobCharts();
 	}
 
 	function buildCharts() {
@@ -322,11 +396,14 @@
 
 	onMount(async () => {
 		try {
-			[data, slsk] = await Promise.all([
+			[data, slsk, jobDashboard] = await Promise.all([
 				fetch('/api/library/stats/detailed').then(r => r.json()),
 				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
+				api.getJobDashboard().catch(() => null),
 			]);
 			await Promise.all([loadHistory(), loadPlayHistory()]);
+			await new Promise(r => setTimeout(r, 0));
+			buildJobCharts();
 		} catch (e) {
 			console.error('Failed to load stats:', e);
 		} finally {
@@ -621,6 +698,82 @@
 						</div>
 					{/each}
 				</div>
+			</Card>
+		{/if}
+
+		<!-- Job Pipeline Dashboard -->
+		{#if jobDashboard}
+			<Card padding="p-4" class="mb-8">
+				<div class="flex items-center gap-2 mb-4">
+					<Layers class="w-4 h-4 text-violet-400" />
+					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Job Pipeline (24h)</h2>
+					{#if jobDashboard.failure_rate_7d > 0}
+						<span class="text-xs text-red-400 ml-auto">{(jobDashboard.failure_rate_7d * 100).toFixed(1)}% failure rate (7d)</span>
+					{/if}
+				</div>
+
+				<!-- Summary tiles -->
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+					<div class="bg-[var(--bg-tertiary)] rounded-lg p-3">
+						<p class="text-xs text-[var(--text-muted)]">Active</p>
+						<p class="text-lg font-bold text-blue-400">{jobDashboard.active_count}</p>
+					</div>
+					{#each Object.entries(jobDashboard.status_counts).filter(([, v]) => v > 0) as [status, count]}
+						<div class="bg-[var(--bg-tertiary)] rounded-lg p-3">
+							<p class="text-xs text-[var(--text-muted)] capitalize">{status}</p>
+							<p class="text-lg font-bold {status === 'completed' ? 'text-emerald-400' : status === 'failed' ? 'text-red-400' : status === 'running' ? 'text-blue-400' : 'text-amber-400'}">{count}</p>
+						</div>
+					{/each}
+				</div>
+
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+					<!-- Status Distribution -->
+					<div>
+						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Status Distribution</h3>
+						<div class="h-48">
+							<canvas bind:this={jobStatusChartEl}></canvas>
+						</div>
+					</div>
+					<!-- Hourly Timeline -->
+					<div>
+						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Jobs by Hour</h3>
+						<div class="h-48">
+							<canvas bind:this={jobTimelineChartEl}></canvas>
+						</div>
+					</div>
+				</div>
+
+				<!-- Type breakdown + avg duration -->
+				{#if jobDashboard.type_distribution?.length || jobDashboard.avg_duration_by_type?.length}
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+						{#if jobDashboard.type_distribution?.length}
+							<div>
+								<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Type (24h)</h3>
+								<div class="space-y-1.5">
+									{#each jobDashboard.type_distribution as td}
+										<div class="flex items-center gap-2 text-sm">
+											<span class="flex-1 text-[var(--text-body)] text-xs">{td.type}</span>
+											<span class="text-[var(--text-muted)] text-xs font-mono w-8 text-right">{td.count}</span>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+						{#if jobDashboard.avg_duration_by_type?.length}
+							<div>
+								<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Avg Duration (7d)</h3>
+								<div class="space-y-1.5">
+									{#each jobDashboard.avg_duration_by_type as ad}
+										<div class="flex items-center gap-2 text-sm">
+											<span class="flex-1 text-[var(--text-body)] text-xs">{ad.type}</span>
+											<span class="text-[var(--text-muted)] text-xs font-mono w-16 text-right">{formatDuration(ad.avg_seconds)}</span>
+										</div>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
+				{/if}
 			</Card>
 		{/if}
 

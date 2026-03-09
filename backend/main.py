@@ -163,6 +163,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting (applied after CORS)
+if settings.server.rate_limit_rps > 0:
+    from backend.middleware.rate_limit import RateLimiter
+    app.add_middleware(
+        RateLimiter,
+        rate=settings.server.rate_limit_rps,
+        burst=settings.server.rate_limit_burst,
+    )
+
 # API routes
 app.include_router(tracks.router, prefix="/api/tracks", tags=["tracks"])
 app.include_router(library.router, prefix="/api/library", tags=["library"])

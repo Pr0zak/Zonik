@@ -77,6 +77,90 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
     return {"items": items, "total": total}
 
 
+@router.get("/dashboard")
+async def job_dashboard(db: AsyncSession = Depends(get_db)):
+    """Job pipeline health metrics for the dashboard."""
+    from datetime import timedelta
+
+    now = datetime.utcnow()
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+
+    # Status counts (24h)
+    status_result = await db.execute(
+        select(Job.status, func.count(Job.id))
+        .where(Job.started_at >= day_ago)
+        .group_by(Job.status)
+    )
+    status_counts = dict(status_result.all())
+
+    # Type distribution (24h)
+    type_result = await db.execute(
+        select(Job.type, func.count(Job.id))
+        .where(Job.started_at >= day_ago)
+        .group_by(Job.type)
+        .order_by(func.count(Job.id).desc())
+    )
+    type_dist = [{"type": t, "count": c} for t, c in type_result.all()]
+
+    # Timeline (hourly for 24h)
+    hourly_result = await db.execute(
+        select(
+            func.strftime("%Y-%m-%d %H:00", Job.started_at).label("hour"),
+            func.count(Job.id),
+        )
+        .where(Job.started_at >= day_ago)
+        .group_by("hour")
+        .order_by("hour")
+    )
+    timeline = [{"hour": h, "count": c} for h, c in hourly_result.all()]
+
+    # Avg duration by type (completed only, 7d)
+    duration_result = await db.execute(
+        select(
+            Job.type,
+            func.avg(
+                func.julianday(Job.finished_at) - func.julianday(Job.started_at)
+            ).label("avg_days"),
+        )
+        .where(Job.status == "completed", Job.started_at >= week_ago, Job.finished_at.isnot(None))
+        .group_by(Job.type)
+    )
+    avg_duration = {
+        t: round((d or 0) * 86400, 1)  # Convert days to seconds
+        for t, d in duration_result.all()
+    }
+
+    # Currently active
+    active_result = await db.execute(
+        select(func.count(Job.id)).where(Job.status.in_(["running", "pending"]))
+    )
+    active_count = active_result.scalar() or 0
+
+    # Failure rate (7d)
+    week_total = await db.execute(
+        select(func.count(Job.id)).where(Job.started_at >= week_ago)
+    )
+    week_failed = await db.execute(
+        select(func.count(Job.id)).where(Job.started_at >= week_ago, Job.status == "failed")
+    )
+    total_7d = week_total.scalar() or 0
+    failed_7d = week_failed.scalar() or 0
+    failure_rate = round(failed_7d / total_7d * 100, 1) if total_7d > 0 else 0
+
+    return {
+        "status_counts": status_counts,
+        "type_distribution": type_dist,
+        "timeline": timeline,
+        "avg_duration": avg_duration,
+        "active_count": active_count,
+        "total_24h": sum(status_counts.values()),
+        "failure_rate_7d": failure_rate,
+        "failed_7d": failed_7d,
+        "total_7d": total_7d,
+    }
+
+
 @router.get("/active")
 async def active_jobs(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
