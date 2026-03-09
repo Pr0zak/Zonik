@@ -452,3 +452,52 @@ async def get_artwork_batch(req: ArtworkBatchRequest):
         await asyncio.gather(*[fetch_one(client, item) for item in items])
 
     return {"results": results}
+
+
+class PlaylistDiscoverRequest(BaseModel):
+    limit: int = 10
+
+
+@router.post("/playlists")
+async def discover_playlists(req: PlaylistDiscoverRequest, db: AsyncSession = Depends(get_db)):
+    """Discover playlists based on library taste profile.
+
+    Searches Spotify and Deezer for playlists matching top genres/artists.
+    """
+    from backend.services.playlist_import import search_playlists
+
+    # Get top genres and artists from library
+    top_genres = (await db.execute(
+        select(Track.genre, sqfunc.count()).where(Track.genre.isnot(None), Track.genre != "")
+        .group_by(Track.genre).order_by(sqfunc.count().desc()).limit(5)
+    )).all()
+
+    top_artists = (await db.execute(
+        select(Artist.name, sqfunc.count(Track.id))
+        .join(Track, Track.artist_id == Artist.id)
+        .group_by(Artist.name).order_by(sqfunc.count(Track.id).desc()).limit(5)
+    )).all()
+
+    # Build search queries from taste
+    queries = []
+    for genre, _ in top_genres[:3]:
+        queries.append(genre)
+    for artist, _ in top_artists[:2]:
+        queries.append(artist)
+
+    if not queries:
+        return {"playlists": [], "queries": []}
+
+    # Search across sources
+    all_results = []
+    seen = set()
+    for q in queries:
+        results = await search_playlists(q, limit=req.limit // len(queries) + 1)
+        for r in results:
+            key = f"{r['source']}:{r['id']}"
+            if key not in seen:
+                seen.add(key)
+                r["matched_query"] = q
+                all_results.append(r)
+
+    return {"playlists": all_results[:req.limit], "queries": queries}

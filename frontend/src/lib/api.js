@@ -138,6 +138,10 @@ export const api = {
 	tagMoods: (trackIds) => request('/tracks/ai-moods', { method: 'POST', body: JSON.stringify({ track_ids: trackIds }) }),
 	getMoods: (trackIds = null) => request(buildUrl('/tracks/moods', { track_ids: trackIds?.join(',') })),
 
+	// Playlist Discovery
+	discoverPlaylists: (limit = 10) =>
+		request('/discovery/playlists', { method: 'POST', body: JSON.stringify({ limit }) }),
+
 	// Playlist Import
 	fetchExternalPlaylist: (url, source = null) =>
 		request('/playlists/import/fetch', { method: 'POST', body: JSON.stringify({ url, source }) }),

@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { parseUTC } from '$lib/utils.js';
-	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3, HelpCircle } from 'lucide-svelte';
+	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3, HelpCircle, ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -35,6 +35,21 @@
 	let remixes = $state([]);
 	let remixLoading = $state(false);
 	let remixSource = $state('popular');
+
+	// Playlist Discovery state
+	let discPlaylists = $state([]);
+	let discPlaylistsLoading = $state(false);
+	let discQueries = $state([]);
+
+	async function loadDiscoverPlaylists() {
+		discPlaylistsLoading = true;
+		try {
+			const data = await api.discoverPlaylists(20);
+			discPlaylists = data.playlists || [];
+			discQueries = data.queries || [];
+		} catch (e) { addToast('Failed to discover playlists: ' + e.message, 'error'); }
+		finally { discPlaylistsLoading = false; }
+	}
 
 	// For You state
 	let recommendations = $state([]);
@@ -167,6 +182,7 @@
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
 		{ key: 'remixes', label: 'Remixes', icon: Disc3 },
+		{ key: 'playlists', label: 'Playlists', icon: ListMusic },
 		{ key: 'search', label: 'Search', icon: Search },
 	];
 
@@ -1672,6 +1688,58 @@
 			{:else}
 				<Card>
 					<EmptyState icon={Disc3} title="No remixes found" description="Try a different source or play more tracks to build history." />
+				</Card>
+			{/if}
+
+		{:else if activeTab === 'playlists'}
+			<div class="flex items-center gap-3 mb-4">
+				<Button variant="ghost" onclick={loadDiscoverPlaylists} disabled={discPlaylistsLoading}>
+					{#if discPlaylistsLoading}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
+					Discover
+				</Button>
+				{#if discQueries.length}
+					<span class="text-xs text-[var(--text-muted)]">Based on: {discQueries.join(', ')}</span>
+				{/if}
+			</div>
+
+			{#if discPlaylistsLoading}
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					{#each Array(6) as _}
+						<Skeleton class="h-20 rounded-lg" />
+					{/each}
+				</div>
+			{:else if discPlaylists.length}
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+					{#each discPlaylists as pl}
+						<a href="/playlists" class="block">
+							<Card hover padding="p-3">
+								<div class="flex items-center gap-3">
+									{#if pl.image_url}
+										<img src={pl.image_url} alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+									{:else}
+										<div class="w-12 h-12 rounded-lg bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
+											<ListMusic class="w-5 h-5 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+									<div class="flex-1 min-w-0">
+										<p class="text-sm font-medium text-[var(--text-primary)] truncate">{pl.name}</p>
+										<p class="text-xs text-[var(--text-muted)] truncate">
+											{pl.owner} &middot; {pl.track_count} tracks &middot;
+											<span class="capitalize">{pl.source.replace('_', ' ')}</span>
+										</p>
+										{#if pl.matched_query}
+											<span class="text-[10px] text-[var(--text-disabled)]">matched: {pl.matched_query}</span>
+										{/if}
+									</div>
+									<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
+								</div>
+							</Card>
+						</a>
+					{/each}
+				</div>
+			{:else}
+				<Card>
+					<EmptyState icon={ListMusic} title="No playlists discovered" description="Click Discover to find playlists matching your library taste." />
 				</Card>
 			{/if}
 		{/if}
