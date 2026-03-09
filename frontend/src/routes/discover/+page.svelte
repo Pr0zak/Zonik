@@ -35,6 +35,7 @@
 	let remixes = $state([]);
 	let remixLoading = $state(false);
 	let remixSource = $state('popular');
+	let remixTypeFilter = $state('all');
 
 	// Playlist Discovery state
 	let discPlaylists = $state([]);
@@ -290,7 +291,17 @@
 	let sortedTopTracks = $derived(sortTracks(topTracks));
 	let sortedSimilarTracks = $derived(sortTracks(similarTracks));
 	let sortedSearchResults = $derived(sortTracks(filteredSearchResults));
-	let sortedRemixes = $derived(sortTracks(remixes));
+	let filteredRemixes = $derived(remixTypeFilter === 'all' ? remixes : remixes.filter(r => r.version_type === remixTypeFilter));
+	let sortedRemixes = $derived(sortTracks(filteredRemixes));
+	let remixTypeCounts = $derived(() => {
+		const counts = { all: remixes.length };
+		for (const r of remixes) {
+			if (r.version_type) {
+				counts[r.version_type] = (counts[r.version_type] || 0) + 1;
+			}
+		}
+		return counts;
+	});
 
 	async function discoverSearch() {
 		if (!searchQuery.trim()) return;
@@ -1564,7 +1575,7 @@
 			<div class="flex items-center gap-3 mb-4 flex-wrap">
 				{#each [{ key: 'popular', label: 'Popular' }, { key: 'favorites', label: 'Favorites' }, { key: 'random', label: 'Random' }] as src}
 					<button
-						onclick={() => { remixSource = src.key; loadRemixes(); }}
+						onclick={() => { remixSource = src.key; remixTypeFilter = 'all'; loadRemixes(); }}
 						class="px-3 py-1.5 text-xs rounded-md transition-colors {remixSource === src.key ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
 					>{src.label}</button>
 				{/each}
@@ -1579,6 +1590,23 @@
 					</Button>
 				{/if}
 			</div>
+
+			<!-- Version type filter pills -->
+			{#if remixes.length > 0}
+				{@const counts = remixTypeCounts()}
+				<div class="flex items-center gap-1.5 mb-4 flex-wrap">
+					<button
+						onclick={() => remixTypeFilter = 'all'}
+						class="px-2.5 py-1 text-xs rounded-md transition-colors {remixTypeFilter === 'all' ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent-light)] border border-[var(--color-accent)]/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+					>All {counts.all || 0}</button>
+					{#each Object.entries(counts).filter(([k]) => k !== 'all').sort((a, b) => b[1] - a[1]) as [type, count]}
+						<button
+							onclick={() => remixTypeFilter = type}
+							class="px-2.5 py-1 text-xs rounded-md transition-colors capitalize {remixTypeFilter === type ? (versionTypeColors[type] || 'bg-gray-500/20 text-gray-400') + ' border border-current/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+						>{type} {count}</button>
+					{/each}
+				</div>
+			{/if}
 
 			{#if remixLoading}
 				<Card padding="p-0">

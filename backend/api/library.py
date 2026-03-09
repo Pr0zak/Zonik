@@ -312,7 +312,8 @@ async def ai_resolve_duplicates(db: AsyncSession = Depends(get_db)):
     from backend.services.cleanup import find_duplicates_enriched
     from backend.services.ai.duplicate_resolver import resolve_duplicates
 
-    groups = await find_duplicates_enriched(db)
+    result = await find_duplicates_enriched(db)
+    groups = result.get("groups", [])
     if not groups:
         return {"recommendations": [], "message": "No duplicates found"}
 
