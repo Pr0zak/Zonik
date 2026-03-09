@@ -133,4 +133,8 @@ export const api = {
 	applyAITags: (tags) => request('/tracks/ai-tag/apply', { method: 'POST', body: JSON.stringify({ tags }) }),
 	getInsights: () => request('/library/stats/insights'),
 	aiResolveDuplicates: () => request('/library/duplicates/ai-resolve', { method: 'POST' }),
+
+	// Mood Tags
+	tagMoods: (trackIds) => request('/tracks/ai-moods', { method: 'POST', body: JSON.stringify({ track_ids: trackIds }) }),
+	getMoods: (trackIds = null) => request(buildUrl('/tracks/moods', { track_ids: trackIds?.join(',') })),
 };

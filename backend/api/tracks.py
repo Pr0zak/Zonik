@@ -426,3 +426,22 @@ async def bulk_analyze_tracks(req: BulkAnalyzeRequest, background_tasks: Backgro
 
     background_tasks.add_task(run_analysis)
     return {"job_id": job_id, "queued": len(track_info)}
+
+
+class MoodTagRequest(BaseModel):
+    track_ids: list[str]
+
+
+@router.post("/ai-moods")
+async def tag_moods(req: MoodTagRequest):
+    """Tag tracks with mood labels using CLAP embeddings."""
+    from backend.services.ai.mood_tagger import tag_tracks_with_moods
+    return await tag_tracks_with_moods(req.track_ids)
+
+
+@router.get("/moods")
+async def get_moods(track_ids: str | None = None):
+    """Get mood tags for tracks. Pass comma-separated IDs or omit for all."""
+    from backend.services.ai.mood_tagger import get_track_moods
+    ids = track_ids.split(",") if track_ids else None
+    return await get_track_moods(ids)

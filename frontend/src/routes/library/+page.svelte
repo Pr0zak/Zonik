@@ -560,6 +560,26 @@
 		} catch (e) { addToast('Failed to apply tags: ' + e.message, 'error'); }
 	}
 
+	let moodTagLoading = $state(false);
+	let trackMoods = $state({});  // track_id -> {moods, primary_mood}
+
+	async function bulkMoodTag() {
+		if (!selected.size) return;
+		moodTagLoading = true;
+		try {
+			const data = await api.tagMoods([...selected]);
+			if (data.error) { addToast(data.error, 'error'); return; }
+			// Merge results into trackMoods map
+			if (data.results) {
+				for (const [id, info] of Object.entries(data.results)) {
+					trackMoods[id] = info;
+				}
+			}
+			addToast(`Tagged ${data.tagged} track(s) with moods`, 'success');
+		} catch (e) { addToast('Mood tagging failed: ' + e.message, 'error'); }
+		finally { moodTagLoading = false; }
+	}
+
 	async function bulkFindUpgrades() {
 		if (!selected.size) return;
 		const selectedTracks = tracks.filter(t => selected.has(t.id));
@@ -967,6 +987,9 @@
 				<Button variant="secondary" size="sm" loading={aiTagLoading} onclick={bulkAITag}>
 					<Sparkles class="w-3.5 h-3.5 text-amber-400" /> AI Tag
 				</Button>
+				<Button variant="secondary" size="sm" loading={moodTagLoading} onclick={bulkMoodTag}>
+					<Sparkles class="w-3.5 h-3.5 text-purple-400" /> Moods
+				</Button>
 			{/if}
 			<div class="flex-1"></div>
 			<Button variant="secondary" size="sm" onclick={toggleSelectMode}>Cancel</Button>
@@ -1043,6 +1066,13 @@
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}</p>
 							{#if track.format || track.bitrate}
 								<p class="text-[10px] text-[var(--text-disabled)] font-mono truncate">{track.format?.toUpperCase() || ''}{track.format && track.bitrate ? ' · ' : ''}{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : ''}</p>
+							{/if}
+							{#if trackMoods[track.id]}
+								<div class="flex gap-1 flex-wrap mt-0.5">
+									{#each trackMoods[track.id].moods?.slice(0, 2) || [] as mood}
+										<span class="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">{mood}</span>
+									{/each}
+								</div>
 							{/if}
 						</div>
 					{/each}
