@@ -26,6 +26,9 @@
 		lidarr_enabled: false,
 		lidarr_url: '',
 		lidarr_api_key: '',
+		spotify_client_id: '',
+		spotify_client_secret: '',
+		apple_music_developer_token: '',
 		lastfm_api_key: '',
 		lastfm_write_api_key: '',
 		lastfm_write_api_secret: '',
@@ -678,7 +681,55 @@
 			{/if}
 		</Card>
 
-		<!-- 5. Subsonic -->
+		<!-- 5. Spotify -->
+		<Card padding="p-4">
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-8 h-8 rounded-lg flex items-center justify-center bg-green-500/15">
+					<Music class="w-4 h-4 text-green-400" />
+				</div>
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Spotify</h2>
+			</div>
+			<p class="text-xs text-[var(--text-muted)] mb-3">For importing Spotify playlists. Get credentials from <a href="https://developer.spotify.com/dashboard" target="_blank" class="text-green-400 hover:underline">Spotify Developer Dashboard</a>.</p>
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1.5">Client ID</label>
+					<input type="text" bind:value={services.spotify_client_id} oninput={markDirty} placeholder="Spotify Client ID" class={inputClass} />
+				</div>
+				<div>
+					<label class="block text-xs text-[var(--text-muted)] mb-1.5">Client Secret</label>
+					<div class="relative">
+						<input type={showField.spotify ? 'text' : 'password'} bind:value={services.spotify_client_secret} oninput={markDirty} placeholder="Spotify Client Secret" class="{inputClass} pr-8" />
+						<button type="button" onclick={() => toggleField('spotify')}
+							class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+							{#if showField.spotify}<EyeOff class="w-4 h-4" />{:else}<Eye class="w-4 h-4" />{/if}
+						</button>
+					</div>
+				</div>
+			</div>
+		</Card>
+
+		<!-- 6. Apple Music -->
+		<Card padding="p-4">
+			<div class="flex items-center gap-3 mb-4">
+				<div class="w-8 h-8 rounded-lg flex items-center justify-center bg-pink-500/15">
+					<Music class="w-4 h-4 text-pink-400" />
+				</div>
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Apple Music</h2>
+			</div>
+			<p class="text-xs text-[var(--text-muted)] mb-3">For importing Apple Music playlists. Requires a developer token from Apple.</p>
+			<div>
+				<label class="block text-xs text-[var(--text-muted)] mb-1.5">Developer Token</label>
+				<div class="relative">
+					<input type={showField.apple ? 'text' : 'password'} bind:value={services.apple_music_developer_token} oninput={markDirty} placeholder="Apple Music developer JWT" class="{inputClass} pr-8" />
+					<button type="button" onclick={() => toggleField('apple')}
+						class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
+						{#if showField.apple}<EyeOff class="w-4 h-4" />{:else}<Eye class="w-4 h-4" />{/if}
+					</button>
+				</div>
+			</div>
+		</Card>
+
+		<!-- 7. Subsonic -->
 		<div class="bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-xl p-4">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-3">

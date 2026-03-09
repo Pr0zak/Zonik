@@ -4,7 +4,7 @@
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, inputClass } from '$lib/utils.js';
-	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles } from 'lucide-svelte';
+	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles, Import, Search, Download, Check, Loader2, ExternalLink } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -41,6 +41,69 @@
 	let aiName = $state('');
 	let aiLimit = $state(30);
 	let aiGenerating = $state(false);
+
+	// Import
+	let showImport = $state(false);
+	let importUrl = $state('');
+	let importSearchQuery = $state('');
+	let importFetching = $state(false);
+	let importSearching = $state(false);
+	let importPreview = $state(null);  // fetched playlist data
+	let importSearchResults = $state([]);
+	let importCreating = $state(false);
+
+	async function fetchExternalPlaylist() {
+		if (!importUrl.trim()) return;
+		importFetching = true;
+		importPreview = null;
+		try {
+			const data = await api.fetchExternalPlaylist(importUrl.trim());
+			if (data.error) { addToast(data.error, 'error'); return; }
+			importPreview = data;
+		} catch (e) { addToast('Failed to fetch playlist: ' + e.message, 'error'); }
+		finally { importFetching = false; }
+	}
+
+	async function searchExternalPlaylists() {
+		if (!importSearchQuery.trim()) return;
+		importSearching = true;
+		try {
+			const data = await api.searchExternalPlaylists(importSearchQuery.trim());
+			importSearchResults = data.results || [];
+			if (!importSearchResults.length) addToast('No playlists found', 'info');
+		} catch (e) { addToast('Search failed: ' + e.message, 'error'); }
+		finally { importSearching = false; }
+	}
+
+	async function importPlaylist(downloadMissing = false) {
+		if (!importPreview) return;
+		importCreating = true;
+		try {
+			const data = await api.importExternalPlaylist(
+				importPreview.name,
+				importPreview.tracks,
+				downloadMissing
+			);
+			addToast(`Imported "${data.name}" — ${data.matched}/${data.total} matched${data.download_jobs ? `, ${data.download_jobs} downloads queued` : ''}`, 'success');
+			playlists = await api.getPlaylists();
+			importPreview = null;
+			importUrl = '';
+			showImport = false;
+		} catch (e) { addToast('Import failed: ' + e.message, 'error'); }
+		finally { importCreating = false; }
+	}
+
+	async function previewSearchResult(result) {
+		importFetching = true;
+		importPreview = null;
+		importSearchResults = [];
+		try {
+			const data = await api.fetchExternalPlaylist(result.id, result.source);
+			if (data.error) { addToast(data.error, 'error'); return; }
+			importPreview = data;
+		} catch (e) { addToast('Failed to fetch playlist', 'error'); }
+		finally { importFetching = false; }
+	}
 
 	async function aiGeneratePlaylist() {
 		if (!aiPrompt.trim()) return;
@@ -171,14 +234,21 @@
 	<div class="flex items-center justify-between mb-6">
 		<PageHeader title="Playlists" color="var(--color-playlists)" />
 		<div class="flex items-center gap-2">
-			<Button onclick={() => { showAIGen = !showAIGen; if (showAIGen) showGenerator = false; }} variant="secondary" size="sm">
+			<Button onclick={() => { showImport = !showImport; if (showImport) { showAIGen = false; showGenerator = false; } }} variant="secondary" size="sm">
+				{#if showImport}
+					<span class="flex items-center gap-1.5">Hide Import</span>
+				{:else}
+					<span class="flex items-center gap-1.5"><Import class="w-4 h-4" /> Import</span>
+				{/if}
+			</Button>
+			<Button onclick={() => { showAIGen = !showAIGen; if (showAIGen) { showGenerator = false; showImport = false; } }} variant="secondary" size="sm">
 				{#if showAIGen}
 					<span class="flex items-center gap-1.5">Hide AI</span>
 				{:else}
 					<span class="flex items-center gap-1.5"><Sparkles class="w-4 h-4 text-amber-400" /> AI Generate</span>
 				{/if}
 			</Button>
-			<Button onclick={() => { showGenerator = !showGenerator; if (showGenerator) showAIGen = false; }} variant="secondary" size="sm">
+			<Button onclick={() => { showGenerator = !showGenerator; if (showGenerator) { showAIGen = false; showImport = false; } }} variant="secondary" size="sm">
 				{#if showGenerator}
 					<span class="flex items-center gap-1.5">Hide Generator</span>
 				{:else}
@@ -212,6 +282,108 @@
 				{/if}
 			</Card>
 		{/if}
+	{/if}
+
+	{#if showImport}
+		<Card padding="p-4" class="mb-6">
+			<div class="flex items-center gap-2 mb-4">
+				<Import class="w-4 h-4 text-blue-400" />
+				<h3 class="text-base font-semibold text-[var(--text-primary)]">Import External Playlist</h3>
+			</div>
+
+			<!-- URL import -->
+			<div class="mb-4">
+				<label class="block text-xs text-[var(--text-muted)] mb-1.5">Paste a Spotify, Apple Music, or Deezer playlist URL</label>
+				<div class="flex gap-2">
+					<input type="text" bind:value={importUrl} placeholder="https://open.spotify.com/playlist/..." class="{inputClass} flex-1"
+						onkeydown={(e) => { if (e.key === 'Enter') fetchExternalPlaylist(); }} />
+					<Button variant="primary" size="sm" loading={importFetching} onclick={fetchExternalPlaylist} disabled={!importUrl.trim()}>
+						Fetch
+					</Button>
+				</div>
+			</div>
+
+			<!-- Or search -->
+			<div class="border-t border-[var(--border-subtle)] pt-3">
+				<label class="block text-xs text-[var(--text-muted)] mb-1.5">Or search for playlists</label>
+				<div class="flex gap-2">
+					<input type="text" bind:value={importSearchQuery} placeholder="Search Spotify & Deezer..." class="{inputClass} flex-1"
+						onkeydown={(e) => { if (e.key === 'Enter') searchExternalPlaylists(); }} />
+					<Button variant="secondary" size="sm" loading={importSearching} onclick={searchExternalPlaylists} disabled={!importSearchQuery.trim()}>
+						<Search class="w-3.5 h-3.5" /> Search
+					</Button>
+				</div>
+			</div>
+
+			<!-- Search results -->
+			{#if importSearchResults.length}
+				<div class="mt-3 space-y-2">
+					{#each importSearchResults as result}
+						<button class="w-full flex items-center gap-3 p-2 rounded-lg bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+							onclick={() => previewSearchResult(result)}>
+							{#if result.image_url}
+								<img src={result.image_url} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0" />
+							{:else}
+								<div class="w-10 h-10 rounded bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
+									<ListMusic class="w-4 h-4 text-[var(--text-disabled)]" />
+								</div>
+							{/if}
+							<div class="flex-1 min-w-0">
+								<p class="text-sm text-[var(--text-primary)] truncate">{result.name}</p>
+								<p class="text-xs text-[var(--text-muted)]">{result.owner} &middot; {result.track_count} tracks &middot; <span class="capitalize">{result.source.replace('_', ' ')}</span></p>
+							</div>
+							<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
+						</button>
+					{/each}
+				</div>
+			{/if}
+
+			<!-- Preview -->
+			{#if importPreview}
+				<div class="mt-4 border-t border-[var(--border-subtle)] pt-4">
+					<div class="flex items-center gap-3 mb-3">
+						{#if importPreview.image_url}
+							<img src={importPreview.image_url} alt="" class="w-14 h-14 rounded-lg object-cover" />
+						{/if}
+						<div class="flex-1 min-w-0">
+							<h4 class="font-semibold text-[var(--text-primary)] truncate">{importPreview.name}</h4>
+							<p class="text-xs text-[var(--text-muted)]">
+								{importPreview.owner} &middot; {importPreview.track_count} tracks &middot;
+								<span class="text-emerald-400">{importPreview.matched_count || 0} in library</span>
+							</p>
+						</div>
+					</div>
+
+					<!-- Track list preview -->
+					<div class="max-h-60 overflow-y-auto space-y-1 mb-3">
+						{#each importPreview.tracks?.slice(0, 50) || [] as track}
+							<div class="flex items-center gap-2 text-xs px-2 py-1 rounded {track.in_library ? 'bg-emerald-500/10' : 'bg-[var(--bg-tertiary)]'}">
+								{#if track.in_library}
+									<Check class="w-3 h-3 text-emerald-400 flex-shrink-0" />
+								{:else}
+									<Download class="w-3 h-3 text-[var(--text-disabled)] flex-shrink-0" />
+								{/if}
+								<span class="text-[var(--text-body)] truncate flex-1">{track.title}</span>
+								<span class="text-[var(--text-muted)] truncate max-w-32">{track.artist}</span>
+							</div>
+						{/each}
+						{#if (importPreview.tracks?.length || 0) > 50}
+							<p class="text-xs text-[var(--text-muted)] text-center py-1">...and {importPreview.tracks.length - 50} more</p>
+						{/if}
+					</div>
+
+					<div class="flex items-center gap-2 justify-end">
+						<Button variant="secondary" size="sm" onclick={() => { importPreview = null; }}>Cancel</Button>
+						<Button variant="primary" size="sm" loading={importCreating} onclick={() => importPlaylist(false)}>
+							Import Matched
+						</Button>
+						<Button variant="success" size="sm" loading={importCreating} onclick={() => importPlaylist(true)}>
+							<Download class="w-3.5 h-3.5" /> Import + Download Missing
+						</Button>
+					</div>
+				</div>
+			{/if}
+		</Card>
 	{/if}
 
 	{#if showAIGen}

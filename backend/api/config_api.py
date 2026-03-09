@@ -94,6 +94,11 @@ class ServiceConfig(BaseModel):
     lastfm_api_key: str = ""
     lastfm_write_api_key: str = ""
     lastfm_write_api_secret: str = ""
+    # Spotify
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
+    # Apple Music
+    apple_music_developer_token: str = ""
     # AI Assistant
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-20250514"
@@ -133,6 +138,9 @@ async def get_service_config():
         "lastfm_write_api_secret": settings.lastfm.write_api_secret,
         "lastfm_session_key": settings.lastfm.session_key,
         "lastfm_username": settings.lastfm.username,
+        "spotify_client_id": settings.spotify.client_id,
+        "spotify_client_secret": settings.spotify.client_secret,
+        "apple_music_developer_token": settings.apple_music.developer_token,
         "claude_api_key": settings.assistant.claude_api_key,
         "claude_model": settings.assistant.claude_model,
         "ai_reranking": settings.assistant.ai_reranking,
@@ -195,6 +203,20 @@ async def update_service_config(req: ServiceConfig):
     if req.naming_scheme:
         library["naming_scheme"] = req.naming_scheme
     raw["library"] = {**settings.library.model_dump(), **library}
+
+    # Spotify
+    spotify = raw.get("spotify", {})
+    if req.spotify_client_id:
+        spotify["client_id"] = req.spotify_client_id
+    if req.spotify_client_secret:
+        spotify["client_secret"] = req.spotify_client_secret
+    raw["spotify"] = {**settings.spotify.model_dump(), **spotify}
+
+    # Apple Music
+    apple_music = raw.get("apple_music", {})
+    if req.apple_music_developer_token:
+        apple_music["developer_token"] = req.apple_music_developer_token
+    raw["apple_music"] = {**settings.apple_music.model_dump(), **apple_music}
 
     # AI Assistant
     assistant = raw.get("assistant", {})
