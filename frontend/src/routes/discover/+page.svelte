@@ -1723,7 +1723,9 @@
 				</Card>
 			{:else}
 				<Card>
-					<EmptyState icon={Disc3} title="No remixes found" description="Try a different source or play more tracks to build history." />
+					<EmptyState title="No remixes found" description="Try a different source or play more tracks to build history.">
+						{#snippet icon()}<Disc3 class="w-12 h-12" />{/snippet}
+					</EmptyState>
 				</Card>
 			{/if}
 
@@ -1784,7 +1786,9 @@
 				</div>
 			{:else}
 				<Card>
-					<EmptyState icon={ListMusic} title="No playlists discovered" description="Click Discover to find playlists matching your library taste." />
+					<EmptyState title="No playlists discovered" description="Click Discover to find playlists matching your library taste.">
+						{#snippet icon()}<ListMusic class="w-12 h-12" />{/snippet}
+					</EmptyState>
 				</Card>
 			{/if}
 		{/if}

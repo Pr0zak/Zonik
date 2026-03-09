@@ -334,7 +334,9 @@
 			{/each}
 		</div>
 	{:else if upgrades.length === 0 && !activeFilter && !activeReason}
-		<EmptyState icon={ArrowUpCircle} title="No upgrades found" description="Scan your library to find tracks that could be upgraded to higher quality." />
+		<EmptyState title="No upgrades found" description="Scan your library to find tracks that could be upgraded to higher quality.">
+			{#snippet icon()}<ArrowUpCircle class="w-12 h-12" />{/snippet}
+		</EmptyState>
 	{:else}
 		<div class="overflow-x-auto">
 			<table class="w-full text-sm">

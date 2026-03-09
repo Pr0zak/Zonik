@@ -1795,7 +1795,9 @@
 				{/each}
 			</div>
 		{:else if upgradeSearchDone}
-			<EmptyState icon={Download} title="No sources found" subtitle="No Soulseek peers have this track available right now" />
+			<EmptyState title="No sources found" description="No Soulseek peers have this track available right now">
+				{#snippet icon()}<Download class="w-12 h-12" />{/snippet}
+			</EmptyState>
 		{/if}
 	{/snippet}
 	{#snippet footer()}

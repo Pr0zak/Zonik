@@ -255,7 +255,9 @@
 		</div>
 	{:else if !data?.groups?.length}
 		<div class="mt-8">
-			<EmptyState icon={Check} title="No duplicates" message="Your library has no duplicate tracks." />
+			<EmptyState title="No duplicates" description="Your library has no duplicate tracks.">
+				{#snippet icon()}<Check class="w-12 h-12" />{/snippet}
+			</EmptyState>
 		</div>
 	{:else}
 		<!-- Stats Bar -->
