@@ -242,8 +242,17 @@ async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):
 
                     if upgrade and upgrade.status == "downloading":
                         if job and job.status == "completed":
-                            upgrade.status = "completed"
-                            upgrade.completed_at = datetime.utcnow()
+                            # Only mark completed if scanner already confirmed the upgrade
+                            # (upgraded_format is set by _mark_upgrade_completed in scanner.py)
+                            if upgrade.upgraded_format:
+                                # Already handled by scanner — just ensure status
+                                upgrade.status = "completed"
+                                upgrade.completed_at = upgrade.completed_at or datetime.utcnow()
+                            else:
+                                # Download succeeded but scanner didn't match it as an upgrade
+                                # — the track was imported as new or title didn't match
+                                upgrade.status = "failed"
+                                upgrade.error_message = "Downloaded but not matched as upgrade (title mismatch or same quality)"
                         elif job and job.status == "failed":
                             err = ""
                             if job.result:
