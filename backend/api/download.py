@@ -46,6 +46,13 @@ from backend.api.websocket import broadcast_job_update
 router = APIRouter()
 
 
+async def _save_job_obj(job):
+    """Save a detached Job object with a short-lived session."""
+    async with async_session() as s:
+        await s.merge(job)
+        await s.commit()
+
+
 async def _find_existing_download(db: AsyncSession, artist: str, track: str) -> str | None:
     """Check if a pending/running download already exists for this artist+track. Returns job_id or None."""
     result = await db.execute(
@@ -244,13 +251,13 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 )
                 db.add(job)
                 await db.commit()
+                db.expunge(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "pending", "progress": 0, "total": 1, "description": f"Queued: {desc}"})
                 async with sem:
                     job.status = "running"
-                    await db.merge(job)
-                    await db.commit()
+                    await _save_job_obj(job)
                     await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-                    await _do_download_inner(db, job, job_id, desc, req)
+                    await _do_download_inner(None, job, job_id, desc, req)
             else:
                 job = Job(
                     id=job_id, type="download", card="dl", status="running",
@@ -259,20 +266,25 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
                 )
                 db.add(job)
                 await db.commit()
+                db.expunge(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
                 async with sem:
-                    await _do_download_inner(db, job, job_id, desc, req)
+                    await _do_download_inner(None, job, job_id, desc, req)
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
 
 
-async def _do_download_inner(db, job, job_id, desc, req):
-    """Core download logic — runs inside the download semaphore."""
+async def _do_download_inner(db_ignored, job, job_id, desc, req):
+    """Core download logic — runs inside the download semaphore.
+    Uses short-lived DB sessions to avoid holding connections during transfers."""
     import asyncio
     from backend.soulseek import get_client
     from backend.soulseek.protocol.types import TransferState
     from backend.services.scanner import import_downloaded_file
+
+    async def _save_job():
+        await _save_job_obj(job)
 
     def _file_size(path):
         """Get file size in bytes, or 0 if unavailable."""
@@ -369,8 +381,7 @@ async def _do_download_inner(db, job, job_id, desc, req):
                 "artist": req.artist, "track": req.track, "status": "downloading",
                 "sources": len(batch),
             }])
-            await db.merge(job)
-            await db.commit()
+            await _save_job()
             await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
 
             # Start all downloads concurrently
@@ -428,7 +439,8 @@ async def _do_download_inner(db, job, job_id, desc, req):
                     cand, save_path = winner
                     short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                     fsize = _file_size(save_path)
-                    track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
+                    async with async_session() as import_sess:
+                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist)
                     job.status = "completed"
                     job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
@@ -477,7 +489,8 @@ async def _do_download_inner(db, job, job_id, desc, req):
 
                     short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                     fsize = _file_size(best_path)
-                    track_id = await import_downloaded_file(db, best_path, artist_hint=req.artist)
+                    async with async_session() as import_sess:
+                        track_id = await import_downloaded_file(import_sess, best_path, artist_hint=req.artist)
                     job.status = "completed"
                     job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
@@ -502,8 +515,7 @@ async def _do_download_inner(db, job, job_id, desc, req):
                     "artist": req.artist, "track": req.track, "status": "downloading",
                     "username": dl_username, "filename": short_name,
                 }])
-                await db.merge(job)
-                await db.commit()
+                await _save_job()
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
 
                 try:
@@ -528,7 +540,8 @@ async def _do_download_inner(db, job, job_id, desc, req):
                 if status == "completed":
                     await native_client.reputation.record_success(dl_username)
                     fsize = _file_size(save_path)
-                    track_id = await import_downloaded_file(db, save_path, artist_hint=req.artist)
+                    async with async_session() as import_sess:
+                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist)
                     job.status = "completed"
                     job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
@@ -562,8 +575,7 @@ async def _do_download_inner(db, job, job_id, desc, req):
         job.result = json.dumps({"error": str(e)})
     finally:
         job.finished_at = datetime.utcnow()
-        await db.merge(job)
-        await db.commit()
+        await _save_job()
         await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": desc})
         # Clean up zero-byte and non-audio leftovers in download dir
         try:
@@ -606,7 +618,9 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None) -
                 job.status = "running"
                 await sess.commit()
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-            await _do_download_inner(sess, job, job_id, desc, dl_req)
+            sess.expunge(job)
+        # job is now detached — _do_download_inner uses its own short-lived sessions
+        await _do_download_inner(None, job, job_id, desc, dl_req)
     return job_id
 
 
