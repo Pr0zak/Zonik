@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from backend.config import get_settings
 from backend.models.track import Track
 from backend.models.artist import Artist
+from backend.models.analysis import TrackAnalysis
 from backend.models.playlist import Playlist, PlaylistTrack
 from backend.services.ai.client import call_claude
 
@@ -101,10 +102,12 @@ Return JSON with selection criteria:
         query = query.join(Artist, Track.artist_id == Artist.id, isouter=True)
         conditions.append(or_(*artist_conditions))
 
-    if criteria.get("min_bpm"):
-        conditions.append(Track.bpm >= criteria["min_bpm"])
-    if criteria.get("max_bpm"):
-        conditions.append(Track.bpm <= criteria["max_bpm"])
+    if criteria.get("min_bpm") or criteria.get("max_bpm"):
+        query = query.outerjoin(TrackAnalysis, Track.id == TrackAnalysis.track_id)
+        if criteria.get("min_bpm"):
+            conditions.append(TrackAnalysis.bpm >= criteria["min_bpm"])
+        if criteria.get("max_bpm"):
+            conditions.append(TrackAnalysis.bpm <= criteria["max_bpm"])
 
     if criteria.get("mood_keywords"):
         # Search genre/title for mood keywords

@@ -372,7 +372,7 @@
 		if (!showEdit) editTrack = null;
 	});
 
-	function openEdit(track) {
+	async function openEdit(track) {
 		closeMenu();
 		editForm = {
 			title: track.title || '',
@@ -382,6 +382,11 @@
 		};
 		editTrack = track;
 		showEdit = true;
+		// Fetch full track details (includes file_path, sample_rate, bit_depth)
+		try {
+			const full = await api.getTrack(track.id);
+			editTrack = { ...editTrack, ...full };
+		} catch (e) { /* keep partial data */ }
 	}
 
 	async function saveEdit() {
@@ -1626,9 +1631,43 @@
 				</div>
 			</div>
 			{#if editTrack?.file_path}
-			<div class="mt-1 px-2.5 py-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
-				<p class="text-[10px] text-[var(--text-disabled)] uppercase tracking-wider mb-0.5">File</p>
-				<p class="text-xs text-[var(--text-muted)] font-mono break-all">{editTrack.file_path}</p>
+			<div class="mt-1 px-2.5 py-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)] space-y-1.5">
+				<div>
+					<p class="text-[10px] text-[var(--text-disabled)] uppercase tracking-wider mb-0.5">File Path</p>
+					<p class="text-xs text-[var(--text-muted)] font-mono break-all">{editTrack.file_path}</p>
+				</div>
+				<div class="flex flex-wrap gap-x-4 gap-y-1">
+					{#if editTrack.format}
+						<div>
+							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Format</span>
+							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{editTrack.format?.toUpperCase()}</span>
+						</div>
+					{/if}
+					{#if editTrack.bitrate}
+						<div>
+							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Bitrate</span>
+							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{editTrack.bitrate}k</span>
+						</div>
+					{/if}
+					{#if editTrack.sample_rate}
+						<div>
+							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Sample Rate</span>
+							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{(editTrack.sample_rate / 1000).toFixed(1)}kHz</span>
+						</div>
+					{/if}
+					{#if editTrack.bit_depth}
+						<div>
+							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Bit Depth</span>
+							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{editTrack.bit_depth}-bit</span>
+						</div>
+					{/if}
+					{#if editTrack.file_size}
+						<div>
+							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Size</span>
+							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{formatSize(editTrack.file_size)}</span>
+						</div>
+					{/if}
+				</div>
 			</div>
 		{/if}
 		<p class="text-xs text-[var(--text-disabled)]">Changes are saved to both the database and the audio file tags.</p>

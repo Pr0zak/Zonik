@@ -735,6 +735,48 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
     )
     job_stats = [{"type": t, "total": total, "completed": comp or 0} for t, total, comp in jobs_result.all()]
 
+    # Database & backend stats
+    import sys
+    import os
+    from pathlib import Path
+    from backend.config import get_settings
+    from backend.database import _is_postgres
+
+    settings = get_settings()
+    db_backend = settings.database.backend
+    db_info: dict = {"backend": db_backend}
+
+    if not _is_postgres():
+        db_path = Path(settings.database.path)
+        if db_path.exists():
+            db_info["file_size_bytes"] = db_path.stat().st_size
+            # WAL file size
+            wal_path = Path(str(db_path) + "-wal")
+            if wal_path.exists():
+                db_info["wal_size_bytes"] = wal_path.stat().st_size
+    else:
+        # PostgreSQL — get database size
+        try:
+            pg_size = await db.execute(
+                select(func.pg_database_size(func.current_database()))
+            )
+            db_info["file_size_bytes"] = pg_size.scalar() or 0
+        except Exception:
+            pass
+
+    # Table row counts for insight
+    from backend.models.play_history import PlayHistory
+    play_count_total = (await db.execute(select(func.count(PlayHistory.id)))).scalar() or 0
+    job_count_total = (await db.execute(select(func.count(Job.id)))).scalar() or 0
+
+    db_info["total_rows"] = track_count + artist_count + album_count + play_count_total + job_count_total + favorites + analyzed + embedded
+
+    # Backend info
+    backend_info = {
+        "python_version": sys.version.split()[0],
+        "pid": os.getpid(),
+    }
+
     return {
         "tracks": track_count,
         "artists": artist_count,
@@ -752,6 +794,8 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
         "playlists": playlists,
         "most_played": most_played,
         "job_stats": job_stats,
+        "database": db_info,
+        "backend": backend_info,
     }
 
 
