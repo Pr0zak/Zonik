@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 async def build_taste_profile(db: AsyncSession) -> dict:
     """Build a taste profile from the user's library data."""
 
-    # === Run independent queries in parallel via asyncio.gather ===
+    # === Profile queries (sequential — AsyncSession is single-threaded) ===
     async def _genre_histogram():
         r = await db.execute(
             select(Track.genre, func.count(Track.id).label("cnt"))
@@ -101,12 +101,14 @@ async def build_taste_profile(db: AsyncSession) -> dict:
         f = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
         return t, f
 
-    # Fire all independent queries concurrently
-    (genre_rows, top_artists, all_fav_artists,
-     analysis_row, fav_top_ids, blacklisted_artists, counts) = await asyncio.gather(
-        _genre_histogram(), _top_artists(), _fav_artists(),
-        _analysis_stats(), _fav_and_top_ids(), _blacklisted(), _counts(),
-    )
+    # Run queries sequentially — AsyncSession doesn't support concurrent ops
+    genre_rows = await _genre_histogram()
+    top_artists = await _top_artists()
+    all_fav_artists = await _fav_artists()
+    analysis_row = await _analysis_stats()
+    fav_top_ids = await _fav_and_top_ids()
+    blacklisted_artists = await _blacklisted()
+    counts = await _counts()
 
     total_genre_tracks = sum(r[1] for r in genre_rows)
     genre_distribution = {
