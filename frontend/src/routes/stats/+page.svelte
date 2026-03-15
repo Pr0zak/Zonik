@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { formatSize, formatDuration, parseUTC } from '$lib/utils.js';
 	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
@@ -207,7 +207,7 @@
 	async function loadPlayHistory() {
 		try {
 			playHistory = await api.getPlayHistory(playPeriod);
-			await new Promise(r => setTimeout(r, 0));
+			await tick();
 			buildPlayCharts();
 		} catch (e) {
 			console.error('Failed to load play history:', e);
@@ -386,8 +386,7 @@
 	async function loadHistory() {
 		try {
 			history = await fetch(`/api/download/soulseek-stats/history?hours=${historyHours}`).then(r => r.json());
-			// Wait for DOM to update with canvas elements
-			await new Promise(r => setTimeout(r, 0));
+			await tick();
 			buildCharts();
 		} catch (e) {
 			console.error('Failed to load stats history:', e);
@@ -402,7 +401,7 @@
 				api.getJobDashboard().catch(() => null),
 			]);
 			await Promise.all([loadHistory(), loadPlayHistory()]);
-			await new Promise(r => setTimeout(r, 0));
+			await tick();
 			buildJobCharts();
 		} catch (e) {
 			console.error('Failed to load stats:', e);
