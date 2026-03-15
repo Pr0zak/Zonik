@@ -5,12 +5,16 @@ import hashlib
 import logging
 from functools import lru_cache
 
+import numpy as np
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.favorite import Favorite
+from backend.models.analysis import TrackAnalysis
+from backend.models.mood import TrackMood
+from backend.models.embedding import TrackEmbedding
 
 log = logging.getLogger(__name__)
 
@@ -27,12 +31,200 @@ def _color_from_name(name: str) -> str:
 FORMAT_QUALITY = {"flac": 100, "wav": 90, "opus": 70, "ogg": 60, "m4a": 55, "mp3": 50, "aac": 45, "wma": 30}
 
 
+async def _aggregate_analysis(db: AsyncSession, artist_ids: list[str]) -> dict:
+    """Join TrackAnalysis with Track, group by artist_id, compute averages.
+
+    Returns dict {artist_id: {avg_energy, avg_danceability, avg_bpm}}.
+    """
+    if not artist_ids:
+        return {}
+    result = await db.execute(
+        select(
+            Track.artist_id,
+            func.avg(TrackAnalysis.energy).label("avg_energy"),
+            func.avg(TrackAnalysis.danceability).label("avg_danceability"),
+            func.avg(TrackAnalysis.bpm).label("avg_bpm"),
+        )
+        .join(TrackAnalysis, TrackAnalysis.track_id == Track.id)
+        .where(Track.artist_id.in_(artist_ids))
+        .group_by(Track.artist_id)
+    )
+    out = {}
+    for aid, avg_energy, avg_dance, avg_bpm in result.all():
+        out[aid] = {
+            "avg_energy": round(avg_energy, 3) if avg_energy is not None else None,
+            "avg_danceability": round(avg_dance, 3) if avg_dance is not None else None,
+            "avg_bpm": round(avg_bpm, 1) if avg_bpm is not None else None,
+        }
+    return out
+
+
+async def _aggregate_moods(db: AsyncSession, artist_ids: list[str]) -> dict:
+    """Join TrackMood with Track, group by (artist_id, primary_mood).
+
+    Returns dict {artist_id: primary_mood_string} (most common mood per artist).
+    """
+    if not artist_ids:
+        return {}
+    result = await db.execute(
+        select(
+            Track.artist_id,
+            TrackMood.primary_mood,
+            func.count(TrackMood.track_id).label("cnt"),
+        )
+        .join(TrackMood, TrackMood.track_id == Track.id)
+        .where(
+            Track.artist_id.in_(artist_ids),
+            TrackMood.primary_mood.isnot(None),
+            TrackMood.primary_mood != "",
+        )
+        .group_by(Track.artist_id, TrackMood.primary_mood)
+        .order_by(func.count(TrackMood.track_id).desc())
+    )
+    out: dict[str, str] = {}
+    for aid, mood, cnt in result.all():
+        # First row per artist_id wins (ordered by count desc)
+        if aid not in out:
+            out[aid] = mood
+    return out
+
+
+async def _aggregate_decades(db: AsyncSession, artist_ids: list[str]) -> dict:
+    """Query Track.year grouped by artist_id, compute most common decade.
+
+    Returns dict {artist_id: primary_decade_int}.
+    """
+    if not artist_ids:
+        return {}
+    # Use (year / 10) * 10 for decade bucketing
+    result = await db.execute(
+        select(
+            Track.artist_id,
+            (Track.year / 10 * 10).label("decade"),
+            func.count(Track.id).label("cnt"),
+        )
+        .where(
+            Track.artist_id.in_(artist_ids),
+            Track.year.isnot(None),
+            Track.year > 0,
+        )
+        .group_by(Track.artist_id, Track.year / 10 * 10)
+        .order_by(func.count(Track.id).desc())
+    )
+    out: dict[str, int] = {}
+    for aid, decade, cnt in result.all():
+        if aid not in out:
+            out[aid] = int(decade)
+    return out
+
+
+async def _compute_vibe_layout(
+    db: AsyncSession, artist_ids: list[str], similarity_threshold: float = 0.7
+) -> tuple[dict, list]:
+    """Compute 2D layout from CLAP embeddings via dimensionality reduction.
+
+    Returns (positions_dict {artist_id: [x, y]}, similarity_edges list).
+    """
+    if not artist_ids:
+        return {}, []
+
+    # Fetch all embeddings joined with tracks
+    result = await db.execute(
+        select(Track.artist_id, TrackEmbedding.embedding)
+        .join(TrackEmbedding, TrackEmbedding.track_id == Track.id)
+        .where(Track.artist_id.in_(artist_ids))
+    )
+    rows = result.all()
+    if not rows:
+        return {}, []
+
+    # Compute mean embedding per artist
+    artist_embeddings: dict[str, list[np.ndarray]] = {}
+    for aid, emb_bytes in rows:
+        if emb_bytes is None:
+            continue
+        try:
+            emb = np.frombuffer(emb_bytes, dtype=np.float32).copy()
+            if len(emb) != 512:
+                continue
+            artist_embeddings.setdefault(aid, []).append(emb)
+        except Exception:
+            continue
+
+    if not artist_embeddings:
+        return {}, []
+
+    # Build mean vectors
+    ordered_ids = list(artist_embeddings.keys())
+    mean_vectors = np.array([
+        np.mean(artist_embeddings[aid], axis=0) for aid in ordered_ids
+    ])
+    n = len(ordered_ids)
+
+    # Dimensionality reduction to 2D
+    coords_2d = None
+    if n >= 2:
+        try:
+            from sklearn.manifold import TSNE
+            perplexity = min(30, max(1, n // 3))
+            if perplexity >= n:
+                perplexity = max(1, n - 1)
+            tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42, n_iter=500)
+            coords_2d = tsne.fit_transform(mean_vectors)
+        except Exception:
+            log.warning("TSNE failed, falling back to PCA")
+            try:
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=2)
+                coords_2d = pca.fit_transform(mean_vectors)
+            except Exception:
+                log.warning("PCA also failed for vibe layout")
+    elif n == 1:
+        coords_2d = np.array([[0.0, 0.0]])
+
+    positions: dict[str, list[float]] = {}
+    if coords_2d is not None:
+        # Normalize to [-500, 500]
+        mins = coords_2d.min(axis=0)
+        maxs = coords_2d.max(axis=0)
+        ranges = maxs - mins
+        # Avoid division by zero
+        ranges[ranges == 0] = 1.0
+        normalized = (coords_2d - mins) / ranges * 1000 - 500  # maps to [-500, 500]
+        for i, aid in enumerate(ordered_ids):
+            positions[aid] = [round(float(normalized[i, 0]), 1), round(float(normalized[i, 1]), 1)]
+
+    # Compute pairwise cosine similarity for edges
+    similarity_edges = []
+    if n >= 2:
+        # Normalize vectors for cosine similarity
+        norms = np.linalg.norm(mean_vectors, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        normed = mean_vectors / norms
+        sim_matrix = normed @ normed.T
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                sim = float(sim_matrix[i, j])
+                if sim > similarity_threshold:
+                    similarity_edges.append({
+                        "source": f"artist:{ordered_ids[i]}",
+                        "target": f"artist:{ordered_ids[j]}",
+                        "type": "vibe_similarity",
+                        "weight": round(sim, 3),
+                    })
+
+    return positions, similarity_edges
+
+
 async def build_graph(
     db: AsyncSession,
     max_artists: int = 200,
     min_genre_tracks: int = 3,
     include_tracks: bool = False,
     max_tracks_per_artist: int = 50,
+    layout: str = "force",
+    similarity_threshold: float = 0.7,
 ) -> dict:
     """Build the graph data for the Music Map."""
     nodes = []
@@ -61,7 +253,7 @@ async def build_graph(
     # 2. Top artists by track count + aggregate play_count and quality
     artist_result = await db.execute(
         select(
-            Artist.id, Artist.name,
+            Artist.id, Artist.name, Artist.image_url,
             func.count(Track.id).label("cnt"),
             func.coalesce(func.sum(Track.play_count), 0).label("total_plays"),
             func.avg(Track.bitrate).label("avg_bitrate"),
@@ -109,13 +301,22 @@ async def build_graph(
     else:
         artist_primary_genre = {}
 
-    # 5. Build artist nodes + artist_genre edges
-    for artist_id, artist_name, track_count, total_plays, avg_bitrate in artists:
+    # 5. Aggregation helpers (sequential — AsyncSession can't do concurrent)
+    analysis_data = await _aggregate_analysis(db, artist_ids)
+    mood_data = await _aggregate_moods(db, artist_ids)
+    decade_data = await _aggregate_decades(db, artist_ids)
+
+    # 6. Build artist nodes + artist_genre edges
+    # Build lookup for image_url from artist query
+    artist_image_map = {a[0]: a[2] for a in artists}
+
+    for artist_id, artist_name, image_url, track_count, total_plays, avg_bitrate in artists:
         primary = artist_primary_genre.get(artist_id)
         genre_color = _color_from_name(primary) if primary else "#888888"
         primary_fmt = artist_primary_format.get(artist_id, "unknown")
         avg_quality = FORMAT_QUALITY.get(primary_fmt, 0) + int((avg_bitrate or 0) // 10)
-        nodes.append({
+
+        node = {
             "id": f"artist:{artist_id}",
             "type": "artist",
             "label": artist_name,
@@ -127,7 +328,24 @@ async def build_graph(
             "avg_bitrate": int(avg_bitrate) if avg_bitrate else None,
             "primary_format": primary_fmt,
             "avg_quality": avg_quality,
-        })
+            "image_url": image_url,
+        }
+
+        # Merge analysis aggregates
+        if artist_id in analysis_data:
+            node.update(analysis_data[artist_id])
+        else:
+            node["avg_energy"] = None
+            node["avg_danceability"] = None
+            node["avg_bpm"] = None
+
+        # Merge mood
+        node["primary_mood"] = mood_data.get(artist_id)
+
+        # Merge decade
+        node["primary_decade"] = decade_data.get(artist_id)
+
+        nodes.append(node)
         if primary and primary in genre_set:
             edges.append({
                 "source": f"artist:{artist_id}",
@@ -136,7 +354,7 @@ async def build_graph(
                 "weight": track_count,
             })
 
-    # 6. Genre co-occurrence edges
+    # 7. Genre co-occurrence edges
     if artist_ids:
         cooccur_result = await db.execute(text("""
             SELECT a.genre, b.genre, COUNT(DISTINCT a.artist_id)
@@ -155,10 +373,9 @@ async def build_graph(
                     "weight": shared_artists,
                 })
 
-    # 7. Track nodes (optional, expensive)
+    # 8. Track nodes (optional, expensive)
     total_tracks = 0
     if include_tracks and artist_ids:
-        from backend.models.analysis import TrackAnalysis
         track_result = await db.execute(
             select(Track)
             .where(Track.artist_id.in_(artist_ids))
@@ -190,6 +407,15 @@ async def build_graph(
             })
             total_tracks += 1
 
+    # 9. Vibe layout (optional)
+    result_dict: dict = {"nodes": nodes, "edges": edges}
+    if layout == "vibe" and artist_ids:
+        vibe_positions, similarity_edges = await _compute_vibe_layout(
+            db, artist_ids, similarity_threshold
+        )
+        result_dict["vibe_positions"] = vibe_positions
+        edges.extend(similarity_edges)
+
     # Meta
     total_track_count = (await db.execute(select(func.count(Track.id)))).scalar() or 0
     meta = {
@@ -197,5 +423,6 @@ async def build_graph(
         "total_artists": len(artists),
         "total_genres": len(genres),
     }
+    result_dict["meta"] = meta
 
-    return {"nodes": nodes, "edges": edges, "meta": meta}
+    return result_dict

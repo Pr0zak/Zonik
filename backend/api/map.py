@@ -15,6 +15,8 @@ async def get_graph(
     min_genre_tracks: int = Query(3, ge=1),
     include_tracks: bool = Query(False),
     max_tracks_per_artist: int = Query(50, le=100),
+    layout: str = Query("force"),
+    similarity_threshold: float = Query(0.7, ge=0.0, le=1.0),
     db: AsyncSession = Depends(get_db),
 ):
     """Get graph data for the Music Map visualization."""
@@ -25,4 +27,6 @@ async def get_graph(
         min_genre_tracks=min_genre_tracks,
         include_tracks=include_tracks,
         max_tracks_per_artist=max_tracks_per_artist,
+        layout=layout,
+        similarity_threshold=similarity_threshold,
     )
