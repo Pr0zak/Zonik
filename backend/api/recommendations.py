@@ -118,10 +118,15 @@ async def refresh_recommendations(req: RefreshRequest, background_tasks: Backgro
 
             try:
                 async def on_progress(current, total, desc=""):
-                    job.progress = current
-                    job.total = total
-                    await db.merge(job)
-                    await db.commit()
+                    # Use separate session to avoid concurrent ops on the main db session
+                    async with async_session() as progress_db:
+                        from sqlalchemy import update
+                        await progress_db.execute(
+                            update(Job).where(Job.id == job_id).values(
+                                progress=current, total=total,
+                            )
+                        )
+                        await progress_db.commit()
                     await broadcast_job_update({
                         "id": job_id, "type": "recommendation_refresh",
                         "status": "running", "progress": current, "total": total,
@@ -136,8 +141,17 @@ async def refresh_recommendations(req: RefreshRequest, background_tasks: Backgro
                 job.result = json.dumps({"error": str(e)})
             finally:
                 job.finished_at = datetime.utcnow()
-                await db.merge(job)
                 await db.commit()
+                # Final status update with separate session to be safe
+                async with async_session() as final_db:
+                    from sqlalchemy import update
+                    await final_db.execute(
+                        update(Job).where(Job.id == job_id).values(
+                            status=job.status, result=job.result,
+                            finished_at=job.finished_at,
+                        )
+                    )
+                    await final_db.commit()
                 await broadcast_job_update({
                     "id": job_id, "type": "recommendation_refresh",
                     "status": job.status, "progress": total_steps, "total": total_steps,
