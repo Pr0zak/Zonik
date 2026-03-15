@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
-	import { ScrollText, ChevronDown, RotateCcw, XCircle } from 'lucide-svelte';
+	import { ScrollText, ChevronDown, ChevronRight, RotateCcw, XCircle } from 'lucide-svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
 	import { formatDateTime } from '$lib/utils.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
