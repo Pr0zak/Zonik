@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
 	import { parseUTC, formatRelativeTime } from '$lib/utils.js';
 	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3, HelpCircle, ExternalLink } from 'lucide-svelte';
@@ -552,30 +552,64 @@
 		} catch { addToast('Failed to run task', 'error'); schedRunning[name] = false; }
 	}
 
-	async function pollSchedJob(name, jobId) {
-		for (let i = 0; i < 300; i++) {
-			await new Promise(r => setTimeout(r, 3000));
+	// Shared job polling — batches all pending job IDs into a single timer
+	let _pollingJobs = $state({});  // { jobId: { name, type, onComplete, onFail } }
+	let _pollTimer = null;
+
+	function startPollingJob(jobId, name, { onComplete, onFail } = {}) {
+		_pollingJobs[jobId] = { name, onComplete, onFail, attempts: 0 };
+		if (!_pollTimer) {
+			_pollTimer = setInterval(pollAllJobs, 5000);  // Single 5s timer for all jobs
+		}
+	}
+
+	async function pollAllJobs() {
+		const entries = Object.entries(_pollingJobs);
+		if (!entries.length) {
+			clearInterval(_pollTimer);
+			_pollTimer = null;
+			return;
+		}
+		// Poll sequentially to avoid rate limit bursts
+		for (const [jobId, info] of entries) {
+			info.attempts++;
+			if (info.attempts > 200) {
+				delete _pollingJobs[jobId];
+				if (info.name) schedRunning[info.name] = false;
+				continue;
+			}
 			try {
-				const job = await fetch(`/api/jobs/${jobId}`).then(r => r.json());
+				const res = await fetch(`/api/jobs/${jobId}`);
+				if (res.status === 429) continue;  // Skip this cycle, retry next
+				const job = await res.json();
 				if (job.status === 'completed') {
-					schedRunning[name] = false;
-					schedTasks[name] = { ...schedTasks[name], last_run_at: new Date().toISOString() };
-					const taskLabels = { lastfm_top_tracks: 'Top Charts', discover_similar: 'Similar Tracks', discover_artists: 'Similar Artists', recommendation_refresh: 'AI Recommendations' };
-					addToast(`${taskLabels[name] || name} completed`, 'success');
-					if (name === 'lastfm_top_tracks') scanTopTracks();
-					else if (name === 'discover_similar') scanSimilarTracks();
-					else if (name === 'discover_artists') scanSimilarArtists();
-					else if (name === 'recommendation_refresh') loadRecommendations();
-					return;
-				}
-				if (job.status === 'failed') {
-					schedRunning[name] = false;
-					addToast('Task failed', 'error');
-					return;
+					delete _pollingJobs[jobId];
+					if (info.name) {
+						schedRunning[info.name] = false;
+						schedTasks[info.name] = { ...schedTasks[info.name], last_run_at: new Date().toISOString() };
+					}
+					if (info.onComplete) await info.onComplete();
+				} else if (job.status === 'failed') {
+					delete _pollingJobs[jobId];
+					if (info.name) schedRunning[info.name] = false;
+					if (info.onFail) info.onFail();
 				}
 			} catch {}
 		}
-		schedRunning[name] = false;
+	}
+
+	async function pollSchedJob(name, jobId) {
+		const taskLabels = { lastfm_top_tracks: 'Top Charts', discover_similar: 'Similar Tracks', discover_artists: 'Similar Artists', recommendation_refresh: 'AI Recommendations' };
+		startPollingJob(jobId, name, {
+			onComplete: async () => {
+				addToast(`${taskLabels[name] || name} completed`, 'success');
+				if (name === 'lastfm_top_tracks') scanTopTracks();
+				else if (name === 'discover_similar') scanSimilarTracks();
+				else if (name === 'discover_artists') scanSimilarArtists();
+				else if (name === 'recommendation_refresh') loadRecommendations();
+			},
+			onFail: () => addToast('Task failed', 'error'),
+		});
 	}
 
 	// --- For You ---
@@ -605,25 +639,22 @@
 			const data = await api.refreshRecommendations(100);
 			addToast('Generating recommendations — check Logs for progress', 'success');
 			if (data.job_id) {
-				for (let i = 0; i < 120; i++) {
-					await new Promise(r => setTimeout(r, 3000));
-					try {
-						const job = await fetch(`/api/jobs/${data.job_id}`).then(r => r.json());
-						if (job.status === 'completed') {
-							addToast('Recommendations ready!', 'success');
-							await loadRecommendations();
-							break;
-						}
-						if (job.status === 'failed') {
-							addToast('Recommendation refresh failed', 'error');
-							break;
-						}
-					} catch {}
-				}
+				startPollingJob(data.job_id, null, {
+					onComplete: async () => {
+						recRefreshing = false;
+						addToast('Recommendations ready!', 'success');
+						await loadRecommendations();
+					},
+					onFail: () => {
+						recRefreshing = false;
+						addToast('Recommendation refresh failed', 'error');
+					},
+				});
+			} else {
+				recRefreshing = false;
 			}
 		} catch {
 			addToast('Failed to start refresh', 'error');
-		} finally {
 			recRefreshing = false;
 		}
 	}
@@ -634,25 +665,22 @@
 			const data = await api.refreshRecommendations(100, true);
 			addToast('Getting AI suggestions — check Logs for progress', 'success');
 			if (data.job_id) {
-				for (let i = 0; i < 120; i++) {
-					await new Promise(r => setTimeout(r, 3000));
-					try {
-						const job = await fetch(`/api/jobs/${data.job_id}`).then(r => r.json());
-						if (job.status === 'completed') {
-							addToast('AI recommendations ready!', 'success');
-							await loadRecommendations();
-							break;
-						}
-						if (job.status === 'failed') {
-							addToast('AI recommendation refresh failed', 'error');
-							break;
-						}
-					} catch {}
-				}
+				startPollingJob(data.job_id, null, {
+					onComplete: async () => {
+						aiRefreshing = false;
+						addToast('AI recommendations ready!', 'success');
+						await loadRecommendations();
+					},
+					onFail: () => {
+						aiRefreshing = false;
+						addToast('AI recommendation refresh failed', 'error');
+					},
+				});
+			} else {
+				aiRefreshing = false;
 			}
 		} catch {
 			addToast('Failed to start AI refresh', 'error');
-		} finally {
 			aiRefreshing = false;
 		}
 	}
@@ -739,6 +767,10 @@
 
 		// Load For You tab by default
 		loadRecommendations();
+	});
+
+	onDestroy(() => {
+		if (_pollTimer) clearInterval(_pollTimer);
 	});
 </script>
 
