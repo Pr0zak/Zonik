@@ -98,6 +98,7 @@ class SearchRequest(BaseModel):
     artist: str = ""
     track: str = ""
     query: str = ""
+    timeout: int = 25  # seconds — search bar uses 10, downloads page uses 25
 
 
 class DownloadRequest(BaseModel):
@@ -138,7 +139,7 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
     if client and client.logged_in:
         # Native client — return all results
         query = f"{artist} {track}".strip()
-        search_results = await client.search(query, timeout=25, max_responses=100)
+        search_results = await client.search(query, timeout=req.timeout, max_responses=100)
 
         results = []
         users = set()

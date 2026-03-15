@@ -1,94 +1,25 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { Search, X, RefreshCw, Bell, Sparkles } from 'lucide-svelte';
+	import { Search, X, RefreshCw, Bell } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { activeJobs, addToast } from '$lib/stores.js';
+	import SearchDropdown from './SearchDropdown.svelte';
 
 	let query = $state('');
-	let results = $state([]);
 	let showResults = $state(false);
 	let showNotifications = $state(false);
-	let loading = $state(false);
 	let syncing = $state(false);
-	let debounceTimer;
 	let inputEl;
-	let isNL = $state(false);
-	let aiResults = $state([]);
+	let dropdownRef;
 
-	let activeDownloads = $derived(
-		$activeJobs.filter(j => j.type === 'download' || j.type === 'bulk_download')
-	);
 	let runningJobs = $derived($activeJobs.filter(j => j.status === 'running'));
 
-	// Simple NL detection heuristic (mirrors backend)
-	function looksLikeNL(q) {
-		if (q.length < 8) return false;
-		const nlWords = /\b(find|show|get|give|play)\b.*\b(me|some|all)\b/i;
-		const moodWords = /\b(chill|upbeat|energetic|mellow|dark|happy|sad|relaxing|ambient)\b.*\b(track|song|music)\b/i;
-		const timeWords = /\bfrom\s+(last|this)\s+(week|month|year)\b/i;
-		const topWords = /\b(top|best|most)\s+(played|rated|popular)\b/i;
-		return nlWords.test(q) || moodWords.test(q) || timeWords.test(q) || topWords.test(q) || (q.split(' ').length > 4 && !q.includes(' - '));
-	}
-
 	function onInput() {
-		clearTimeout(debounceTimer);
 		if (!query.trim()) {
-			results = [];
-			aiResults = [];
 			showResults = false;
-			isNL = false;
 			return;
 		}
-		isNL = looksLikeNL(query.trim());
-		debounceTimer = setTimeout(async () => {
-			loading = true;
-			try {
-				if (isNL) {
-					const data = await api.aiSearch(query.trim(), 8);
-					aiResults = data.tracks || [];
-					results = [];
-					showResults = aiResults.length > 0;
-				} else {
-					const data = await api.getTracks({ search: query.trim(), limit: 8 });
-					results = (data.tracks || data || []).slice(0, 8);
-					aiResults = [];
-					showResults = results.length > 0;
-				}
-			} catch {
-				results = [];
-				aiResults = [];
-			} finally {
-				loading = false;
-			}
-		}, 250);
-	}
-
-	function goToTrack(track) {
-		showResults = false;
-		query = '';
-		goto(`/library?search=${encodeURIComponent(track.title)}`);
-	}
-
-	function goToDownloads() {
-		const q = query.trim();
-		showResults = false;
-		query = '';
-		if (q) {
-			const parts = q.split(/\s*[-–—]\s*/);
-			if (parts.length >= 2) {
-				goto(`/downloads?artist=${encodeURIComponent(parts[0])}&track=${encodeURIComponent(parts.slice(1).join(' '))}`);
-			} else {
-				goto(`/downloads?search=${encodeURIComponent(q)}`);
-			}
-		} else {
-			goto('/downloads');
-		}
-	}
-
-	function goToAITrack(track) {
-		showResults = false;
-		query = '';
-		goto(`/library?search=${encodeURIComponent(track.title)}`);
+		showResults = true;
 	}
 
 	function onKeydown(e) {
@@ -96,22 +27,26 @@
 			showResults = false;
 			query = '';
 			inputEl?.blur();
-		} else if (e.key === 'Enter') {
-			if (query.trim()) {
-				if (isNL && aiResults.length) {
-					// Navigate to library with search
-					goto(`/library?search=${encodeURIComponent(query.trim())}`);
-					showResults = false;
-					query = '';
-				} else {
-					goToDownloads();
-				}
-			}
+		} else if (showResults && dropdownRef) {
+			dropdownRef.handleKeydown(e);
+		} else if (e.key === 'Enter' && query.trim()) {
+			showResults = true;
 		}
 	}
 
 	function onBlur() {
 		setTimeout(() => { showResults = false; }, 200);
+	}
+
+	function handleClose() {
+		showResults = false;
+		query = '';
+	}
+
+	function handleNavigate(url) {
+		showResults = false;
+		query = '';
+		goto(url);
 	}
 
 	async function syncLibrary() {
@@ -129,71 +64,30 @@
 
 <div class="relative flex-1 max-w-xl">
 	<div class="relative">
-		{#if isNL}
-			<Sparkles class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-400" />
-		{:else}
-			<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
-		{/if}
+		<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
 		<input
 			bind:this={inputEl}
 			type="text"
 			data-search-input
-			placeholder="Search library or P2P network..."
+			placeholder="Search music across all sources..."
 			bind:value={query}
 			oninput={onInput}
 			onkeydown={onKeydown}
-			onfocus={() => { if (results.length) showResults = true; }}
+			onfocus={() => { if (query.trim()) showResults = true; }}
 			onblur={onBlur}
 			class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded-lg pl-9 pr-8 py-2 text-sm text-[var(--text-body)]
 				placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20"
 		/>
 		{#if query}
-			<button onclick={() => { query = ''; results = []; showResults = false; }}
+			<button onclick={() => { query = ''; showResults = false; }}
 				class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-muted)] transition-colors">
 				<X class="w-3.5 h-3.5" />
 			</button>
 		{/if}
 	</div>
 
-	{#if showResults}
-		<div class="absolute top-full left-0 right-0 mt-1 w-full max-w-80 sm:max-w-none bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
-			{#if aiResults.length}
-				<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-amber-400 border-b border-[var(--border-subtle)] flex items-center gap-1.5">
-					<Sparkles class="w-3 h-3" /> AI Results
-				</div>
-				{#each aiResults as track}
-					<button onclick={() => goToAITrack(track)}
-						class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[var(--bg-hover)] transition-colors">
-						<div class="flex-1 min-w-0">
-							<p class="text-sm text-[var(--text-primary)] truncate">{track.title}</p>
-							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
-						</div>
-						{#if track.genre}
-							<span class="text-xs text-[var(--text-disabled)] font-mono">{track.genre}</span>
-						{/if}
-					</button>
-				{/each}
-			{:else if results.length}
-				<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--text-disabled)] border-b border-[var(--border-subtle)]">Library</div>
-				{#each results as track}
-					<button onclick={() => goToTrack(track)}
-						class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[var(--bg-hover)] transition-colors">
-						<div class="flex-1 min-w-0">
-							<p class="text-sm text-[var(--text-primary)] truncate">{track.title}</p>
-							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
-						</div>
-						{#if track.genre}
-							<span class="text-xs text-[var(--text-disabled)] font-mono">{track.genre}</span>
-						{/if}
-					</button>
-				{/each}
-			{/if}
-			<button onclick={goToDownloads}
-				class="w-full flex items-center gap-2 px-3 py-2.5 text-left border-t border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors text-[var(--color-downloads)]">
-				<Search class="w-3.5 h-3.5" />
-				<span class="text-sm">Search P2P for "{query}"</span>
-			</button>
-		</div>
+	{#if showResults && query.trim()}
+		<SearchDropdown bind:this={dropdownRef} {query} onclose={handleClose} onnavigate={handleNavigate} />
 	{/if}
 </div>
 

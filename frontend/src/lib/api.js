@@ -1,9 +1,11 @@
 const BASE_URL = '/api';
 
 async function request(path, options = {}) {
+	const { signal, ...rest } = options;
 	const res = await fetch(`${BASE_URL}${path}`, {
-		headers: { 'Content-Type': 'application/json', ...options.headers },
-		...options
+		headers: { 'Content-Type': 'application/json', ...rest.headers },
+		...rest,
+		...(signal ? { signal } : {}),
 	});
 	if (!res.ok) {
 		let detail;
@@ -27,7 +29,7 @@ export const api = {
 	getGenres: () => request('/library/genres'),
 
 	// Tracks
-	getTracks: (params = {}) => request(buildUrl('/tracks', params)),
+	getTracks: (params = {}, signal) => request(buildUrl('/tracks', params), { signal }),
 	getTrack: (id) => request(`/tracks/${id}`),
 	deleteTrack: (id) => request(`/tracks/${id}`, { method: 'DELETE' }),
 	updateTrack: (id, data) => request(`/tracks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -147,8 +149,14 @@ export const api = {
 	// AI Usage
 	getAIUsage: () => request('/config/ai-usage'),
 
+	// Discovery Search (Last.fm)
+	discoverySearch: (q, limit = 5, signal) => request(buildUrl('/discovery/search', { q, limit }), { signal }),
+
+	// P2P Search (Soulseek)
+	p2pSearch: (data, signal) => request('/download/search', { method: 'POST', body: JSON.stringify(data), signal }),
+
 	// AI Search
-	aiSearch: (query, limit = 50) => request('/search/ai', { method: 'POST', body: JSON.stringify({ query, limit }) }),
+	aiSearch: (query, limit = 50, signal) => request('/search/ai', { method: 'POST', body: JSON.stringify({ query, limit }), signal }),
 	detectNL: (query) => request('/search/detect-nl', { method: 'POST', body: JSON.stringify({ query }) }),
 
 	// AI Playlist Generation
