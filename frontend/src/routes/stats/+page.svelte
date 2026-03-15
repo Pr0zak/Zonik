@@ -400,12 +400,13 @@
 				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
 				api.getJobDashboard().catch(() => null),
 			]);
+			// Set loading=false first so {#if} blocks render canvas elements
+			loading = false;
 			await Promise.all([loadHistory(), loadPlayHistory()]);
 			await tick();
 			buildJobCharts();
 		} catch (e) {
 			console.error('Failed to load stats:', e);
-		} finally {
 			loading = false;
 		}
 
