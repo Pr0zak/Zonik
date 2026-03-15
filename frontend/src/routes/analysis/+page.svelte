@@ -241,7 +241,7 @@
 							</label>
 						{/if}
 					</div>
-					<p class="text-[10px] text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
+					<p class="text-xs text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
 				</div>
 			</Card>
 		{/if}
@@ -269,7 +269,7 @@
 					{/if}
 				</div>
 				{#if stats.skipped > 0}
-					<p class="text-[10px] text-amber-500 mt-1" title={Object.entries(stats.skipped_by_format || {}).map(([f, c]) => `${c} ${f}`).join(', ')}>
+					<p class="text-xs text-amber-500 mt-1" title={Object.entries(stats.skipped_by_format || {}).map(([f, c]) => `${c} ${f}`).join(', ')}>
 						{stats.skipped} skipped — unsupported format ({Object.keys(stats.skipped_by_format || {}).join(', ')})
 					</p>
 				{/if}

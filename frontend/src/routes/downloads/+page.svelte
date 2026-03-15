@@ -586,7 +586,7 @@
 							<div class="space-y-1 pl-2 border-l-2 border-amber-500/20 ml-1">
 								{#each queuedJobs as job (job.id)}
 									<div class="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/5 text-xs group/job">
-										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}{#if sourceLabel(job)}<span class="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}</span>
+										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}</span>
 										<Badge variant="warning"><Clock class="w-3 h-3 mr-0.5 inline-block" />queued</Badge>
 									</div>
 								{/each}
@@ -603,7 +603,7 @@
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] font-medium truncate">
 										{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}
-										{#if sourceLabel(job)}<span class="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
+										{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
 									</p>
 									{#if job.status === 'completed' && (jobResult || jobTracks?.[0])}
 										{@const t = jobTracks?.[0]}
@@ -681,7 +681,7 @@
 								</div>
 								{#if job.status === 'running'}
 									<button onclick={() => cancelJob(job.id)}
-										class="p-1.5 text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
+										class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
 										<X class="w-3.5 h-3.5" />
 									</button>
 								{/if}
@@ -689,7 +689,7 @@
 									<button onclick={() => {
 										hiddenJobIds = new Set([...hiddenJobIds, job.id]);
 										localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-									}} class="p-1.5 text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover/job:opacity-100" title="Dismiss">
+									}} class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover/job:opacity-100" title="Dismiss">
 										<X class="w-3 h-3" />
 									</button>
 								{/if}
@@ -699,12 +699,12 @@
 											searchQuery = `${jobTracks[0].artist} - ${jobTracks[0].track}`;
 											searchSoulseek();
 										}}
-											class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for new sources">
+											class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for new sources">
 											<Search class="w-3.5 h-3.5" />
 										</button>
 									{/if}
 									<button onclick={() => retryJob(job.id)}
-										class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry">
+										class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry">
 										<RotateCcw class="w-3.5 h-3.5" />
 									</button>
 								{/if}
@@ -748,7 +748,7 @@
 								{#if jobResult?.source_errors?.length}
 									<!-- Per-source error breakdown (single download) -->
 									<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
-										<p class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-1">Sources tried</p>
+										<p class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-1">Sources tried</p>
 										{#each jobResult.source_errors as se, i}
 											<div class="flex items-center gap-2 text-xs py-1">
 												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
@@ -919,7 +919,7 @@
 													<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
 														style="width: {inline.progress}%"></div>
 												</div>
-												<span class="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">
+												<span class="text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">
 													{inline.speed > 0 ? formatSpeed(inline.speed) : `${Math.round(inline.progress)}%`}
 												</span>
 											</div>

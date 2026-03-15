@@ -54,7 +54,7 @@
 		<span class="text-xs text-[var(--text-secondary)] font-medium min-w-0 truncate">{label}</span>
 	{/if}
 	{#if lastRunAt}
-		<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0" title="{formatDateTime(lastRunAt)}">
+		<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0" title="{formatDateTime(lastRunAt)}">
 			{(() => {
 				const diff = Math.max(0, Date.now() - parseUTC(lastRunAt));
 				const mins = Math.floor(diff / 60000);
@@ -71,7 +71,7 @@
 	<!-- Auto-download toggle (inline) -->
 	{#if onToggleAutoDownload}
 		<button onclick={onToggleAutoDownload}
-			class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors flex-shrink-0
+			class="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-colors flex-shrink-0
 				{autoDownload ? 'bg-green-500/15 text-green-400' : 'bg-[var(--bg-hover)] text-[var(--text-disabled)] hover:text-[var(--text-muted)]'}"
 			title="{autoDownload ? 'Auto-download enabled — missing tracks will be downloaded after scan' : 'Enable auto-download of missing tracks after scan'}">
 			<Download class="w-3 h-3" />
@@ -83,7 +83,7 @@
 		<!-- Interval -->
 		<select value={intervalHours}
 			onchange={(e) => onUpdate({ interval_hours: parseInt(e.target.value) })}
-			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-[10px] text-[var(--text-body)] focus:outline-none">
+			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-xs text-[var(--text-body)] focus:outline-none">
 			{#each intervalOptions as opt}
 				<option value={opt.value} selected={opt.value === intervalHours}>{opt.label}</option>
 			{/each}
@@ -92,13 +92,13 @@
 		<!-- Time -->
 		<input type="time" value={runAt || ''}
 			onchange={(e) => onUpdate({ run_at: e.target.value })}
-			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-[10px] text-[var(--text-body)] w-[70px] focus:outline-none" />
+			class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-xs text-[var(--text-body)] w-[70px] focus:outline-none" />
 
 		<!-- Day of week (for weekly tasks) -->
 		{#if dayOfWeek !== null && dayOfWeek !== undefined}
 			<select value={dayOfWeek}
 				onchange={(e) => onUpdate({ day_of_week: parseInt(e.target.value) })}
-				class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-[10px] text-[var(--text-body)] focus:outline-none">
+				class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-xs text-[var(--text-body)] focus:outline-none">
 				{#each dayOptions as opt}
 					<option value={opt.value} selected={opt.value === dayOfWeek}>{opt.label}</option>
 				{/each}
@@ -109,7 +109,7 @@
 		{#if count !== null && count !== undefined}
 			<input type="number" value={count} min="1" max="1000"
 				onchange={(e) => onUpdate({ count: parseInt(e.target.value) })}
-				class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-[10px] text-[var(--text-body)] w-14 focus:outline-none"
+				class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-1.5 py-1 text-xs text-[var(--text-body)] w-14 focus:outline-none"
 				title={countLabel} />
 		{/if}
 

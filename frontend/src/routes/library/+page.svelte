@@ -5,7 +5,7 @@
 	import { api } from '$lib/api.js';
 	import { formatBadgeClass } from '$lib/colors.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
-	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack } from '$lib/stores.js';
+	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack, isMobile } from '$lib/stores.js';
 	import { formatDuration, formatSize, formatRelativeTime, formatDateTime, debounce } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
@@ -772,11 +772,11 @@
 	{/if}
 
 	<!-- Tabs -->
-	<div class="flex items-center gap-1 mb-4 border-b border-[var(--border-subtle)]">
+	<div class="flex items-center gap-1 mb-4 border-b border-[var(--border-subtle)] overflow-x-auto">
 		{#each tabs as t}
 			{@const Icon = t.icon}
 			<button onclick={() => switchTab(t.id)}
-				class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px
+				class="flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap
 					{tab === t.id
 						? 'border-[var(--color-library)] text-[var(--text-primary)]'
 						: 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
@@ -855,7 +855,7 @@
 					<div class="fixed inset-0 z-20" onclick={() => showColPicker = false}></div>
 					<div class="absolute right-0 top-full mt-1 z-30 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl p-2 min-w-[160px]"
 						onclick={(e) => e.stopPropagation()}>
-						<p class="text-[10px] text-[var(--text-disabled)] uppercase tracking-wider px-2 py-1">Columns</p>
+						<p class="text-xs text-[var(--text-disabled)] uppercase tracking-wider px-2 py-1">Columns</p>
 						{#each ALL_COLUMNS as col}
 							<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] cursor-pointer text-xs text-[var(--text-secondary)]">
 								<input type="checkbox" checked={visibleCols.has(col.id)}
@@ -892,7 +892,7 @@
 
 	<!-- Select mode bar (tracks only) -->
 	{#if tab === 'tracks' && selectMode}
-		<div class="flex items-center gap-3 mb-3 px-1">
+		<div class="flex items-center gap-2 sm:gap-3 mb-3 px-1 overflow-x-auto">
 			<span class="text-sm text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
 			<Button variant="secondary" size="sm" onclick={toggleSelectAll}>
 				{selected.size === tracks.length ? 'Deselect All' : 'Select All'}
@@ -988,7 +988,7 @@
 							</div>
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}</p>
 							{#if track.format || track.bitrate}
-								<p class="text-[10px] text-[var(--text-disabled)] font-mono truncate">{track.format?.toUpperCase() || ''}{track.format && track.bitrate ? ' · ' : ''}{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : ''}</p>
+								<p class="text-xs text-[var(--text-disabled)] font-mono truncate">{track.format?.toUpperCase() || ''}{track.format && track.bitrate ? ' · ' : ''}{track.bitrate ? Math.round(track.bitrate / 1000) + 'k' : ''}</p>
 							{/if}
 							{#if trackMoods[track.id]}
 								<div class="flex gap-1 flex-wrap mt-0.5">
@@ -1080,7 +1080,7 @@
 									{#if colVisible('format')}
 										<td class="px-3 py-2">
 											{#if track.format}
-												<span class="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
+												<span class="text-xs font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
 											{:else}
 												<span class="text-[var(--text-disabled)]">—</span>
 											{/if}
@@ -1111,11 +1111,11 @@
 									<td class="px-3 py-2 w-20">
 										<div class="flex items-center gap-0.5">
 											<button onclick={(e) => toggleFav('track', track.id, e)}
-												class="p-1 transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+												class="min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
 												<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
 											</button>
 											<button onclick={(e) => openMenu(track, e)}
-												class="p-1 text-[var(--text-disabled)] hover:text-[var(--text-primary)] transition-colors">
+												class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-disabled)] hover:text-[var(--text-primary)] transition-colors">
 												<MoreVertical class="w-3.5 h-3.5" />
 											</button>
 										</div>
@@ -1383,15 +1383,15 @@
 
 	<!-- Pagination -->
 	{#if currentTotal > 0}
-		<div class="flex justify-center items-center gap-3 mt-4">
+		<div class="flex justify-center items-center gap-2 sm:gap-3 mt-4">
 			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
-				<ChevronLeft class="w-4 h-4" /> Prev
+				<ChevronLeft class="w-4 h-4" /> <span class="hidden sm:inline">Prev</span>
 			</Button>
-			<span class="text-sm text-[var(--text-muted)] font-mono">
+			<span class="text-xs sm:text-sm text-[var(--text-muted)] font-mono">
 				{offset + 1}-{Math.min(offset + limit, currentTotal)} of {currentTotal}
 			</span>
 			<Button variant="secondary" size="sm" disabled={offset + limit >= currentTotal} onclick={nextPage}>
-				Next <ChevronRight class="w-4 h-4" />
+				<span class="hidden sm:inline">Next</span> <ChevronRight class="w-4 h-4" />
 			</Button>
 		</div>
 	{/if}
@@ -1402,13 +1402,13 @@
 			<AlertTriangle class="w-4 h-4 text-amber-400" />
 			<span class="text-xs text-amber-400/80 font-mono uppercase tracking-wider">Danger Zone</span>
 		</div>
-		<p class="text-[11px] text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
+		<p class="text-xs text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
 			<a href="/duplicates" class="text-left p-3 rounded-lg border transition-colors border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5">
 				<div class="flex items-center gap-2 mb-1">
 					<Copy class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Deduplication</span>
-					<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono">OPEN</span>
+					<span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono">OPEN</span>
 				</div>
 				<p class="text-xs text-[var(--text-muted)]">Manage duplicate tracks with full details — format, quality, play count, ratings.</p>
 			</a>
@@ -1416,7 +1416,7 @@
 				<div class="flex items-center gap-2 mb-1">
 					<FolderTree class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Rename & Sort</span>
-					<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-mono">CAUTION</span>
+					<span class="text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-mono">CAUTION</span>
 				</div>
 				<p class="text-xs text-[var(--text-muted)]">Move and rename files into Artist/Album/Track folder structure.</p>
 			</button>
@@ -1551,37 +1551,37 @@
 			{#if editTrack?.file_path}
 			<div class="mt-1 px-2.5 py-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)] space-y-1.5">
 				<div>
-					<p class="text-[10px] text-[var(--text-disabled)] uppercase tracking-wider mb-0.5">File Path</p>
+					<p class="text-xs text-[var(--text-disabled)] uppercase tracking-wider mb-0.5">File Path</p>
 					<p class="text-xs text-[var(--text-muted)] font-mono break-all">{editTrack.file_path}</p>
 				</div>
 				<div class="flex flex-wrap gap-x-4 gap-y-1">
 					{#if editTrack.format}
 						<div>
-							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Format</span>
+							<span class="text-xs text-[var(--text-disabled)] uppercase">Format</span>
 							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{editTrack.format?.toUpperCase()}</span>
 						</div>
 					{/if}
 					{#if editTrack.bitrate}
 						<div>
-							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Bitrate</span>
+							<span class="text-xs text-[var(--text-disabled)] uppercase">Bitrate</span>
 							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{editTrack.bitrate}k</span>
 						</div>
 					{/if}
 					{#if editTrack.sample_rate}
 						<div>
-							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Sample Rate</span>
+							<span class="text-xs text-[var(--text-disabled)] uppercase">Sample Rate</span>
 							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{(editTrack.sample_rate / 1000).toFixed(1)}kHz</span>
 						</div>
 					{/if}
 					{#if editTrack.bit_depth}
 						<div>
-							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Bit Depth</span>
+							<span class="text-xs text-[var(--text-disabled)] uppercase">Bit Depth</span>
 							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{editTrack.bit_depth}-bit</span>
 						</div>
 					{/if}
 					{#if editTrack.file_size}
 						<div>
-							<span class="text-[10px] text-[var(--text-disabled)] uppercase">Size</span>
+							<span class="text-xs text-[var(--text-disabled)] uppercase">Size</span>
 							<span class="text-xs text-[var(--text-muted)] ml-1 font-mono">{formatSize(editTrack.file_size)}</span>
 						</div>
 					{/if}

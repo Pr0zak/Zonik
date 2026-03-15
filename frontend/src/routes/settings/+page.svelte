@@ -641,7 +641,7 @@
 						Submit Token
 					</button>
 				</div>
-				<p class="text-[11px] text-[var(--text-disabled)] mt-1">Click Authenticate, authorize on Last.fm, then copy the <code>token</code> parameter from the redirect URL and paste it above.</p>
+				<p class="text-xs text-[var(--text-disabled)] mt-1">Click Authenticate, authorize on Last.fm, then copy the <code>token</code> parameter from the redirect URL and paste it above.</p>
 			{/if}
 
 			<!-- Last.fm Favorites Sync Schedule -->
@@ -946,7 +946,7 @@
 						<div class="flex items-center justify-between py-1.5 px-2.5 rounded-md bg-[var(--bg-tertiary)]">
 							<div class="min-w-0">
 								<span class="text-sm text-[var(--text-secondary)]">{toggle.label}</span>
-								<p class="text-[10px] text-[var(--text-disabled)] truncate">{toggle.desc}</p>
+								<p class="text-xs text-[var(--text-disabled)] truncate">{toggle.desc}</p>
 							</div>
 							<button type="button" onclick={() => { services[toggle.key] = !services[toggle.key]; markDirty(); }}
 								class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ml-3 {services[toggle.key] ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
@@ -956,7 +956,7 @@
 						</div>
 					{/each}
 				</div>
-				<p class="text-[10px] text-[var(--text-disabled)]">Features require a Claude API key. Mood Tags uses CLAP locally (zero API cost) with optional Claude enhancement.</p>
+				<p class="text-xs text-[var(--text-disabled)]">Features require a Claude API key. Mood Tags uses CLAP locally (zero API cost) with optional Claude enhancement.</p>
 			</div>
 		</Card>
 

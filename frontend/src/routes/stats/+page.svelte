@@ -641,13 +641,13 @@
 
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
 					<div>
-						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Plays Over Time</h3>
+						<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Plays Over Time</h3>
 						<div class="h-48">
 							<canvas bind:this={playTimelineChartEl}></canvas>
 						</div>
 					</div>
 					<div>
-						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Hour of Day</h3>
+						<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Hour of Day</h3>
 						<div class="h-48">
 							<canvas bind:this={playHourlyChartEl}></canvas>
 						</div>
@@ -657,7 +657,7 @@
 				{#if playHistory.top_tracks.length}
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 						<div>
-							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Top Tracks (Period)</h3>
+							<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Top Tracks (Period)</h3>
 							<div class="space-y-1.5">
 								{#each playHistory.top_tracks.slice(0, 10) as track, i}
 									<div class="flex items-center gap-2 text-sm">
@@ -670,7 +670,7 @@
 							</div>
 						</div>
 						<div>
-							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Top Artists (Period)</h3>
+							<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Top Artists (Period)</h3>
 							<div class="space-y-1.5">
 								{#each playHistory.top_artists.slice(0, 10) as artist, i}
 									<div class="flex items-center gap-2 text-sm">
@@ -792,14 +792,14 @@
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
 					<!-- Status Distribution -->
 					<div>
-						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Status Distribution</h3>
+						<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Status Distribution</h3>
 						<div class="h-48">
 							<canvas bind:this={jobStatusChartEl}></canvas>
 						</div>
 					</div>
 					<!-- Hourly Timeline -->
 					<div>
-						<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Jobs by Hour</h3>
+						<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Jobs by Hour</h3>
 						<div class="h-48">
 							<canvas bind:this={jobTimelineChartEl}></canvas>
 						</div>
@@ -811,7 +811,7 @@
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 						{#if jobDashboard.type_distribution?.length}
 							<div>
-								<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Type (24h)</h3>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Type (24h)</h3>
 								<div class="space-y-1.5">
 									{#each jobDashboard.type_distribution as td}
 										<div class="flex items-center gap-2 text-sm">
@@ -824,7 +824,7 @@
 						{/if}
 						{#if jobDashboard.avg_duration_by_type?.length}
 							<div>
-								<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Avg Duration (7d)</h3>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Avg Duration (7d)</h3>
 								<div class="space-y-1.5">
 									{#each jobDashboard.avg_duration_by_type as ad}
 										<div class="flex items-center gap-2 text-sm">
@@ -957,7 +957,7 @@
 									{/if}
 									<div class="min-w-0">
 										<p class="text-xs text-[var(--text-body)] truncate" title={peer.username}>{peer.username}</p>
-										<p class="text-[10px] text-[var(--text-muted)]">
+										<p class="text-xs text-[var(--text-muted)]">
 											<span class="text-emerald-400">{peer.successes}</span> /
 											<span class="text-red-400">{peer.failures}</span>
 										</p>
@@ -996,25 +996,25 @@
 				{#if history?.length > 1}
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
 						<div>
-							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Peers & Searches</h3>
+							<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Peers & Searches</h3>
 							<div class="h-48">
 								<canvas bind:this={peersChartEl}></canvas>
 							</div>
 						</div>
 						<div>
-							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Transfers</h3>
+							<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Transfers</h3>
 							<div class="h-48">
 								<canvas bind:this={transfersChartEl}></canvas>
 							</div>
 						</div>
 						<div>
-							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Transfer Speed</h3>
+							<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Transfer Speed</h3>
 							<div class="h-48">
 								<canvas bind:this={speedChartEl}></canvas>
 							</div>
 						</div>
 						<div>
-							<h3 class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Bandwidth</h3>
+							<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Bandwidth</h3>
 							<div class="h-48">
 								<canvas bind:this={bandwidthChartEl}></canvas>
 							</div>

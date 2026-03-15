@@ -122,10 +122,13 @@
 	});
 </script>
 
-<div class="h-16 bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] flex items-center px-4 gap-4 shrink-0">
+<!-- Mobile: 2-row stacked layout; Desktop: single row -->
+<div class="bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] shrink-0">
 	{#if $currentTrack}
-		<div class="flex items-center gap-3 w-72 min-w-0">
-			<div class="w-10 h-10 bg-[var(--bg-tertiary)] rounded flex-shrink-0 overflow-hidden">
+		<!-- Row 1: track info + controls + actions -->
+		<div class="flex items-center px-3 sm:px-4 gap-2 sm:gap-4 h-14 sm:h-16">
+			<!-- Cover art: hidden on mobile -->
+			<div class="hidden sm:block w-10 h-10 bg-[var(--bg-tertiary)] rounded flex-shrink-0 overflow-hidden">
 				{#if $currentTrack.id}
 					<img src="/rest/getCoverArt?id={$currentTrack.id}&size=80"
 						alt="" class="w-full h-full object-cover"
@@ -139,20 +142,21 @@
 					</div>
 				{/if}
 			</div>
-			<div class="min-w-0">
-				<p class="text-sm font-medium text-[var(--text-primary)] truncate">{$currentTrack.title}</p>
-				<p class="text-xs text-[var(--text-secondary)] truncate">{$currentTrack.artist || 'Unknown'}{#if $currentTrack.album} — {$currentTrack.album}{/if}</p>
-			</div>
-		</div>
 
-		<div class="flex-1 flex flex-col items-center gap-1">
-			<div class="flex items-center gap-3">
+			<!-- Track info: flex-1 with truncation -->
+			<div class="flex-1 min-w-0 sm:max-w-[200px]">
+				<p class="text-sm font-medium text-[var(--text-primary)] truncate">{$currentTrack.title}</p>
+				<p class="text-xs text-[var(--text-secondary)] truncate">{$currentTrack.artist || 'Unknown'}</p>
+			</div>
+
+			<!-- Playback controls -->
+			<div class="flex items-center gap-1 sm:gap-3">
 				<button onclick={playPrev} disabled={!hasPrev}
-					class="p-1 text-[var(--text-secondary)] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default">
+					class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-secondary)] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default">
 					<SkipBack class="w-4 h-4" />
 				</button>
 				<button onclick={togglePlay}
-					class="w-9 h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
+					class="w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
 					{#if $isPlaying}
 						<Pause class="w-4 h-4" />
 					{:else}
@@ -160,11 +164,13 @@
 					{/if}
 				</button>
 				<button onclick={playNext} disabled={!hasNext}
-					class="p-1 text-[var(--text-secondary)] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default">
+					class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-secondary)] hover:text-white transition-colors disabled:opacity-30 disabled:cursor-default">
 					<SkipForward class="w-4 h-4" />
 				</button>
 			</div>
-			<div class="w-full max-w-md flex items-center gap-2 text-xs text-[var(--text-muted)]">
+
+			<!-- Desktop: progress bar inline -->
+			<div class="hidden sm:flex flex-1 items-center gap-2 text-xs text-[var(--text-muted)] max-w-md">
 				<span class="font-mono tabular-nums">{formatDuration(currentTime)}</span>
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -174,22 +180,37 @@
 				</div>
 				<span class="font-mono tabular-nums">{formatDuration(duration)}</span>
 			</div>
+
+			<!-- Action buttons -->
+			<div class="flex items-center gap-0 sm:gap-2">
+				<button onclick={toggleFav}
+					class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md transition-colors {isFav ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-white'}"
+					title={isFav ? 'Unfavorite' : 'Favorite'}>
+					<Heart class="w-4 h-4" fill={isFav ? 'currentColor' : 'none'} />
+				</button>
+				<button onclick={openEdit}
+					class="hidden sm:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-md text-[var(--text-muted)] hover:text-white transition-colors"
+					title="Edit track info">
+					<Pencil class="w-4 h-4" />
+				</button>
+			</div>
 		</div>
 
-		<div class="w-32 flex items-center justify-end gap-2">
-			<button onclick={toggleFav}
-				class="p-1.5 rounded-md transition-colors {isFav ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-white'}"
-				title={isFav ? 'Unfavorite' : 'Favorite'}>
-				<Heart class="w-4 h-4" fill={isFav ? 'currentColor' : 'none'} />
-			</button>
-			<button onclick={openEdit}
-				class="p-1.5 rounded-md text-[var(--text-muted)] hover:text-white transition-colors"
-				title="Edit track info">
-				<Pencil class="w-4 h-4" />
-			</button>
+		<!-- Mobile: progress bar below -->
+		<div class="sm:hidden flex items-center gap-2 px-3 pb-2 text-xs text-[var(--text-muted)]">
+			<span class="font-mono tabular-nums text-xs">{formatDuration(currentTime)}</span>
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div class="flex-1 h-1.5 bg-[var(--border-interactive)] rounded-full cursor-pointer" onclick={seek}>
+				<div class="h-full bg-[var(--color-accent)] rounded-full transition-all"
+					style="width: {duration ? (currentTime / duration * 100) : 0}%"></div>
+			</div>
+			<span class="font-mono tabular-nums text-xs">{formatDuration(duration)}</span>
 		</div>
 	{:else}
-		<p class="text-sm text-[var(--text-disabled)] mx-auto">No track selected</p>
+		<div class="h-14 sm:h-16 flex items-center">
+			<p class="text-sm text-[var(--text-disabled)] mx-auto">No track selected</p>
+		</div>
 	{/if}
 </div>
 

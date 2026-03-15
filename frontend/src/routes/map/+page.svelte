@@ -418,17 +418,17 @@
 </script>
 
 <div class="flex flex-col h-[calc(100vh-8rem)] -m-4 md:-m-6">
-	<div class="px-6 pt-5 pb-3 flex items-center justify-between flex-wrap gap-2">
+	<div class="px-3 sm:px-6 pt-5 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
 		<PageHeader title="Music Map" icon={Network} color="var(--color-map)"
 			subtitle={graphData ? `${graphData.meta.total_artists} artists \u00b7 ${graphData.meta.total_genres} genres \u00b7 ${graphData.meta.total_tracks} tracks` : ''} />
 
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-2 flex-wrap">
 			<!-- View mode selector -->
 			<div class="flex items-center bg-[var(--bg-tertiary)] rounded border border-[var(--border-subtle)] overflow-hidden">
 				{#each VIEW_MODES as mode}
 					{@const Icon = mode.icon}
 					<button onclick={() => switchViewMode(mode.id)}
-						class="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] transition-colors
+						class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors
 							{viewMode === mode.id
 								? 'bg-[var(--color-map)]/20 text-[var(--color-map)]'
 								: 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-white/5'}"
@@ -447,7 +447,7 @@
 					onblur={() => setTimeout(() => searchFocused = false, 200)}
 					onkeydown={(e) => e.key === 'Enter' && handleSearch()}
 					placeholder="Search nodes..."
-					class="bg-[var(--bg-tertiary)] text-[var(--text-primary)] text-xs px-3 py-1.5 pl-8 rounded border border-[var(--border-subtle)] w-48 focus:outline-none focus:border-[var(--color-map)]" />
+					class="bg-[var(--bg-tertiary)] text-[var(--text-primary)] text-xs px-3 py-1.5 pl-8 rounded border border-[var(--border-subtle)] w-36 sm:w-48 focus:outline-none focus:border-[var(--color-map)]" />
 				<Search class="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-2.5 top-1/2 -translate-y-1/2" />
 				{#if searchFocused && searchResults.length}
 					<div class="absolute top-full left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded shadow-lg z-50 max-h-64 overflow-y-auto">
@@ -456,7 +456,7 @@
 								class="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-hover)] flex items-center gap-2 transition-colors">
 								<div class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {node.color}"></div>
 								<span class="text-xs text-[var(--text-primary)] truncate">{node.label}</span>
-								<span class="text-[10px] text-[var(--text-disabled)] ml-auto flex-shrink-0 capitalize">{node.type}</span>
+								<span class="text-xs text-[var(--text-disabled)] ml-auto flex-shrink-0 capitalize">{node.type}</span>
 							</button>
 						{/each}
 					</div>
@@ -468,7 +468,7 @@
 				<button onclick={() => handleZoom('out')} class="p-1 hover:bg-white/10 rounded transition-colors" title="Zoom out">
 					<ZoomOut class="w-4 h-4 text-[var(--text-secondary)]" />
 				</button>
-				<span class="text-[10px] font-mono text-[var(--text-muted)] px-1 min-w-[50px] text-center capitalize">{zoomLevel}</span>
+				<span class="text-xs font-mono text-[var(--text-muted)] px-1 min-w-[50px] text-center capitalize">{zoomLevel}</span>
 				<button onclick={() => handleZoom('in')} class="p-1 hover:bg-white/10 rounded transition-colors" title="Zoom in">
 					<ZoomIn class="w-4 h-4 text-[var(--text-secondary)]" />
 				</button>
@@ -502,59 +502,59 @@
 			<!-- Legend overlay -->
 			<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2.5 backdrop-blur-sm max-w-xs">
 				{#if viewMode === 'genre'}
-					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Legend</p>
+					<p class="text-xs text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Legend</p>
 					<div class="space-y-1.5">
 						<div class="flex items-center gap-2">
 							<div class="w-5 h-5 rounded-full bg-white/10 border border-white/20 flex-shrink-0"></div>
-							<span class="text-[11px] text-[var(--text-secondary)]">Genre cluster (size = track count)</span>
+							<span class="text-xs text-[var(--text-secondary)]">Genre cluster (size = track count)</span>
 						</div>
 						<div class="flex items-center gap-2">
 							<div class="w-3 h-3 rounded-full bg-[var(--color-map)] flex-shrink-0 ml-1"></div>
-							<span class="text-[11px] text-[var(--text-secondary)]">Artist (colored by genre)</span>
+							<span class="text-xs text-[var(--text-secondary)]">Artist (colored by genre)</span>
 						</div>
 						<div class="flex items-center gap-2">
 							<div class="relative ml-1 flex-shrink-0">
 								<div class="w-3 h-3 rounded-full bg-gray-500"></div>
 								<div class="w-1.5 h-1.5 rounded-full bg-red-500 absolute -top-0.5 -right-0.5"></div>
 							</div>
-							<span class="text-[11px] text-[var(--text-secondary)]">Favorited artist</span>
+							<span class="text-xs text-[var(--text-secondary)]">Favorited artist</span>
 						</div>
 						<div class="flex items-center gap-2">
 							<div class="w-5 border-t border-white/20 flex-shrink-0 ml-0.5"></div>
-							<span class="text-[11px] text-[var(--text-secondary)]">Genre connection</span>
+							<span class="text-xs text-[var(--text-secondary)]">Genre connection</span>
 						</div>
 					</div>
 				{:else if viewMode === 'play_heatmap'}
-					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Play Count</p>
+					<p class="text-xs text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Play Count</p>
 					<div class="space-y-1.5">
 						<div class="flex items-center gap-2">
-							<span class="text-[11px] text-[var(--text-disabled)]">0</span>
+							<span class="text-xs text-[var(--text-disabled)]">0</span>
 							<div class="w-28 h-2.5 rounded-full" style="background: linear-gradient(to right, #334155, #3b82f6, #f59e0b, #ef4444)"></div>
-							<span class="text-[11px] text-[var(--text-disabled)]">High</span>
+							<span class="text-xs text-[var(--text-disabled)]">High</span>
 						</div>
-						<p class="text-[10px] text-[var(--text-disabled)]">Artist nodes colored by total plays</p>
+						<p class="text-xs text-[var(--text-disabled)]">Artist nodes colored by total plays</p>
 					</div>
 				{:else if viewMode === 'quality'}
-					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Audio Quality</p>
+					<p class="text-xs text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Audio Quality</p>
 					<div class="space-y-1.5">
 						<div class="flex items-center gap-2.5 flex-wrap">
 							{#each [['#ef4444', 'Low'], ['#f97316', 'Mid'], ['#f59e0b', 'Good'], ['#84cc16', 'High'], ['#22c55e', 'Lossless']] as [color, label]}
 								<div class="flex items-center gap-1">
 									<div class="w-2.5 h-2.5 rounded-full" style="background: {color}"></div>
-									<span class="text-[11px] text-[var(--text-secondary)]">{label}</span>
+									<span class="text-xs text-[var(--text-secondary)]">{label}</span>
 								</div>
 							{/each}
 						</div>
-						<p class="text-[10px] text-[var(--text-disabled)]">Based on format + bitrate score</p>
+						<p class="text-xs text-[var(--text-disabled)]">Based on format + bitrate score</p>
 					</div>
 				{:else if viewMode === 'duplicates'}
-					<p class="text-[10px] text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Duplicates</p>
+					<p class="text-xs text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Duplicates</p>
 					<div class="space-y-1.5">
 						<div class="flex items-center gap-2">
 							<div class="w-4 h-4 rounded-full border-2 border-amber-400 bg-amber-400/30 flex-shrink-0"></div>
-							<span class="text-[11px] text-[var(--text-secondary)]">Artist with duplicate tracks</span>
+							<span class="text-xs text-[var(--text-secondary)]">Artist with duplicate tracks</span>
 						</div>
-						<p class="text-[10px] text-[var(--text-disabled)]">{duplicateArtistIds.size} artist{duplicateArtistIds.size !== 1 ? 's' : ''} affected</p>
+						<p class="text-xs text-[var(--text-disabled)]">{duplicateArtistIds.size} artist{duplicateArtistIds.size !== 1 ? 's' : ''} affected</p>
 					</div>
 				{/if}
 			</div>
@@ -562,11 +562,11 @@
 
 		<!-- Detail panel -->
 		{#if selectedNode}
-			<div class="absolute top-0 right-0 w-80 h-full bg-[var(--bg-secondary)] border-l border-[var(--border-subtle)] p-4 overflow-y-auto shadow-lg">
+			<div class="absolute inset-x-0 bottom-0 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-80 h-2/3 sm:h-full bg-[var(--bg-secondary)] border-t sm:border-t-0 sm:border-l border-[var(--border-subtle)] p-4 overflow-y-auto shadow-lg rounded-t-xl sm:rounded-none">
 				<div class="flex items-center justify-between mb-3">
 					<div class="flex items-center gap-2">
 						<div class="w-3 h-3 rounded-full" style="background-color: {getNodeColor(selectedNode)}"></div>
-						<span class="text-[10px] font-mono text-[var(--text-muted)] uppercase">{selectedNode.type}</span>
+						<span class="text-xs font-mono text-[var(--text-muted)] uppercase">{selectedNode.type}</span>
 					</div>
 					<button onclick={() => selectedNode = null} class="p-1 hover:bg-white/10 rounded">
 						<X class="w-4 h-4 text-[var(--text-muted)]" />

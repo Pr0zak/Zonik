@@ -810,11 +810,11 @@
 	{/if}
 
 	<!-- Tabs -->
-	<div class="flex gap-1.5 mb-4 overflow-x-auto">
+	<div class="flex gap-1.5 mb-4 overflow-x-auto pb-1 -mb-1">
 		{#each tabs as tab}
 			{@const Icon = tab.icon}
 			<button onclick={() => switchTab(tab.key)}
-				class="flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors
+				class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
 					{activeTab === tab.key
 						? 'bg-[var(--color-discover)] text-white'
 						: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
@@ -990,12 +990,12 @@
 
 			<!-- Actions bar -->
 			<Card padding="p-4" class="mb-4">
-				<div class="flex items-center justify-between mb-3">
+				<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 					<div class="flex items-center gap-4">
 						<span class="text-2xl font-bold text-[var(--text-primary)]">{recTotal}</span>
 						<span class="text-xs text-[var(--text-muted)]">recommendations</span>
 					</div>
-					<div class="flex items-center gap-2">
+					<div class="flex items-center gap-2 flex-wrap">
 						<Button variant="primary" size="sm" onclick={refreshRecs} loading={recRefreshing}>
 							<RefreshCw class="w-3.5 h-3.5" />
 							Refresh
@@ -1143,12 +1143,12 @@
 										<div class="mt-2 pt-2 border-t border-[var(--border-subtle)] space-y-1">
 											{#each Object.entries(rec.score_breakdown) as [signal, value]}
 												<div class="flex items-center gap-2">
-													<span class="text-[10px] text-[var(--text-muted)] w-28 truncate capitalize">{signal.replace(/_/g, ' ')}</span>
+													<span class="text-xs text-[var(--text-muted)] w-28 truncate capitalize">{signal.replace(/_/g, ' ')}</span>
 													<div class="flex-1 h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden max-w-[100px]">
 														<div class="h-full rounded-full transition-all {value > 0.6 ? 'bg-green-500' : value > 0.3 ? 'bg-yellow-500' : 'bg-red-500'}"
 															style="width: {Math.round(Math.min(1, value) * 100)}%"></div>
 													</div>
-													<span class="text-[10px] text-[var(--text-muted)] font-mono w-8 text-right">{typeof value === 'number' ? (value * 100).toFixed(0) : value}</span>
+													<span class="text-xs text-[var(--text-muted)] font-mono w-8 text-right">{typeof value === 'number' ? (value * 100).toFixed(0) : value}</span>
 												</div>
 											{/each}
 										</div>
@@ -1156,21 +1156,21 @@
 								</div>
 
 								<!-- Actions -->
-								<div class="flex items-center gap-1.5 flex-shrink-0">
+								<div class="flex items-center gap-0.5 sm:gap-1.5 flex-shrink-0">
 									{#if rec.status === 'downloaded' || dlStatus === 'completed'}
 										<span class="text-xs text-green-400 flex items-center gap-1">
-											<Check class="w-3.5 h-3.5" /> Downloaded
+											<Check class="w-3.5 h-3.5" /> <span class="hidden sm:inline">Downloaded</span>
 										</span>
 									{:else if dlStatus === 'downloading' || dlStatus === 'queued'}
 										<span class="text-xs text-blue-400 flex items-center gap-1">
 											<Loader2 class="w-3.5 h-3.5 animate-spin" />
-											{dlStatus === 'queued' ? 'Queued' : 'Downloading'}
+											<span class="hidden sm:inline">{dlStatus === 'queued' ? 'Queued' : 'Downloading'}</span>
 										</span>
 									{:else if dlStatus === 'failed'}
-										<button onclick={() => downloadRec(rec)} class="text-xs text-red-400 hover:text-red-300 underline">retry</button>
+										<button onclick={() => downloadRec(rec)} class="text-xs text-red-400 hover:text-red-300 underline min-w-[44px] min-h-[44px] flex items-center justify-center">retry</button>
 									{:else}
 										<button onclick={() => downloadRec(rec)}
-											class="p-1.5 rounded hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
+											class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
 											title="Download">
 											<Download class="w-4 h-4" />
 										</button>
@@ -1259,7 +1259,7 @@
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
 								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('artist')}>
 									Artist {sortIndicator('artist')}
 								</th>
@@ -1301,10 +1301,13 @@
 													</div>
 												{/if}
 											</button>
-											<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
+											<div class="min-w-0">
+												<span class="font-medium text-[var(--text-primary)] truncate block">{t.name}</span>
+												<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
+											</div>
 										</div>
 									</td>
-									<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
+									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
 									<td class="px-4 py-3 text-right">
 										{#if t.in_library}
@@ -1365,7 +1368,7 @@
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
 								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('artist')}>
 									Artist {sortIndicator('artist')}
 								</th>
@@ -1406,10 +1409,13 @@
 													</div>
 												{/if}
 											</button>
-											<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
+											<div class="min-w-0">
+												<span class="font-medium text-[var(--text-primary)] truncate block">{t.name}</span>
+												<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
+											</div>
 										</div>
 									</td>
-									<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
+									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
 									<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
 										{#if t.source_artist}
 											{t.source_artist} — {t.source_track}
@@ -1474,7 +1480,7 @@
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
 								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('artist')}>
 									Artist {sortIndicator('artist')}
 								</th>
@@ -1490,7 +1496,7 @@
 								{@const status = getStatus(t)}
 								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
-									<td class="px-4 py-3 text-[var(--text-secondary)]">{t.artist}</td>
+									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
 									<td class="px-4 py-3 text-right">
 										{#if t.in_library}
@@ -1634,7 +1640,7 @@
 										onclick={() => toggleSort('name')}>
 										Track {sortIndicator('name')}
 									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 										onclick={() => toggleSort('artist')}>
 										Artist {sortIndicator('artist')}
 									</th>
@@ -1689,7 +1695,7 @@
 										<td class="px-4 py-3 text-[var(--text-secondary)]">{r.artist}</td>
 										<td class="px-4 py-3 hidden md:table-cell">
 											{#if r.version_type}
-												<span class="px-2 py-0.5 rounded-full text-[10px] font-medium {versionTypeColors[r.version_type] || 'bg-gray-500/20 text-gray-400'}">{r.version_type}</span>
+												<span class="px-2 py-0.5 rounded-full text-xs font-medium {versionTypeColors[r.version_type] || 'bg-gray-500/20 text-gray-400'}">{r.version_type}</span>
 											{/if}
 										</td>
 										<td class="px-4 py-3 hidden sm:table-cell">
@@ -1766,7 +1772,7 @@
 											<span class="capitalize">{pl.source.replace('_', ' ')}</span>
 										</p>
 										{#if pl.matched_query}
-											<span class="text-[10px] text-[var(--text-disabled)]">matched: {pl.matched_query}</span>
+											<span class="text-xs text-[var(--text-disabled)]">matched: {pl.matched_query}</span>
 										{/if}
 									</div>
 									{#if pl.ai_score}

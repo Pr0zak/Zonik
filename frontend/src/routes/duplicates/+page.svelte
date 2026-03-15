@@ -243,7 +243,7 @@
 	onMount(loadDuplicates);
 </script>
 
-<div class="px-6 py-5 max-w-7xl mx-auto">
+<div class="px-3 sm:px-6 py-5 max-w-7xl mx-auto">
 	<PageHeader title="Duplicates" icon={Copy} color="var(--color-duplicates)"
 		subtitle={data ? `${data.total_groups} group${data.total_groups !== 1 ? 's' : ''} \u00b7 ${data.total_duplicates} extra file${data.total_duplicates !== 1 ? 's' : ''} \u00b7 ${formatSize(data.reclaimable_bytes)} reclaimable` : ''} />
 
@@ -272,7 +272,7 @@
 				] as stat}
 					<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-center">
 						<p class="text-lg font-bold {stat.color}">{stat.value}</p>
-						<p class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
+						<p class="text-xs text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
 					</div>
 				{/each}
 			</div>
@@ -281,7 +281,7 @@
 		<!-- Toolbar -->
 		<div class="sticky top-0 z-10 bg-[var(--bg-primary)] pt-3 pb-2 mt-3 mb-3 border-b border-[var(--border-subtle)] space-y-2">
 			<!-- Row 1: Filters + Search + Sort -->
-			<div class="flex items-center justify-between gap-3">
+			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
 				<div class="flex items-center gap-2 flex-wrap">
 					{#each [
 						{ value: 'all', label: 'All' },
@@ -291,20 +291,20 @@
 					] as f}
 						<button
 							onclick={() => filterBy = f.value}
-							class="px-2.5 py-1 text-xs rounded-md transition-colors whitespace-nowrap {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+							class="px-2.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
 						>
 							{f.label}
 						</button>
 					{/each}
 				</div>
 				<div class="flex items-center gap-2 flex-shrink-0">
-					<div class="relative">
+					<div class="relative flex-1 sm:flex-none">
 						<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
 						<input type="text" bind:value={searchQuery} placeholder="Search..."
-							class="pl-8 pr-3 py-1 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-36 focus:outline-none focus:border-[var(--color-accent)]" />
+							class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-full sm:w-36 focus:outline-none focus:border-[var(--color-accent)]" />
 					</div>
 					<select bind:value={sortBy}
-						class="text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] px-2 py-1 focus:outline-none focus:border-[var(--color-accent)]">
+						class="text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] px-2 py-1.5 focus:outline-none focus:border-[var(--color-accent)]">
 						<option value="space">Reclaimable Space</option>
 						<option value="copies">Most Copies</option>
 						<option value="gap">Quality Gap</option>
@@ -314,12 +314,12 @@
 				</div>
 			</div>
 			<!-- Row 2: Selection controls + Actions -->
-			<div class="flex items-center justify-between gap-3">
-				<div class="flex items-center gap-2 text-xs">
+			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
+				<div class="flex items-center gap-2 text-xs flex-wrap">
 					<span class="text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
 					<button onclick={selectAllInferior} class="text-[var(--color-accent)] hover:underline whitespace-nowrap">Select Inferior</button>
 					<button onclick={deselectAll} class="text-[var(--text-muted)] hover:underline whitespace-nowrap">Deselect</button>
-					<span class="text-[var(--border-subtle)]">|</span>
+					<span class="text-[var(--border-subtle)] hidden sm:inline">|</span>
 					<button onclick={expandAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
 						<ChevronsDown class="w-3 h-3" /> Expand
 					</button>
@@ -327,7 +327,7 @@
 						<ChevronsUp class="w-3 h-3" /> Collapse
 					</button>
 				</div>
-				<div class="flex items-center gap-2 flex-shrink-0">
+				<div class="flex items-center gap-2 flex-wrap">
 					<Button variant="secondary" size="sm" loading={aiResolveLoading} onclick={aiResolve}>
 						<Sparkles class="w-3.5 h-3.5 mr-1 text-amber-400" /> AI Resolve
 					</Button>
@@ -405,11 +405,11 @@
 									{track.is_best ? 'bg-emerald-500/5' : selected.has(track.id) ? (track.is_favorite ? 'bg-amber-500/5 border-l-2 border-l-amber-500' : 'bg-red-500/5') : 'hover:bg-[var(--bg-hover)]'}">
 
 									<!-- Row 1: Main info -->
-									<div class="flex items-center gap-3">
+									<div class="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
 										<!-- Checkbox / BEST badge -->
-										<div class="w-14 flex-shrink-0 flex justify-center">
+										<div class="w-10 sm:w-14 flex-shrink-0 flex justify-center">
 											{#if track.is_best}
-												<span class="text-[11px] font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase tracking-wide">Best</span>
+												<span class="text-xs font-bold text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full uppercase tracking-wide">Best</span>
 											{:else}
 												<input type="checkbox" checked={selected.has(track.id)}
 													onchange={() => toggleTrack(track.id)}
@@ -420,10 +420,10 @@
 										<!-- Cover art -->
 										{#if track.album_id}
 											<img src="/rest/getCoverArt?id={track.album_id}&size=44" alt=""
-												class="w-11 h-11 rounded object-cover flex-shrink-0 bg-[var(--bg-tertiary)]"
+												class="w-10 h-10 sm:w-11 sm:h-11 rounded object-cover flex-shrink-0 bg-[var(--bg-tertiary)]"
 												onerror={(e) => e.target.style.display='none'} />
 										{:else}
-											<div class="w-11 h-11 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
+											<div class="w-10 h-10 sm:w-11 sm:h-11 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
 												<Music class="w-5 h-5 text-[var(--text-disabled)]" />
 											</div>
 										{/if}
@@ -442,7 +442,7 @@
 										</span>
 
 										<!-- Bitrate -->
-										<div class="text-right flex-shrink-0 min-w-[65px]">
+										<div class="text-right flex-shrink-0 min-w-[50px] hidden sm:block">
 											{#if track.bitrate}
 												<p class="text-sm text-[var(--text-secondary)] font-mono">{Math.round(track.bitrate / 1000)}k</p>
 											{:else}
@@ -451,14 +451,14 @@
 										</div>
 
 										<!-- File size -->
-										<div class="flex-shrink-0 min-w-[65px] text-right">
+										<div class="flex-shrink-0 min-w-[50px] text-right hidden sm:block">
 											<p class="text-sm text-[var(--text-secondary)] font-mono">
 												{track.file_size ? formatSize(track.file_size) : '—'}
 											</p>
 										</div>
 
 										<!-- Quality bar -->
-										<div class="flex items-center gap-2 flex-shrink-0 min-w-[100px]">
+										<div class="flex items-center gap-2 flex-shrink-0 hidden md:flex min-w-[100px]">
 											<div class="w-16 h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
 												<div class="h-full rounded-full transition-all {qualityBarColor(qpct)}" style="width: {qpct}%"></div>
 											</div>
@@ -467,10 +467,10 @@
 
 										<!-- Actions -->
 										<div class="flex items-center gap-0.5 flex-shrink-0">
-											<button onclick={() => playTrack(track)} class="p-1.5 hover:bg-white/10 rounded transition-colors" title="Play">
+											<button onclick={() => playTrack(track)} class="p-2 min-w-[44px] min-h-[44px] sm:p-1.5 sm:min-w-0 sm:min-h-0 flex items-center justify-center hover:bg-white/10 rounded transition-colors" title="Play">
 												<Play class="w-4 h-4 text-[var(--text-secondary)]" />
 											</button>
-											<button onclick={() => findUpgrade(track)} class="p-1.5 hover:bg-white/10 rounded transition-colors" title="Find upgrade on Soulseek">
+											<button onclick={() => findUpgrade(track)} class="p-2 min-w-[44px] min-h-[44px] sm:p-1.5 sm:min-w-0 sm:min-h-0 flex items-center justify-center hover:bg-white/10 rounded transition-colors" title="Find upgrade on Soulseek">
 												<Download class="w-4 h-4 text-[var(--text-secondary)]" />
 											</button>
 											{#if track.is_favorite}
@@ -481,14 +481,14 @@
 
 									<!-- Favorite warning when selected -->
 									{#if !track.is_best && track.is_favorite && selected.has(track.id)}
-										<div class="flex items-center gap-1.5 mt-1.5 ml-[6.75rem] text-xs text-amber-400">
+										<div class="flex items-center gap-1.5 mt-1.5 ml-0 sm:ml-[6.75rem] text-xs text-amber-400">
 											<AlertTriangle class="w-3 h-3" />
 											This track is favorited
 										</div>
 									{/if}
 
 									<!-- Row 2: Secondary details -->
-									<div class="flex items-center gap-4 mt-2 ml-[6.75rem] text-xs text-[var(--text-muted)]">
+									<div class="flex items-center gap-4 mt-2 ml-0 sm:ml-[6.75rem] text-xs text-[var(--text-muted)] overflow-x-auto">
 										<!-- File path -->
 										<span class="font-mono truncate flex-1 min-w-0" title={track.file_path}>
 											{track.file_path}

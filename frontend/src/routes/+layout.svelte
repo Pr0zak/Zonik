@@ -8,19 +8,24 @@
 	import { connectWebSocket, disconnectWebSocket } from '$lib/websocket.js';
 	import { goto } from '$app/navigation';
 	import { Menu } from 'lucide-svelte';
-	import { sidebarOpen, isPlaying, showShortcuts, playNext, playPrev } from '$lib/stores.js';
+	import { sidebarOpen, isPlaying, showShortcuts, playNext, playPrev, isMobile } from '$lib/stores.js';
 
 	let { children } = $props();
 
+	let mql;
 	onMount(() => {
 		connectWebSocket();
-		if (window.innerWidth < 768) {
+		mql = window.matchMedia('(max-width: 767px)');
+		$isMobile = mql.matches;
+		mql.addEventListener('change', (e) => { $isMobile = e.matches; });
+		if ($isMobile) {
 			$sidebarOpen = false;
 		}
 	});
 
 	onDestroy(() => {
 		disconnectWebSocket();
+		if (mql) mql.removeEventListener('change', (e) => { $isMobile = e.matches; });
 	});
 
 	function handleKeydown(event) {
@@ -140,7 +145,7 @@
 					</div>
 				</div>
 			</div>
-			<p class="mt-4 text-xs text-[var(--text-disabled)]">Press <kbd class="px-1 py-0.5 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded text-[10px] font-mono">?</kbd> to toggle this help</p>
+			<p class="mt-4 text-xs text-[var(--text-disabled)]">Press <kbd class="px-1 py-0.5 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded text-xs font-mono">?</kbd> to toggle this help</p>
 		</div>
 	</div>
 {/if}

@@ -189,10 +189,10 @@
 	</PageHeader>
 
 	<!-- Category filters -->
-	<div class="flex gap-1.5 mb-4 overflow-x-auto">
+	<div class="flex gap-1.5 mb-4 overflow-x-auto pb-1">
 		{#each categories as cat}
 			<button onclick={() => changeCategory(cat.key)}
-				class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
+				class="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
 					{categoryFilter === cat.key
 						? 'bg-[var(--color-logs)] text-white'
 						: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
@@ -228,8 +228,8 @@
 				<tbody class="divide-y divide-[var(--border-subtle)]">
 					{#each jobs as job}
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
-						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" onclick={() => toggleExpand(job)}>
-							<td class="px-4 py-3">
+						<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors min-h-[44px]" onclick={() => toggleExpand(job)}>
+							<td class="px-3 sm:px-4 py-3">
 								<div class="flex items-center gap-2">
 									{#if expandedJob === job.id}
 										<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
@@ -241,6 +241,9 @@
 										{#if job.description}
 											<p class="text-xs text-[var(--text-muted)] truncate max-w-xs">{job.description}</p>
 										{/if}
+										<p class="text-xs text-[var(--text-disabled)] sm:hidden">
+											{#if job.total}{job.progress}/{job.total} &middot; {/if}{job.started_at ? formatDateTime(job.started_at) : ''}
+										</p>
 									</div>
 								</div>
 							</td>
@@ -279,23 +282,23 @@
 									<div class="space-y-2 text-xs animate-fade-slide-in">
 										<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-												<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Job ID</span>
-												<p class="text-[var(--text-body)] font-mono text-[10px] truncate">{jobDetail.id}</p>
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Job ID</span>
+												<p class="text-[var(--text-body)] font-mono text-xs truncate">{jobDetail.id}</p>
 											</div>
 											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-												<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Progress</span>
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Progress</span>
 												<p class="text-[var(--text-body)] font-mono font-bold">{jobDetail.progress ?? 0} / {jobDetail.total ?? 0}</p>
 											</div>
 											{#if jobDetail.started_at}
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Started</span>
-													<p class="text-[var(--text-body)] font-mono text-[10px]">{formatDateTime(jobDetail.started_at)}</p>
+													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Started</span>
+													<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(jobDetail.started_at)}</p>
 												</div>
 											{/if}
 											{#if jobDetail.finished_at}
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">Finished</span>
-													<p class="text-[var(--text-body)] font-mono text-[10px]">{formatDateTime(jobDetail.finished_at)}</p>
+													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Finished</span>
+													<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(jobDetail.finished_at)}</p>
 												</div>
 											{/if}
 										</div>
@@ -308,7 +311,7 @@
 													<div class="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
 														{#each Object.entries(parsed) as [key, value]}
 															<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-																<span class="text-[var(--text-muted)] font-mono text-[10px] uppercase">{key}</span>
+																<span class="text-[var(--text-muted)] font-mono text-xs uppercase">{key}</span>
 																<p class="text-[var(--text-body)] font-mono font-bold">{typeof value === 'number' ? value.toLocaleString() : value}</p>
 															</div>
 														{/each}
@@ -331,12 +334,12 @@
 																<Badge variant={t.status === 'downloaded' ? 'success' : t.status === 'failed' ? 'error' : t.status === 'skipped' ? 'warning' : 'default'}>{t.status}</Badge>
 																<span class="text-[var(--text-body)] truncate">{t.artist} — {t.track}</span>
 																{#if t.username}
-																	<span class="text-[var(--text-muted)] text-[10px]">from {t.username}</span>
+																	<span class="text-[var(--text-muted)] text-xs">from {t.username}</span>
 																{/if}
 																{#if t.error}
-																	<span class="text-red-400 text-[10px] ml-auto" title={t.error}>{t.error}</span>
+																	<span class="text-red-400 text-xs ml-auto" title={t.error}>{t.error}</span>
 																{:else if t.reason}
-																	<span class="text-orange-400 text-[10px] ml-auto">{t.reason}</span>
+																	<span class="text-orange-400 text-xs ml-auto">{t.reason}</span>
 																{/if}
 															</div>
 														{/each}

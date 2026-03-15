@@ -11,6 +11,7 @@ export const activeTransfers = writable([]);
 export const trackQueue = writable([]);
 export const queueIndex = writable(-1);
 export const discoverTrackStatus = writable({});
+export const isMobile = writable(false);
 
 export function playTrack(track, queue = null) {
 	currentTrack.set(track);

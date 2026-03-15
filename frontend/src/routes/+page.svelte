@@ -241,9 +241,9 @@
 						{/each}
 					</div>
 					<div class="flex justify-between mt-1.5">
-						<span class="text-[10px] text-[var(--text-disabled)]">{dashboard.growth[0]?.date?.slice(5)}</span>
-						<span class="text-[10px] text-[var(--text-muted)]">{dashboard.growth.reduce((s, d) => s + d.count, 0)} tracks added</span>
-						<span class="text-[10px] text-[var(--text-disabled)]">{dashboard.growth[dashboard.growth.length - 1]?.date?.slice(5)}</span>
+						<span class="text-xs text-[var(--text-disabled)]">{dashboard.growth[0]?.date?.slice(5)}</span>
+						<span class="text-xs text-[var(--text-muted)]">{dashboard.growth.reduce((s, d) => s + d.count, 0)} tracks added</span>
+						<span class="text-xs text-[var(--text-disabled)]">{dashboard.growth[dashboard.growth.length - 1]?.date?.slice(5)}</span>
 					</div>
 				</Card>
 			{/if}
@@ -272,8 +272,8 @@
 						{#each storage.by_format.slice(0, 6) as fmt}
 							<div class="flex items-center gap-1.5">
 								<div class="w-2 h-2 rounded-full" style="background: {fmtColors[fmt.format] || '#6b7280'}"></div>
-								<span class="text-[10px] text-[var(--text-secondary)]">{fmt.format.toUpperCase()}</span>
-								<span class="text-[10px] text-[var(--text-muted)] font-mono">{formatSize(fmt.size)}</span>
+								<span class="text-xs text-[var(--text-secondary)]">{fmt.format.toUpperCase()}</span>
+								<span class="text-xs text-[var(--text-muted)] font-mono">{formatSize(fmt.size)}</span>
 							</div>
 						{/each}
 					</div>
@@ -298,14 +298,14 @@
 							<div class="p-2 rounded bg-[var(--bg-hover)]">
 								<div class="flex items-center justify-between mb-1">
 									<span class="text-xs text-[var(--text-primary)] truncate flex-1">{t.filename?.split(/[\\/]/).pop() || 'Unknown'}</span>
-									<span class="text-[10px] text-[var(--text-muted)] font-mono ml-2">{pct}%</span>
+									<span class="text-xs text-[var(--text-muted)] font-mono ml-2">{pct}%</span>
 								</div>
 								<div class="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
 									<div class="h-full bg-blue-500 rounded-full transition-all" style="width: {pct}%"></div>
 								</div>
 								<div class="flex justify-between mt-1">
-									<span class="text-[10px] text-[var(--text-disabled)] truncate">{t.username || ''}</span>
-									<span class="text-[10px] text-[var(--text-disabled)] font-mono">
+									<span class="text-xs text-[var(--text-disabled)] truncate">{t.username || ''}</span>
+									<span class="text-xs text-[var(--text-disabled)] font-mono">
 										{t.speed ? formatSize(t.speed) + '/s' : ''}
 										{t.eta_seconds ? ' · ' + (t.eta_seconds < 60 ? t.eta_seconds + 's' : Math.round(t.eta_seconds / 60) + 'm') : ''}
 									</span>
@@ -331,7 +331,7 @@
 				<Card padding="p-4">
 					<div class="flex items-center justify-between mb-3">
 						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Recent Activity</h2>
-						<button onclick={() => goto('/logs')} class="text-[10px] text-blue-400 hover:underline">View all →</button>
+						<button onclick={() => goto('/logs')} class="text-xs text-blue-400 hover:underline">View all →</button>
 					</div>
 					<div class="space-y-1">
 						{#each dashboard.recent_activity.slice(0, 8) as job}
@@ -340,7 +340,7 @@
 								class="w-full flex items-center gap-2 py-1.5 px-2 rounded hover:bg-[var(--bg-hover)] transition-colors text-left">
 								<SIcon class="w-3 h-3 flex-shrink-0 {statusColor(job.status)} {job.status === 'running' ? 'animate-spin' : ''}" />
 								<span class="text-xs text-[var(--text-secondary)] flex-1 truncate">{jobLabel(job.type)}</span>
-								<span class="text-[10px] text-[var(--text-disabled)] font-mono">{formatRelativeTime(job.finished_at)}</span>
+								<span class="text-xs text-[var(--text-disabled)] font-mono">{formatRelativeTime(job.finished_at)}</span>
 							</button>
 						{/each}
 					</div>
@@ -355,7 +355,7 @@
 				<Card padding="p-4">
 					<div class="flex items-center justify-between mb-3">
 						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Favorites</h2>
-						<button onclick={() => goto('/favorites')} class="text-[10px] text-blue-400 hover:underline">View all →</button>
+						<button onclick={() => goto('/favorites')} class="text-xs text-blue-400 hover:underline">View all →</button>
 					</div>
 					<div class="flex items-center gap-3 mb-3">
 						<Heart class="w-5 h-5 text-red-400" fill="currentColor" />
@@ -368,7 +368,7 @@
 								<div class="flex items-center gap-2 py-0.5">
 									<Heart class="w-3 h-3 text-red-400/50 flex-shrink-0" fill="currentColor" />
 									<span class="text-xs text-[var(--text-secondary)] truncate">{fav.title}</span>
-									<span class="text-[10px] text-[var(--text-disabled)] truncate">{fav.artist}</span>
+									<span class="text-xs text-[var(--text-disabled)] truncate">{fav.artist}</span>
 								</div>
 							{/each}
 						</div>
@@ -382,7 +382,7 @@
 					<div class="flex items-center justify-between mb-3">
 						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Duplicates</h2>
 						{#if dashboard.duplicates.groups > 0}
-							<button onclick={() => goto('/duplicates')} class="text-[10px] text-blue-400 hover:underline">Manage →</button>
+							<button onclick={() => goto('/duplicates')} class="text-xs text-blue-400 hover:underline">Manage →</button>
 						{/if}
 					</div>
 					{#if dashboard.duplicates.groups > 0}
@@ -395,7 +395,7 @@
 								<p class="text-xs text-[var(--text-muted)]">{formatSize(dashboard.duplicates.reclaimable_bytes)} reclaimable</p>
 							</div>
 						</div>
-						<p class="text-[10px] text-[var(--text-disabled)]">Duplicate tracks detected. Review and remove extras to free up space.</p>
+						<p class="text-xs text-[var(--text-disabled)]">Duplicate tracks detected. Review and remove extras to free up space.</p>
 					{:else}
 						<div class="flex items-center gap-2 py-4 justify-center">
 							<Check class="w-4 h-4 text-emerald-400" />
@@ -410,14 +410,14 @@
 				<Card padding="p-4">
 					<div class="flex items-center justify-between mb-3">
 						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Scheduled Tasks</h2>
-						<button onclick={() => goto('/schedule')} class="text-[10px] text-blue-400 hover:underline">Manage →</button>
+						<button onclick={() => goto('/schedule')} class="text-xs text-blue-400 hover:underline">Manage →</button>
 					</div>
 					<div class="space-y-1.5">
 						{#each dashboard.upcoming_tasks.slice(0, 6) as task}
 							<div class="flex items-center gap-2 py-1">
 								<div class="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"></div>
 								<span class="text-xs text-[var(--text-secondary)] flex-1 truncate">{jobLabel(task.task_name)}</span>
-								<span class="text-[10px] text-[var(--text-disabled)] font-mono">
+								<span class="text-xs text-[var(--text-disabled)] font-mono">
 									{#if task.run_at}{task.run_at}{/if}
 									{#if task.interval_hours <= 24}daily{:else if task.interval_hours <= 48}2d{:else}weekly{/if}
 								</span>
@@ -465,7 +465,7 @@
 							<div>
 								<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.connected ? 'Online' : 'Offline'}</p>
 								{#if slsk.username}
-									<p class="text-[10px] text-[var(--text-muted)] truncate">{slsk.username}</p>
+									<p class="text-xs text-[var(--text-muted)] truncate">{slsk.username}</p>
 								{/if}
 							</div>
 						</div>
@@ -473,21 +473,21 @@
 							<Users class="w-4 h-4 flex-shrink-0 text-[var(--color-downloads)]" />
 							<div>
 								<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.peers} peers</p>
-								<p class="text-[10px] text-[var(--text-muted)]">connected</p>
+								<p class="text-xs text-[var(--text-muted)]">connected</p>
 							</div>
 						</div>
 						<div class="flex items-center gap-3">
 							<Share2 class="w-4 h-4 flex-shrink-0 text-[var(--color-discover)]" />
 							<div>
 								<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.shared_files.toLocaleString()} files</p>
-								<p class="text-[10px] text-[var(--text-muted)]">{slsk.shared_folders} folders</p>
+								<p class="text-xs text-[var(--text-muted)]">{slsk.shared_folders} folders</p>
 							</div>
 						</div>
 						<div class="flex items-center gap-3">
 							<HardDrive class="w-4 h-4 flex-shrink-0 text-[var(--color-downloads)]" />
 							<div>
 								<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.active_transfers} active</p>
-								<p class="text-[10px] text-[var(--text-muted)]">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
+								<p class="text-xs text-[var(--text-muted)]">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
 							</div>
 						</div>
 					</div>
@@ -517,7 +517,7 @@
 						<Card padding="p-4">
 							<div class="flex items-center gap-2 mb-1">
 								<RefreshCw class="w-3.5 h-3.5 text-[var(--color-library)]" />
-								<span class="text-[10px] font-mono text-[var(--text-muted)] uppercase">Last Scan</span>
+								<span class="text-xs font-mono text-[var(--text-muted)] uppercase">Last Scan</span>
 							</div>
 							<p class="text-sm font-bold text-[var(--text-primary)]">{formatRelativeTime(lastScan.finished_at)}</p>
 						</Card>
@@ -526,11 +526,11 @@
 						<Card padding="p-4">
 							<div class="flex items-center gap-2 mb-1">
 								<Clock class="w-3.5 h-3.5 text-[var(--color-settings)]" />
-								<span class="text-[10px] font-mono text-[var(--text-muted)] uppercase">Version</span>
+								<span class="text-xs font-mono text-[var(--text-muted)] uppercase">Version</span>
 							</div>
 							<p class="text-sm font-bold text-[var(--text-primary)]">v{version.version}</p>
 							{#if version.commit}
-								<p class="text-[10px] text-[var(--text-muted)] font-mono">{version.commit.slice(0, 7)}</p>
+								<p class="text-xs text-[var(--text-muted)] font-mono">{version.commit.slice(0, 7)}</p>
 							{/if}
 						</Card>
 					{/if}

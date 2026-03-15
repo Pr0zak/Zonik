@@ -156,9 +156,9 @@
 	</div>
 
 	{#if showResults}
-		<div class="absolute top-full left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
+		<div class="absolute top-full left-0 right-0 mt-1 w-full max-w-80 sm:max-w-none bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
 			{#if aiResults.length}
-				<div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-amber-400 border-b border-[var(--border-subtle)] flex items-center gap-1.5">
+				<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-amber-400 border-b border-[var(--border-subtle)] flex items-center gap-1.5">
 					<Sparkles class="w-3 h-3" /> AI Results
 				</div>
 				{#each aiResults as track}
@@ -169,12 +169,12 @@
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
 						</div>
 						{#if track.genre}
-							<span class="text-[10px] text-[var(--text-disabled)] font-mono">{track.genre}</span>
+							<span class="text-xs text-[var(--text-disabled)] font-mono">{track.genre}</span>
 						{/if}
 					</button>
 				{/each}
 			{:else if results.length}
-				<div class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--text-disabled)] border-b border-[var(--border-subtle)]">Library</div>
+				<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--text-disabled)] border-b border-[var(--border-subtle)]">Library</div>
 				{#each results as track}
 					<button onclick={() => goToTrack(track)}
 						class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[var(--bg-hover)] transition-colors">
@@ -183,7 +183,7 @@
 							<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
 						</div>
 						{#if track.genre}
-							<span class="text-[10px] text-[var(--text-disabled)] font-mono">{track.genre}</span>
+							<span class="text-xs text-[var(--text-disabled)] font-mono">{track.genre}</span>
 						{/if}
 					</button>
 				{/each}
@@ -221,7 +221,7 @@
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="fixed inset-0 z-40" onclick={() => showNotifications = false}></div>
-			<div class="absolute top-full right-0 mt-1 w-80 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
+			<div class="absolute top-full right-0 mt-1 w-[calc(100vw-2rem)] sm:w-80 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
 				<div class="px-3 py-2 border-b border-[var(--border-subtle)] flex items-center justify-between">
 					<span class="text-xs font-medium text-[var(--text-primary)] uppercase tracking-wider">Activity</span>
 					<button onclick={() => showNotifications = false} class="text-[var(--text-disabled)] hover:text-[var(--text-muted)]">
@@ -241,7 +241,7 @@
 									<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
 										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
 								</div>
-								<p class="text-[10px] text-[var(--text-muted)] mt-1">{job.progress || 0}/{job.total}</p>
+								<p class="text-xs text-[var(--text-muted)] mt-1">{job.progress || 0}/{job.total}</p>
 							{/if}
 						</button>
 					{/each}

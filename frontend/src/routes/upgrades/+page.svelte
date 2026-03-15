@@ -255,7 +255,7 @@
 			] as stat}
 				<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-center">
 					<p class="text-lg font-bold {stat.color}">{stat.value}</p>
-					<p class="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
+					<p class="text-xs text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
 				</div>
 			{/each}
 		</div>
@@ -277,7 +277,7 @@
 				{#if stats}
 					{@const count = f.value ? stats[f.value] || 0 : stats.total}
 					{#if count > 0}
-						<span class="ml-1 text-[10px] opacity-70">({count})</span>
+						<span class="ml-1 text-xs opacity-70">({count})</span>
 					{/if}
 				{/if}
 			</button>
@@ -397,7 +397,7 @@
 							</td>
 							<td class="px-3 py-2">
 								<div class="flex items-center gap-2">
-									<span class="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase {formatBadgeClass(u.original_format)}">{u.original_format}</span>
+									<span class="px-1.5 py-0.5 rounded text-xs font-mono uppercase {formatBadgeClass(u.original_format)}">{u.original_format}</span>
 									<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.original_bitrate)}</span>
 								</div>
 							</td>
@@ -405,7 +405,7 @@
 								{#if u.status === 'completed' && u.upgraded_format}
 									<div class="flex items-center gap-2">
 										<ArrowRight class="w-3 h-3 text-emerald-400" />
-										<span class="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase {formatBadgeClass(u.upgraded_format)}">{u.upgraded_format}</span>
+										<span class="px-1.5 py-0.5 rounded text-xs font-mono uppercase {formatBadgeClass(u.upgraded_format)}">{u.upgraded_format}</span>
 										<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.upgraded_bitrate)}</span>
 									</div>
 								{:else if u.error_message}
@@ -415,7 +415,7 @@
 								{/if}
 							</td>
 							<td class="px-3 py-2">
-								<span class="px-2 py-0.5 rounded-full text-[10px] font-medium {statusColors[u.status] || ''}">{u.status}</span>
+								<span class="px-2 py-0.5 rounded-full text-xs font-medium {statusColors[u.status] || ''}">{u.status}</span>
 								{#if u.status === 'downloading'}
 									<Loader2 class="w-3 h-3 text-indigo-400 animate-spin inline ml-1" />
 								{/if}
@@ -429,11 +429,11 @@
 							<td class="px-3 py-2 text-right">
 								<div class="flex items-center gap-1 justify-end">
 									{#if u.status === 'pending'}
-										<button onclick={() => skipUpgrade(u.id)} class="p-1 text-[var(--text-muted)] hover:text-amber-400 transition-colors" title="Skip">
+										<button onclick={() => skipUpgrade(u.id)} class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-amber-400 transition-colors" title="Skip">
 											<SkipForward class="w-4 h-4" />
 										</button>
 									{:else if u.status === 'failed'}
-										<button onclick={() => retryUpgrade(u.id)} class="p-1 text-[var(--text-muted)] hover:text-blue-400 transition-colors" title="Retry">
+										<button onclick={() => retryUpgrade(u.id)} class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-blue-400 transition-colors" title="Retry">
 											<RotateCcw class="w-4 h-4" />
 										</button>
 									{/if}

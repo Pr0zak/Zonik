@@ -118,13 +118,13 @@
 							<div class="px-4 pb-3">
 								<div class="divide-y divide-[var(--border-subtle)]">
 									{#each groupTasks as task}
-										<div class="flex items-center gap-3 py-2 {DANGER_TASKS.has(task.task_name) ? 'opacity-75' : ''}">
+										<div class="flex items-center gap-2 sm:gap-3 py-2 flex-wrap sm:flex-nowrap {DANGER_TASKS.has(task.task_name) ? 'opacity-75' : ''}">
 											<div class="w-2 h-2 rounded-full flex-shrink-0 {task.enabled ? (DANGER_TASKS.has(task.task_name) ? 'bg-amber-400' : 'bg-emerald-400') : 'bg-[var(--border-interactive)]'}"></div>
 											<span class="text-sm min-w-0 truncate {DANGER_TASKS.has(task.task_name) ? 'text-amber-400/80' : 'text-[var(--text-body)]'}">{task.label}</span>
 											{#if DANGER_TASKS.has(task.task_name)}
 												<AlertTriangle class="w-3.5 h-3.5 text-amber-400/70 flex-shrink-0" />
 											{/if}
-											<span class="text-[11px] text-[var(--text-muted)] font-mono flex-shrink-0">{formatLastRun(task.last_run_at)}</span>
+											<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0 hidden sm:inline">{formatLastRun(task.last_run_at)}</span>
 											<div class="flex items-center gap-2 ml-auto flex-shrink-0">
 												<span class="text-xs text-[var(--text-muted)] font-mono">{formatInterval(task.interval_hours)}</span>
 												{#if task.run_at}

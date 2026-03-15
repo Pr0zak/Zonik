@@ -141,7 +141,7 @@
 							{/if}
 						</button>
 						<button onclick={() => unstar(fav)}
-							class="p-1.5 text-red-400 hover:text-red-300 transition-colors flex-shrink-0">
+							class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-red-400 hover:text-red-300 transition-colors flex-shrink-0">
 							<Heart class="w-4 h-4" fill="currentColor" />
 						</button>
 					</div>

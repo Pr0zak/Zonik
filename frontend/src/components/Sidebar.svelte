@@ -49,13 +49,13 @@
 		role="presentation"></div>
 {/if}
 
-<aside class="{$sidebarOpen ? '' : 'hidden'} w-64 bg-[var(--bg-primary)] flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)]
-	fixed inset-y-0 left-0 z-50 md:static md:z-auto">
+<aside class="{$sidebarOpen ? '' : 'hidden'} w-[80vw] max-w-64 bg-[var(--bg-primary)] flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)]
+	fixed inset-y-0 left-0 z-50 md:static md:z-auto md:w-64 md:max-w-none">
 
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-5">
 		<h1 class="text-3xl font-bold tracking-[0.15em]"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
-		<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
+		<p class="text-xs font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 
 	<nav class="flex-1 px-3 space-y-0.5 overflow-y-auto">
@@ -89,10 +89,10 @@
 				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>
 				<div class="flex items-center gap-2 mb-1">
 					<Download class="w-3 h-3 text-[var(--color-downloads)] flex-shrink-0" />
-					<span class="text-[10px] text-[var(--text-primary)] truncate flex-1">
+					<span class="text-xs text-[var(--text-primary)] truncate flex-1">
 						{currentTransfer.filename?.split(/[/\\]/).pop() || 'Downloading...'}
 					</span>
-					<span class="text-[10px] text-[var(--color-downloads)] font-mono flex-shrink-0">{currentTransfer.progress || 0}%</span>
+					<span class="text-xs text-[var(--color-downloads)] font-mono flex-shrink-0">{currentTransfer.progress || 0}%</span>
 				</div>
 				<div class="h-0.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
 					<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
@@ -107,13 +107,13 @@
 				<div class="flex-1 min-w-0">
 					<span class="text-xs text-[var(--color-info)]">{$activeJobs.length} active job{$activeJobs.length > 1 ? 's' : ''}</span>
 					{#if $activeJobs[0]}
-						<p class="text-[10px] text-[var(--text-muted)] truncate">{$activeJobs[0].type.replace('_', ' ')}{$activeJobs[0].total ? ` ${$activeJobs[0].progress || 0}/${$activeJobs[0].total}` : ''}</p>
+						<p class="text-xs text-[var(--text-muted)] truncate">{$activeJobs[0].type.replace('_', ' ')}{$activeJobs[0].total ? ` ${$activeJobs[0].progress || 0}/${$activeJobs[0].total}` : ''}</p>
 					{/if}
 				</div>
 			</a>
 		{/if}
 		<div class="flex items-center justify-between">
-			<p class="text-[10px] font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+			<p class="text-xs font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
 			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
 				class="flex items-center gap-1.5 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors group" title="View on GitHub">
 				<Github class="w-3.5 h-3.5 group-hover:text-white transition-colors" />
