@@ -273,7 +273,8 @@
 							<div class="flex items-center gap-1.5">
 								<div class="w-2 h-2 rounded-full" style="background: {fmtColors[fmt.format] || '#6b7280'}"></div>
 								<span class="text-xs text-[var(--text-secondary)]">{fmt.format.toUpperCase()}</span>
-								<span class="text-xs text-[var(--text-muted)] font-mono">{formatSize(fmt.size)}</span>
+								<span class="text-xs text-[var(--text-muted)] font-mono">{fmt.count}</span>
+								<span class="text-xs text-[var(--text-disabled)] font-mono">{formatSize(fmt.size)}</span>
 							</div>
 						{/each}
 					</div>
@@ -538,16 +539,5 @@
 			</div>
 		</div>
 
-		<!-- Formats row -->
-		{#if stats.formats && Object.keys(stats.formats).length}
-			<Card padding="p-4">
-				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Formats</h2>
-				<div class="flex flex-wrap gap-2">
-					{#each Object.entries(stats.formats) as [fmt, count]}
-						<Badge>{fmt.toUpperCase()} <span class="text-[var(--text-muted)] ml-1">{count}</span></Badge>
-					{/each}
-				</div>
-			</Card>
-		{/if}
 	{/if}
 </div>
