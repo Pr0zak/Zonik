@@ -99,22 +99,36 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         elif task_name == "audio_analysis":
             from backend.services.analyzer import analyze_track_async
             from backend.models.analysis import TrackAnalysis
+            batch_limit = count or 50  # Limit per run to stay within ARQ timeout
             analyzed_ids = (await db.execute(select(TrackAnalysis.track_id))).scalars().all()
             tracks = (await db.execute(
-                select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids))
+                select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids)).limit(batch_limit)
             )).all()
+            analyzed_count = 0
             failed_count = 0
-            for track_id, file_path in tracks:
+            failed_files = []
+            for i, (track_id, file_path) in enumerate(tracks):
                 try:
                     analysis = await analyze_track_async(file_path)
                     if analysis:
                         await db.merge(TrackAnalysis(track_id=track_id, **analysis))
+                        analyzed_count += 1
                 except Exception as e:
                     failed_count += 1
+                    short = (file_path or "").rsplit("/", 1)[-1]
+                    failed_files.append(f"{short}: {e}")
                     log.warning(f"[scheduler] Analysis failed for {file_path}: {e}")
+                # Commit every 10 tracks to avoid losing progress on timeout
+                if (i + 1) % 10 == 0:
+                    await db.commit()
             await db.commit()
-            if failed_count:
-                job.result = json.dumps({"analyzed": len(tracks) - failed_count, "failed": failed_count})
+            remaining = max(0, len(analyzed_ids) + len(tracks) - analyzed_count - len(analyzed_ids))
+            job.result = json.dumps({
+                "analyzed": analyzed_count,
+                "failed": failed_count,
+                "batch": len(tracks),
+                "errors": failed_files[:5],  # Keep first 5 errors for UI
+            })
 
         elif task_name == "recommendation_refresh":
             from backend.services.recommender import refresh_recommendations
