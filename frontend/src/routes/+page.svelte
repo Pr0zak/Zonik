@@ -233,8 +233,8 @@
 					<div class="flex items-end gap-0.5 h-24">
 						{#each dashboard.growth as day}
 							{@const pct = (day.count / maxCount) * 100}
-							<div class="flex-1 group relative">
-								<div class="bg-indigo-500/70 hover:bg-indigo-400 rounded-t transition-colors cursor-default"
+							<div class="flex-1 group relative h-full flex items-end">
+								<div class="w-full bg-indigo-500/70 hover:bg-indigo-400 rounded-t transition-colors cursor-default min-h-[2px]"
 									style="height: {Math.max(pct, 2)}%"
 									title="{day.date}: {day.count} tracks"></div>
 							</div>
