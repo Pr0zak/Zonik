@@ -832,17 +832,17 @@
 		<!-- View toggle -->
 		<div class="flex border border-[var(--border-subtle)] rounded-md overflow-hidden ml-2">
 			<button onclick={() => viewMode = 'grid'}
-				class="p-1.5 transition-colors {viewMode === 'grid' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+				class="p-2 sm:p-1.5 transition-colors {viewMode === 'grid' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
 				<Grid3x3 class="w-4 h-4" />
 			</button>
 			<button onclick={() => viewMode = 'list'}
-				class="p-1.5 transition-colors {viewMode === 'list' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+				class="p-2 sm:p-1.5 transition-colors {viewMode === 'list' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
 				<List class="w-4 h-4" />
 			</button>
 		</div>
 
-		<!-- Column picker -->
-		{#if viewMode === 'list'}
+		<!-- Column picker (desktop only, mobile uses card layout) -->
+		{#if viewMode === 'list' && !$isMobile}
 			<div class="relative ml-1">
 				<button onclick={() => showColPicker = !showColPicker}
 					class="p-1.5 rounded-md transition-colors border border-[var(--border-subtle)] {showColPicker ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
@@ -1001,7 +1001,53 @@
 					{/each}
 				</div>
 			{:else}
-				<!-- List view -->
+				<!-- List view: mobile card list -->
+				{#if $isMobile}
+					<div class="space-y-1">
+						{#each tracks as track}
+							<button class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--bg-hover)] transition-colors
+								{selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10 ring-1 ring-[var(--color-accent)]' : 'bg-[var(--bg-secondary)]'}"
+								onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
+								{#if selectMode}
+									<div class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0
+										{selected.has(track.id) ? 'bg-[var(--color-accent)] border-[var(--color-accent)]' : 'border-[var(--text-disabled)]'}">
+										{#if selected.has(track.id)}
+											<svg class="w-3 h-3 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+										{/if}
+									</div>
+								{/if}
+								<div class="w-10 h-10 rounded bg-[var(--bg-tertiary)] overflow-hidden flex-shrink-0">
+									{#if coverUrl(track.cover_art)}
+										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
+									{:else}
+										<div class="flex items-center justify-center w-full h-full"><Music class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+									{/if}
+								</div>
+								<div class="flex-1 min-w-0 text-left">
+									<p class="text-sm font-medium text-[var(--text-primary)] truncate">{track.title}</p>
+									<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || 'Unknown'}{#if track.album} — {track.album}{/if}</p>
+								</div>
+								<div class="flex items-center gap-1 flex-shrink-0">
+									{#if track.format}
+										<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
+									{/if}
+									<span class="text-xs text-[var(--text-muted)] font-mono w-10 text-right">{formatDuration(track.duration)}</span>
+								</div>
+							</button>
+							<div class="flex items-center justify-end gap-0 -mt-1 pr-1">
+								<button onclick={(e) => { e.stopPropagation(); toggleFav('track', track.id, e); }}
+									class="min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors {favTrackIds.has(track.id) ? 'text-red-400' : 'text-[var(--text-disabled)] hover:text-red-400'}">
+									<Heart class="w-3.5 h-3.5" fill={favTrackIds.has(track.id) ? 'currentColor' : 'none'} />
+								</button>
+								<button onclick={(e) => { e.stopPropagation(); openMenu(track, e); }}
+									class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-disabled)] hover:text-[var(--text-primary)] transition-colors">
+									<MoreVertical class="w-3.5 h-3.5" />
+								</button>
+							</div>
+						{/each}
+					</div>
+				{:else}
+				<!-- List view: desktop table -->
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
@@ -1125,6 +1171,7 @@
 						</tbody>
 					</table>
 				</Card>
+				{/if}
 			{/if}
 
 			{:else}
