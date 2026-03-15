@@ -24,7 +24,7 @@ class RateLimiter(BaseHTTPMiddleware):
         self.rate = rate
         self.burst = burst
         self.paths = paths or ["/api/"]
-        self.exclude = exclude or ["/api/download/", "/rest/"]
+        self.exclude = exclude or ["/api/download/", "/api/jobs", "/rest/"]
         self._buckets: dict[str, tuple[float, float]] = defaultdict(lambda: (burst, time.monotonic()))
 
     def _get_key(self, request: Request) -> str:
