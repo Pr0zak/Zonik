@@ -140,7 +140,7 @@ docs/                  # Installation, configuration, API reference, development
 - Soulseek retry with candidate fallback: search_and_download tries up to 5 candidates before failing
 - Config: zonik.toml (gitignored), zonik.toml.example (committed with empty keys)
 - Service connections (slskd, Lidarr, Last.fm) configurable via web UI Settings page
-- Settings page: 8 sections (Library, Soulseek, Last.fm, Lidarr, Subsonic, Users, Database, Updates), each with icon badge header and proper Button test buttons
+- Settings page: 10 sections (Library, Soulseek, Last.fm, Lidarr, Spotify, Apple Music, Subsonic, Users, Database, Updates), each with icon badge header and proper Button test buttons; restart button in About section
 - Download dir, cover cache dir, and file naming scheme are web-configurable
 - Installer (`create-ct.sh`) only asks for infrastructure — no API keys
 - SPA routing: catch-all route serves index.html for client-side SvelteKit routes
@@ -251,6 +251,9 @@ docs/                  # Installation, configuration, API reference, development
 - Download cleanup: cleanup_download_dir() runs after every download — removes zero-byte and non-audio orphan files
 - Library "Added" column: sortable by created_at (defaults desc), shows formatRelativeTime() with full timestamp tooltip
 - Library context menu: "Find Upgrade" opens in-page Soulseek search modal (auto-searches on open, shows results with format/bitrate/size, per-result download + "Auto Best" button); bulk "Find Upgrades" triggers POST /api/download/bulk
+- Track deletion: DELETE /api/tracks/{id} cleans up all 8 FK-dependent tables (Favorite, TrackAnalysis, TrackEmbedding, PlayHistory, PlaylistTrack, Bookmark, TrackMood, TrackUpgrade) + FTS entry before deleting track; same cleanup in bulk delete, duplicates remove, orphan cleanup, and scanner
+- Flagged for deletion: rate 1 star in Symfonium to flag; Library page "Flagged" toggle button filters to rating=1 tracks; red pill indicator; use Select + bulk delete to remove
+- Settings restart: POST /api/config/restart endpoint; button in Settings > About with confirm dialog + auto-reload polling
 - User API keys: per-user subsonic_api_key for Symfonium token auth; generate/revoke/copy/eye-toggle in Settings > User Management
 - Last.fm favorites sync: scheduled task pushes Zonik starred tracks → Last.fm loved tracks (incremental, skips already-loved)
 - Last.fm auth: callback saves session_key + username to zonik.toml; session_key and username in [lastfm] config
@@ -301,7 +304,8 @@ docs/                  # Installation, configuration, API reference, development
 - Recommendation stats: GET /api/recommendations/stats — conversion funnel (total/downloaded/thumbs_up/thumbs_down/by_source/downloads_by_source)
 - Recommendation bulk download: POST /api/recommendations/bulk-download with mode (top/above_score), count, min_score; creates individual download jobs per track
 - All download paths (trigger, bulk, recommendations, retry, auto-download) create individual per-track download jobs — no bulk_download job type
-- Download job creation: shared `enqueue_download(artist, track)` in download.py handles Job creation + semaphore queuing; used by bulk, retry (jobs.py), and recommendation bulk-download
+- Download source tracking: Job.card field stores source as "dl:{source}" (upgrade/discovery/similar/remix/recommendation/playlist/manual); frontend passes source in POST body; downloads page shows source badge per job
+- Download job creation: shared `enqueue_download(artist, track, source=None)` in download.py handles Job creation + semaphore queuing; uses short-lived DB sessions throughout; used by bulk, retry (jobs.py), and recommendation bulk-download
 - Download dedup: _find_existing_download() checks for pending/running jobs with same artist+track before creating new job; both trigger_download() and enqueue_download() return existing job_id instead of duplicating
 - Sort parameter security: allowlist sets (TRACK_SORT_COLUMNS, ARTIST_SORT_COLUMNS, ALBUM_SORT_COLUMNS) prevent arbitrary attribute access via getattr()
 - CORS: configurable via `cors_origins` list in [server] config (default `["*"]` for self-hosted)
@@ -322,7 +326,8 @@ docs/                  # Installation, configuration, API reference, development
 - Bulk download queue: same pattern — /api/download/bulk uses single background task with Semaphore(4) bounded concurrency to avoid connection pool exhaustion (QueuePool limit 5+10 overflow)
 - TrackUpgrade denormalized columns: track_title, track_artist stored at scan time — survives track ID changes when upgraded file gets new path/ID; serializer uses stored values as fallback when track FK is broken
 - enqueue_download accepts optional job_id parameter to pre-link upgrade records before download starts
-- DB connection pool pitfall: never spawn unbounded BackgroundTasks that each open async_session() — SQLAlchemy QueuePool has 5+10 limit, exceeding it hangs the entire app with TimeoutError
+- SQLite connection pool: NullPool (no pooling) eliminates QueuePool exhaustion; SQLite is file-based so pooling provides no benefit; busy_timeout=30s handles write contention
+- DB session pitfall: never hold async_session() during long operations (semaphore waits, downloads, transfers); use short-lived sessions — open, do DB work, close immediately; expunge() ORM objects to use after session closes
 - Upgrades page: /upgrades route (emerald --color-upgrades: #10b981), stats bar, scan controls (4 modes + bitrate threshold + limit), status filter tabs, table with before→after format badges, bulk start/retry/clear, per-row actions
 - Remix discovery suggestions: GET /api/discovery/remix-suggestions (source: popular/favorites/random), rate-limited Last.fm search (Semaphore(3)), batch library match, version type detection
 - Discover Remixes tab: 6th tab on Discover page, source pills (Popular/Favorites/Random), version type filter pills with counts, version type color badges (remix=purple, dub=blue, extended=green, live=red, etc.), artwork, download all missing
@@ -335,7 +340,7 @@ docs/                  # Installation, configuration, API reference, development
 - Performance: is_blacklisted() uses SQL WHERE lower(artist) filter (not full table scan)
 - Performance: _find_existing_track() uses SQL-side lower(title)+lower(artist) filter (not Python loop over all tracks)
 - Performance: FTS updates batched every 50 tracks during scan (not per-track)
-- Performance: SQLite PRAGMAs in init_db — synchronous=NORMAL, cache_size=32MB, mmap_size=256MB
+- Performance: SQLite PRAGMAs set via connect event listener (not init_db) — busy_timeout=30s, WAL, synchronous=NORMAL, cache_size=32MB, mmap_size=256MB; required because NullPool creates fresh connections
 - Performance: recommender build_taste_profile runs 7 independent DB queries via asyncio.gather()
 - Performance: Last.fm uses persistent httpx.AsyncClient with connection pooling (not new client per call)
 - Performance: api.js buildUrl() helper centralizes URL building with undefined/null filtering (8 call sites)
@@ -355,7 +360,7 @@ docs/                  # Installation, configuration, API reference, development
 - Playlist discovery: POST /api/discovery/playlists builds queries from taste profile (top genres + artists), searches Deezer/Spotify, returns ranked results
 - AI playlist curator: backend/services/ai/playlist_curator.py — rank_playlists() scores by taste alignment + novelty, review_import() evaluates track compatibility
 - Config: SpotifyConfig (client_id, client_secret) and AppleMusicConfig (developer_token) in config.py; web-configurable in Settings
-- Rate limiting: token bucket middleware (backend/middleware/rate_limit.py), per-IP tracking, configurable rate_limit_rps + rate_limit_burst in ServerConfig
+- Rate limiting: token bucket middleware (backend/middleware/rate_limit.py), per-IP tracking, configurable rate_limit_rps + rate_limit_burst in ServerConfig; excludes /api/download/ (has own semaphore) and /rest/ (Symfonium rapid calls)
 - Stats page layout: music stats first (overview, processing, formats, artists, genres, bitrate, years, most played, listening history), then "System" divider line, then system stats (DB & Backend, Job Pipeline, Soulseek P2P)
 - Stats page DB & Backend tile: shows database backend type, file size, WAL size, total rows, Python version, PID (from /api/library/stats/detailed)
 - Job pipeline dashboard: GET /api/jobs/dashboard returns status counts, type distribution, hourly timeline, avg duration; Chart.js donut + bar charts on Stats page
