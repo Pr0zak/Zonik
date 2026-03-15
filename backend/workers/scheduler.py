@@ -119,10 +119,15 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         elif task_name == "recommendation_refresh":
             from backend.services.recommender import refresh_recommendations
             async def on_progress(current, total, description=""):
-                job.progress = current
-                job.total = total
-                await db.merge(job)
-                await db.commit()
+                # Use separate session to avoid concurrent ops on the main db session
+                async with async_session() as progress_db:
+                    from sqlalchemy import update as _update
+                    await progress_db.execute(
+                        _update(Job).where(Job.id == job_id).values(
+                            progress=current, total=total,
+                        )
+                    )
+                    await progress_db.commit()
                 await broadcast_job_update({
                     "id": job_id, "type": "recommendation_refresh",
                     "status": "running", "progress": current, "total": total,
@@ -422,10 +427,16 @@ async def _run_lastfm_loved_sync(db: AsyncSession, job: Job):
     username = settings.lastfm.username
 
     async def on_progress(current, total):
-        job.progress = current
-        job.total = total
+        # Use separate session to avoid concurrent ops on the main db session
         if current % 10 == 0 or current == total:
-            await db.commit()
+            async with async_session() as progress_db:
+                from sqlalchemy import update as _update
+                await progress_db.execute(
+                    _update(Job).where(Job.id == job.id).values(
+                        progress=current, total=total,
+                    )
+                )
+                await progress_db.commit()
         await broadcast_job_update({
             "id": job.id, "type": "lastfm_sync", "status": "running",
             "progress": current, "total": total,
