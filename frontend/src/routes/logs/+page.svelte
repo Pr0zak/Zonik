@@ -375,7 +375,7 @@
 	</Card>
 
 	<!-- Pagination -->
-	<div class="flex justify-center items-center gap-3 mt-4">
+	<div class="flex flex-wrap justify-center items-center gap-3 mt-4">
 		{#if total > limit}
 			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
 				<ChevronLeft class="w-4 h-4" /> Prev

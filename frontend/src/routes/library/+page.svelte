@@ -771,8 +771,8 @@
 		{/if}
 	{/if}
 
-	<!-- Tabs -->
-	<div class="flex items-center gap-1 mb-4 border-b border-[var(--border-subtle)] overflow-x-auto">
+	<!-- Tabs row -->
+	<div class="flex items-center gap-1 border-b border-[var(--border-subtle)] overflow-x-auto">
 		{#each tabs as t}
 			{@const Icon = t.icon}
 			<button onclick={() => switchTab(t.id)}
@@ -787,7 +787,7 @@
 
 		<div class="flex-1"></div>
 
-		<!-- Search -->
+		<!-- Search (desktop) -->
 		<div class="relative hidden sm:block">
 			<Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-disabled)]" />
 			<input type="text" placeholder="Search..."
@@ -795,10 +795,13 @@
 				class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md pl-8 pr-3 py-1.5 text-sm w-48
 					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 		</div>
+	</div>
 
+	<!-- Controls row: filters, per-page, view toggle, select -->
+	<div class="flex items-center gap-1.5 mb-4 mt-2 flex-wrap">
 		<!-- Active filter pills -->
 		{#if filterArtistId}
-			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1 ml-2">
+			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
 				Artist: {filterArtistName}
 				<button onclick={() => { filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -806,7 +809,7 @@
 			</span>
 		{/if}
 		{#if filterAlbumId}
-			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1 ml-2">
+			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
 				Album: {filterAlbumName}
 				<button onclick={() => { filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -814,7 +817,7 @@
 			</span>
 		{/if}
 		{#if flaggedFilter}
-			<span class="inline-flex items-center gap-1 bg-red-500/10 text-xs text-red-400 border border-red-500/30 rounded px-2 py-1 ml-2">
+			<span class="inline-flex items-center gap-1 bg-red-500/10 text-xs text-red-400 border border-red-500/30 rounded px-2 py-1">
 				<Trash2 class="w-3 h-3" /> Flagged for Deletion
 				<button onclick={() => { flaggedFilter = false; offset = 0; loadData(); }} class="text-red-400/60 hover:text-red-300 ml-0.5">
 					<X class="w-3 h-3" />
@@ -822,15 +825,17 @@
 			</span>
 		{/if}
 
+		<div class="flex-1"></div>
+
 		<!-- Per-page select -->
-		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1 ml-2" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
+		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
 			{#each limitOptions as opt}
 				<option value={opt}>{opt}/page</option>
 			{/each}
 		</select>
 
 		<!-- View toggle -->
-		<div class="flex border border-[var(--border-subtle)] rounded-md overflow-hidden ml-2">
+		<div class="flex border border-[var(--border-subtle)] rounded-md overflow-hidden">
 			<button onclick={() => viewMode = 'grid'}
 				class="p-2 sm:p-1.5 transition-colors {viewMode === 'grid' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
 				<Grid3x3 class="w-4 h-4" />
@@ -841,9 +846,9 @@
 			</button>
 		</div>
 
-		<!-- Column picker (desktop only, mobile uses card layout) -->
+		<!-- Column picker (desktop only) -->
 		{#if viewMode === 'list' && !$isMobile}
-			<div class="relative ml-1">
+			<div class="relative">
 				<button onclick={() => showColPicker = !showColPicker}
 					class="p-1.5 rounded-md transition-colors border border-[var(--border-subtle)] {showColPicker ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
 					title="Toggle columns">

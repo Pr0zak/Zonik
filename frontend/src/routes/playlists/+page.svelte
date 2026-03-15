@@ -243,9 +243,9 @@
 </script>
 
 <div class="max-w-6xl">
-	<div class="flex items-center justify-between mb-6">
+	<div class="flex flex-wrap items-center justify-between gap-3 mb-6">
 		<PageHeader title="Playlists" color="var(--color-playlists)" />
-		<div class="flex items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2">
 			<Button onclick={() => { showImport = !showImport; if (showImport) { showAIGen = false; showGenerator = false; } }} variant="secondary" size="sm">
 				{#if showImport}
 					<span class="flex items-center gap-1.5">Hide Import</span>
@@ -562,7 +562,7 @@
 				</div>
 			</Card>
 
-			<div class="flex justify-center items-center gap-3 mt-4">
+			<div class="flex flex-wrap justify-center items-center gap-3 mt-4">
 				{#if totalTracks > trackLimit}
 					<Button variant="secondary" size="sm" disabled={trackOffset === 0} onclick={() => { trackOffset = Math.max(0, trackOffset - trackLimit); }}>
 						<ChevronLeft class="w-4 h-4" /> Prev

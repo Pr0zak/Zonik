@@ -541,7 +541,7 @@
 					</button>
 				{/if}
 			</div>
-			<div class="flex gap-1 mb-4">
+			<div class="flex flex-wrap gap-1 mb-4">
 				{#each [
 					{ key: 'all', label: 'All' },
 					{ key: 'queued', label: 'Queued' },

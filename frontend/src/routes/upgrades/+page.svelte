@@ -447,7 +447,7 @@
 
 		<!-- Pagination -->
 		{#if totalPages > 1}
-			<div class="flex items-center justify-between pt-2">
+			<div class="flex flex-wrap items-center justify-between gap-2 pt-2">
 				<p class="text-xs text-[var(--text-muted)]">
 					Showing {offset + 1}–{Math.min(offset + perPage, total)} of {total}
 				</p>
