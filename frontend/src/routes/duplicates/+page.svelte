@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api.js';
-	import { formatBadgeClass } from '$lib/colors.js';
+	import FormatBadge from '../../components/ui/FormatBadge.svelte';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatSize, formatRelativeTime, formatDateTime } from '$lib/utils.js';
 	import {
@@ -436,10 +436,7 @@
 											{/if}
 										</div>
 
-										<!-- Format badge -->
-										<span class="text-xs font-mono font-semibold px-2.5 py-1 rounded border {formatBadgeClass(track.format)} flex-shrink-0">
-											{track.format?.toUpperCase() || '?'}
-										</span>
+										<FormatBadge format={track.format} class="flex-shrink-0 px-2.5 py-1" />
 
 										<!-- Bitrate -->
 										<div class="text-right flex-shrink-0 min-w-[50px] hidden sm:block">

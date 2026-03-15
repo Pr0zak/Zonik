@@ -6,9 +6,10 @@ from sqlalchemy import String, Integer, Float, DateTime, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
+from backend.models.mixins import TimestampMixin
 
 
-class Track(Base):
+class Track(TimestampMixin, Base):
     __tablename__ = "tracks"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -35,9 +36,6 @@ class Track(Base):
     rating: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     play_count: Mapped[int] = mapped_column(Integer, default=0)
     last_played_at: Mapped[datetime | None] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
     artist: Mapped["Artist | None"] = relationship("Artist", back_populates="tracks")
     album: Mapped["Album | None"] = relationship("Album", back_populates="tracks")
     analysis: Mapped["TrackAnalysis | None"] = relationship("TrackAnalysis", back_populates="track", uselist=False)

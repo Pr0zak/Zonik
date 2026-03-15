@@ -2,29 +2,24 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
-	import { formatDuration } from '$lib/utils.js';
-	import { Heart, Music, Play, Upload, ChevronLeft, ChevronRight } from 'lucide-svelte';
+	import { formatDuration, coverUrl } from '$lib/utils.js';
+	import { Heart, Music, Play, Upload } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import Modal from '../../components/ui/Modal.svelte';
+	import Pagination from '../../components/ui/Pagination.svelte';
 
 	let favorites = $state([]);
 	let total = $state(0);
 	let offset = $state(0);
 	let limit = $state(25);
-	const limitOptions = [25, 50, 100, 200];
 	let loading = $state(true);
 	let showImport = $state(false);
 	let importFile = $state(null);
 	let importing = $state(false);
-
-	function coverUrl(id) {
-		if (!id) return null;
-		return `/rest/getCoverArt?id=${id}`;
-	}
 
 	onMount(async () => {
 		await loadFavorites();
@@ -43,16 +38,10 @@
 		}
 	}
 
-	function prevPage() {
-		offset = Math.max(0, offset - limit);
+	function handlePageChange(newOffset, newLimit) {
+		offset = newOffset;
+		limit = newLimit;
 		loadFavorites();
-	}
-
-	function nextPage() {
-		if (offset + limit < total) {
-			offset += limit;
-			loadFavorites();
-		}
 	}
 
 	async function unstar(fav) {
@@ -149,26 +138,7 @@
 			</div>
 		</Card>
 
-		<div class="flex flex-wrap justify-center items-center gap-3 mt-4">
-			{#if total > limit}
-				<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
-					<ChevronLeft class="w-4 h-4" /> Prev
-				</Button>
-				<span class="text-sm text-[var(--text-muted)] font-mono">
-					{offset + 1}-{Math.min(offset + limit, total)} of {total}
-				</span>
-				<Button variant="secondary" size="sm" disabled={offset + limit >= total} onclick={nextPage}>
-					Next <ChevronRight class="w-4 h-4" />
-				</Button>
-			{/if}
-			<select value={limit}
-				onchange={(e) => { limit = parseInt(e.target.value); offset = 0; loadFavorites(); }}
-				class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
-				{#each limitOptions as opt}
-					<option value={opt} selected={opt === limit}>{opt} / page</option>
-				{/each}
-			</select>
-		</div>
+		<Pagination {total} {offset} {limit} onchange={handlePageChange} />
 	{:else if total === 0}
 		<Card>
 			<EmptyState

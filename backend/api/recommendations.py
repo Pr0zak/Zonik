@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.helpers import paginate
 from backend.database import get_db, async_session
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
@@ -36,13 +37,10 @@ async def list_recommendations(
     if source:
         query = query.where(Recommendation.source == source)
 
-    total = (await db.execute(
-        select(func.count()).select_from(query.subquery())
-    )).scalar() or 0
-
-    query = query.order_by(Recommendation.score.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    recs = result.scalars().all()
+    query = query.order_by(Recommendation.score.desc())
+    page = await paginate(db, query, offset, limit)
+    total = page["total"]
+    recs = page["items"]
 
     # Load profile stats
     tp = await db.get(TasteProfile, "default")

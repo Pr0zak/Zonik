@@ -6,9 +6,10 @@ from sqlalchemy import String, Float, Integer, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
+from backend.models.mixins import CreatedAtMixin
 
 
-class Recommendation(Base):
+class Recommendation(CreatedAtMixin, Base):
     __tablename__ = "recommendations"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -25,5 +26,4 @@ class Recommendation(Base):
     lastfm_match: Mapped[float | None] = mapped_column(Float)
     image_url: Mapped[str | None] = mapped_column(String)
     preview_url: Mapped[str | None] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -5,7 +5,11 @@ async function request(path, options = {}) {
 		headers: { 'Content-Type': 'application/json', ...options.headers },
 		...options
 	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
+	if (!res.ok) {
+		let detail;
+		try { detail = (await res.json()).detail; } catch {}
+		throw new Error(detail || `API error: ${res.status}`);
+	}
 	return res.json();
 }
 
@@ -112,6 +116,33 @@ export const api = {
 
 	// Music Map
 	getMapGraph: (params = {}) => request(buildUrl('/map/graph', params)),
+
+	// Config
+	getServices: () => request('/config/services'),
+	saveServices: (data) => request('/config/services', { method: 'PUT', body: JSON.stringify(data) }),
+	getVersion: () => request('/config/version'),
+	checkUpdates: () => request('/config/updates'),
+	restart: () => request('/config/restart', { method: 'POST' }),
+	upgrade: () => request('/config/upgrade', { method: 'POST' }),
+	testService: (service) => request(`/config/test/${service}`, { method: 'POST' }),
+	getBackups: () => request('/config/backups'),
+	createBackup: () => request('/config/backup', { method: 'POST' }),
+	restoreBackup: (filename) => request(`/config/restore/${filename}`, { method: 'POST' }),
+
+	// Users
+	getUsers: () => request('/users'),
+	createUser: (data) => request('/users', { method: 'POST', body: JSON.stringify(data) }),
+	deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
+	changePassword: (id, data) => request(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify(data) }),
+	generateApiKey: (id) => request(`/users/${id}/api-key`, { method: 'POST' }),
+	revokeApiKey: (id) => request(`/users/${id}/api-key`, { method: 'DELETE' }),
+
+	// Schedule
+	getSchedule: () => request('/schedule'),
+
+	// Last.fm Auth
+	getLastfmAuthUrl: () => request('/discovery/lastfm/auth-url'),
+	lastfmCallback: (token) => request(`/discovery/lastfm/callback?token=${encodeURIComponent(token)}`),
 
 	// AI Usage
 	getAIUsage: () => request('/config/ai-usage'),

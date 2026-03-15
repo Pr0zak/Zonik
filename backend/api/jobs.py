@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy import select, delete, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.helpers import paginate
 from backend.database import get_db
 from backend.models.job import Job
 from backend.api.websocket import broadcast_job_update
@@ -52,16 +53,16 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
         status_list = [s.strip() for s in status.split(",") if s.strip()]
         if status_list:
             base = base.where(Job.status.in_(status_list))
-    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar()
     # Active jobs (running/pending) first, then by date
     status_priority = case(
         (Job.status == "running", 0),
         (Job.status == "pending", 1),
         else_=2,
     )
-    query = base.order_by(status_priority, Job.started_at.desc()).offset(offset).limit(limit)
-    result = await db.execute(query)
-    jobs = result.scalars().all()
+    base = base.order_by(status_priority, Job.started_at.desc())
+    page = await paginate(db, base, offset, limit)
+    total = page["total"]
+    jobs = page["items"]
     items = []
     for j in jobs:
         item = {

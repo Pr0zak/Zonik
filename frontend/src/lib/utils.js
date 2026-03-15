@@ -75,6 +75,11 @@ export function formatRelativeTime(iso) {
 	return `${Math.floor(months / 12)}y ago`;
 }
 
+export function coverUrl(id, size) {
+	if (!id) return null;
+	return size ? `/rest/getCoverArt?id=${id}&size=${size}` : `/rest/getCoverArt?id=${id}`;
+}
+
 export function debounce(fn, ms = 300) {
 	let timer;
 	return (...args) => {

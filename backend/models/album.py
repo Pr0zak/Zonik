@@ -6,9 +6,10 @@ from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
+from backend.models.mixins import CreatedAtMixin
 
 
-class Album(Base):
+class Album(CreatedAtMixin, Base):
     __tablename__ = "albums"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -20,7 +21,6 @@ class Album(Base):
     cover_art_path: Mapped[str | None] = mapped_column(String)
     track_count: Mapped[int | None] = mapped_column(Integer)
     is_compilation: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     artist: Mapped["Artist | None"] = relationship("Artist", back_populates="albums")
     tracks: Mapped[list["Track"]] = relationship("Track", back_populates="album")

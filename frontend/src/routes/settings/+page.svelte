@@ -1,5 +1,6 @@
 <script>
 	import { onMount } from 'svelte';
+	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass, formatDateTime } from '$lib/utils.js';
@@ -69,20 +70,22 @@
 	let changingPw = $state(null);
 	let pwForm = $state({ current_password: '', new_password: '' });
 
+	function applyServices(d) {
+		services = d;
+		if (d.lastfm_session_key) {
+			lastfmSession = { username: d.lastfm_username || 'Authenticated', authenticated: true };
+		}
+	}
+
 	onMount(() => {
 		// Load each section independently so one failure doesn't block the page
-		fetch('/api/library/stats').then(r => r.json()).then(d => stats = d).catch(() => {});
-		fetch('/api/config/services').then(r => r.json()).then(d => {
-			services = d;
-			if (d.lastfm_session_key) {
-				lastfmSession = { username: d.lastfm_username || 'Authenticated', authenticated: true };
-			}
-		}).catch(() => {});
-		fetch('/api/config/version').then(r => r.json()).then(d => versionInfo = d).catch(() => {});
-		fetch('/api/users').then(r => r.json()).then(d => users = d).catch(() => {});
-		fetch('/api/config/backups').then(r => r.json()).then(d => backups = d).catch(() => {});
-		fetch('/api/config/ai-usage').then(r => r.json()).then(d => aiUsage = d).catch(() => {});
-		fetch('/api/schedule').then(r => r.json()).then(tasks => {
+		api.getStats().then(d => stats = d).catch(() => {});
+		api.getServices().then(applyServices).catch(() => {});
+		api.getVersion().then(d => versionInfo = d).catch(() => {});
+		api.getUsers().then(d => users = d).catch(() => {});
+		api.getBackups().then(d => backups = d).catch(() => {});
+		api.getAIUsage().then(d => aiUsage = d).catch(() => {});
+		api.getSchedule().then(tasks => {
 			for (const t of tasks) schedTasks[t.task_name] = t;
 		}).catch(() => {});
 
@@ -91,13 +94,7 @@
 		if (params.get('lastfm_auth') === 'ok') {
 			addToast('Last.fm authenticated successfully!', 'success');
 			window.history.replaceState({}, '', '/settings');
-			// Re-fetch to pick up new session
-			fetch('/api/config/services').then(r => r.json()).then(d => {
-				services = d;
-				if (d.lastfm_session_key) {
-					lastfmSession = { username: d.lastfm_username || 'Authenticated', authenticated: true };
-				}
-			}).catch(() => {});
+			api.getServices().then(applyServices).catch(() => {});
 		} else if (params.get('lastfm_auth') === 'failed') {
 			addToast('Last.fm authentication failed', 'error');
 			window.history.replaceState({}, '', '/settings');
@@ -108,8 +105,7 @@
 		checkingUpdates = true;
 		updateInfo = null;
 		try {
-			const data = await fetch('/api/config/updates').then(r => r.json());
-			updateInfo = data;
+			updateInfo = await api.checkUpdates();
 		} catch (e) {
 			addToast('Failed to check for updates: ' + e.message, 'error');
 		} finally {
@@ -121,11 +117,11 @@
 		if (!confirm('Restart Zonik? The app will be briefly unavailable.')) return;
 		restarting = true;
 		try {
-			await fetch('/api/config/restart', { method: 'POST' });
+			await api.restart();
 			addToast('Restarting...', 'success');
 			const reloadCheck = setInterval(async () => {
 				try {
-					await fetch('/api/config/version');
+					await api.getVersion();
 					clearInterval(reloadCheck);
 					restarting = false;
 					window.location.reload();
@@ -142,7 +138,7 @@
 	async function triggerUpgrade() {
 		upgrading = true;
 		try {
-			const data = await fetch('/api/config/upgrade', { method: 'POST' }).then(r => r.json());
+			const data = await api.upgrade();
 			if (data.error) {
 				addToast(data.error, 'error');
 				upgrading = false;
@@ -161,7 +157,7 @@
 		let failCount = 0;
 		const interval = setInterval(async () => {
 			try {
-				const data = await fetch(`/api/jobs/${upgradeJobId}`).then(r => r.json());
+				const data = await api.getJob(upgradeJobId);
 				upgradeJob = data;
 				failCount = 0;
 				if (data.status === 'completed' || data.status === 'failed') {
@@ -182,7 +178,7 @@
 					addToast('Server is restarting after upgrade...', 'success');
 					const reloadCheck = setInterval(async () => {
 						try {
-							await fetch('/api/config/version');
+							await api.getVersion();
 							clearInterval(reloadCheck);
 							window.location.reload();
 						} catch {
@@ -201,19 +197,10 @@
 	async function saveServices() {
 		saving = true;
 		try {
-			const resp = await fetch('/api/config/services', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(services),
-			});
-			if (resp.ok) {
-				addToast('Settings saved', 'success');
-				dirty = false;
-				const svcData = await fetch('/api/config/services').then(r => r.json());
-				services = svcData;
-			} else {
-				addToast('Failed to save settings', 'error');
-			}
+			await api.saveServices(services);
+			addToast('Settings saved', 'success');
+			dirty = false;
+			services = await api.getServices();
 		} catch (e) {
 			addToast('Failed to save: ' + e.message, 'error');
 		} finally {
@@ -231,7 +218,7 @@
 				testResults[service] = { status: ok ? 'ok' : 'error', message: ok ? 'Connected' : 'Failed' };
 			} else {
 				if (dirty) await saveServices();
-				const data = await fetch(`/api/config/test/${service}`, { method: 'POST' }).then(r => r.json());
+				const data = await api.testService(service);
 				testResults[service] = { status: data.status, message: data.status === 'ok' ? 'Connected' : data.message || 'Failed' };
 			}
 		} catch (e) {
@@ -270,7 +257,7 @@
 
 	async function loadUsers() {
 		try {
-			users = await fetch('/api/users').then(r => r.json());
+			users = await api.getUsers();
 		} catch (e) {
 			console.error('Failed to load users', e);
 		}
@@ -278,68 +265,40 @@
 
 	async function addUser() {
 		try {
-			const resp = await fetch('/api/users', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(newUser),
-			});
-			if (!resp.ok) {
-				const data = await resp.json();
-				addToast(data.detail || 'Failed to create user', 'error');
-				return;
-			}
+			await api.createUser(newUser);
 			addToast(`User "${newUser.username}" created`, 'success');
 			newUser = { username: '', password: '', is_admin: false };
 			await loadUsers();
 		} catch (e) {
-			addToast('Failed to create user: ' + e.message, 'error');
+			addToast(e.message || 'Failed to create user', 'error');
 		}
 	}
 
 	async function changePassword(userId) {
 		try {
-			const resp = await fetch(`/api/users/${userId}/password`, {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(pwForm),
-			});
-			if (!resp.ok) {
-				const data = await resp.json();
-				addToast(data.detail || 'Failed to change password', 'error');
-				return;
-			}
+			await api.changePassword(userId, pwForm);
 			addToast('Password changed', 'success');
 			changingPw = null;
 			pwForm = { current_password: '', new_password: '' };
 		} catch (e) {
-			addToast('Failed to change password: ' + e.message, 'error');
+			addToast(e.message || 'Failed to change password', 'error');
 		}
 	}
 
 	async function deleteUser(userId) {
 		if (!confirm('Are you sure you want to delete this user?')) return;
 		try {
-			const resp = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-			if (!resp.ok) {
-				const data = await resp.json();
-				addToast(data.detail || 'Failed to delete user', 'error');
-				return;
-			}
+			await api.deleteUser(userId);
 			addToast('User deleted', 'success');
 			await loadUsers();
 		} catch (e) {
-			addToast('Failed to delete user: ' + e.message, 'error');
+			addToast(e.message || 'Failed to delete user', 'error');
 		}
 	}
 
 	async function generateApiKey(userId) {
 		try {
-			const resp = await fetch(`/api/users/${userId}/api-key`, { method: 'POST' });
-			if (!resp.ok) {
-				addToast('Failed to generate API key', 'error');
-				return;
-			}
-			const data = await resp.json();
+			await api.generateApiKey(userId);
 			addToast('API key generated — copy it now', 'success');
 			await loadUsers();
 		} catch (e) {
@@ -350,11 +309,7 @@
 	async function revokeApiKey(userId) {
 		if (!confirm('Revoke this API key? Symfonium will need a new one.')) return;
 		try {
-			const resp = await fetch(`/api/users/${userId}/api-key`, { method: 'DELETE' });
-			if (!resp.ok) {
-				addToast('Failed to revoke API key', 'error');
-				return;
-			}
+			await api.revokeApiKey(userId);
 			addToast('API key revoked', 'success');
 			await loadUsers();
 		} catch (e) {
@@ -370,10 +325,10 @@
 	async function createBackup() {
 		creatingBackup = true;
 		try {
-			const data = await fetch('/api/config/backup', { method: 'POST' }).then(r => r.json());
+			const data = await api.createBackup();
 			if (data.error) { addToast(data.error, 'error'); return; }
 			addToast('Backup created', 'success');
-			backups = await fetch('/api/config/backups').then(r => r.json());
+			backups = await api.getBackups();
 		} catch (e) { addToast('Backup failed', 'error'); }
 		finally { creatingBackup = false; }
 	}
@@ -381,7 +336,7 @@
 	async function restoreBackup(filename) {
 		if (!confirm('Restore this backup? Current data will be backed up first. Services must be restarted after restore.')) return;
 		try {
-			const data = await fetch(`/api/config/restore/${filename}`, { method: 'POST' }).then(r => r.json());
+			const data = await api.restoreBackup(filename);
 			if (data.error) { addToast(data.error, 'error'); return; }
 			addToast(data.message, 'success');
 		} catch (e) { addToast('Restore failed', 'error'); }
@@ -398,8 +353,7 @@
 	async function startLastfmAuth() {
 		lastfmAuthLoading = true;
 		try {
-			const res = await fetch('/api/discovery/lastfm/auth-url');
-			const data = await res.json();
+			const data = await api.getLastfmAuthUrl();
 			if (data.error) {
 				addToast(data.error, 'error');
 			} else {
@@ -416,8 +370,7 @@
 	async function submitLastfmToken() {
 		if (!lastfmToken.trim()) return;
 		try {
-			const res = await fetch(`/api/discovery/lastfm/callback?token=${encodeURIComponent(lastfmToken.trim())}`);
-			const data = await res.json();
+			const data = await api.lastfmCallback(lastfmToken.trim());
 			if (data.error) {
 				addToast(`Last.fm auth failed: ${data.error}`, 'error');
 			} else {

@@ -3,13 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
-	import { formatBadgeClass } from '$lib/colors.js';
+	import FormatBadge from '../../components/ui/FormatBadge.svelte';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { currentTrack, addToast, activeJobs, playTrack as storePlayTrack, isMobile } from '$lib/stores.js';
-	import { formatDuration, formatSize, formatRelativeTime, formatDateTime, debounce } from '$lib/utils.js';
+	import { formatDuration, formatSize, formatRelativeTime, formatDateTime, debounce, coverUrl } from '$lib/utils.js';
 	import {
 		Search, ScanLine, Download, Music, Users, Disc3,
-		Play, ChevronLeft, ChevronRight, Grid3x3, List, Trash2, CheckSquare, Heart,
+		Play, ChevronLeft, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock, Columns3,
 		Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
 		ChevronDown, ChevronUp, Sparkles
@@ -23,6 +23,7 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 	import StarRating from '../../components/ui/StarRating.svelte';
+	import Pagination from '../../components/ui/Pagination.svelte';
 
 	const tabs = [
 		{ id: 'tracks', label: 'Tracks', icon: Music },
@@ -429,10 +430,6 @@
 	let artistAlbums = $state([]);
 	let artistTracks = $state([]);
 
-	function coverUrl(id) {
-		if (!id) return null;
-		return `/rest/getCoverArt?id=${id}`;
-	}
 
 	async function loadData() {
 		loading = true;
@@ -522,8 +519,7 @@
 		loadData();
 	}
 
-	function prevPage() { offset = Math.max(0, offset - limit); loadData(); }
-	function nextPage() { offset += limit; loadData(); }
+	function handlePageChange(newOffset, newLimit) { offset = newOffset; limit = newLimit; loadData(); }
 
 	let currentTotal = $derived(tab === 'tracks' ? trackTotal : tab === 'artists' ? artistTotal : albumTotal);
 
@@ -1034,7 +1030,7 @@
 								</div>
 								<div class="flex items-center gap-1 flex-shrink-0">
 									{#if track.format}
-										<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
+										<FormatBadge format={track.format} class="text-[9px]" />
 									{/if}
 									<span class="text-xs text-[var(--text-muted)] font-mono w-10 text-right">{formatDuration(track.duration)}</span>
 								</div>
@@ -1131,7 +1127,7 @@
 									{#if colVisible('format')}
 										<td class="px-3 py-2">
 											{#if track.format}
-												<span class="text-xs font-mono font-semibold px-1.5 py-0.5 rounded border {formatBadgeClass(track.format)}">{track.format.toUpperCase()}</span>
+												<FormatBadge format={track.format} />
 											{:else}
 												<span class="text-[var(--text-disabled)]">—</span>
 											{/if}
@@ -1433,20 +1429,7 @@
 		{/if}
 	{/if}
 
-	<!-- Pagination -->
-	{#if currentTotal > 0}
-		<div class="flex justify-center items-center gap-2 sm:gap-3 mt-4">
-			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
-				<ChevronLeft class="w-4 h-4" /> <span class="hidden sm:inline">Prev</span>
-			</Button>
-			<span class="text-xs sm:text-sm text-[var(--text-muted)] font-mono">
-				{offset + 1}-{Math.min(offset + limit, currentTotal)} of {currentTotal}
-			</span>
-			<Button variant="secondary" size="sm" disabled={offset + limit >= currentTotal} onclick={nextPage}>
-				<span class="hidden sm:inline">Next</span> <ChevronRight class="w-4 h-4" />
-			</Button>
-		</div>
-	{/if}
+	<Pagination total={currentTotal} {offset} {limit} limitOptions={limitOptions} onchange={handlePageChange} />
 
 	<!-- Library Cleanup Tools — Danger Zone -->
 	<Card padding="p-4" class="mt-4 border border-amber-500/20">

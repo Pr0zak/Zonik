@@ -10,6 +10,7 @@
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
+	import FilterPills from '../../components/ui/FilterPills.svelte';
 
 	// Search state
 	let searchQuery = $state('');
@@ -832,24 +833,16 @@
 						{/if}
 					</p>
 					<div class="flex items-center gap-3">
-						<!-- Format filter tabs -->
-						<div class="flex gap-1">
-							{#each [
-								{ key: 'all', label: 'All', count: formatCounts.all },
-								{ key: 'flac', label: 'FLAC', count: formatCounts.flac },
-								{ key: '320', label: '320+', count: formatCounts.high },
-								{ key: '256', label: '256+', count: formatCounts.mid },
-							] as tab}
-								<button onclick={() => { formatFilter = tab.key; resultsPage = 0; }}
-									class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
-										{formatFilter === tab.key
-											? 'bg-[var(--color-downloads)] text-white'
-											: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'}">
-									{tab.label}
-									<span class="ml-1 opacity-60">{tab.count}</span>
-								</button>
-							{/each}
-						</div>
+						<FilterPills
+							options={[
+								{ value: 'all', label: 'All', count: formatCounts.all, color: 'downloads' },
+								{ value: 'flac', label: 'FLAC', count: formatCounts.flac, color: 'downloads' },
+								{ value: '320', label: '320+', count: formatCounts.high, color: 'downloads' },
+								{ value: '256', label: '256+', count: formatCounts.mid, color: 'downloads' },
+							]}
+							value={formatFilter}
+							onchange={(v) => { formatFilter = v; resultsPage = 0; }}
+						/>
 						<!-- Per page selector -->
 						<select bind:value={resultsPerPage} onchange={() => resultsPage = 0}
 							class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-muted)]">

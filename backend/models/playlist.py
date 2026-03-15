@@ -6,9 +6,10 @@ from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database import Base
+from backend.models.mixins import TimestampMixin
 
 
-class Playlist(Base):
+class Playlist(TimestampMixin, Base):
     __tablename__ = "playlists"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -16,8 +17,6 @@ class Playlist(Base):
     user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"))
     comment: Mapped[str | None] = mapped_column(Text)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     entries: Mapped[list["PlaylistTrack"]] = relationship(
         "PlaylistTrack", back_populates="playlist", cascade="all, delete-orphan",

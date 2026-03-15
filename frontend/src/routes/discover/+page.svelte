@@ -12,6 +12,7 @@
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import PlaylistDiscoveryTab from './PlaylistDiscoveryTab.svelte';
 
 	let activeTab = $state('foryou');
 
@@ -37,27 +38,6 @@
 	let remixSource = $state('popular');
 	let remixTypeFilter = $state('all');
 
-	// Playlist Discovery state
-	let discPlaylists = $state([]);
-	let discPlaylistsLoading = $state(false);
-	let discQueries = $state([]);
-
-	async function loadDiscoverPlaylists() {
-		discPlaylistsLoading = true;
-		try {
-			const data = await api.discoverPlaylists(20);
-			discPlaylists = data.playlists || [];
-			discQueries = data.queries || [];
-			// Try AI ranking
-			if (discPlaylists.length > 1) {
-				try {
-					const ranked = await api.aiRankPlaylists(discPlaylists);
-					if (ranked.playlists) discPlaylists = ranked.playlists;
-				} catch {}
-			}
-		} catch (e) { addToast('Failed to discover playlists: ' + e.message, 'error'); }
-		finally { discPlaylistsLoading = false; }
-	}
 
 	// For You state
 	let recommendations = $state([]);
@@ -1736,67 +1716,7 @@
 			{/if}
 
 		{:else if activeTab === 'playlists'}
-			<div class="flex items-center gap-3 mb-4">
-				<Button variant="ghost" onclick={loadDiscoverPlaylists} disabled={discPlaylistsLoading}>
-					{#if discPlaylistsLoading}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
-					Discover
-				</Button>
-				{#if discQueries.length}
-					<span class="text-xs text-[var(--text-muted)]">Based on: {discQueries.join(', ')}</span>
-				{/if}
-			</div>
-
-			{#if discPlaylistsLoading}
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-					{#each Array(6) as _}
-						<Skeleton class="h-20 rounded-lg" />
-					{/each}
-				</div>
-			{:else if discPlaylists.length}
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-					{#each discPlaylists as pl}
-						<a href="/playlists" class="block">
-							<Card hover padding="p-3">
-								<div class="flex items-center gap-3">
-									{#if pl.image_url}
-										<img src={pl.image_url} alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
-									{:else}
-										<div class="w-12 h-12 rounded-lg bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
-											<ListMusic class="w-5 h-5 text-[var(--text-disabled)]" />
-										</div>
-									{/if}
-									<div class="flex-1 min-w-0">
-										<p class="text-sm font-medium text-[var(--text-primary)] truncate">{pl.name}</p>
-										<p class="text-xs text-[var(--text-muted)] truncate">
-											{pl.owner} &middot; {pl.track_count} tracks &middot;
-											<span class="capitalize">{pl.source.replace('_', ' ')}</span>
-										</p>
-										{#if pl.matched_query}
-											<span class="text-xs text-[var(--text-disabled)]">matched: {pl.matched_query}</span>
-										{/if}
-									</div>
-									{#if pl.ai_score}
-										<div class="flex flex-col items-end flex-shrink-0">
-											<span class="text-xs font-mono {pl.ai_score >= 0.7 ? 'text-emerald-400' : pl.ai_score >= 0.4 ? 'text-amber-400' : 'text-[var(--text-muted)]'}">{Math.round(pl.ai_score * 100)}%</span>
-											{#if pl.ai_reason}
-												<span class="text-[9px] text-[var(--text-disabled)] max-w-28 truncate" title={pl.ai_reason}>{pl.ai_reason}</span>
-											{/if}
-										</div>
-									{:else}
-										<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
-									{/if}
-								</div>
-							</Card>
-						</a>
-					{/each}
-				</div>
-			{:else}
-				<Card>
-					<EmptyState title="No playlists discovered" description="Click Discover to find playlists matching your library taste.">
-						{#snippet icon()}<ListMusic class="w-12 h-12" />{/snippet}
-					</EmptyState>
-				</Card>
-			{/if}
+			<PlaylistDiscoveryTab />
 		{/if}
 	</div>
 

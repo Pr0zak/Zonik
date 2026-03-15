@@ -3,8 +3,8 @@
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
-	import { formatDuration, inputClass } from '$lib/utils.js';
-	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Sparkles, Import, Search, Download, Check, Loader2, ExternalLink } from 'lucide-svelte';
+	import { formatDuration, inputClass, coverUrl } from '$lib/utils.js';
+	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronDown, ChevronUp, Sparkles, Import, Search, Download, Check, Loader2, ExternalLink } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -12,6 +12,7 @@
 	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import Pagination from '../../components/ui/Pagination.svelte';
 
 	let playlists = $state([]);
 	let loading = $state(true);
@@ -26,7 +27,6 @@
 	let deleting = $state(false);
 	let trackOffset = $state(0);
 	let trackLimit = $state(25);
-	const trackLimitOptions = [25, 50, 100, 200];
 
 	let showGenerator = $state(false);
 	let genName = $state('');
@@ -216,10 +216,6 @@
 		finally { deleting = false; }
 	}
 
-	function coverUrl(id) {
-		if (!id) return null;
-		return `/rest/getCoverArt?id=${id}`;
-	}
 
 	const { toggleSched, updateSched, runSched } = createScheduleHelpers(
 		() => schedTasks,
@@ -562,26 +558,7 @@
 				</div>
 			</Card>
 
-			<div class="flex flex-wrap justify-center items-center gap-3 mt-4">
-				{#if totalTracks > trackLimit}
-					<Button variant="secondary" size="sm" disabled={trackOffset === 0} onclick={() => { trackOffset = Math.max(0, trackOffset - trackLimit); }}>
-						<ChevronLeft class="w-4 h-4" /> Prev
-					</Button>
-					<span class="text-sm text-[var(--text-muted)] font-mono">
-						{trackOffset + 1}-{Math.min(trackOffset + trackLimit, totalTracks)} of {totalTracks}
-					</span>
-					<Button variant="secondary" size="sm" disabled={trackOffset + trackLimit >= totalTracks} onclick={() => { trackOffset += trackLimit; }}>
-						Next <ChevronRight class="w-4 h-4" />
-					</Button>
-				{/if}
-				<select value={trackLimit}
-					onchange={(e) => { trackLimit = parseInt(e.target.value); trackOffset = 0; }}
-					class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
-					{#each trackLimitOptions as opt}
-						<option value={opt} selected={opt === trackLimit}>{opt} / page</option>
-					{/each}
-				</select>
-			</div>
+			<Pagination total={totalTracks} offset={trackOffset} limit={trackLimit} onchange={(o, l) => { trackOffset = o; trackLimit = l; }} />
 		{:else}
 			<Card>
 				<EmptyState title="Empty playlist" description="This playlist has no tracks.">

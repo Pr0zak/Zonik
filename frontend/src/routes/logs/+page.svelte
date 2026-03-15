@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
-	import { ScrollText, ChevronDown, ChevronRight, ChevronLeft, RotateCcw, XCircle } from 'lucide-svelte';
+	import { ScrollText, ChevronDown, RotateCcw, XCircle } from 'lucide-svelte';
 	import { addToast, activeJobs } from '$lib/stores.js';
 	import { formatDateTime } from '$lib/utils.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -11,6 +11,8 @@
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import Pagination from '../../components/ui/Pagination.svelte';
+	import FilterPills from '../../components/ui/FilterPills.svelte';
 
 	let jobs = $state([]);
 	let total = $state(0);
@@ -23,7 +25,6 @@
 	let categoryFilter = $state('all');
 	let unsubJobs;
 	let refreshInterval;
-	const limitOptions = [25, 50, 100, 200];
 
 	const categories = [
 		{ key: 'all', label: 'All' },
@@ -102,16 +103,10 @@
 		loadJobs();
 	}
 
-	function prevPage() {
-		offset = Math.max(0, offset - limit);
+	function handlePageChange(newOffset, newLimit) {
+		offset = newOffset;
+		limit = newLimit;
 		loadJobs();
-	}
-
-	function nextPage() {
-		if (offset + limit < total) {
-			offset += limit;
-			loadJobs();
-		}
 	}
 
 	async function toggleExpand(job) {
@@ -189,17 +184,12 @@
 	</PageHeader>
 
 	<!-- Category filters -->
-	<div class="flex gap-1.5 mb-4 overflow-x-auto pb-1">
-		{#each categories as cat}
-			<button onclick={() => changeCategory(cat.key)}
-				class="flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap
-					{categoryFilter === cat.key
-						? 'bg-[var(--color-logs)] text-white'
-						: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
-				{cat.label}
-			</button>
-		{/each}
-	</div>
+	<FilterPills
+		options={categories.map(c => ({ value: c.key, label: c.label, color: 'logs' }))}
+		value={categoryFilter}
+		onchange={changeCategory}
+		class="mb-4 overflow-x-auto pb-1"
+	/>
 
 	<Card padding="p-0">
 		{#if loading}
@@ -374,25 +364,5 @@
 		{/if}
 	</Card>
 
-	<!-- Pagination -->
-	<div class="flex flex-wrap justify-center items-center gap-3 mt-4">
-		{#if total > limit}
-			<Button variant="secondary" size="sm" disabled={offset === 0} onclick={prevPage}>
-				<ChevronLeft class="w-4 h-4" /> Prev
-			</Button>
-			<span class="text-sm text-[var(--text-muted)] font-mono">
-				{offset + 1}-{Math.min(offset + limit, total)} of {total}
-			</span>
-			<Button variant="secondary" size="sm" disabled={offset + limit >= total} onclick={nextPage}>
-				Next <ChevronRight class="w-4 h-4" />
-			</Button>
-		{/if}
-		<select value={limit}
-			onchange={(e) => { limit = parseInt(e.target.value); offset = 0; loadJobs(); }}
-			class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
-			{#each limitOptions as opt}
-				<option value={opt} selected={opt === limit}>{opt} / page</option>
-			{/each}
-		</select>
-	</div>
+	<Pagination {total} {offset} {limit} onchange={handlePageChange} />
 </div>

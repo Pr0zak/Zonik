@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
-	import { formatBadgeClass } from '$lib/colors.js';
+	import FormatBadge from '../../components/ui/FormatBadge.svelte';
 	import { parseUTC } from '$lib/utils.js';
 	import {
 		ArrowUpCircle, Search, Play, SkipForward, RotateCcw, Trash2, Check, X,
@@ -12,6 +12,7 @@
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import Pagination from '../../components/ui/Pagination.svelte';
 
 	// Stats
 	let stats = $state(null);
@@ -194,8 +195,9 @@
 		return sortOrder === 'asc' ? ' ↑' : ' ↓';
 	}
 
-	function changePage(newOffset) {
+	function handlePageChange(newOffset, newLimit) {
 		offset = newOffset;
+		perPage = newLimit;
 		selected = new Set();
 		loadUpgrades();
 	}
@@ -229,8 +231,6 @@
 		return Math.round(bps / 1000) + 'k';
 	}
 
-	let totalPages = $derived(Math.ceil(total / perPage));
-	let currentPage = $derived(Math.floor(offset / perPage) + 1);
 
 	onMount(() => {
 		loadStats();
@@ -397,7 +397,7 @@
 							</td>
 							<td class="px-3 py-2">
 								<div class="flex items-center gap-2">
-									<span class="px-1.5 py-0.5 rounded text-xs font-mono uppercase {formatBadgeClass(u.original_format)}">{u.original_format}</span>
+									<FormatBadge format={u.original_format} />
 									<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.original_bitrate)}</span>
 								</div>
 							</td>
@@ -405,7 +405,7 @@
 								{#if u.status === 'completed' && u.upgraded_format}
 									<div class="flex items-center gap-2">
 										<ArrowRight class="w-3 h-3 text-emerald-400" />
-										<span class="px-1.5 py-0.5 rounded text-xs font-mono uppercase {formatBadgeClass(u.upgraded_format)}">{u.upgraded_format}</span>
+										<FormatBadge format={u.upgraded_format} />
 										<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.upgraded_bitrate)}</span>
 									</div>
 								{:else if u.error_message}
@@ -445,31 +445,6 @@
 			</table>
 		</div>
 
-		<!-- Pagination -->
-		{#if totalPages > 1}
-			<div class="flex flex-wrap items-center justify-between gap-2 pt-2">
-				<p class="text-xs text-[var(--text-muted)]">
-					Showing {offset + 1}–{Math.min(offset + perPage, total)} of {total}
-				</p>
-				<div class="flex items-center gap-1">
-					<button onclick={() => changePage(offset - perPage)} disabled={offset === 0}
-						class="px-2 py-1 text-xs rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] disabled:opacity-30 hover:bg-[var(--bg-hover)]">
-						Prev
-					</button>
-					<span class="text-xs text-[var(--text-muted)] px-2">{currentPage} / {totalPages}</span>
-					<button onclick={() => changePage(offset + perPage)} disabled={offset + perPage >= total}
-						class="px-2 py-1 text-xs rounded bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] disabled:opacity-30 hover:bg-[var(--bg-hover)]">
-						Next
-					</button>
-					<select bind:value={perPage} onchange={() => { offset = 0; loadUpgrades(); }}
-						class="ml-2 bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-xs text-[var(--text-secondary)]">
-						<option value={25}>25</option>
-						<option value={50}>50</option>
-						<option value={100}>100</option>
-						<option value={200}>200</option>
-					</select>
-				</div>
-			</div>
-		{/if}
+		<Pagination {total} {offset} limit={perPage} onchange={handlePageChange} />
 	{/if}
 </div>

@@ -11,6 +11,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.api.helpers import paginate
 from backend.database import get_db, async_session
 from backend.models.track import Track
 from backend.models.artist import Artist
@@ -55,14 +56,6 @@ async def list_upgrades(
     if reason:
         query = query.where(TrackUpgrade.reason == reason)
 
-    # Count
-    count_q = select(func.count(TrackUpgrade.id))
-    if status:
-        count_q = count_q.where(TrackUpgrade.status == status)
-    if reason:
-        count_q = count_q.where(TrackUpgrade.reason == reason)
-    total = (await db.execute(count_q)).scalar() or 0
-
     # Sort
     if sort in UPGRADE_SORT_COLUMNS:
         col = getattr(TrackUpgrade, sort)
@@ -70,13 +63,10 @@ async def list_upgrades(
     else:
         query = query.order_by(TrackUpgrade.created_at.desc())
 
-    query = query.offset(offset).limit(limit)
-    result = await db.execute(query)
-    upgrades = result.scalars().all()
-
+    page = await paginate(db, query, offset, limit)
     return {
-        "items": [_serialize(u) for u in upgrades],
-        "total": total,
+        "items": [_serialize(u) for u in page["items"]],
+        "total": page["total"],
     }
 
 
