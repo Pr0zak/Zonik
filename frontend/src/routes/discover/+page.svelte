@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast, discoverTrackStatus } from '$lib/stores.js';
-	import { parseUTC } from '$lib/utils.js';
+	import { parseUTC, formatRelativeTime } from '$lib/utils.js';
 	import { Download, TrendingUp, Users, Music, Check, X, Loader2, RefreshCw, ListMusic, Search, Clock, ArrowUp, ArrowDown, Sparkles, ThumbsUp, ThumbsDown, Info, ChevronDown, ChevronUp, Play, Pause, Disc3, HelpCircle, ExternalLink } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
@@ -775,6 +775,16 @@
 							</label>
 						</div>
 					{/if}
+					{#if tasteProfile?.has_claude_key}
+						<div class="flex items-center gap-2 ml-6 mt-1 mb-2">
+							<Button variant="default" size="sm" onclick={refreshRecsAI} loading={aiRefreshing}
+								title="Run Claude AI re-ranking manually (~$0.01-0.03)">
+								<Sparkles class="w-3.5 h-3.5" />
+								Run AI Re-ranking Now
+							</Button>
+							<span class="text-xs text-[var(--text-disabled)]">~$0.01-0.03 per run</span>
+						</div>
+					{/if}
 				{/if}
 				{#if schedTasks.lastfm_top_tracks}
 					<ScheduleControl taskName="lastfm_top_tracks" label="Top Charts Scan" enabled={schedTasks.lastfm_top_tracks.enabled} intervalHours={schedTasks.lastfm_top_tracks.interval_hours} runAt={schedTasks.lastfm_top_tracks.run_at} count={schedTasks.lastfm_top_tracks.count} lastRunAt={schedTasks.lastfm_top_tracks.last_run_at} running={schedRunning.lastfm_top_tracks} onToggle={() => toggleSched('lastfm_top_tracks')} onUpdate={(u) => updateSched('lastfm_top_tracks', u)} onRun={() => runSched('lastfm_top_tracks')} autoDownload={schedTasks.lastfm_top_tracks.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('lastfm_top_tracks')} />
@@ -973,20 +983,19 @@
 				<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 					<div class="flex items-center gap-4">
 						<span class="text-2xl font-bold text-[var(--text-primary)]">{recTotal}</span>
-						<span class="text-xs text-[var(--text-muted)]">recommendations</span>
+						<div class="flex flex-col">
+							<span class="text-xs text-[var(--text-muted)]">recommendations</span>
+							{#if recommendations.length && recommendations[0].created_at}
+								<span class="text-xs text-[var(--text-disabled)]">Updated {formatRelativeTime(recommendations[0].created_at)}</span>
+							{/if}
+						</div>
 					</div>
 					<div class="flex items-center gap-2 flex-wrap">
-						<Button variant="primary" size="sm" onclick={refreshRecs} loading={recRefreshing}>
+						<Button variant="primary" size="sm" onclick={refreshRecs} loading={recRefreshing}
+							title="Refresh recommendations (rule-based scoring)">
 							<RefreshCw class="w-3.5 h-3.5" />
 							Refresh
 						</Button>
-						{#if tasteProfile?.has_claude_key}
-							<Button variant="default" size="sm" onclick={refreshRecsAI} loading={aiRefreshing}
-								title="Re-rank with Claude AI (~$0.01-0.03)">
-								<Sparkles class="w-3.5 h-3.5" />
-								AI Suggestions
-							</Button>
-						{/if}
 						{#if recommendations.length}
 							<div class="relative">
 								<Button variant="default" size="sm" onclick={() => showBulkMenu = !showBulkMenu} loading={bulkDownloading}>
