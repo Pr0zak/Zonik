@@ -164,14 +164,29 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
     finally:
         job.finished_at = datetime.utcnow()
 
-        # Update last_run_at
-        result = await db.execute(select(ScheduleTask).where(ScheduleTask.task_name == task_name))
-        task = result.scalar_one_or_none()
-        if task:
-            task.last_run_at = datetime.utcnow()
-
-        await db.merge(job)
-        await db.commit()
+        # Use a fresh session for final updates — the main session may be in
+        # PendingRollbackError state if the task raised a DB exception
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        try:
+            from sqlalchemy import update as _update
+            async with async_session() as final_db:
+                await final_db.execute(
+                    _update(ScheduleTask).where(ScheduleTask.task_name == task_name).values(
+                        last_run_at=datetime.utcnow(),
+                    )
+                )
+                await final_db.execute(
+                    _update(Job).where(Job.id == job_id).values(
+                        status=job.status, result=job.result,
+                        finished_at=job.finished_at,
+                    )
+                )
+                await final_db.commit()
+        except Exception as fin_err:
+            log.error(f"Failed to save final job status for {task_name}: {fin_err}")
         await broadcast_job_update({"id": job_id, "type": task_name, "status": job.status, "progress": 1, "total": 1, "description": desc})
 
         # Auto-download missing tracks if configured
@@ -381,8 +396,11 @@ async def _run_favorites_playlist(db: AsyncSession):
         await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
         await db.execute(delete(Playlist).where(Playlist.id == existing.id))
 
+    # Join with Track to exclude stale favorite references to deleted tracks
     favorites = (await db.execute(
-        select(Favorite.track_id).where(Favorite.track_id.isnot(None))
+        select(Favorite.track_id)
+        .join(Track, Track.id == Favorite.track_id)
+        .where(Favorite.track_id.isnot(None))
     )).scalars().all()
 
     if not favorites:
