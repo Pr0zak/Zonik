@@ -8,34 +8,44 @@ export const castDeviceName = writable('');
 let castSession = null;
 let mediaSession = null;
 
+function setupCastContext() {
+	const ctx = cast.framework.CastContext.getInstance();
+	ctx.setOptions({
+		receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+		autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+	});
+
+	ctx.addEventListener(cast.framework.CastContextEventType.CAST_STATE_CHANGED, (e) => {
+		const available = e.castState !== cast.framework.CastState.NO_DEVICES_AVAILABLE;
+		isCastAvailable.set(available);
+	});
+
+	ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
+		const state = e.sessionState;
+		if (state === cast.framework.SessionState.SESSION_STARTED ||
+			state === cast.framework.SessionState.SESSION_RESUMED) {
+			castSession = ctx.getCurrentSession();
+			isCasting.set(true);
+			castDeviceName.set(castSession.getCastDevice().friendlyName || 'Cast Device');
+		} else if (state === cast.framework.SessionState.SESSION_ENDED) {
+			castSession = null;
+			mediaSession = null;
+			isCasting.set(false);
+			castDeviceName.set('');
+		}
+	});
+}
+
 export function initCast() {
+	// SDK already loaded before mount — init immediately
+	if (window.cast && cast.framework) {
+		setupCastContext();
+		return;
+	}
+	// SDK not yet loaded — wait for callback
 	window['__onGCastApiAvailable'] = (isAvailable) => {
 		if (!isAvailable) return;
-		const ctx = cast.framework.CastContext.getInstance();
-		ctx.setOptions({
-			receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-			autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
-		});
-
-		ctx.addEventListener(cast.framework.CastContextEventType.CAST_STATE_CHANGED, (e) => {
-			const available = e.castState !== cast.framework.CastState.NO_DEVICES_AVAILABLE;
-			isCastAvailable.set(available);
-		});
-
-		ctx.addEventListener(cast.framework.CastContextEventType.SESSION_STATE_CHANGED, (e) => {
-			const state = e.sessionState;
-			if (state === cast.framework.SessionState.SESSION_STARTED ||
-				state === cast.framework.SessionState.SESSION_RESUMED) {
-				castSession = ctx.getCurrentSession();
-				isCasting.set(true);
-				castDeviceName.set(castSession.getCastDevice().friendlyName || 'Cast Device');
-			} else if (state === cast.framework.SessionState.SESSION_ENDED) {
-				castSession = null;
-				mediaSession = null;
-				isCasting.set(false);
-				castDeviceName.set('');
-			}
-		});
+		setupCastContext();
 	};
 }
 
