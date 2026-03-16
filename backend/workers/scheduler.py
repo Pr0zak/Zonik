@@ -165,10 +165,14 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
     finally:
         job.finished_at = datetime.utcnow()
 
-        # Use a fresh session for final updates — the main session may be in
-        # PendingRollbackError state if the task raised a DB exception
+        # Close the main session FIRST to release the SQLite write lock,
+        # then use a fresh session for final updates
         try:
             await db.rollback()
+        except Exception:
+            pass
+        try:
+            await db.close()
         except Exception:
             pass
         try:

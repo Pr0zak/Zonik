@@ -17,34 +17,54 @@ async def run_scheduled_tasks(ctx: dict):
     """Check schedule_tasks table and run any that are due."""
     from sqlalchemy import select
     from backend.models.schedule import ScheduleTask
+    from backend.models.job import Job
     from backend.workers.scheduler import run_task
 
+    # Use a short-lived session to read the schedule — do NOT hold it open during tasks
     async with async_session() as db:
         result = await db.execute(select(ScheduleTask).where(ScheduleTask.enabled.is_(True)))
         tasks = result.scalars().all()
 
-        now = datetime.utcnow()
-        for task in tasks:
-            # Check if enough time has passed since last run
-            if task.last_run_at:
-                hours_since = (now - task.last_run_at).total_seconds() / 3600
-                if hours_since < task.interval_hours:
-                    continue
+        # Also fetch currently running jobs to skip tasks that are already in progress
+        running_types = set(
+            (await db.execute(
+                select(Job.type).where(Job.status == "running")
+            )).scalars().all()
+        )
 
-            # Check run_at time if set
-            if task.run_at:
-                try:
-                    run_hour, run_min = map(int, task.run_at.split(":"))
-                    if now.hour != run_hour or abs(now.minute - run_min) > 5:
-                        continue
-                except ValueError:
-                    pass
+    now = datetime.utcnow()
+    due_tasks = []
+    for task in tasks:
+        # Skip tasks that already have a running job
+        if task.task_name in running_types:
+            log.info(f"Skipping {task.task_name} — already running")
+            continue
 
-            log.info(f"Running scheduled task: {task.task_name}")
+        # Check if enough time has passed since last run
+        if task.last_run_at:
+            hours_since = (now - task.last_run_at).total_seconds() / 3600
+            if hours_since < task.interval_hours:
+                continue
+
+        # Check run_at time if set
+        if task.run_at:
             try:
-                await run_task(task.task_name, db)
-            except Exception as e:
-                log.error(f"Scheduled task {task.task_name} failed: {e}")
+                run_hour, run_min = map(int, task.run_at.split(":"))
+                if now.hour != run_hour or abs(now.minute - run_min) > 5:
+                    continue
+            except ValueError:
+                pass
+
+        due_tasks.append(task.task_name)
+
+    # Run each task with its OWN session to avoid SQLite single-writer deadlocks
+    for task_name in due_tasks:
+        log.info(f"Running scheduled task: {task_name}")
+        try:
+            async with async_session() as task_db:
+                await run_task(task_name, task_db)
+        except Exception as e:
+            log.error(f"Scheduled task {task_name} failed: {e}")
 
 
 async def download_track(ctx: dict, artist: str, track: str):
@@ -127,6 +147,6 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 10
-    job_timeout = 600  # 10 minutes
+    job_timeout = 3600  # 60 minutes — scheduled tasks (library_scan, audio_analysis) need time
 
     redis_settings = _make_redis_settings()
