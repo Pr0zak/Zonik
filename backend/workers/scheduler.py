@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.database import async_session
 from backend.models.job import Job
 from backend.models.schedule import ScheduleTask
 from backend.models.track import Track
