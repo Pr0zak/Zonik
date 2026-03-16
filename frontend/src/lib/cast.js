@@ -49,30 +49,24 @@ function setupCastContext() {
 	});
 }
 
-// Set callback at module load time — cast_sender.js captures it via D()
-// BEFORE it overwrites window.__onGCastApiAvailable with its internal counter.
-// The SDK reads our callback, then calls it once both cast_framework.js
-// and the extension script finish loading.
-if (typeof window !== 'undefined') {
-	window['__onGCastApiAvailable'] = (isAvailable) => {
-		if (isAvailable) setupCastContext();
-	};
-}
-
+// The inline script in app.html sets window.__onGCastApiAvailable before
+// cast_sender.js loads, so the SDK captures it. When both cast_framework.js
+// and the extension load, it calls our callback which sets window.__castReady.
+// initCast() polls for that flag + the cast.framework global.
 export function initCast() {
-	// If SDK already loaded (callback already fired), init now
+	// Already available
 	if (window.cast && cast.framework) {
 		setupCastContext();
 		return;
 	}
-	// Fallback poll — in case callback timing was missed
+	// Poll until cast_framework.js has loaded (set by SDK via our callback)
 	let attempts = 0;
 	const poll = setInterval(() => {
 		attempts++;
 		if (window.cast && cast.framework) {
 			clearInterval(poll);
 			setupCastContext();
-		} else if (attempts >= 20) {
+		} else if (attempts >= 30) {
 			clearInterval(poll);
 		}
 	}, 500);
