@@ -7,8 +7,12 @@ export const castDeviceName = writable('');
 
 let castSession = null;
 let mediaSession = null;
+let castInitialized = false;
 
 function setupCastContext() {
+	if (castInitialized) return;
+	castInitialized = true;
+
 	const ctx = cast.framework.CastContext.getInstance();
 	ctx.setOptions({
 		receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
@@ -45,17 +49,33 @@ function setupCastContext() {
 	});
 }
 
+// Set callback at module load time — cast_sender.js captures it via D()
+// BEFORE it overwrites window.__onGCastApiAvailable with its internal counter.
+// The SDK reads our callback, then calls it once both cast_framework.js
+// and the extension script finish loading.
+if (typeof window !== 'undefined') {
+	window['__onGCastApiAvailable'] = (isAvailable) => {
+		if (isAvailable) setupCastContext();
+	};
+}
+
 export function initCast() {
-	// SDK already loaded before mount — init immediately
+	// If SDK already loaded (callback already fired), init now
 	if (window.cast && cast.framework) {
 		setupCastContext();
 		return;
 	}
-	// SDK not yet loaded — wait for callback
-	window['__onGCastApiAvailable'] = (isAvailable) => {
-		if (!isAvailable) return;
-		setupCastContext();
-	};
+	// Fallback poll — in case callback timing was missed
+	let attempts = 0;
+	const poll = setInterval(() => {
+		attempts++;
+		if (window.cast && cast.framework) {
+			clearInterval(poll);
+			setupCastContext();
+		} else if (attempts >= 20) {
+			clearInterval(poll);
+		}
+	}, 500);
 }
 
 function isLocalhost() {
