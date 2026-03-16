@@ -15,6 +15,15 @@ function setupCastContext() {
 		autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
 	});
 
+	// Check initial state + delayed recheck (discovery takes time)
+	const checkState = () => {
+		const s = ctx.getCastState();
+		isCastAvailable.set(s !== cast.framework.CastState.NO_DEVICES_AVAILABLE);
+	};
+	checkState();
+	setTimeout(checkState, 3000);
+	setTimeout(checkState, 8000);
+
 	ctx.addEventListener(cast.framework.CastContextEventType.CAST_STATE_CHANGED, (e) => {
 		const available = e.castState !== cast.framework.CastState.NO_DEVICES_AVAILABLE;
 		isCastAvailable.set(available);
