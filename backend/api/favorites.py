@@ -111,7 +111,7 @@ async def star(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depe
         query = query.where(Favorite.album_id == req.album_id)
     elif req.artist_id:
         query = query.where(Favorite.artist_id == req.artist_id)
-    existing = (await db.execute(query)).scalar_one_or_none()
+    existing = (await db.execute(query)).scalars().first()
     if existing:
         return {"ok": True, "already_starred": True}
 
