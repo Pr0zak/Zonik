@@ -395,6 +395,7 @@ async def _run_favorites_playlist(db: AsyncSession):
     if existing:
         await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
         await db.execute(delete(Playlist).where(Playlist.id == existing.id))
+        await db.commit()
 
     # Join with Track to exclude stale favorite references to deleted tracks
     favorites = (await db.execute(
@@ -422,6 +423,7 @@ async def _run_unfavorites_playlist(db: AsyncSession):
     if existing:
         await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
         await db.execute(delete(Playlist).where(Playlist.id == existing.id))
+        await db.commit()
 
     fav_ids = (await db.execute(
         select(Favorite.track_id).where(Favorite.track_id.isnot(None))
