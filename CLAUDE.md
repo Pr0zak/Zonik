@@ -4,7 +4,7 @@ Self-hosted music backend serving Symfonium via OpenSubsonic API.
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) or PostgreSQL + ARQ/Redis
-- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 15 routes)
+- **Frontend**: SvelteKit 5 + Tailwind CSS + Chart.js + D3.js (dark theme, 16 routes)
 - **Audio**: mutagen (tags), Essentia (analysis), CLAP (vibe embeddings)
 - **Downloads**: Native Soulseek P2P client (or legacy slskd) with multi-strategy search + quality scoring
 - **Discovery**: Last.fm API (similar tracks/artists, top charts, scrobbling)
@@ -38,8 +38,8 @@ backend/
   workers/             # ARQ task functions + cron scheduler
   migrations/          # Alembic migrations
 frontend/
-  src/routes/          # SvelteKit pages (15 routes)
-  src/components/      # Sidebar, TopBar, Player, Toast
+  src/routes/          # SvelteKit pages (16 routes)
+  src/components/      # Sidebar, TopBar, Player, Toast, SearchDropdown
     ui/                # 11 reusable components (Button, Badge, Card, Modal, etc.)
   src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js
 deploy/                # Systemd service files
@@ -56,6 +56,9 @@ deploy/                # Systemd service files
 
 ## Critical Pitfalls
 - **SQLite single-writer**: never hold async_session() during long ops (semaphore waits, downloads); use short-lived sessions + expunge()
+- **AsyncSession concurrent ops**: NEVER use asyncio.gather() with multiple queries on the same AsyncSession — run sequentially. For progress callbacks inside long tasks, use a separate async_session() to avoid conflicts with the main session.
+- **Scheduler finally block**: run_task's finally block uses a fresh async_session() because the main session may be in PendingRollbackError state after a failed task. Always import async_session in scheduler.py.
+- **Playlist builders**: commit the delete of old playlist before inserting new tracks — SQLite FK checks fail if old+new coexist in same transaction. Join Favorite with Track to exclude stale references to deleted tracks.
 - **AsyncSession**: `exec_driver_sql` is NOT on AsyncSession — use `db.execute(text("..."))` instead
 - **Track deletion**: must delete from all 8 FK tables before Track (Favorite, TrackAnalysis, TrackEmbedding, PlayHistory, PlaylistTrack, Bookmark, TrackMood, TrackUpgrade) + FTS
 - **Track model**: NO `bpm` column — BPM is on TrackAnalysis (requires outerjoin); uses `duration_seconds` not `duration`
@@ -63,7 +66,7 @@ deploy/                # Systemd service files
 - **BrokenProcessPool**: import from `concurrent.futures.process` (NOT top-level concurrent.futures)
 - **Essentia**: .opus needs ffmpeg pre-conversion; >2 channels must be skipped
 - **Upgrade track swap**: raw SQL with PRAGMA foreign_keys=OFF (ORM cascade breaks TrackAnalysis PK)
-- **Rate limiter**: excludes /api/download/ and /rest/ paths
+- **Rate limiter**: excludes /api/download/, /api/jobs, and /rest/ paths
 - **Sort security**: allowlist sets prevent arbitrary getattr() on model attributes
 - **URLSearchParams**: filter out undefined/null values (converts to literal "undefined")
 
@@ -88,3 +91,8 @@ deploy/                # Systemd service files
 - CSS variables in app.css (--bg-primary, --bg-secondary, etc.)
 - Inter font via Google Fonts; lucide-svelte icons
 - WebSocket connected in +layout.svelte on mount
+- **Charts**: set `loading = false` BEFORE building charts — canvas elements are inside `{:else if data}` blocks and don't exist while loading
+- **DOM timing**: use `await tick()` (not setTimeout) to wait for Svelte 5 DOM updates before accessing `bind:this` refs
+- **Search bar**: unified SearchDropdown fires 3 parallel search lanes (library, Last.fm, P2P) with AbortController cancellation
+- **Job polling**: discover page uses single shared 5s polling timer for all jobs — never spawn parallel polling loops
+- **Music Map**: 7 view modes (genre, plays, energy, mood, era, quality, dupes), vibe layout via TSNE, filters, tooltips, artist thumbnails
