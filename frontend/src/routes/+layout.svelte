@@ -6,6 +6,7 @@
 	import Toast from '../components/Toast.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/websocket.js';
+	import { initCast } from '$lib/cast.js';
 	import { goto } from '$app/navigation';
 	import { Menu } from 'lucide-svelte';
 	import { sidebarOpen, isPlaying, showShortcuts, playNext, playPrev, isMobile } from '$lib/stores.js';
@@ -15,6 +16,7 @@
 	let mql;
 	onMount(() => {
 		connectWebSocket();
+		initCast();
 		mql = window.matchMedia('(max-width: 767px)');
 		$isMobile = mql.matches;
 		mql.addEventListener('change', (e) => { $isMobile = e.matches; });

@@ -2,7 +2,9 @@
 	import { currentTrack, isPlaying, addToast, playNext, playPrev, trackQueue, queueIndex } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 	import { formatDuration } from '$lib/utils.js';
-	import { Play, Pause, Music, Heart, Pencil, SkipBack, SkipForward } from 'lucide-svelte';
+	import { isCastAvailable, isCasting, castDeviceName, startCasting, stopCasting, castLoadMedia, castPlay, castPause, castSeek, getCastCurrentTime } from '$lib/cast.js';
+	import { onDestroy } from 'svelte';
+	import { Play, Pause, Music, Heart, Pencil, SkipBack, SkipForward, Cast } from 'lucide-svelte';
 
 	let hasPrev = $derived($trackQueue.length > 0 && $queueIndex > 0);
 	let hasNext = $derived($trackQueue.length > 0 && $queueIndex < $trackQueue.length - 1);
@@ -82,6 +84,11 @@
 	let duration = $state(0);
 
 	function togglePlay() {
+		if ($isCasting) {
+			if ($isPlaying) { castPause(); } else { castPlay(); }
+			$isPlaying = !$isPlaying;
+			return;
+		}
 		if (!audio) return;
 		if ($isPlaying) {
 			audio.pause();
@@ -92,26 +99,38 @@
 	}
 
 	function seek(e) {
-		if (!audio || !duration) return;
+		if (!duration) return;
 		const rect = e.currentTarget.getBoundingClientRect();
 		const pct = (e.clientX - rect.left) / rect.width;
-		audio.currentTime = pct * duration;
+		const time = pct * duration;
+		if ($isCasting) {
+			castSeek(time);
+			currentTime = time;
+		} else {
+			if (!audio) return;
+			audio.currentTime = time;
+		}
 	}
 
 	let lastTrackId = $state(null);
 	$effect(() => {
-		if ($currentTrack && audio && $currentTrack.id !== lastTrackId) {
+		if ($currentTrack && $currentTrack.id !== lastTrackId) {
 			lastTrackId = $currentTrack.id;
-			audio.src = `/rest/stream?id=${$currentTrack.id}&v=1.16.1&c=zonik-web`;
-			audio.play();
+			if ($isCasting) {
+				castLoadMedia($currentTrack, 0);
+				if (audio) audio.pause();
+			} else if (audio) {
+				audio.src = `/rest/stream?id=${$currentTrack.id}&v=1.16.1&c=zonik-web`;
+				audio.play();
+			}
 			$isPlaying = true;
-			// Record play count
 			api.recordPlay($currentTrack.id).catch(() => {});
 		}
 	});
 
 	// React to external isPlaying changes (e.g. keyboard shortcut)
 	$effect(() => {
+		if ($isCasting) return;
 		if (audio && $currentTrack) {
 			if ($isPlaying && audio.paused) {
 				audio.play();
@@ -120,6 +139,34 @@
 			}
 		}
 	});
+
+	// Cast time sync polling
+	let castPollInterval = null;
+	$effect(() => {
+		if ($isCasting && $isPlaying) {
+			castPollInterval = setInterval(() => {
+				currentTime = getCastCurrentTime();
+			}, 1000);
+		} else {
+			if (castPollInterval) { clearInterval(castPollInterval); castPollInterval = null; }
+		}
+	});
+	onDestroy(() => { if (castPollInterval) clearInterval(castPollInterval); });
+
+	function toggleCast() {
+		if ($isCasting) {
+			const pos = stopCasting();
+			if (audio && $currentTrack) {
+				audio.currentTime = pos;
+				audio.play();
+				$isPlaying = true;
+			}
+		} else {
+			const pos = audio ? audio.currentTime : 0;
+			if (audio) audio.pause();
+			startCasting($currentTrack, pos);
+		}
+	}
 </script>
 
 <!-- Mobile: 2-row stacked layout; Desktop: single row -->
@@ -147,6 +194,9 @@
 			<div class="flex-1 min-w-0 sm:max-w-[200px]">
 				<p class="text-sm font-medium text-[var(--text-primary)] truncate">{$currentTrack.title}</p>
 				<p class="text-xs text-[var(--text-secondary)] truncate">{$currentTrack.artist || 'Unknown'}</p>
+				{#if $isCasting}
+					<p class="text-[10px] text-[var(--color-accent)] truncate">Casting to {$castDeviceName}</p>
+				{/if}
 			</div>
 
 			<!-- Playback controls -->
@@ -188,6 +238,13 @@
 					title={isFav ? 'Unfavorite' : 'Favorite'}>
 					<Heart class="w-4 h-4" fill={isFav ? 'currentColor' : 'none'} />
 				</button>
+				{#if $isCastAvailable}
+					<button onclick={toggleCast}
+						class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-md transition-colors {$isCasting ? 'text-[var(--color-accent)]' : 'text-[var(--text-muted)] hover:text-white'}"
+						title={$isCasting ? `Casting to ${$castDeviceName}` : 'Cast to device'}>
+						<Cast class="w-4 h-4" />
+					</button>
+				{/if}
 				<button onclick={openEdit}
 					class="hidden sm:flex min-w-[44px] min-h-[44px] items-center justify-center rounded-md text-[var(--text-muted)] hover:text-white transition-colors"
 					title="Edit track info">
@@ -266,7 +323,7 @@
 	ontimeupdate={() => { currentTime = audio.currentTime; }}
 	onloadedmetadata={() => { duration = audio.duration; }}
 	ondurationchange={() => { duration = audio.duration; }}
-	onended={() => { if (hasNext) { playNext(); } else { $isPlaying = false; currentTime = 0; } }}
+	onended={() => { if (!$isCasting) { if (hasNext) { playNext(); } else { $isPlaying = false; currentTime = 0; } } }}
 	onpause={() => { $isPlaying = false; }}
 	onplay={() => { $isPlaying = true; }}>
 </audio>
