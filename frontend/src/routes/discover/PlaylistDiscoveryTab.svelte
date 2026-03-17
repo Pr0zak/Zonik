@@ -1,12 +1,14 @@
 <script>
 	import { addToast } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
-	import { Loader2, RefreshCw, ListMusic, ExternalLink, Download, Check, X, ChevronLeft, ArrowDown } from 'lucide-svelte';
+	import { Loader2, RefreshCw, ListMusic, ExternalLink, Download, Check, X, ChevronLeft, Music, Play, Pause } from 'lucide-svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
+
+	let { getArtwork, playPreview, previewKey } = $props();
 
 	let playlists = $state([]);
 	let loading = $state(false);
@@ -194,11 +196,36 @@
 					<tbody>
 						{#each playlistTracks as t, i}
 							{@const status = trackStatus[trackKey(t)]}
-							<tr class="border-b border-[var(--border-subtle)] last:border-0 hover:bg-[var(--bg-hover)] transition-colors">
+							{@const art = getArtwork(t.artist, t.title)}
+							{@const tKey = trackKey(t)}
+							<tr class="border-b border-[var(--border-subtle)] last:border-0 transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
 								<td class="px-4 py-3 text-[var(--text-disabled)] font-mono text-xs">{i + 1}</td>
 								<td class="px-4 py-3">
-									<span class="font-medium text-[var(--text-primary)] truncate block">{t.title}</span>
-									<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
+									<div class="flex items-center gap-3">
+										<button onclick={() => playPreview(art?.preview, tKey)}
+											class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+											{#if art?.image}
+												<img src={art.image} alt="" class="w-full h-full object-cover" />
+											{:else}
+												<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+													<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+												</div>
+											{/if}
+											{#if art?.preview}
+												<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
+													{#if previewKey === tKey}
+														<Pause class="w-3.5 h-3.5 text-white" />
+													{:else}
+														<Play class="w-3.5 h-3.5 text-white" />
+													{/if}
+												</div>
+											{/if}
+										</button>
+										<div class="min-w-0">
+											<span class="font-medium text-[var(--text-primary)] truncate block">{t.title}</span>
+											<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
+										</div>
+									</div>
 								</td>
 								<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
 								<td class="px-4 py-3 text-right">

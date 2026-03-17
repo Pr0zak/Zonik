@@ -1757,7 +1757,7 @@
 			{/if}
 
 		{:else if activeTab === 'playlists'}
-			<PlaylistDiscoveryTab />
+			<PlaylistDiscoveryTab {getArtwork} {playPreview} {previewKey} />
 		{/if}
 	</div>
 
