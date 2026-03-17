@@ -165,6 +165,12 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
     finally:
         job.finished_at = datetime.utcnow()
 
+        # Capture values from ORM object BEFORE closing session —
+        # after rollback/close, the detached object can't refresh attributes
+        final_status = job.status
+        final_result = job.result
+        final_finished = job.finished_at
+
         # Close the main session FIRST to release the SQLite write lock,
         # then use a fresh session for final updates
         try:
@@ -185,39 +191,46 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                 )
                 await final_db.execute(
                     _update(Job).where(Job.id == job_id).values(
-                        status=job.status, result=job.result,
-                        finished_at=job.finished_at,
+                        status=final_status, result=final_result,
+                        finished_at=final_finished,
                     )
                 )
                 await final_db.commit()
         except Exception as fin_err:
             log.error(f"Failed to save final job status for {task_name}: {fin_err}")
-        await broadcast_job_update({"id": job_id, "type": task_name, "status": job.status, "progress": 1, "total": 1, "description": desc})
+        await broadcast_job_update({"id": job_id, "type": task_name, "status": final_status, "progress": 1, "total": 1, "description": desc})
 
         # Auto-download missing tracks if configured
         if (
-            job.status == "completed"
+            final_status == "completed"
             and task_config.get("auto_download")
             and task_name in ("lastfm_top_tracks", "discover_similar", "upgrade_scan", "remix_discovery")
-            and job.tracks
         ):
             try:
-                missing = json.loads(job.tracks)
-                if missing:
-                    await _auto_download_missing(missing, task_name)
+                tracks_json = json.loads(final_result or "{}").get("tracks") if final_result else None
+                # tracks were stored on job.tracks — read from a fresh session
+                async with async_session() as dl_db:
+                    row = (await dl_db.execute(
+                        select(Job.tracks).where(Job.id == job_id)
+                    )).scalar_one_or_none()
+                if row:
+                    missing = json.loads(row)
+                    if missing:
+                        await _auto_download_missing(missing, task_name)
             except Exception as e:
                 log.error(f"Auto-download after {task_name} failed: {e}")
 
         # Auto-download top recommendations if configured
         if (
-            job.status == "completed"
+            final_status == "completed"
             and task_config.get("auto_download")
             and task_name == "recommendation_refresh"
         ):
             try:
                 min_score = task_config.get("min_score", 0.5)
                 max_downloads = task_config.get("max_downloads", 10)
-                await _auto_download_recommendations(db, min_score, max_downloads)
+                async with async_session() as dl_db:
+                    await _auto_download_recommendations(dl_db, min_score, max_downloads)
             except Exception as e:
                 log.error(f"Auto-download recommendations failed: {e}")
 
