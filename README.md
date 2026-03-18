@@ -4,7 +4,7 @@
 
 <p align="center">
   Self-hosted music backend with OpenSubsonic API.<br>
-  Track-focused library management with smart discovery, Soulseek downloads, audio analysis, and vibe-based recommendations.
+  Track-focused library management with smart discovery, Soulseek downloads, audio analysis, and AI-powered recommendations.
 </p>
 
 <p align="center">
@@ -15,28 +15,32 @@
 
 - **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for Symfonium compatibility
 - **Track-focused** - Download individual tracks, not full discographies
-- **Soulseek downloads** - Native P2P client with multi-strategy search and quality scoring
-- **Last.fm integration** - Discovery, scrobbling, loved track sync
+- **Native Soulseek client** - Built-in P2P client with multi-strategy search and quality scoring
+- **Last.fm integration** - Discovery, scrobbling, loved track sync, similar artists/tracks
 - **Audio analysis** - BPM, key, energy, danceability via Essentia
 - **Vibe embeddings** - CLAP-based 512-dim audio embeddings for similarity search
-- **Echo Match** - Find tracks with similar vibes
-- **Smart discovery** - Expand library from favorites using Last.fm similar tracks/artists
+- **AI recommendations** - Claude-powered taste profiling, playlist curation, and track suggestions
+- **Playlist discovery** - Find and import playlists from Spotify/Deezer, preview tracks, download missing
+- **Echo Match** - Find tracks with similar vibes using audio embeddings
+- **Remix discovery** - Find remixes, edits, and versions of library tracks via Last.fm
+- **Track upgrades** - Automatically find and replace low-quality tracks with better versions
 - **Stream transcoding** - On-the-fly ffmpeg transcoding (FLAC to MP3/OGG/Opus)
 - **Scheduled tasks** - Automated library scan, enrichment, discovery, playlist generation
-- **Modern web UI** - SvelteKit + Tailwind CSS dark theme
+- **Modern web UI** - SvelteKit 5 + Tailwind CSS dark theme with 16 routes
 
 ## Architecture
 
 ```
-FastAPI (backend) ─── SQLite (WAL) ─── ARQ + Redis (workers)
-     │                                       │
-SvelteKit (frontend)                   Background tasks:
-     │                                  - Downloads
-OpenSubsonic API ──── Symfonium        - Analysis
-     │                                  - Enrichment
-     ├── slskd (Soulseek)              - Discovery
-     ├── Last.fm API                   - Scheduler
-     └── MusicBrainz
+FastAPI (backend) ─── SQLite (WAL+FTS5) ─── ARQ + Redis (workers)
+     │                                             │
+SvelteKit (frontend)                         Background tasks:
+     │                                        - Soulseek downloads
+OpenSubsonic API ──── Symfonium              - Audio analysis (Essentia)
+     │                                        - Vibe embeddings (CLAP)
+     ├── Native Soulseek P2P                 - AI recommendations
+     ├── Last.fm API                         - Discovery & enrichment
+     ├── Spotify / Deezer APIs               - Scheduled jobs
+     └── Claude API (AI features)
 ```
 
 ## Quick Start
@@ -74,8 +78,8 @@ Edit `zonik.toml` (or `/etc/zonik/zonik.toml` in production):
 music_dir = "/music"
 
 [soulseek]
-slskd_url = "http://your-slskd-host:5030"
-slskd_api_key = "your-key"
+username = "your-username"
+password = "your-password"
 
 [lastfm]
 api_key = "your-key"
@@ -105,7 +109,8 @@ See [API Reference](docs/api.md) for the full list.
 | Audio Tags | mutagen |
 | Audio Analysis | Essentia |
 | Vibe Embeddings | CLAP |
-| Metadata | MusicBrainz + Last.fm |
+| AI | Claude API |
+| Metadata | Last.fm + Spotify + Deezer |
 | Downloads | Native Soulseek P2P client |
 
 ## License
