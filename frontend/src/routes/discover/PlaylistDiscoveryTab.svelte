@@ -1,7 +1,8 @@
 <script>
 	import { addToast } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
-	import { Loader2, RefreshCw, ListMusic, ExternalLink, Download, Check, X, ChevronLeft, Music, Play, Pause } from 'lucide-svelte';
+	import { onMount } from 'svelte';
+	import { Loader2, RefreshCw, ListMusic, ExternalLink, Download, Check, X, ChevronLeft, Music, Play, Pause, Search, Shuffle } from 'lucide-svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
@@ -10,24 +11,123 @@
 
 	let { getArtwork, playPreview, previewKey } = $props();
 
+	// --- Taste-based discover ---
 	let playlists = $state([]);
 	let loading = $state(false);
 	let queries = $state([]);
 
-	// Track detail view
+	// --- Keyword search ---
+	let searchQuery = $state('');
+	let searchResults = $state([]);
+	let searchLoading = $state(false);
+
+	// --- Popular ---
+	let popularPlaylists = $state([]);
+	let popularLoading = $state(false);
+
+	// --- Random ---
+	let randomPlaylists = $state([]);
+	let randomLoading = $state(false);
+
+	// --- Track detail view ---
 	let selectedPlaylist = $state(null);
 	let playlistTracks = $state([]);
 	let tracksLoading = $state(false);
 	let trackStatus = $state({});
 
+	const RANDOM_QUERIES = [
+		'top hits 2025', 'chill vibes', 'workout energy', 'road trip', 'indie gems', 'jazz essentials',
+		'throwback classics', 'dance party', 'lo-fi beats', 'acoustic sessions', 'summer anthems',
+		'hip hop bangers', 'rock classics', 'electronic mix', 'r&b soul', 'folk acoustic',
+		'punk rock', 'heavy metal', 'latin fire', 'pop hits', 'blues legends', 'reggae roots',
+		'ambient chill', 'classical focus', 'k-pop', 'country roads', '90s nostalgia', 'new music friday',
+	];
+
+	function pickRandom(arr, n) {
+		const shuffled = [...arr].sort(() => Math.random() - 0.5);
+		return shuffled.slice(0, n);
+	}
+
 	function trackKey(t) {
 		return `${t.artist}::${t.title}`.toLowerCase();
 	}
 
+	// --- Search ---
+	async function searchPlaylists() {
+		if (!searchQuery.trim()) return;
+		searchLoading = true;
+		searchResults = [];
+		try {
+			const data = await api.searchExternalPlaylists(searchQuery.trim(), null, 20);
+			searchResults = data.results || [];
+		} catch (e) {
+			addToast('Search failed: ' + e.message, 'error');
+		} finally {
+			searchLoading = false;
+		}
+	}
+
+	function handleSearchKeydown(e) {
+		if (e.key === 'Enter') searchPlaylists();
+	}
+
+	// --- Popular ---
+	async function loadPopularPlaylists() {
+		popularLoading = true;
+		try {
+			const popularQueries = ['top 50 global', 'viral hits', 'most popular 2025'];
+			const seen = new Set();
+			const results = [];
+			for (const q of popularQueries) {
+				try {
+					const data = await api.searchExternalPlaylists(q, null, 6);
+					for (const pl of (data.results || [])) {
+						const key = `${pl.source}:${pl.id}`;
+						if (!seen.has(key)) {
+							seen.add(key);
+							results.push(pl);
+						}
+					}
+				} catch {}
+			}
+			popularPlaylists = results.slice(0, 10);
+		} catch {}
+		finally { popularLoading = false; }
+	}
+
+	// --- Random ---
+	async function loadRandomPlaylists() {
+		randomLoading = true;
+		try {
+			const picks = pickRandom(RANDOM_QUERIES, 3);
+			const seen = new Set();
+			const results = [];
+			for (const q of picks) {
+				try {
+					const data = await api.searchExternalPlaylists(q, null, 6);
+					for (const pl of (data.results || [])) {
+						const key = `${pl.source}:${pl.id}`;
+						if (!seen.has(key)) {
+							seen.add(key);
+							pl.matched_query = q;
+							results.push(pl);
+						}
+					}
+				} catch {}
+			}
+			randomPlaylists = results.slice(0, 12);
+		} catch {}
+		finally { randomLoading = false; }
+	}
+
+	onMount(() => {
+		loadPopularPlaylists();
+		loadRandomPlaylists();
+	});
+
+	// --- Taste discover ---
 	async function loadPlaylists() {
 		loading = true;
-		selectedPlaylist = null;
-		playlistTracks = [];
 		try {
 			const data = await api.discoverPlaylists(20);
 			playlists = data.playlists || [];
@@ -42,6 +142,7 @@
 		finally { loading = false; }
 	}
 
+	// --- Open playlist detail ---
 	async function openPlaylist(pl) {
 		selectedPlaylist = pl;
 		tracksLoading = true;
@@ -67,6 +168,7 @@
 		playlistTracks = [];
 	}
 
+	// --- Downloads ---
 	async function downloadTrack(t) {
 		const key = trackKey(t);
 		trackStatus[key] = 'downloading';
@@ -77,15 +179,10 @@
 				body: JSON.stringify({ artist: t.artist, track: t.title, source: 'playlist' }),
 			});
 			const data = await res.json();
-			if (data.error) {
-				trackStatus[key] = 'failed';
-				return;
-			}
+			if (data.error) { trackStatus[key] = 'failed'; return; }
 			trackStatus[key] = 'queued';
 			pollJob(data.job_id, key);
-		} catch {
-			trackStatus[key] = 'failed';
-		}
+		} catch { trackStatus[key] = 'failed'; }
 	}
 
 	async function pollJob(jobId, key) {
@@ -103,9 +200,7 @@
 	async function downloadAllMissing() {
 		const missing = playlistTracks.filter(t => !t.in_library && !trackStatus[trackKey(t)]);
 		if (!missing.length) return;
-
 		for (const t of missing) trackStatus[trackKey(t)] = 'queued';
-
 		let started = 0;
 		for (const t of missing) {
 			try {
@@ -115,16 +210,11 @@
 					body: JSON.stringify({ artist: t.artist, track: t.title, source: 'playlist' }),
 				});
 				const data = await res.json();
-				if (data.error) {
-					trackStatus[trackKey(t)] = 'failed';
-					continue;
-				}
+				if (data.error) { trackStatus[trackKey(t)] = 'failed'; continue; }
 				trackStatus[trackKey(t)] = 'downloading';
 				pollJob(data.job_id, trackKey(t));
 				started++;
-			} catch {
-				trackStatus[trackKey(t)] = 'failed';
-			}
+			} catch { trackStatus[trackKey(t)] = 'failed'; }
 		}
 		addToast(`Queued ${started} downloads`, 'success');
 	}
@@ -136,6 +226,42 @@
 		playlistTracks.filter(t => t.in_library).length
 	);
 </script>
+
+{#snippet playlistCard(pl)}
+	<button onclick={() => openPlaylist(pl)} class="block w-full text-left">
+		<Card hover padding="p-3">
+			<div class="flex items-center gap-3">
+				{#if pl.image_url}
+					<img src={pl.image_url} alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+				{:else}
+					<div class="w-12 h-12 rounded-lg bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
+						<ListMusic class="w-5 h-5 text-[var(--text-disabled)]" />
+					</div>
+				{/if}
+				<div class="flex-1 min-w-0">
+					<p class="text-sm font-medium text-[var(--text-primary)] truncate">{pl.name}</p>
+					<p class="text-xs text-[var(--text-muted)] truncate">
+						{pl.owner} &middot; {pl.track_count} tracks &middot;
+						<span class="capitalize">{pl.source.replace('_', ' ')}</span>
+					</p>
+					{#if pl.matched_query}
+						<span class="text-xs text-[var(--text-disabled)]">{pl.matched_query}</span>
+					{/if}
+				</div>
+				{#if pl.ai_score}
+					<div class="flex flex-col items-end flex-shrink-0">
+						<span class="text-xs font-mono {pl.ai_score >= 0.7 ? 'text-emerald-400' : pl.ai_score >= 0.4 ? 'text-amber-400' : 'text-[var(--text-muted)]'}">{Math.round(pl.ai_score * 100)}%</span>
+						{#if pl.ai_reason}
+							<span class="text-[9px] text-[var(--text-disabled)] max-w-28 truncate" title={pl.ai_reason}>{pl.ai_reason}</span>
+						{/if}
+					</div>
+				{:else}
+					<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
+				{/if}
+			</div>
+		</Card>
+	</button>
+{/snippet}
 
 {#if selectedPlaylist}
 	<!-- Track detail view -->
@@ -267,11 +393,70 @@
 	{/if}
 
 {:else}
-	<!-- Playlist grid view -->
-	<div class="flex items-center gap-3 mb-4">
+	<!-- Search bar -->
+	<div class="flex items-center gap-2 mb-5">
+		<div class="relative flex-1">
+			<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
+			<input
+				type="text"
+				bind:value={searchQuery}
+				onkeydown={handleSearchKeydown}
+				placeholder="Search playlists on Spotify & Deezer..."
+				class="w-full pl-9 pr-3 py-2 text-sm bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-interactive)]"
+			/>
+		</div>
+		<Button variant="ghost" onclick={searchPlaylists} disabled={searchLoading || !searchQuery.trim()}>
+			{#if searchLoading}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Search class="w-4 h-4" />{/if}
+			Search
+		</Button>
+	</div>
+
+	<!-- Search results -->
+	{#if searchLoading}
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
+			{#each Array(6) as _}
+				<Skeleton class="h-20 rounded-lg" />
+			{/each}
+		</div>
+	{:else if searchResults.length}
+		<div class="mb-6">
+			<span class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-3 block">
+				Search Results ({searchResults.length})
+			</span>
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#each searchResults as pl}
+					{@render playlistCard(pl)}
+				{/each}
+			</div>
+		</div>
+	{/if}
+
+	<!-- Popular playlists -->
+	{#if popularLoading && !popularPlaylists.length}
+		<div class="mb-6">
+			<span class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-3 block">Popular</span>
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#each Array(4) as _}
+					<Skeleton class="h-20 rounded-lg" />
+				{/each}
+			</div>
+		</div>
+	{:else if popularPlaylists.length}
+		<div class="mb-6">
+			<span class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mb-3 block">Popular</span>
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#each popularPlaylists as pl}
+					{@render playlistCard(pl)}
+				{/each}
+			</div>
+		</div>
+	{/if}
+
+	<!-- Taste-based discover -->
+	<div class="flex items-center gap-3 mb-3">
 		<Button variant="ghost" onclick={loadPlaylists} disabled={loading}>
 			{#if loading}<Loader2 class="w-4 h-4 animate-spin" />{:else}<RefreshCw class="w-4 h-4" />{/if}
-			Discover
+			For You
 		</Button>
 		{#if queries.length}
 			<span class="text-xs text-[var(--text-muted)]">Based on: {queries.join(', ')}</span>
@@ -287,46 +472,39 @@
 	{:else if playlists.length}
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 			{#each playlists as pl}
-				<button onclick={() => openPlaylist(pl)} class="block w-full text-left">
-					<Card hover padding="p-3">
-						<div class="flex items-center gap-3">
-							{#if pl.image_url}
-								<img src={pl.image_url} alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
-							{:else}
-								<div class="w-12 h-12 rounded-lg bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
-									<ListMusic class="w-5 h-5 text-[var(--text-disabled)]" />
-								</div>
-							{/if}
-							<div class="flex-1 min-w-0">
-								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{pl.name}</p>
-								<p class="text-xs text-[var(--text-muted)] truncate">
-									{pl.owner} &middot; {pl.track_count} tracks &middot;
-									<span class="capitalize">{pl.source.replace('_', ' ')}</span>
-								</p>
-								{#if pl.matched_query}
-									<span class="text-xs text-[var(--text-disabled)]">matched: {pl.matched_query}</span>
-								{/if}
-							</div>
-							{#if pl.ai_score}
-								<div class="flex flex-col items-end flex-shrink-0">
-									<span class="text-xs font-mono {pl.ai_score >= 0.7 ? 'text-emerald-400' : pl.ai_score >= 0.4 ? 'text-amber-400' : 'text-[var(--text-muted)]'}">{Math.round(pl.ai_score * 100)}%</span>
-									{#if pl.ai_reason}
-										<span class="text-[9px] text-[var(--text-disabled)] max-w-28 truncate" title={pl.ai_reason}>{pl.ai_reason}</span>
-									{/if}
-								</div>
-							{:else}
-								<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)] flex-shrink-0" />
-							{/if}
-						</div>
-					</Card>
-				</button>
+				{@render playlistCard(pl)}
 			{/each}
 		</div>
-	{:else}
-		<Card>
-			<EmptyState title="No playlists discovered" description="Click Discover to find playlists matching your library taste.">
-				{#snippet icon()}<ListMusic class="w-12 h-12" />{/snippet}
-			</EmptyState>
-		</Card>
 	{/if}
+
+	<!-- Random / Explore -->
+	<div class="mt-6">
+		<div class="flex items-center justify-between mb-3">
+			<span class="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">Explore</span>
+			<button onclick={loadRandomPlaylists} disabled={randomLoading}
+				class="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors flex items-center gap-1">
+				{#if randomLoading}<Loader2 class="w-3 h-3 animate-spin" />{:else}<Shuffle class="w-3 h-3" />{/if}
+				Shuffle
+			</button>
+		</div>
+		{#if randomLoading && !randomPlaylists.length}
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#each Array(6) as _}
+					<Skeleton class="h-20 rounded-lg" />
+				{/each}
+			</div>
+		{:else if randomPlaylists.length}
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+				{#each randomPlaylists as pl}
+					{@render playlistCard(pl)}
+				{/each}
+			</div>
+		{:else}
+			<Card>
+				<EmptyState title="No playlists" description="Could not load playlists. Check your Spotify/Deezer credentials in Settings.">
+					{#snippet icon()}<ListMusic class="w-12 h-12" />{/snippet}
+				</EmptyState>
+			</Card>
+		{/if}
+	</div>
 {/if}

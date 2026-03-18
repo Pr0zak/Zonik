@@ -9,6 +9,58 @@ Enable/disable entire collections of music (e.g., Christmas, Techno/Dance/Dub, M
 
 ---
 
+## Code Review Findings
+
+### Critical (Security & Data Integrity)
+
+- [ ] **Add missing `ondelete="CASCADE"` to FK relationships**
+  - `backend/models/favorite.py` — track_id, album_id, artist_id FKs
+  - `backend/models/bookmark.py` — user_id, track_id FKs
+  - `backend/models/play_queue.py` — user_id FK (CASCADE), current_track_id FK (SET NULL)
+  - `backend/models/track_upgrade.py` — track_id FK
+  - Generate Alembic migration after
+
+- [ ] **Add missing database indexes**
+  - `backend/models/album.py` — `index=True` on `artist_id`
+  - `backend/models/bookmark.py` — `index=True` on `user_id`
+  - `backend/models/playlist.py` — `index=True` on `user_id`
+  - `backend/models/track_upgrade.py` — `index=True` on `status`
+  - `backend/models/recommendation.py` — `index=True` on `status`
+  - `backend/models/user.py` — `index=True` on `subsonic_api_key`
+
+- [ ] **Fix detached ORM reads in download.py**
+  - After `db.expunge(job)`, capture attributes into local variables before using them
+  - Violates CLAUDE.md pitfall: "Never read attributes from a detached/expired ORM object after session close"
+
+### Performance
+
+- [ ] **Unbounded job query in download.py `_find_existing_download()`** — loads ALL jobs to find one match; add SQL WHERE + LIMIT 1
+- [ ] **Bulk track deletion in tracks.py `bulk_delete_tracks()`** — 9 DELETE queries per track in loop; use IN clause
+- [ ] **Rate limiter memory leak** — `backend/middleware/rate_limiter.py` `_buckets` grows unbounded; evict stale entries
+- [ ] **Scanner `rglob("*")`** — scans entire tree then filters; use targeted glob for audio extensions
+- [ ] **`find_duplicates()` loads ALL tracks into memory** — `backend/services/cleanup.py`; use SQL GROUP BY + HAVING
+
+### Frontend
+
+- [ ] **Fix polling/timer leaks on navigation**
+  - `discover/+page.svelte` — `pollJob()` loops, `artworkFlushTimer`, `_pollTimer` continue after unmount
+  - `discover/PlaylistDiscoveryTab.svelte` — same `pollJob()` leak
+  - Cancel on `onDestroy`
+
+- [ ] **Fix media query listener leak in +layout.svelte** — `removeEventListener` passes new function reference; store and reuse
+- [ ] **Extract duplicated download/poll helpers** — `trackKey()`, `pollJob()`, `downloadTrack()` duplicated; extract to `$lib/download.js`
+- [ ] **Missing AbortController cleanup** — discover page fetch calls lack signal cancellation
+
+### Code Hygiene
+
+- [ ] **Consolidate `FORMAT_QUALITY`** — different scales in scanner.py (1-9) vs cleanup.py (10-90)
+- [ ] **Remove unused imports** — `lists.py` selectinload, `playlist_import.py` urlparse, `discovery.py` hashlib
+- [ ] **Add logging to silent exception handlers** — `playlist_import.py:101`, `soulseek.py:216`, `remix_discovery.py:87`
+- [ ] **Input validation on Subsonic API params** — max_bitrate, time_offset, rating range, position, size bounds
+- [ ] **Hardcoded secret key** — `config.py` `secret_key = "change-me"` — log warning if unchanged
+
+---
+
 ## Low Priority
 
 ### Pushover Notifications
