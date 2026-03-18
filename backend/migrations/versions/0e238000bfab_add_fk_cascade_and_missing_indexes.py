@@ -31,11 +31,17 @@ def upgrade() -> None:
     conn = op.get_bind()
     is_sqlite = conn.dialect.name == "sqlite"
 
-    # --- Simple indexes (work on both SQLite and PostgreSQL) ---
-    op.create_index('ix_albums_artist_id', 'albums', ['artist_id'])
-    op.create_index('ix_playlists_user_id', 'playlists', ['user_id'])
-    op.create_index('ix_users_subsonic_api_key', 'users', ['subsonic_api_key'])
-    op.create_index('ix_recommendations_status', 'recommendations', ['status'])
+    # --- New indexes (IF NOT EXISTS for idempotency) ---
+    if is_sqlite:
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_albums_artist_id ON albums (artist_id)"))
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_playlists_user_id ON playlists (user_id)"))
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_users_subsonic_api_key ON users (subsonic_api_key)"))
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_recommendations_status ON recommendations (status)"))
+    else:
+        op.create_index('ix_albums_artist_id', 'albums', ['artist_id'])
+        op.create_index('ix_playlists_user_id', 'playlists', ['user_id'])
+        op.create_index('ix_users_subsonic_api_key', 'users', ['subsonic_api_key'])
+        op.create_index('ix_recommendations_status', 'recommendations', ['status'])
 
     if is_sqlite:
         # SQLite: recreate tables with CASCADE FKs via raw SQL
@@ -56,7 +62,7 @@ def upgrade() -> None:
                 FOREIGN KEY(track_id) REFERENCES tracks (id) ON DELETE CASCADE
             )
         """, "id, user_id, track_id, position_ms, comment, created_at, updated_at")
-        op.create_index('ix_bookmarks_user_id', 'bookmarks', ['user_id'])
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_bookmarks_user_id ON bookmarks (user_id)"))
 
         # --- favorites: add CASCADE ---
         _sqlite_recreate_table('favorites', """
@@ -78,9 +84,9 @@ def upgrade() -> None:
             )
         """, "id, user_id, track_id, album_id, artist_id, starred_at")
         # Re-create existing indexes on favorites
-        op.create_index('ix_favorites_track_id', 'favorites', ['track_id'])
-        op.create_index('ix_favorites_album_id', 'favorites', ['album_id'])
-        op.create_index('ix_favorites_artist_id', 'favorites', ['artist_id'])
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_favorites_track_id ON favorites (track_id)"))
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_favorites_album_id ON favorites (album_id)"))
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_favorites_artist_id ON favorites (artist_id)"))
 
         # --- play_queue: CASCADE on user_id, SET NULL on current_track_id ---
         _sqlite_recreate_table('play_queue', """
@@ -124,8 +130,8 @@ def upgrade() -> None:
             )
         """, "id, track_id, original_format, original_bitrate, original_file_size, target_format, status, upgraded_format, upgraded_bitrate, upgraded_file_size, track_title, track_artist, reason, error_message, job_id, attempts, max_attempts, created_at, updated_at, completed_at")
         # Re-create existing indexes on track_upgrades
-        op.create_index('ix_track_upgrades_track_id', 'track_upgrades', ['track_id'])
-        op.create_index('ix_track_upgrades_status', 'track_upgrades', ['status'])
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_track_upgrades_track_id ON track_upgrades (track_id)"))
+        op.execute(sa.text("CREATE INDEX IF NOT EXISTS ix_track_upgrades_status ON track_upgrades (status)"))
 
     else:
         # PostgreSQL: use standard ALTER TABLE
