@@ -65,7 +65,10 @@ async def get_bookmarks(request: Request, db: AsyncSession = Depends(get_db)):
 async def create_bookmark(request: Request, db: AsyncSession = Depends(get_db)):
     params = dict(request.query_params)
     song_id = params.get("id")
-    position = int(params.get("position", 0))
+    try:
+        position = max(0, int(params.get("position", 0)))
+    except (ValueError, TypeError):
+        position = 0
     comment = params.get("comment")
 
     username = params.get("u", "admin")

@@ -14,6 +14,9 @@
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 	import PlaylistDiscoveryTab from './PlaylistDiscoveryTab.svelte';
 
+	// AbortController for in-flight fetches — cancelled on destroy
+	let _abortCtrl = new AbortController();
+
 	let activeTab = $state('foryou');
 
 	// Top Tracks state
@@ -129,6 +132,7 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ items: batch.map(b => ({ artist: b.artist, track: b.track })) }),
+				signal: _abortCtrl.signal,
 			}).then(r => r.json());
 			if (resp.results) {
 				artworkCache = { ...artworkCache, ...resp.results };
@@ -416,10 +420,12 @@
 				await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: r.artist, track: r.name, source: 'remix' })
+					body: JSON.stringify({ artist: r.artist, track: r.name, source: 'remix' }),
+					signal: _abortCtrl.signal,
 				});
 				trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'downloading';
-			} catch {
+			} catch (e) {
+				if (e.name === 'AbortError') return;
 				trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'failed';
 			}
 		}
@@ -471,6 +477,7 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery' }),
+				signal: _abortCtrl.signal,
 			});
 			const data = await res.json();
 			if (data.error) {
@@ -486,7 +493,9 @@
 
 	async function pollJob(jobId, key) {
 		for (let i = 0; i < 180; i++) {
+			if (_destroyed) return;
 			await new Promise(r => setTimeout(r, 2000));
+			if (_destroyed) return;
 			try {
 				const job = await fetch(`/api/jobs/${jobId}`).then(r => r.json());
 				if (job.status === 'completed') { trackStatus[key] = 'completed'; return; }
@@ -510,11 +519,13 @@
 				await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery' })
+					body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery' }),
+					signal: _abortCtrl.signal,
 				});
 				trackStatus[trackKey(t)] = 'downloading';
 				started++;
-			} catch {
+			} catch (e) {
+				if (e.name === 'AbortError') return;
 				trackStatus[trackKey(t)] = 'failed';
 			}
 		}
@@ -730,6 +741,7 @@
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ artist: rec.artist, track: rec.track, source: 'recommendation' }),
+				signal: _abortCtrl.signal,
 			});
 			const data = await res.json();
 			if (data.error) { trackStatus[key] = 'failed'; return; }
@@ -769,8 +781,14 @@
 		loadRecommendations();
 	});
 
+	let _destroyed = false;
+
 	onDestroy(() => {
+		_destroyed = true;
 		if (_pollTimer) clearInterval(_pollTimer);
+		if (artworkFlushTimer) clearTimeout(artworkFlushTimer);
+		if (previewAudio) { previewAudio.pause(); previewAudio = null; }
+		_abortCtrl.abort();
 	});
 </script>
 

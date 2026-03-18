@@ -14,7 +14,7 @@ class Album(CreatedAtMixin, Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    artist_id: Mapped[str | None] = mapped_column(String, ForeignKey("artists.id"))
+    artist_id: Mapped[str | None] = mapped_column(String, ForeignKey("artists.id"), index=True)
     year: Mapped[int | None] = mapped_column(Integer)
     genre: Mapped[str | None] = mapped_column(String)
     musicbrainz_id: Mapped[str | None] = mapped_column(String)

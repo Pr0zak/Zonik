@@ -41,7 +41,7 @@ frontend/
   src/routes/          # SvelteKit pages (16 routes)
   src/components/      # Sidebar, TopBar, Player, Toast, SearchDropdown
     ui/                # 11 reusable components (Button, Badge, Card, Modal, etc.)
-  src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js
+  src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js, download.js
 deploy/                # Systemd service files
 ```
 
@@ -57,16 +57,16 @@ deploy/                # Systemd service files
 ## Critical Pitfalls
 - **SQLite single-writer**: never hold async_session() during long ops (semaphore waits, downloads); use short-lived sessions + expunge()
 - **AsyncSession concurrent ops**: NEVER use asyncio.gather() with multiple queries on the same AsyncSession — run sequentially. For progress callbacks inside long tasks, use a separate async_session() to avoid conflicts with the main session.
-- **Scheduler finally block**: run_task's finally block uses a fresh async_session() because the main session may be in PendingRollbackError state after a failed task. Always import async_session in scheduler.py.
+- **Scheduler finally block**: run_task's finally block captures ORM values (status, result, finished_at) into local variables BEFORE db.rollback()/db.close(), then writes them via a fresh async_session(). Never read attributes from a detached/expired ORM object after session close.
 - **Playlist builders**: commit the delete of old playlist before inserting new tracks — SQLite FK checks fail if old+new coexist in same transaction. Join Favorite with Track to exclude stale references to deleted tracks.
 - **AsyncSession**: `exec_driver_sql` is NOT on AsyncSession — use `db.execute(text("..."))` instead
-- **Track deletion**: must delete from all 8 FK tables before Track (Favorite, TrackAnalysis, TrackEmbedding, PlayHistory, PlaylistTrack, Bookmark, TrackMood, TrackUpgrade) + FTS
+- **Track deletion**: FK CASCADE handles most child tables now (Favorite, Bookmark, PlaylistTrack, TrackUpgrade, PlayQueue). Still manually delete TrackAnalysis, TrackEmbedding, PlayHistory, TrackMood + FTS before Track (no CASCADE on those).
 - **Track model**: NO `bpm` column — BPM is on TrackAnalysis (requires outerjoin); uses `duration_seconds` not `duration`
 - **Svelte 5**: `{@const}` must be direct child of {#each}/{#if}, NOT inside component children
 - **BrokenProcessPool**: import from `concurrent.futures.process` (NOT top-level concurrent.futures)
 - **Essentia**: .opus needs ffmpeg pre-conversion; >2 channels must be skipped
 - **Upgrade track swap**: raw SQL with PRAGMA foreign_keys=OFF (ORM cascade breaks TrackAnalysis PK)
-- **Rate limiter**: excludes /api/download/, /api/jobs, and /rest/ paths
+- **Rate limiter**: excludes /api/download/, /api/jobs, and /rest/ paths; auto-evicts stale IPs every 1000 requests
 - **Sort security**: allowlist sets prevent arbitrary getattr() on model attributes
 - **URLSearchParams**: filter out undefined/null values (converts to literal "undefined")
 
@@ -94,5 +94,7 @@ deploy/                # Systemd service files
 - **Charts**: set `loading = false` BEFORE building charts — canvas elements are inside `{:else if data}` blocks and don't exist while loading
 - **DOM timing**: use `await tick()` (not setTimeout) to wait for Svelte 5 DOM updates before accessing `bind:this` refs
 - **Search bar**: unified SearchDropdown fires 3 parallel search lanes (library, Last.fm, P2P) with AbortController cancellation
-- **Job polling**: discover page uses single shared 5s polling timer for all jobs — never spawn parallel polling loops
+- **Job polling**: discover page uses single shared 5s polling timer for all jobs — never spawn parallel polling loops. All poll loops check `_destroyed` flag and stop on unmount.
+- **Download helpers**: shared `$lib/download.js` — `trackKey()`, `pollJob()`, `downloadAndPoll()` used by discover page and PlaylistDiscoveryTab
+- **AbortController**: discover page creates `_abortCtrl` and passes `signal` to all fetch calls; aborted on `onDestroy`
 - **Music Map**: 7 view modes (genre, plays, energy, mood, era, quality, dupes), vibe layout via TSNE, filters, tooltips, artist thumbnails

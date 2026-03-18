@@ -13,8 +13,8 @@ class Bookmark(TimestampMixin, Base):
     __tablename__ = "bookmarks"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"))
-    track_id: Mapped[str] = mapped_column(String, ForeignKey("tracks.id"))
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    track_id: Mapped[str] = mapped_column(String, ForeignKey("tracks.id", ondelete="CASCADE"))
     position_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str | None] = mapped_column(Text)
 

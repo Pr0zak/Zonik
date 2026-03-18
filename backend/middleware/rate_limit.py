@@ -26,6 +26,8 @@ class RateLimiter(BaseHTTPMiddleware):
         self.paths = paths or ["/api/"]
         self.exclude = exclude or ["/api/download/", "/api/jobs", "/rest/"]
         self._buckets: dict[str, tuple[float, float]] = defaultdict(lambda: (burst, time.monotonic()))
+        self._request_count = 0
+        self._cleanup_interval = 1000
 
     def _get_key(self, request: Request) -> str:
         """Rate limit key — by client IP."""
@@ -56,6 +58,13 @@ class RateLimiter(BaseHTTPMiddleware):
         self._buckets[key] = (tokens, now)
         return False
 
+    def _cleanup_stale_buckets(self):
+        """Evict bucket entries older than 60 seconds to prevent memory leak from unique IPs."""
+        now = time.monotonic()
+        stale_keys = [k for k, (_, last_time) in self._buckets.items() if now - last_time > 60]
+        for k in stale_keys:
+            del self._buckets[k]
+
     async def dispatch(self, request: Request, call_next):
         # Skip non-API paths and WebSocket
         if not self._should_limit(request.url.path):
@@ -64,6 +73,12 @@ class RateLimiter(BaseHTTPMiddleware):
         # Skip WebSocket upgrades
         if request.headers.get("upgrade", "").lower() == "websocket":
             return await call_next(request)
+
+        # Periodic cleanup of stale entries
+        self._request_count += 1
+        if self._request_count >= self._cleanup_interval:
+            self._request_count = 0
+            self._cleanup_stale_buckets()
 
         key = self._get_key(request)
         if not self._consume(key):

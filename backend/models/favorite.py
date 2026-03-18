@@ -13,9 +13,9 @@ class Favorite(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"))
-    track_id: Mapped[str | None] = mapped_column(String, ForeignKey("tracks.id"), index=True)
-    album_id: Mapped[str | None] = mapped_column(String, ForeignKey("albums.id"), index=True)
-    artist_id: Mapped[str | None] = mapped_column(String, ForeignKey("artists.id"), index=True)
+    track_id: Mapped[str | None] = mapped_column(String, ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
+    album_id: Mapped[str | None] = mapped_column(String, ForeignKey("albums.id", ondelete="CASCADE"), index=True)
+    artist_id: Mapped[str | None] = mapped_column(String, ForeignKey("artists.id", ondelete="CASCADE"), index=True)
     starred_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     track: Mapped["Track | None"] = relationship("Track")

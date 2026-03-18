@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import tomllib
 from pathlib import Path
 from functools import lru_cache
 
 from pydantic import BaseModel
+
+_log = logging.getLogger(__name__)
 
 
 class ServerConfig(BaseModel):
@@ -141,5 +144,8 @@ def get_settings() -> Settings:
         if path.exists():
             with open(path, "rb") as f:
                 data = tomllib.load(f)
-            return Settings(**data)
+            settings = Settings(**data)
+            if settings.server.secret_key == "change-me":
+                _log.warning("Using default secret_key 'change-me' — set server.secret_key in zonik.toml for production")
+            return settings
     return Settings()

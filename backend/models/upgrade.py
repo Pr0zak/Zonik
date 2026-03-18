@@ -12,7 +12,7 @@ class TrackUpgrade(Base):
     __tablename__ = "track_upgrades"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    track_id: Mapped[str] = mapped_column(String, ForeignKey("tracks.id"), index=True)
+    track_id: Mapped[str] = mapped_column(String, ForeignKey("tracks.id", ondelete="CASCADE"), index=True)
     original_format: Mapped[str] = mapped_column(String, nullable=False)
     original_bitrate: Mapped[int | None] = mapped_column(Integer)
     original_file_size: Mapped[int | None] = mapped_column(Integer)

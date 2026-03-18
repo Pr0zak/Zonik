@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import logging
 import re
-from urllib.parse import urlparse, parse_qs
-
 import httpx
 
 from backend.config import get_settings

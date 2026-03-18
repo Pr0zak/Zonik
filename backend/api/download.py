@@ -55,14 +55,17 @@ async def _save_job_obj(job):
 
 async def _find_existing_download(db: AsyncSession, artist: str, track: str) -> str | None:
     """Check if a pending/running download already exists for this artist+track. Returns job_id or None."""
+    artist_lower = artist.strip().lower()
+    track_lower = track.strip().lower()
+    # Filter by type+status in SQL and use LIKE to narrow candidates before Python scan
+    like_pattern = f"%{track_lower[:20]}%"
     result = await db.execute(
         select(Job.id, Job.tracks).where(
             Job.type == "download",
             Job.status.in_(["pending", "running"]),
-        )
+            Job.tracks.ilike(like_pattern),
+        ).limit(50)
     )
-    artist_lower = artist.strip().lower()
-    track_lower = track.strip().lower()
     for job_id, tracks_json in result.all():
         if not tracks_json:
             continue
@@ -256,7 +259,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
 
         # Wait for semaphore — no DB session held
         async with sem:
-            if job.status == "pending":
+            if initial_status == "pending":
                 job.status = "running"
                 await _save_job_obj(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
@@ -567,8 +570,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         job.result = json.dumps({"error": str(e)})
     finally:
         job.finished_at = datetime.utcnow()
+        # Capture status before save (avoid reading from detached ORM object later)
+        final_status = job.status
         await _save_job()
-        await broadcast_job_update({"id": job_id, "type": "download", "status": job.status, "progress": 1, "total": 1, "description": desc})
+        await broadcast_job_update({"id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1, "description": desc})
         # Clean up zero-byte and non-audio leftovers in download dir
         try:
             from backend.services.scanner import cleanup_download_dir

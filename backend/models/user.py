@@ -15,5 +15,5 @@ class User(CreatedAtMixin, Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
-    subsonic_api_key: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    subsonic_api_key: Mapped[str | None] = mapped_column(String, nullable=True, default=None, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)

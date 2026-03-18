@@ -121,8 +121,8 @@ async def remove_orphaned_tracks(db: AsyncSession) -> dict:
 
 # --- Deduplication ---
 
-# Quality ranking for formats (higher = better)
-FORMAT_QUALITY = {"flac": 100, "wav": 90, "opus": 70, "ogg": 60, "m4a": 55, "mp3": 50, "aac": 45, "wma": 30}
+# Quality ranking for formats (higher = better) — 10x scale for finer scoring with bitrate/metadata bonuses
+FORMAT_QUALITY = {"flac": 100, "wav": 90, "alac": 80, "aiff": 80, "opus": 70, "ogg": 60, "m4a": 55, "mp3": 50, "aac": 45, "wma": 30}
 
 
 def _track_quality_score(track: Track) -> int:
@@ -143,20 +143,41 @@ def _track_quality_score(track: Track) -> int:
 
 
 async def find_duplicates(db: AsyncSession) -> list[dict]:
-    """Find duplicate tracks (normalized title + artist matching)."""
-    # Load all tracks with artist for normalized matching
-    all_result = await db.execute(
-        select(Track).options(selectinload(Track.artist), selectinload(Track.album))
-        .order_by(Track.bitrate.desc().nullslast())
+    """Find duplicate tracks (normalized title + artist matching).
+
+    Uses SQL GROUP BY to find candidate duplicates by lowercase title+artist,
+    then loads only those tracks for normalized Python matching.
+    """
+    from collections import defaultdict
+
+    # Step 1: SQL GROUP BY to find (title, artist) pairs with 2+ tracks
+    dup_result = await db.execute(
+        select(func.lower(Track.title), func.lower(Artist.name))
+        .join(Artist, Track.artist_id == Artist.id)
+        .group_by(func.lower(Track.title), func.lower(Artist.name))
+        .having(func.count(Track.id) >= 2)
     )
-    all_tracks = all_result.scalars().all()
-    if not all_tracks:
+    dup_pairs = dup_result.all()
+    if not dup_pairs:
         return []
 
-    # Group by normalized (title, artist) — catches cross-artist dupes
-    from collections import defaultdict
+    # Step 2: Load only tracks that are potential duplicates
+    conditions = [
+        (func.lower(Track.title) == title) & (func.lower(Artist.name) == artist_name)
+        for title, artist_name in dup_pairs
+    ]
+    from sqlalchemy import or_
+    candidate_result = await db.execute(
+        select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+        .join(Artist, Track.artist_id == Artist.id)
+        .where(or_(*conditions))
+        .order_by(Track.bitrate.desc().nullslast())
+    )
+    candidate_tracks = candidate_result.scalars().all()
+
+    # Step 3: Group by normalized (title, artist) — catches cross-artist dupes
     grouped: dict[tuple, list] = defaultdict(list)
-    for t in all_tracks:
+    for t in candidate_tracks:
         norm_title = _normalize_for_dedup(t.title or "")
         artist_name = t.artist.name if t.artist else ""
         norm_artist = _normalize_artist_for_dedup(artist_name)

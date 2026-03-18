@@ -358,28 +358,32 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
     from backend.models.mood import TrackMood
     from backend.models.upgrade import TrackUpgrade
 
-    deleted = 0
-    for track_id in req.track_ids:
-        result = await db.execute(select(Track).where(Track.id == track_id))
-        track = result.scalar_one_or_none()
-        if track:
-            file_path = Path(settings.library.music_dir) / track.file_path
-            if file_path.exists():
-                file_path.unlink()
-            # Clean up FK-dependent records
-            await db.execute(delete(Favorite).where(Favorite.track_id == track_id))
-            await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id == track_id))
-            await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id == track_id))
-            await db.execute(delete(PlayHistory).where(PlayHistory.track_id == track_id))
-            await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id == track_id))
-            await db.execute(delete(Bookmark).where(Bookmark.track_id == track_id))
-            await db.execute(delete(TrackMood).where(TrackMood.track_id == track_id))
-            await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id == track_id))
-            await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": track_id})
-            await db.delete(track)
-            deleted += 1
+    # Fetch all tracks to delete files
+    result = await db.execute(select(Track).where(Track.id.in_(req.track_ids)))
+    tracks = result.scalars().all()
+    found_ids = [t.id for t in tracks]
+
+    # Delete files
+    for track in tracks:
+        file_path = Path(settings.library.music_dir) / track.file_path
+        if file_path.exists():
+            file_path.unlink()
+
+    if found_ids:
+        # Bulk delete FK-dependent records (single DELETE per table)
+        await db.execute(delete(Favorite).where(Favorite.track_id.in_(found_ids)))
+        await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(found_ids)))
+        await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(found_ids)))
+        await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(found_ids)))
+        await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(found_ids)))
+        await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(found_ids)))
+        await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(found_ids)))
+        await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(found_ids)))
+        for tid in found_ids:
+            await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": tid})
+        await db.execute(delete(Track).where(Track.id.in_(found_ids)))
     await db.commit()
-    return {"deleted": deleted}
+    return {"deleted": len(found_ids)}
 
 
 class AITagRequest(BaseModel):

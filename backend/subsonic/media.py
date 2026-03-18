@@ -55,7 +55,10 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
     # Check if transcoding is requested
     max_bitrate = request.query_params.get("maxBitRate")
     transcode_format = request.query_params.get("format")
-    time_offset = int(request.query_params.get("timeOffset", 0))
+    try:
+        time_offset = max(0, int(request.query_params.get("timeOffset", 0)))
+    except (ValueError, TypeError):
+        time_offset = 0
 
     # Determine if we need to transcode
     needs_transcode = False
@@ -67,9 +70,14 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         needs_transcode = True
 
     if max_bitrate:
-        target_bitrate = int(max_bitrate)
+        try:
+            target_bitrate = int(max_bitrate)
+        except (ValueError, TypeError):
+            target_bitrate = None
+        if not target_bitrate or target_bitrate <= 0:
+            target_bitrate = None
         track_kbps = (track.bitrate // 1000) if track.bitrate else 0
-        if track_kbps > target_bitrate:
+        if target_bitrate and track_kbps > target_bitrate:
             needs_transcode = True
 
     if time_offset > 0:

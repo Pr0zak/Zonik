@@ -14,12 +14,14 @@
 	let { children } = $props();
 
 	let mql;
+	let mqlHandler;
 	onMount(() => {
 		connectWebSocket();
 		initCast();
 		mql = window.matchMedia('(max-width: 767px)');
 		$isMobile = mql.matches;
-		mql.addEventListener('change', (e) => { $isMobile = e.matches; });
+		mqlHandler = (e) => { $isMobile = e.matches; };
+		mql.addEventListener('change', mqlHandler);
 		if ($isMobile) {
 			$sidebarOpen = false;
 		}
@@ -27,7 +29,7 @@
 
 	onDestroy(() => {
 		disconnectWebSocket();
-		if (mql) mql.removeEventListener('change', (e) => { $isMobile = e.matches; });
+		if (mql && mqlHandler) mql.removeEventListener('change', mqlHandler);
 	});
 
 	function handleKeydown(event) {

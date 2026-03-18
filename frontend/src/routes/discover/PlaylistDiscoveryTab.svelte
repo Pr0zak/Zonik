@@ -1,7 +1,8 @@
 <script>
 	import { addToast } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
+	import { trackKey as _trackKey, pollJob as _pollJob } from '$lib/download.js';
 	import { Loader2, RefreshCw, ListMusic, ExternalLink, Download, Check, X, ChevronLeft, Music, Play, Pause, Search, Shuffle } from 'lucide-svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -48,8 +49,11 @@
 		return shuffled.slice(0, n);
 	}
 
+	let _destroyed = false;
+	onDestroy(() => { _destroyed = true; });
+
 	function trackKey(t) {
-		return `${t.artist}::${t.title}`.toLowerCase();
+		return _trackKey(t, 'title');
 	}
 
 	// --- Search ---
@@ -186,15 +190,7 @@
 	}
 
 	async function pollJob(jobId, key) {
-		for (let i = 0; i < 180; i++) {
-			await new Promise(r => setTimeout(r, 2000));
-			try {
-				const job = await fetch(`/api/jobs/${jobId}`).then(r => r.json());
-				if (job.status === 'completed') { trackStatus[key] = 'completed'; return; }
-				if (job.status === 'failed') { trackStatus[key] = 'failed'; return; }
-			} catch {}
-		}
-		trackStatus[key] = 'failed';
+		await _pollJob(jobId, key, (k, s) => { trackStatus[k] = s; }, () => _destroyed);
 	}
 
 	async function downloadAllMissing() {

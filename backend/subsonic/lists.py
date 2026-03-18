@@ -1,8 +1,6 @@
 """Subsonic list endpoints: getAlbumList2, getRandomSongs, getStarred2, etc."""
 from __future__ import annotations
 
-import random
-
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +24,8 @@ def _get_format(request: Request) -> str:
 @router.get("/getAlbumList2.view")
 async def get_album_list2(request: Request, db: AsyncSession = Depends(get_db)):
     list_type = request.query_params.get("type", "alphabeticalByName")
-    size = min(int(request.query_params.get("size", 10)), 500)
-    offset = int(request.query_params.get("offset", 0))
+    size = max(1, min(int(request.query_params.get("size", 10)), 500))
+    offset = max(0, int(request.query_params.get("offset", 0)))
 
     query = select(Album).options(selectinload(Album.artist))
 

@@ -212,8 +212,8 @@ class SlskdClient:
                     f"{self.base_url}/api/v0/searches/{search_id}",
                     headers=self._headers(),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug("Failed to clean up slskd search %s: %s", search_id, e)
 
             return all_files
 

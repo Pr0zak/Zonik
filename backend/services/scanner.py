@@ -286,11 +286,10 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
 
     stats = {"scanned": 0, "added": 0, "updated": 0, "errors": 0}
 
-    # Count total audio files first for progress tracking
-    audio_files = [
-        f for f in music_dir.rglob("*")
-        if f.suffix.lower() in AUDIO_EXTENSIONS and f.is_file()
-    ]
+    # Count total audio files first for progress tracking — use targeted globs per extension
+    audio_files = []
+    for ext in AUDIO_EXTENSIONS:
+        audio_files.extend(f for f in music_dir.rglob(f"*{ext}") if f.is_file())
     total_files = len(audio_files)
 
     # Collect existing file paths

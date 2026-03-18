@@ -14,7 +14,7 @@ class Playlist(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"))
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id"), index=True)
     comment: Mapped[str | None] = mapped_column(Text)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
 
