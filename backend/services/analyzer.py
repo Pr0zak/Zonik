@@ -169,8 +169,9 @@ def analyze_track(file_path: str) -> dict | None:
 async def analyze_track_async(file_path: str) -> dict | None:
     """Async wrapper — runs Essentia in a separate process for true parallelism.
 
-    If a worker process segfaults (BrokenProcessPool), recreates the pool
-    and returns None for this track so the job can continue.
+    If a worker process segfaults (BrokenProcessPool) or times out, recreates
+    the pool and returns None for this track so the job can continue.
+    Timeouts reset the pool because hung workers block the entire pool queue.
     """
     import asyncio
     loop = asyncio.get_event_loop()
@@ -184,7 +185,8 @@ async def analyze_track_async(file_path: str) -> dict | None:
         _reset_analysis_pool()
         return None
     except asyncio.TimeoutError:
-        log.warning(f"Analysis timed out (120s) for {file_path}")
+        log.warning(f"Analysis timed out (120s) for {file_path} — resetting pool")
+        _reset_analysis_pool()
         return None
     except Exception as e:
         log.warning(f"Analysis async error for {file_path}: {e}")

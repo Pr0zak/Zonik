@@ -89,7 +89,11 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
 
             try:
                 completed = 0
+                analyzed_count = 0
+                failed_count = 0
+                consecutive_fails = 0
                 last_broadcast = 0
+                MAX_CONSECUTIVE_FAILS = 20
 
                 for i, (track_id, file_path) in enumerate(tracks):
                     try:
@@ -105,10 +109,22 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                                 loudness=analysis.get("loudness"),
                             )
                             await db.merge(ta)
+                            analyzed_count += 1
+                            consecutive_fails = 0
+                        else:
+                            failed_count += 1
+                            consecutive_fails += 1
                     except Exception as e:
                         log.warning("Analysis failed for track %s: %s", track_id, e)
+                        failed_count += 1
+                        consecutive_fails += 1
 
                     completed = i + 1
+
+                    # Abort if pool is persistently broken
+                    if consecutive_fails >= MAX_CONSECUTIVE_FAILS:
+                        log.error("Audio analysis aborting: %d consecutive failures (pool likely dead)", consecutive_fails)
+                        break
 
                     # DB commit every 10 tracks, WS broadcast every 10 tracks
                     if completed % 10 == 0 or completed == total:
@@ -119,7 +135,12 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                         last_broadcast = completed
                         await broadcast_job_update({"id": job_id, "type": "audio_analysis", "status": "running", "progress": completed, "total": total})
 
-                job.status = "completed"
+                if consecutive_fails >= MAX_CONSECUTIVE_FAILS:
+                    job.status = "failed"
+                    job.result = json.dumps({"error": f"Aborted after {consecutive_fails} consecutive failures", "analyzed": analyzed_count, "failed": failed_count})
+                else:
+                    job.status = "completed"
+                    job.result = json.dumps({"analyzed": analyzed_count, "failed": failed_count})
             except Exception as e:
                 log.error("Audio analysis job crashed: %s", e)
                 job.status = "failed"

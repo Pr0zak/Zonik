@@ -107,6 +107,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             )).all()
             analyzed_count = 0
             failed_count = 0
+            consecutive_fails = 0
             failed_files = []
             for i, (track_id, file_path) in enumerate(tracks):
                 try:
@@ -114,21 +115,29 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                     if analysis:
                         await db.merge(TrackAnalysis(track_id=track_id, **analysis))
                         analyzed_count += 1
+                        consecutive_fails = 0
+                    else:
+                        failed_count += 1
+                        consecutive_fails += 1
                 except Exception as e:
                     failed_count += 1
+                    consecutive_fails += 1
                     short = (file_path or "").rsplit("/", 1)[-1]
                     failed_files.append(f"{short}: {e}")
                     log.warning(f"[scheduler] Analysis failed for {file_path}: {e}")
                 # Commit every 10 tracks to avoid losing progress on timeout
                 if (i + 1) % 10 == 0:
                     await db.commit()
+                # Abort if pool is persistently broken
+                if consecutive_fails >= 20:
+                    log.error("[scheduler] Audio analysis aborting: %d consecutive failures", consecutive_fails)
+                    break
             await db.commit()
-            remaining = max(0, len(analyzed_ids) + len(tracks) - analyzed_count - len(analyzed_ids))
             job.result = json.dumps({
                 "analyzed": analyzed_count,
                 "failed": failed_count,
                 "batch": len(tracks),
-                "errors": failed_files[:5],  # Keep first 5 errors for UI
+                "errors": failed_files[:5],
             })
 
         elif task_name == "recommendation_refresh":
