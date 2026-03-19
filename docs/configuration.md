@@ -162,6 +162,8 @@ Configure via the web UI at `/schedule`. Available tasks:
 | playlist_weekly_top | Generate Weekly Top Tracks playlist | 168h (7d) |
 | playlist_weekly_discover | Generate Weekly Discover playlist | 168h (7d) |
 | playlist_favorites | Update Favorites playlist | 12h |
-| audio_analysis | Analyze unprocessed tracks | 24h |
-| cover_art_fetch | Fetch missing cover art | 24h |
+| audio_analysis | Essentia analysis (BPM, key, energy). Pool resets on timeout; aborts after 20 consecutive failures | 24h |
+| recommendation_refresh | Build taste profile and score new track recommendations | 48h |
+| upgrade_scan | Find low-quality tracks and queue for re-download | 168h (7d) |
+| remix_discovery | Search for remixes of popular library tracks via Last.fm | 168h (7d) |
 | library_cleanup | Remove orphaned records | 168h (7d) |

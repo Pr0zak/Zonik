@@ -8,7 +8,7 @@ zonik/
 │   ├── main.py              # FastAPI app entry point
 │   ├── config.py             # Settings from zonik.toml
 │   ├── database.py           # SQLAlchemy engine, FTS5
-│   ├── models/               # SQLAlchemy models (14 models)
+│   ├── models/               # SQLAlchemy models (18 models)
 │   ├── api/                  # REST API routes
 │   ├── subsonic/             # OpenSubsonic API implementation
 │   ├── soulseek/             # Native Soulseek P2P client
@@ -25,11 +25,11 @@ zonik/
 ├── frontend/
 │   ├── src/
 │   │   ├── components/       # Svelte components
-│   │   │   ├── ui/           # 8 reusable UI components
+│   │   │   ├── ui/           # 15 reusable UI components
 │   │   │   ├── Sidebar.svelte
 │   │   │   ├── Player.svelte
 │   │   │   └── Toast.svelte
-│   │   ├── routes/           # SvelteKit pages (12 routes)
+│   │   ├── routes/           # SvelteKit pages (16 routes)
 │   │   └── lib/              # API client, stores, utils
 │   └── static/
 ├── deploy/                   # Systemd service files
@@ -101,7 +101,7 @@ uv run alembic upgrade head
 
 ## Adding a UI Component
 
-Reusable UI components live in `frontend/src/components/ui/`. The 8 existing components are:
+Reusable UI components live in `frontend/src/components/ui/`. The 15 existing components are:
 
 | Component | Description |
 |-----------|-------------|
@@ -113,6 +113,13 @@ Reusable UI components live in `frontend/src/components/ui/`. The 8 existing com
 | `Modal` | Dialog overlay with backdrop blur |
 | `EmptyState` | Icon + message for empty lists |
 | `PageHeader` | Page title with optional actions slot |
+| `StarRating` | 5-star rating input |
+| `SwipeRow` | Swipeable list row with actions |
+| `ScheduleControl` | Schedule task toggle and config |
+| `Pagination` | Page navigation controls |
+| `CoverArt` | Album/track cover art with fallback |
+| `FilterPills` | Horizontal filter chip bar |
+| `FormatBadge` | Audio format indicator badge |
 
 To add a new component:
 
@@ -158,6 +165,7 @@ Message types: `job_update`, `transfer_progress`, `log_entry`, `ping`
 - **FTS5**: Full-text search populated during library scan, prefix matching
 - **Transcoding**: ffmpeg streaming via `asyncio.create_subprocess_exec`
 - **Enrichment**: Per-track 45s timeout, concurrent MB+Last.fm lookups, cover art 20s timeout, cancel support
+- **Essentia process pool**: Runs in `ProcessPoolExecutor` (CPU count - 1 workers, nice 15). Pool resets on both `BrokenProcessPool` and `TimeoutError` — hung workers can't be cancelled via `asyncio.wait_for`, so the entire pool must be recreated. Jobs abort after 20 consecutive failures to avoid grinding for hours on a dead pool.
 - **SQLite single writer**: Never use concurrent sessions for writes; progress updates go via WebSocket only
 - **db.get() for dedup**: Use `await db.get(Model, id)` in get_or_create patterns to check identity map first
 - **URLSearchParams**: Always filter out undefined/null values before passing to `new URLSearchParams()` — it converts them to literal strings

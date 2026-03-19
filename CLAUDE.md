@@ -40,7 +40,7 @@ backend/
 frontend/
   src/routes/          # SvelteKit pages (16 routes)
   src/components/      # Sidebar, TopBar, Player, Toast, SearchDropdown
-    ui/                # 11 reusable components (Button, Badge, Card, Modal, etc.)
+    ui/                # 15 reusable components (Button, Badge, Card, Modal, CoverArt, etc.)
   src/lib/             # api.js, stores.js, utils.js, websocket.js, schedule.js, colors.js, download.js
 deploy/                # Systemd service files
 ```
@@ -64,7 +64,7 @@ deploy/                # Systemd service files
 - **Track model**: NO `bpm` column — BPM is on TrackAnalysis (requires outerjoin); uses `duration_seconds` not `duration`
 - **Svelte 5**: `{@const}` must be direct child of {#each}/{#if}, NOT inside component children
 - **BrokenProcessPool**: import from `concurrent.futures.process` (NOT top-level concurrent.futures)
-- **Essentia**: .opus needs ffmpeg pre-conversion; >2 channels must be skipped
+- **Essentia**: .opus needs ffmpeg pre-conversion; >2 channels must be skipped. Pool resets on timeout (not just BrokenProcessPool) — hung workers block the entire queue. Jobs abort after 20 consecutive failures.
 - **Upgrade track swap**: raw SQL with PRAGMA foreign_keys=OFF (ORM cascade breaks TrackAnalysis PK)
 - **Rate limiter**: excludes /api/download/, /api/jobs, and /rest/ paths; auto-evicts stale IPs every 1000 requests
 - **Sort security**: allowlist sets prevent arbitrary getattr() on model attributes
