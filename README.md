@@ -8,12 +8,12 @@
 </p>
 
 <p align="center">
-  Built to serve <a href="https://symfonium.app/">Symfonium</a> on Android via the OpenSubsonic protocol.
+  Paired with <a href="https://github.com/Pr0zak/Zonik-mobile">Zonik-mobile</a> on Android via the OpenSubsonic protocol.
 </p>
 
 ## Features
 
-- **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for Symfonium compatibility
+- **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for Zonik-mobile and other Subsonic clients
 - **Track-focused** - Download individual tracks, not full discographies
 - **Native Soulseek client** - Built-in P2P client with multi-strategy search and quality scoring
 - **Last.fm integration** - Discovery, scrobbling, loved track sync, similar artists/tracks
@@ -35,7 +35,7 @@ FastAPI (backend) ─── SQLite (WAL+FTS5) ─── ARQ + Redis (workers)
      │                                             │
 SvelteKit (frontend)                         Background tasks:
      │                                        - Soulseek downloads
-OpenSubsonic API ──── Symfonium              - Audio analysis (Essentia)
+OpenSubsonic API ──── Zonik-mobile            - Audio analysis (Essentia)
      │                                        - Vibe embeddings (CLAP)
      ├── Native Soulseek P2P                 - AI recommendations
      ├── Last.fm API                         - Discovery & enrichment
@@ -91,7 +91,7 @@ See [Configuration Reference](docs/configuration.md) for all options.
 
 ## Subsonic API
 
-Point Symfonium at `http://<host>:3000/rest` with credentials `admin` / `admin`.
+Point Zonik-mobile (or any Subsonic client) at `http://<host>:3000/rest` with credentials `admin` / `admin`.
 
 Supported endpoints: ping, getLicense, getArtists, getArtist, getAlbum, getSong, getAlbumList2, search3, stream, download, getCoverArt, star, unstar, scrobble, getPlaylists, createPlaylist, getBookmarks, savePlayQueue, and more.
 

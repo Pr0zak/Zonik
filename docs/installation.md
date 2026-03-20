@@ -129,13 +129,13 @@ cd frontend && npm install && npm run build && cd ..
 systemctl restart zonik-web zonik-worker
 ```
 
-## Connecting Symfonium
+## Connecting Zonik-mobile
 
-1. Open Symfonium on Android
-2. Add Server > Subsonic
-3. URL: `http://<zonik-ip>:3000`
-4. Username: `admin`
-5. Password: `admin`
-6. Test connection
+1. Install [Zonik-mobile](https://github.com/Pr0zak/Zonik-mobile) on Android
+2. Enter server URL: `http://<zonik-ip>:3000`
+3. Username: `admin`
+4. Password: `admin`
 
-The default credentials are created on first startup. Change them in the database or via a future user management UI.
+The default credentials are created on first startup. Change them via the web UI at Settings > Users.
+
+Any other Subsonic-compatible client (Symfonium, DSub, etc.) can also connect to the same URL.

@@ -1,4 +1,4 @@
-"""App log upload and viewing API — accepts logs from Symfonium via Subsonic auth."""
+"""App log upload and viewing API — accepts logs from Zonik-mobile via Subsonic auth."""
 from __future__ import annotations
 
 import uuid
@@ -27,7 +27,7 @@ class LogUploadRequest(BaseModel):
 
 @router.post("")
 async def upload_log(body: LogUploadRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Accept a log upload from Symfonium. Auth via Subsonic query params."""
+    """Accept a log upload from Zonik-mobile. Auth via Subsonic query params."""
     user = await authenticate_subsonic(request)
 
     log_id = str(uuid.uuid4())

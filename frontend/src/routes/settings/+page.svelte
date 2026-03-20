@@ -307,7 +307,7 @@
 	}
 
 	async function revokeApiKey(userId) {
-		if (!confirm('Revoke this API key? Symfonium will need a new one.')) return;
+		if (!confirm('Revoke this API key? Zonik-mobile will need a new one.')) return;
 		try {
 			await api.revokeApiKey(userId);
 			addToast('API key revoked', 'success');
@@ -772,7 +772,7 @@
 										<Shield class="w-3.5 h-3.5 text-red-400" />
 									</Button>
 								{:else}
-									<Button variant="ghost" size="sm" onclick={() => generateApiKey(user.id)} title="Generate API key for Symfonium">
+									<Button variant="ghost" size="sm" onclick={() => generateApiKey(user.id)} title="Generate API key for Zonik-mobile">
 										<Shield class="w-3.5 h-3.5" />
 									</Button>
 								{/if}

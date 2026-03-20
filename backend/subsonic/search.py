@@ -1,4 +1,4 @@
-"""Subsonic search3 endpoint with empty query fast-sync support for Symfonium."""
+"""Subsonic search3 endpoint with empty query fast-sync support for Subsonic clients."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Depends
@@ -32,7 +32,7 @@ async def search3(request: Request, db: AsyncSession = Depends(get_db)):
 
     if query == "" or query == '""':
         # Empty query = fast sync - return all items paginated
-        # This is critical for Symfonium fast sync support
+        # This is critical for Subsonic client fast sync support
         artists_result = await db.execute(
             select(Artist).order_by(Artist.name).offset(artist_offset).limit(artist_count)
         )

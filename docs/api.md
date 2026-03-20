@@ -43,7 +43,7 @@ All endpoints support both `/endpoint` and `/endpoint.view` URL patterns. Authen
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /rest/search3?query=` | Search artists, albums, tracks. Empty query = fast sync for Symfonium |
+| `GET /rest/search3?query=` | Search artists, albums, tracks. Empty query = fast sync for Subsonic clients |
 
 ### Media
 

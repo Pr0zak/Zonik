@@ -550,7 +550,7 @@
 			{:else}
 				<EmptyState
 					title="No app logs yet"
-					description="Logs uploaded from Symfonium will appear here."
+					description="Logs uploaded from Zonik-mobile will appear here."
 				>
 					{#snippet icon()}<Smartphone class="w-10 h-10" />{/snippet}
 				</EmptyState>

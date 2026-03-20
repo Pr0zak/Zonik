@@ -1,6 +1,6 @@
 # Zonik
 
-Self-hosted music backend serving Symfonium via OpenSubsonic API.
+Self-hosted music backend with OpenSubsonic API. Paired with [Zonik-mobile](https://github.com/Pr0zak/Zonik-mobile) on Android.
 
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 async + SQLite (WAL+FTS5) or PostgreSQL + ARQ/Redis

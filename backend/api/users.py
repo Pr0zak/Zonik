@@ -75,7 +75,7 @@ async def change_password(user_id: str, req: PasswordChange, db: AsyncSession = 
 
 @router.post("/{user_id}/api-key")
 async def generate_api_key(user_id: str, db: AsyncSession = Depends(get_db)):
-    """Generate a new Subsonic API key for token-based auth (e.g. Symfonium)."""
+    """Generate a new Subsonic API key for token-based auth (e.g. Zonik-mobile)."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:

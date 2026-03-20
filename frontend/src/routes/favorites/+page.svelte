@@ -143,7 +143,7 @@
 		<Card>
 			<EmptyState
 				title="No favorites yet"
-				description="Star tracks, albums, or artists from the Library page, or use Symfonium."
+				description="Star tracks, albums, or artists from the Library page, or use Zonik-mobile."
 			>
 				{#snippet icon()}<Heart class="w-10 h-10" />{/snippet}
 			</EmptyState>
