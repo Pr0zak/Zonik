@@ -192,4 +192,9 @@ export const api = {
 		request('/playlists/import/search', { method: 'POST', body: JSON.stringify({ query, sources, limit }) }),
 	importExternalPlaylist: (name, tracks, downloadMissing = false) =>
 		request('/playlists/import/import', { method: 'POST', body: JSON.stringify({ name, tracks, download_missing: downloadMissing }) }),
+
+	// App Logs
+	getAppLogs: (params = {}) => request(buildUrl('/logs/app', params)),
+	getAppLog: (id) => request(`/logs/app/${id}`),
+	deleteAppLog: (id) => request(`/logs/app/${id}`, { method: 'DELETE' }),
 };

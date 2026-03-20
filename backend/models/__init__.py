@@ -16,11 +16,12 @@ from backend.models.play_history import PlayHistory
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
 from backend.models.upgrade import TrackUpgrade
+from backend.models.app_log import AppLog
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
     "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User",
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
     "SoulseekSnapshot", "PlayHistory", "Recommendation", "TasteProfile",
-    "TrackUpgrade",
+    "TrackUpgrade", "AppLog",
 ]

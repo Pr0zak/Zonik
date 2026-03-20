@@ -18,7 +18,7 @@ from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
 from backend.models.job import Job
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs
 from backend.subsonic import router as subsonic_router
 
 
@@ -189,6 +189,7 @@ app.include_router(recommendations.router, prefix="/api/recommendations", tags=[
 app.include_router(upgrades.router, prefix="/api/upgrades", tags=["upgrades"])
 app.include_router(ai_search.router, prefix="/api/search", tags=["ai-search"])
 app.include_router(playlist_import.router, prefix="/api/playlists/import", tags=["playlist-import"])
+app.include_router(app_logs.router, prefix="/api/logs", tags=["logs"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 
 # Subsonic API
