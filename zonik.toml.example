@@ -47,6 +47,11 @@ use_gpu = false
 clap_model = "HTSAT-base"
 max_analysis_workers = 2
 
+[streaming]
+max_concurrent_transcodes = 3
+transcode_cache_dir = "/opt/zonik/cache/transcodes"
+transcode_cache_max_mb = 500
+
 [subsonic]
 server_name = "Zonik"
 

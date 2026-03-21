@@ -1,8 +1,8 @@
-"""Subsonic annotation endpoints: star, unstar, scrobble, setRating."""
+"""Subsonic annotation endpoints: star, unstar, scrobble, setRating, getNowPlaying."""
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy import select, delete
@@ -13,9 +13,12 @@ from backend.models.favorite import Favorite
 from backend.models.track import Track
 from backend.models.user import User
 from backend.subsonic.auth import authenticate_subsonic
-from backend.subsonic.responses import subsonic_response, error_response
+from backend.subsonic.responses import subsonic_response, error_response, format_track
 
 router = APIRouter()
+
+# In-memory now-playing state: {username: {track, started_at, playerId}}
+_now_playing: dict[str, dict] = {}
 
 
 def _get_format(request: Request) -> str:
@@ -136,16 +139,26 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
     if not song_id:
         return error_response(10, "Missing id parameter", _get_format(request))
 
+    result = await db.execute(select(Track).where(Track.id == song_id))
+    track = result.scalar_one_or_none()
+
     if submission == "true":
         # Update play count and record history
-        result = await db.execute(select(Track).where(Track.id == song_id))
-        track = result.scalar_one_or_none()
         if track:
             track.play_count = (track.play_count or 0) + 1
             track.last_played_at = datetime.utcnow()
             from backend.models.play_history import PlayHistory
             db.add(PlayHistory(track_id=song_id, played_at=datetime.utcnow(), source="subsonic"))
             await db.commit()
+    else:
+        # Now-playing notification
+        if track:
+            username = params.get("u", "admin")
+            _now_playing[username] = {
+                "track": track,
+                "playerId": params.get("c", ""),
+                "started_at": datetime.utcnow(),
+            }
 
     return subsonic_response({}, _get_format(request))
 
@@ -185,3 +198,22 @@ async def set_rating(request: Request, db: AsyncSession = Depends(get_db)):
     track.rating = rating if rating > 0 else None
     await db.commit()
     return subsonic_response({}, _get_format(request))
+
+
+@router.get("/getNowPlaying")
+@router.get("/getNowPlaying.view")
+async def get_now_playing(request: Request, db: AsyncSession = Depends(get_db)):
+    """Return tracks currently being played (reported via scrobble submission=false)."""
+    entries = []
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    for username, info in list(_now_playing.items()):
+        if info["started_at"] < cutoff:
+            del _now_playing[username]
+            continue
+        track = info["track"]
+        entry = format_track(track)
+        entry["username"] = username
+        entry["minutesAgo"] = int((datetime.utcnow() - info["started_at"]).total_seconds() / 60)
+        entry["playerId"] = info.get("playerId", "")
+        entries.append(entry)
+    return subsonic_response({"nowPlaying": {"entry": entries}}, _get_format(request))

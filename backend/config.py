@@ -88,6 +88,12 @@ class AppleMusicConfig(BaseModel):
     developer_token: str = ""
 
 
+class StreamingConfig(BaseModel):
+    max_concurrent_transcodes: int = 3
+    transcode_cache_dir: str = "/opt/zonik/cache/transcodes"
+    transcode_cache_max_mb: int = 500
+
+
 class SubsonicConfig(BaseModel):
     server_name: str = "Zonik"
 
@@ -128,6 +134,7 @@ class Settings(BaseModel):
     analysis: AnalysisConfig = AnalysisConfig()
     spotify: SpotifyConfig = SpotifyConfig()
     apple_music: AppleMusicConfig = AppleMusicConfig()
+    streaming: StreamingConfig = StreamingConfig()
     subsonic: SubsonicConfig = SubsonicConfig()
     assistant: AssistantConfig = AssistantConfig()
 

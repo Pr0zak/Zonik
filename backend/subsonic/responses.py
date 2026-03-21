@@ -145,6 +145,10 @@ def format_track(track, starred: bool = False) -> dict:
         }
     if track.play_count and track.last_played_at:
         data["played"] = _format_dt(track.last_played_at)
+    # Gapless: tell client what transcoded format to expect for lossless sources
+    if track.suffix in ("flac", "wav", "alac", "aiff"):
+        data["transcodedSuffix"] = "mp3"
+        data["transcodedContentType"] = "audio/mpeg"
 
     # Remove None values
     return {k: v for k, v in data.items() if v is not None}
