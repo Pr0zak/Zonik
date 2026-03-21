@@ -50,6 +50,7 @@ deploy/                # Systemd service files
 - SQLite with NullPool (no connection pooling) — PRAGMAs set via connect event listener
 - Subsonic auth: apiKey param, token+salt (md5), or password (plain/enc:hex)
 - Subsonic compat: coverArt=entity ID, isDir/isVideo=boolean, bpm=int, artist/album always present
+- Streaming: FileResponse handles Range/206/ETag natively (Starlette 0.52+). Transcoded streams use chunked transfer + `Accept-Ranges: none`. Cache-Control: streams/downloads 24h private, cover art 7d public. FFmpeg uses flush flags for low-latency transcoding. Keep-alive 30s.
 - Config: zonik.toml (gitignored), zonik.toml.example (committed)
 - SPA routing: catch-all route serves index.html for client-side SvelteKit
 - Default admin: admin/admin (created on first startup)

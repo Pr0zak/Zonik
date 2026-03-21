@@ -93,13 +93,15 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
             path=str(file_path),
             media_type=track.mime_type or "audio/mpeg",
             filename=file_path.name,
+            content_disposition_type="inline",
+            headers={"Cache-Control": "private, max-age=86400"},
         )
 
-    # Transcode with ffmpeg
-    cmd = ["ffmpeg", "-i", str(file_path)]
-
+    # Transcode with ffmpeg (flush flags for low-latency streaming)
+    cmd = ["ffmpeg", "-fflags", "+flush_packets"]
     if time_offset > 0:
-        cmd = ["ffmpeg", "-ss", str(time_offset), "-i", str(file_path)]
+        cmd.extend(["-ss", str(time_offset)])
+    cmd.extend(["-i", str(file_path)])
 
     if target_format == "mp3":
         cmd.extend(["-f", "mp3", "-c:a", "libmp3lame"])
@@ -122,7 +124,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
     else:
         cmd.extend(["-f", "mp3", "-c:a", "libmp3lame", "-b:a", "192k"])
 
-    cmd.extend(["-vn", "-"])  # No video, output to stdout
+    cmd.extend(["-flush_packets", "1", "-vn", "-"])  # Low-latency, no video, stdout
 
     content_type = TRANSCODE_CONTENT_TYPES.get(target_format, "audio/mpeg")
 
@@ -143,7 +145,14 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                 process.kill()
             await process.wait()
 
-    return StreamingResponse(generate(), media_type=content_type)
+    return StreamingResponse(
+        generate(),
+        media_type=content_type,
+        headers={
+            "Cache-Control": "private, max-age=86400",
+            "Accept-Ranges": "none",
+        },
+    )
 
 
 @router.get("/download")
@@ -169,6 +178,7 @@ async def download(request: Request, db: AsyncSession = Depends(get_db)):
         path=str(file_path),
         media_type=track.mime_type or "audio/mpeg",
         filename=file_path.name,
+        headers={"Cache-Control": "private, max-age=86400"},
     )
 
 
@@ -179,13 +189,15 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
     if not cover_id:
         return error_response(10, "Missing id parameter", _get_format(request))
 
+    _cover_cache = {"Cache-Control": "public, max-age=604800"}
+
     # cover_id might be a file path to cached cover art
     cover_path = Path(cover_id)
     if cover_path.exists():
         media_type = "image/jpeg"
         if cover_path.suffix.lower() == ".png":
             media_type = "image/png"
-        return FileResponse(path=str(cover_path), media_type=media_type)
+        return FileResponse(path=str(cover_path), media_type=media_type, headers=_cover_cache)
 
     # Try to find track/album cover
     result = await db.execute(select(Track).where(Track.id == cover_id))
@@ -193,7 +205,7 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
     if track and track.cover_art_path:
         path = Path(track.cover_art_path)
         if path.exists():
-            return FileResponse(path=str(path), media_type="image/jpeg")
+            return FileResponse(path=str(path), media_type="image/jpeg", headers=_cover_cache)
 
     from backend.models.album import Album
     result = await db.execute(select(Album).where(Album.id == cover_id))
@@ -201,10 +213,11 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
     if album and album.cover_art_path:
         path = Path(album.cover_art_path)
         if path.exists():
-            return FileResponse(path=str(path), media_type="image/jpeg")
+            return FileResponse(path=str(path), media_type="image/jpeg", headers=_cover_cache)
 
     # Return 1x1 transparent pixel as fallback
     return Response(
         content=b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n\xb4\x00\x00\x00\x00IEND\xaeB`\x82",
         media_type="image/png",
+        headers=_cover_cache,
     )
