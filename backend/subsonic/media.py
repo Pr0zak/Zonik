@@ -212,8 +212,8 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
             headers["Content-Length"] = str(estimated_bytes)
         return Response(media_type=content_type, headers=headers)
 
-    # Build ffmpeg command
-    cmd = ["ffmpeg", "-fflags", "+flush_packets", "-threads", "1"]
+    # Build ffmpeg command (-y to overwrite temp files from mkstemp)
+    cmd = ["ffmpeg", "-y", "-fflags", "+flush_packets", "-threads", "1"]
     if time_offset > 0:
         cmd.extend(["-ss", str(time_offset)])
     cmd.extend(["-i", str(file_path)])
@@ -265,7 +265,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                 if process.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
                     log.warning(
                         f"ffmpeg exited {process.returncode} for {file_path.name}: "
-                        f"{stderr_data.decode(errors='replace')[:500]}"
+                        f"{stderr_data.decode(errors='replace')[-500:]}"
                     )
                     tmp_path.unlink(missing_ok=True)
                     return error_response(0, "Transcoding failed", _get_format(request))
@@ -316,7 +316,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                     stderr_out = await process.stderr.read()
                     log.warning(
                         f"ffmpeg exited {process.returncode} for {file_path.name}: "
-                        f"{stderr_out.decode(errors='replace')[:500]}"
+                        f"{stderr_out.decode(errors='replace')[-500:]}"
                     )
 
     return StreamingResponse(generate(), media_type=content_type, headers=response_headers)
