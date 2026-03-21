@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
@@ -38,17 +39,50 @@ def get_analysis_pool() -> ProcessPoolExecutor:
     return _analysis_pool
 
 
+def _kill_pool_workers(pool: ProcessPoolExecutor):
+    """Forcibly kill all worker processes in a pool.
+
+    shutdown(wait=False) only initiates graceful shutdown — workers stuck in
+    CPU-bound C code (Essentia) ignore it and become orphaned processes
+    spinning at 100% CPU forever.  SIGKILL is the only reliable way to stop them.
+    """
+    # _processes is an internal dict {pid: Process} — stable across Python 3.9+
+    procs = getattr(pool, "_processes", None)
+    if not procs:
+        return
+    for pid in list(procs.keys()):
+        try:
+            os.kill(pid, signal.SIGKILL)
+            log.info(f"Killed hung analysis worker pid={pid}")
+        except OSError:
+            pass  # already dead
+
+
 def _reset_analysis_pool():
     """Destroy broken pool and create a fresh one."""
     global _analysis_pool
     if _analysis_pool is not None:
+        _kill_pool_workers(_analysis_pool)
         try:
-            _analysis_pool.shutdown(wait=False)
+            _analysis_pool.shutdown(wait=False, cancel_futures=True)
         except Exception:
             pass
     _analysis_pool = None
     log.warning("Analysis pool reset after worker crash")
     return get_analysis_pool()
+
+
+def shutdown_analysis_pool():
+    """Clean shutdown — kill workers and release the pool. Called on app exit."""
+    global _analysis_pool
+    if _analysis_pool is not None:
+        _kill_pool_workers(_analysis_pool)
+        try:
+            _analysis_pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+        _analysis_pool = None
+        log.info("Analysis pool shut down")
 
 
 def _pre_validate(abs_path: Path) -> str | None:

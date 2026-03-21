@@ -150,6 +150,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.debug("Soulseek client shutdown error: %s", e)
 
+    # Kill any lingering Essentia analysis workers
+    try:
+        from backend.services.analyzer import shutdown_analysis_pool
+        shutdown_analysis_pool()
+    except Exception as e:
+        log.debug("Analysis pool shutdown error: %s", e)
+
 
 settings = get_settings()
 
