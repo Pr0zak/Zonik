@@ -51,6 +51,7 @@ deploy/                # Systemd service files
 - Subsonic auth: apiKey param, token+salt (md5), or password (plain/enc:hex)
 - Subsonic compat: coverArt=entity ID, isDir/isVideo=boolean, bpm=int, artist/album always present
 - Streaming: FileResponse handles Range/206/ETag natively (Starlette 0.52+). Transcoded streams use chunked transfer + `Accept-Ranges: none`. Cache-Control: streams/downloads 24h private, cover art 7d public. FFmpeg uses flush flags + `-threads 1` for low-latency transcoding. Keep-alive 30s. Transcode cache at `streaming.transcode_cache_dir` with LRU eviction. Concurrent transcodes capped by `asyncio.Semaphore(streaming.max_concurrent_transcodes)`. Cover art supports `size` param (Pillow resize, cached in `covers/resized/`). HEAD supported on stream/download/getCoverArt. `estimateContentLength=true` returns estimated Content-Length for transcoded streams. Lossless tracks include `transcodedSuffix`/`transcodedContentType` in responses. `getNowPlaying` endpoint uses in-memory state from scrobble `submission=false`.
+- Waveform: `GET /api/tracks/{track_id}/waveform?bars=200` returns pre-computed RMS amplitude data (array of 0.0–1.0 floats) for mobile seek bar rendering. FFmpeg decodes to mono PCM (8kHz s16le), computes RMS per segment, peak-normalizes. File-cached at `/opt/zonik/cache/waveforms/{track_id}_{bars}.json` — immutable per track. Response includes `Cache-Control: public, max-age=31536000, immutable`. First call ~375ms, cached ~8ms.
 - Config: zonik.toml (gitignored), zonik.toml.example (committed)
 - SPA routing: catch-all route serves index.html for client-side SvelteKit
 - Default admin: admin/admin (created on first startup)
@@ -90,7 +91,8 @@ deploy/                # Systemd service files
 ## Frontend Notes
 - Svelte 5 runes: `$state`, `$derived` (deprecation warnings are harmless)
 - SPA: `adapter-static` with `fallback: 'index.html'`
-- CSS variables in app.css (--bg-primary, --bg-secondary, etc.)
+- **Design system**: Material 3 surface hierarchy (7 tiers: `--surface-lowest` to `--surface-bright`). "No-line" rule: ghost borders (`rgba(70,69,84,0.15)`) replace hard borders. Glassmorphism (`.glass`, `.glass-subtle`) for player bar, dropdowns, modals with `@supports` fallback. Gradient primary buttons (`--gradient-primary`). Ambient indigo-tinted shadows (`--shadow-ambient`, `--shadow-float`, `--shadow-glow`). Editorial typography with `tracking-editorial` (-0.02em). Sidebar groups: Library, Discover, Manage, System with glow-bar active state. `forced-colors` media query for accessibility.
+- CSS variables in app.css (surface hierarchy + backward-compat `--bg-*` aliases)
 - Inter font via Google Fonts; lucide-svelte icons
 - WebSocket connected in +layout.svelte on mount
 - **Charts**: set `loading = false` BEFORE building charts — canvas elements are inside `{:else if data}` blocks and don't exist while loading
