@@ -516,7 +516,7 @@
 					{#each Object.entries(data.formats).sort((a, b) => b[1] - a[1]) as [fmt, count]}
 						<div class="flex items-center gap-3 text-sm group">
 							<span class="w-16 text-right text-[var(--text-muted)] uppercase font-mono text-xs">{fmt}</span>
-							<div class="flex-1 h-5 bg-[var(--bg-hover)] rounded overflow-hidden">
+							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
 								<div class="h-full {barColors.formats} rounded transition-colors" style="width: {barWidth(count, maxFmt)}"></div>
 							</div>
 							<span class="w-12 text-right text-[var(--text-muted)] text-xs font-mono">{count}</span>
@@ -532,7 +532,7 @@
 					{#each data.top_artists as artist}
 						<div class="flex items-center gap-3 text-sm group">
 							<span class="w-32 truncate text-right text-[var(--text-body)]" title={artist.name}>{artist.name}</span>
-							<div class="flex-1 h-5 bg-[var(--bg-hover)] rounded overflow-hidden">
+							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
 								<div class="h-full {barColors.artists} rounded transition-colors" style="width: {barWidth(artist.count, maxArt)}"></div>
 							</div>
 							<span class="w-10 text-right text-[var(--text-muted)] text-xs font-mono">{artist.count}</span>
@@ -548,7 +548,7 @@
 					{#each data.genres as genre}
 						<div class="flex items-center gap-3 text-sm group">
 							<span class="w-32 truncate text-right text-[var(--text-body)]" title={genre.name}>{genre.name}</span>
-							<div class="flex-1 h-5 bg-[var(--bg-hover)] rounded overflow-hidden">
+							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
 								<div class="h-full {barColors.genres} rounded transition-colors" style="width: {barWidth(genre.count, maxGenre)}"></div>
 							</div>
 							<span class="w-10 text-right text-[var(--text-muted)] text-xs font-mono">{genre.count}</span>
@@ -564,7 +564,7 @@
 					{#each Object.entries(data.bitrates).sort() as [range, count]}
 						<div class="flex items-center gap-3 text-sm group">
 							<span class="w-20 text-right text-[var(--text-muted)] text-xs font-mono">{range} kbps</span>
-							<div class="flex-1 h-5 bg-[var(--bg-hover)] rounded overflow-hidden">
+							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
 								<div class="h-full {barColors.bitrates} rounded transition-colors" style="width: {barWidth(count, maxBr)}"></div>
 							</div>
 							<span class="w-10 text-right text-[var(--text-muted)] text-xs font-mono">{count}</span>
@@ -583,7 +583,7 @@
 						<div class="flex-1 flex flex-col items-center justify-end h-full group relative">
 							<div class="w-full bg-[var(--color-accent)] rounded-t min-h-[2px] transition-colors"
 								style="height: {barWidth(yr.count, maxYear)}"></div>
-							<div class="hidden group-hover:block absolute bottom-full mb-1 bg-[var(--bg-hover)] text-xs px-2 py-1 rounded whitespace-nowrap z-10 text-[var(--text-body)] border border-[var(--border-subtle)]">
+							<div class="hidden group-hover:block absolute bottom-full mb-1 bg-[var(--surface-container-high)] text-xs px-2 py-1 rounded whitespace-nowrap z-10 text-[var(--text-body)] ghost-border">
 								{yr.year}: {yr.count} tracks
 							</div>
 						</div>
@@ -630,7 +630,7 @@
 							{ v: '90d', l: '90d' },
 						] as opt}
 							<button
-								class="px-2.5 py-1 text-xs rounded transition-colors {playPeriod === opt.v ? 'bg-purple-500 text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--bg-tertiary)]'}"
+								class="px-2.5 py-1 text-xs rounded transition-colors {playPeriod === opt.v ? 'bg-purple-500 text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--surface-container)]'}"
 								onclick={() => { playPeriod = opt.v; loadPlayHistory(); }}
 							>
 								{opt.l}
@@ -755,7 +755,7 @@
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Job History Summary</h2>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-3">
 					{#each data.job_stats as js}
-						<div class="bg-[var(--bg-tertiary)] rounded-lg p-3">
+						<div class="bg-[var(--surface-container)] rounded-lg p-3">
 							<p class="text-xs text-[var(--text-muted)]">{js.type}</p>
 							<p class="text-sm font-medium text-[var(--text-primary)]">{js.completed} <span class="text-[var(--text-muted)]">/ {js.total}</span></p>
 						</div>
@@ -777,12 +777,12 @@
 
 				<!-- Summary tiles -->
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-3">
+					<div class="bg-[var(--surface-container)] rounded-lg p-3">
 						<p class="text-xs text-[var(--text-muted)]">Active</p>
 						<p class="text-lg font-bold text-blue-400">{jobDashboard.active_count}</p>
 					</div>
 					{#each Object.entries(jobDashboard.status_counts).filter(([, v]) => v > 0) as [status, count]}
-						<div class="bg-[var(--bg-tertiary)] rounded-lg p-3">
+						<div class="bg-[var(--surface-container)] rounded-lg p-3">
 							<p class="text-xs text-[var(--text-muted)] capitalize">{status}</p>
 							<p class="text-lg font-bold {status === 'completed' ? 'text-emerald-400' : status === 'failed' ? 'text-red-400' : status === 'running' ? 'text-blue-400' : 'text-amber-400'}">{count}</p>
 						</div>
@@ -861,7 +861,7 @@
 
 				<!-- Connection & Network -->
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Wifi class="w-4 h-4 {slsk.connected ? 'text-emerald-400' : 'text-red-400'}" />
 							<span class="text-xs text-[var(--text-muted)]">Connection</span>
@@ -871,7 +871,7 @@
 							<p class="text-xs text-[var(--text-muted)] truncate mt-0.5">{slsk.username}</p>
 						{/if}
 					</div>
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Clock class="w-4 h-4 text-[var(--color-stats)]" />
 							<span class="text-xs text-[var(--text-muted)]">Uptime</span>
@@ -879,7 +879,7 @@
 						<p class="text-lg font-bold text-[var(--text-primary)]">{formatUptime(slsk.uptime_seconds)}</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.reconnects} reconnect{slsk.reconnects !== 1 ? 's' : ''}</p>
 					</div>
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Users class="w-4 h-4 text-[var(--color-downloads)]" />
 							<span class="text-xs text-[var(--text-muted)]">Peers</span>
@@ -887,7 +887,7 @@
 						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.peers}</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">active connections</p>
 					</div>
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Radio class="w-4 h-4 text-[var(--color-discover)]" />
 							<span class="text-xs text-[var(--text-muted)]">Listen Port</span>
@@ -899,7 +899,7 @@
 
 				<!-- Sharing & Transfers -->
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Share2 class="w-4 h-4 text-[var(--color-discover)]" />
 							<span class="text-xs text-[var(--text-muted)]">Sharing</span>
@@ -907,7 +907,7 @@
 						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.shared_files.toLocaleString()}</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.shared_folders} folders</p>
 					</div>
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<ArrowUpDown class="w-4 h-4 text-[var(--color-downloads)]" />
 							<span class="text-xs text-[var(--text-muted)]">Transfers</span>
@@ -915,7 +915,7 @@
 						<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.active_transfers} active</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.queued_transfers} queued</p>
 					</div>
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<HardDrive class="w-4 h-4 text-[var(--color-stats)]" />
 							<span class="text-xs text-[var(--text-muted)]">Transferred</span>
@@ -923,7 +923,7 @@
 						<p class="text-lg font-bold text-[var(--text-primary)]">{formatSize(slsk.total_bytes_transferred)}</p>
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
 					</div>
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-4">
+					<div class="bg-[var(--surface-container)] rounded-lg p-4">
 						<div class="flex items-center gap-2 mb-2">
 							<Zap class="w-4 h-4 text-amber-400" />
 							<span class="text-xs text-[var(--text-muted)]">Speed</span>
@@ -949,7 +949,7 @@
 						</div>
 						<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
 							{#each (showAllPeers ? slsk.reputation.peers : slsk.reputation.peers.slice(0, 12)) as peer}
-								<div class="bg-[var(--bg-hover)] rounded px-3 py-2 flex items-center gap-2">
+								<div class="bg-[var(--surface-container-high)] rounded px-3 py-2 flex items-center gap-2">
 									{#if peer.failures > peer.successes}
 										<ShieldAlert class="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
 									{:else}
@@ -984,7 +984,7 @@
 							{ v: 168, l: '7d' },
 						] as opt}
 							<button
-								class="px-2.5 py-1 text-xs rounded transition-colors {historyHours === opt.v ? 'bg-[var(--color-stats)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--bg-tertiary)]'}"
+								class="px-2.5 py-1 text-xs rounded transition-colors {historyHours === opt.v ? 'bg-[var(--color-stats)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--surface-container)]'}"
 								onclick={() => { historyHours = opt.v; loadHistory(); }}
 							>
 								{opt.l}

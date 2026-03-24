@@ -579,7 +579,7 @@
 					<Badge variant="default">Not authenticated — scrobbling & favorites sync disabled</Badge>
 				{/if}
 				<button onclick={startLastfmAuth} disabled={lastfmAuthLoading}
-					class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-[var(--bg-tertiary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors">
+					class="flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-[var(--surface-container)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors">
 					<ExternalLink class="w-3 h-3" />
 					{lastfmSession.authenticated ? 'Re-authenticate' : 'Authenticate with Last.fm'}
 				</button>
@@ -599,7 +599,7 @@
 
 			<!-- Last.fm Favorites Sync Schedule -->
 			{#if schedTasks.lastfm_sync}
-				<div class="mt-4 pt-4 border-t border-[var(--border-subtle)]">
+				<div class="mt-4 pt-4 ">
 					<ScheduleControl taskName="lastfm_sync" label="Last.fm Favorites Sync" enabled={schedTasks.lastfm_sync.enabled} intervalHours={schedTasks.lastfm_sync.interval_hours} runAt={schedTasks.lastfm_sync.run_at} lastRunAt={schedTasks.lastfm_sync.last_run_at} running={schedRunning.lastfm_sync} onToggle={() => toggleSched('lastfm_sync')} onUpdate={(u) => updateSched('lastfm_sync', u)} onRun={() => runSched('lastfm_sync')} />
 				</div>
 			{/if}
@@ -706,7 +706,7 @@
 		</Card>
 
 		<!-- 7. Subsonic -->
-		<div class="bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-xl p-4">
+		<div class="bg-[var(--bg-primary)] ghost-border rounded-xl p-4">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-3">
 					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-settings) 15%, transparent)">
@@ -749,7 +749,7 @@
 
 			<div class="space-y-3">
 				{#each users as user}
-					<div class="bg-[var(--bg-tertiary)] rounded-md px-3 py-2">
+					<div class="bg-[var(--surface-container)] rounded-md px-3 py-2">
 						<div class="flex items-center justify-between">
 							<div class="flex items-center gap-3">
 								<span class="font-medium text-[var(--text-primary)]">{user.username}</span>
@@ -809,7 +809,7 @@
 			</div>
 
 			<!-- Add User -->
-			<div class="mt-4 pt-4 border-t border-[var(--border-subtle)]">
+			<div class="mt-4 pt-4 ">
 				<div class="flex gap-2">
 					<input type="text" placeholder="Username" bind:value={newUser.username} class={inputClass + ' flex-1'} />
 					<input type="password" placeholder="Password" bind:value={newUser.password} class={inputClass + ' flex-1'} />
@@ -871,7 +871,7 @@
 
 				<!-- Usage stats -->
 				{#if aiUsage && aiUsage.requests > 0}
-					<div class="flex items-center gap-4 text-xs text-[var(--text-muted)] bg-[var(--bg-tertiary)] rounded-lg px-3 py-2">
+					<div class="flex items-center gap-4 text-xs text-[var(--text-muted)] bg-[var(--surface-container)] rounded-lg px-3 py-2">
 						<span>Session: <span class="text-[var(--text-secondary)] font-mono">{aiUsage.requests}</span> requests</span>
 						<span><span class="text-[var(--text-secondary)] font-mono">{(aiUsage.input_tokens + aiUsage.output_tokens).toLocaleString()}</span> tokens</span>
 						<span>~<span class="text-[var(--text-secondary)] font-mono">${aiUsage.estimated_cost_usd}</span></span>
@@ -896,7 +896,7 @@
 						{ key: 'ai_download_advisor', label: 'Download Advisor', desc: 'AI ranks search results' },
 						{ key: 'ai_playlist_curator', label: 'Playlist Curator', desc: 'AI ranks discovered playlists' },
 					] as toggle}
-						<div class="flex items-center justify-between py-1.5 px-2.5 rounded-md bg-[var(--bg-tertiary)]">
+						<div class="flex items-center justify-between py-1.5 px-2.5 rounded-md bg-[var(--surface-container)]">
 							<div class="min-w-0">
 								<span class="text-sm text-[var(--text-secondary)]">{toggle.label}</span>
 								<p class="text-xs text-[var(--text-disabled)] truncate">{toggle.desc}</p>
@@ -930,7 +930,7 @@
 			{#if backups.length}
 				<div class="space-y-2">
 					{#each backups as backup}
-						<div class="flex items-center justify-between text-sm bg-[var(--bg-tertiary)] rounded-lg px-3 py-2">
+						<div class="flex items-center justify-between text-sm bg-[var(--surface-container)] rounded-lg px-3 py-2">
 							<div class="flex flex-col">
 								<span class="font-mono text-xs text-[var(--text-body)]">{backup.filename}</span>
 								<span class="text-xs text-[var(--text-muted)]">
@@ -1001,7 +1001,7 @@
 				{/if}
 
 				{#if updateInfo?.update_available}
-					<div class="bg-[var(--bg-tertiary)] rounded-lg p-3 space-y-2">
+					<div class="bg-[var(--surface-container)] rounded-lg p-3 space-y-2">
 						<div class="flex items-center justify-between text-sm">
 							<span class="text-[var(--text-muted)]">Latest</span>
 							<span class="font-mono text-xs text-[var(--text-body)]">{updateInfo.latest_commit}</span>
@@ -1039,7 +1039,7 @@
 
 						{#if upgradeJob?.log}
 							{@const logLines = (() => { try { return JSON.parse(upgradeJob.log); } catch { return []; } })()}
-							<div class="bg-[var(--bg-primary)] rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs text-[var(--text-muted)] space-y-0.5 border border-[var(--border-subtle)]">
+							<div class="bg-[var(--bg-primary)] rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs text-[var(--text-muted)] space-y-0.5 ghost-border">
 								{#each logLines as line}
 									<div class:text-emerald-400={line.includes('\u2713') || line.includes('upgraded')}
 										 class:text-red-400={line.includes('Error') || line.includes('error')}
@@ -1064,7 +1064,7 @@
 
 <!-- Sticky save bar -->
 {#if dirty}
-	<div class="sticky bottom-0 left-0 right-0 bg-[var(--bg-secondary)]/95 backdrop-blur border-t border-[var(--border-subtle)] px-4 py-3 flex items-center justify-between z-10">
+	<div class="sticky bottom-0 left-0 right-0 bg-[var(--surface-base)]/95 backdrop-blur px-4 py-3 flex items-center justify-between z-10">
 		<span class="text-xs text-[var(--text-muted)]">Unsaved changes</span>
 		<Button variant="primary" size="sm" loading={saving} onclick={saveServices}>Save Changes</Button>
 	</div>

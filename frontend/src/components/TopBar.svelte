@@ -75,8 +75,8 @@
 			onkeydown={onKeydown}
 			onfocus={() => { if (query.trim()) showResults = true; }}
 			onblur={onBlur}
-			class="w-full bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded-lg pl-9 pr-8 py-2 text-sm text-[var(--text-body)]
-				placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20"
+			class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg pl-9 pr-8 py-2 text-sm text-[var(--text-body)]
+				placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15 ghost-border-focus"
 		/>
 		{#if query}
 			<button onclick={() => { query = ''; showResults = false; }}
@@ -95,7 +95,7 @@
 <div class="flex items-center gap-1">
 	<!-- Sync library -->
 	<button onclick={syncLibrary}
-		class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+		class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors"
 		title="Sync library">
 		<RefreshCw class="w-4 h-4 {syncing ? 'animate-spin' : ''}" />
 	</button>
@@ -103,7 +103,7 @@
 	<!-- Notifications / Activity -->
 	<div class="relative">
 		<button onclick={() => showNotifications = !showNotifications}
-			class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors relative"
+			class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors relative"
 			title="Activity">
 			<Bell class="w-4 h-4" />
 			{#if runningJobs.length > 0}
@@ -115,8 +115,8 @@
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div class="fixed inset-0 z-40" onclick={() => showNotifications = false}></div>
-			<div class="absolute top-full right-0 mt-1 w-[calc(100vw-2rem)] sm:w-80 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in">
-				<div class="px-3 py-2 border-b border-[var(--border-subtle)] flex items-center justify-between">
+			<div class="absolute top-full right-0 mt-1 w-[calc(100vw-2rem)] sm:w-80 glass rounded-lg shadow-float z-50 overflow-hidden animate-fade-slide-in">
+				<div class="px-3 py-2 flex items-center justify-between">
 					<span class="text-xs font-medium text-[var(--text-primary)] uppercase tracking-wider">Activity</span>
 					<button onclick={() => showNotifications = false} class="text-[var(--text-disabled)] hover:text-[var(--text-muted)]">
 						<X class="w-3.5 h-3.5" />
@@ -125,7 +125,7 @@
 				{#if runningJobs.length}
 					{#each runningJobs as job}
 						<button onclick={() => { showNotifications = false; goto(`/logs?job=${job.id}`); }}
-							class="w-full text-left px-3 py-2.5 border-b border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors cursor-pointer">
+							class="w-full text-left px-3 py-2.5  hover:bg-[var(--surface-container-high)] transition-colors cursor-pointer">
 							<div class="flex items-center gap-2">
 								<span class="inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-downloads)] animate-pulse flex-shrink-0"></span>
 								<p class="text-sm text-[var(--text-primary)] truncate flex-1">{job.description || job.type}</p>
@@ -145,7 +145,7 @@
 					</div>
 				{/if}
 				<button onclick={() => { showNotifications = false; goto('/logs'); }}
-					class="w-full px-3 py-2 text-xs text-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors border-t border-[var(--border-subtle)]">
+					class="w-full px-3 py-2 text-xs text-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors border-t border-[var(--border-subtle)]">
 					View all jobs
 				</button>
 			</div>

@@ -100,11 +100,11 @@
 		</div>
 	{:else if favorites.length}
 		<Card padding="p-0">
-			<div class="divide-y divide-[var(--border-subtle)]">
+			<div class="space-y-0.5">
 				{#each favorites as fav}
-					<div class="flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors group">
+					<div class="flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors group">
 						<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => playTrack(fav)}>
-							<div class="relative w-10 h-10 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+							<div class="relative w-10 h-10 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
 								{#if coverUrl(fav.cover_art)}
 									<img src={coverUrl(fav.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 								{:else}
@@ -162,8 +162,8 @@
 		<input type="file" accept=".json"
 			onchange={(e) => importFile = e.target.files[0]}
 			class="w-full text-sm text-[var(--text-body)] file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0
-				file:text-sm file:font-medium file:bg-[var(--bg-hover)] file:text-[var(--text-primary)]
-				file:cursor-pointer hover:file:bg-[var(--bg-tertiary)]" />
+				file:text-sm file:font-medium file:bg-[var(--surface-container-high)] file:text-[var(--text-primary)]
+				file:cursor-pointer hover:file:bg-[var(--surface-container)]" />
 	{/snippet}
 	{#snippet footer()}
 		<div class="flex justify-end">

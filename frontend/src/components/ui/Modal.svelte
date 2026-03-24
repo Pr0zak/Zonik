@@ -27,11 +27,11 @@
 		class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
 		onclick={handleBackdrop}
 	>
-		<div class="bg-gradient-to-br from-[var(--bg-tertiary)] to-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg shadow-2xl {maxWidth} w-full max-h-[85vh] flex flex-col animate-slide-up">
-			<div class="flex items-center justify-between p-4 border-b border-[var(--border-subtle)]">
-				<h2 class="text-lg font-semibold text-[var(--text-primary)]">{title}</h2>
+		<div class="bg-[var(--surface-container)] ghost-border rounded-xl shadow-float {maxWidth} w-full max-h-[85vh] flex flex-col animate-slide-up">
+			<div class="flex items-center justify-between p-4">
+				<h2 class="text-lg font-semibold text-[var(--text-primary)] tracking-editorial">{title}</h2>
 				<button
-					class="w-8 h-8 flex items-center justify-center text-[var(--text-muted)] hover:text-white hover:bg-[var(--bg-hover)] rounded-md transition-colors"
+					class="w-8 h-8 flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] rounded-md transition-colors"
 					onclick={() => open = false}
 				>
 					<X class="w-4 h-4" />
@@ -43,7 +43,7 @@
 			</div>
 
 			{#if footer}
-				<div class="p-4 border-t border-[var(--border-subtle)]">
+				<div class="p-4">
 					{@render footer()}
 				</div>
 			{/if}

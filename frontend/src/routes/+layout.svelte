@@ -103,7 +103,7 @@
 		role="dialog">
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl animate-fade-slide-in"
+		<div class="bg-[var(--surface-container)] ghost-border rounded-xl p-6 max-w-md w-full mx-4 shadow-float animate-fade-slide-in"
 			onclick={(e) => e.stopPropagation()}>
 			<h2 class="text-lg font-bold text-[var(--text-primary)] mb-4">Keyboard Shortcuts</h2>
 			<div class="space-y-4">
@@ -120,7 +120,7 @@
 						] as [key, desc]}
 							<div class="flex items-center justify-between text-sm">
 								<span class="text-[var(--text-secondary)]">{desc}</span>
-								<kbd class="px-2 py-0.5 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
+								<kbd class="px-2 py-0.5 bg-[var(--surface-lowest)] ghost-border rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
 							</div>
 						{/each}
 					</div>
@@ -143,20 +143,20 @@
 						] as [key, desc]}
 							<div class="flex items-center justify-between text-sm">
 								<span class="text-[var(--text-secondary)]">{desc}</span>
-								<kbd class="px-2 py-0.5 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
+								<kbd class="px-2 py-0.5 bg-[var(--surface-lowest)] ghost-border rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
 							</div>
 						{/each}
 					</div>
 				</div>
 			</div>
-			<p class="mt-4 text-xs text-[var(--text-disabled)]">Press <kbd class="px-1 py-0.5 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded text-xs font-mono">?</kbd> to toggle this help</p>
+			<p class="mt-4 text-xs text-[var(--text-disabled)]">Press <kbd class="px-1 py-0.5 bg-[var(--surface-lowest)] ghost-border rounded text-xs font-mono">?</kbd> to toggle this help</p>
 		</div>
 	</div>
 {/if}
 
 <div class="h-screen flex flex-col bg-[var(--bg-primary)]">
 	<!-- Mobile header -->
-	<div class="md:hidden flex items-center justify-between px-4 py-3 bg-[var(--bg-primary)] border-b border-[var(--border-subtle)]">
+	<div class="md:hidden flex items-center justify-between px-4 py-3 bg-[var(--surface-base)]">
 		<button onclick={() => $sidebarOpen = !$sidebarOpen} class="text-[var(--text-secondary)] hover:text-white transition-colors">
 			<Menu class="w-5 h-5" />
 		</button>
@@ -171,7 +171,7 @@
 		<Sidebar />
 		<div class="flex-1 flex flex-col overflow-hidden">
 			<!-- Top bar with search -->
-			<div class="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-[var(--border-subtle)] bg-[var(--bg-primary)] shrink-0">
+			<div class="flex items-center gap-3 px-4 md:px-6 py-3 bg-[var(--surface-base)] shrink-0">
 				<TopBar />
 			</div>
 			<main class="flex-1 overflow-y-auto p-4 md:p-6">

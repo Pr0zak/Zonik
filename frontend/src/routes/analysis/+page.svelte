@@ -179,7 +179,7 @@
 	<!-- Collapsible Schedule -->
 	{#if schedTasks.audio_analysis || schedTasks.enrichment}
 		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
 			<Clock class="w-3.5 h-3.5" />
 			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
 			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
@@ -215,7 +215,7 @@
 					/>
 				{/if}
 				<!-- Auto-run after scan toggles -->
-				<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+				<div class="mt-3 pt-3">
 					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-run after Library Scan</span>
 					<div class="mt-2 space-y-2">
 						{#if schedTasks.audio_analysis}
@@ -275,7 +275,7 @@
 				{/if}
 				{#if analysisJob}
 					{@const ap = analysisProgress(analysisJob)}
-					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
+					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] ghost-border">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-[var(--color-info)] font-medium animate-pulse">Running...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{ap.done}/{ap.total}</span>
@@ -325,7 +325,7 @@
 				</div>
 				<p class="text-sm text-[var(--text-muted)] mb-1">Fill missing genres, cover art, and metadata from online sources.</p>
 				{#if enrichmentJob}
-					<div class="mt-2 p-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)]">
+					<div class="mt-2 p-2 rounded bg-[var(--bg-primary)] ghost-border">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-emerald-400 font-medium animate-pulse">Enriching...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{enrichmentJob.progress}/{enrichmentJob.total}</span>
@@ -354,7 +354,7 @@
 			<input type="text" placeholder="e.g., chill ambient beats, energetic dance music..."
 				bind:value={vibeQuery}
 				onkeydown={(e) => { if (e.key === 'Enter') vibeSearch(); }}
-				class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)]
+				class="flex-1 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)]
 					focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 			<Button variant="secondary" loading={searching} disabled={!vibeQuery}
 				onclick={vibeSearch}>
@@ -364,9 +364,9 @@
 		</div>
 
 		{#if vibeResults.length}
-			<div class="mt-4 border border-[var(--border-subtle)] rounded-lg divide-y divide-[var(--border-subtle)]">
+			<div class="mt-4 ghost-border rounded-lg space-y-0.5">
 				{#each vibeResults as r}
-					<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--bg-hover)] transition-colors">
+					<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--surface-container-high)] transition-colors">
 						<div>
 							<span class="font-medium text-[var(--text-primary)]">{r.title}</span>
 							<span class="text-[var(--text-secondary)] text-sm ml-2">{r.artist || ''}</span>

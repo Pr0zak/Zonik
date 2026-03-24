@@ -16,6 +16,14 @@ export default {
 					tertiary: 'var(--bg-tertiary)',
 					hover: 'var(--bg-hover)',
 					active: 'var(--bg-active)',
+					/* New surface hierarchy tokens */
+					lowest: 'var(--surface-lowest)',
+					base: 'var(--surface-base)',
+					'container-low': 'var(--surface-container-low)',
+					container: 'var(--surface-container)',
+					'container-high': 'var(--surface-container-high)',
+					'container-highest': 'var(--surface-container-highest)',
+					bright: 'var(--surface-bright)',
 				},
 				border: {
 					subtle: 'var(--border-subtle)',
@@ -27,7 +35,32 @@ export default {
 					hover: 'var(--color-accent-hover)',
 					light: 'var(--color-accent-light)',
 					dark: 'var(--color-accent-dark)',
+					primary: 'var(--color-primary)',
+					'primary-container': 'var(--color-primary-container)',
 				},
+				outline: {
+					DEFAULT: 'var(--outline)',
+					variant: 'var(--outline-variant)',
+				},
+			},
+			boxShadow: {
+				ambient: 'var(--shadow-ambient)',
+				float: 'var(--shadow-float)',
+				glow: 'var(--shadow-glow)',
+			},
+			borderRadius: {
+				sm: '0.125rem',
+				DEFAULT: '0.25rem',
+				md: '0.75rem',
+				lg: '1rem',
+				xl: '1.5rem',
+			},
+			backdropBlur: {
+				glass: '20px',
+				'glass-subtle': '12px',
+			},
+			letterSpacing: {
+				editorial: '-0.02em',
 			},
 		},
 	},

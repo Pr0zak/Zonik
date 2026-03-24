@@ -4,4 +4,4 @@
 	} = $props();
 </script>
 
-<div class="animate-pulse bg-[var(--bg-hover)] rounded {className}"></div>
+<div class="animate-pulse bg-[var(--surface-container)] rounded {className}"></div>

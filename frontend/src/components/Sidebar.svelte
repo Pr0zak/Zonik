@@ -10,21 +10,41 @@
 
 	let currentTransfer = $derived($activeTransfers.find(t => t.state === 'transferring') || null);
 
-	const nav = [
-		{ href: '/', label: 'Dashboard', icon: LayoutDashboard, color: 'var(--color-dashboard)' },
-		{ href: '/library', label: 'Library', icon: Library, color: 'var(--color-library)' },
-		{ href: '/discover', label: 'Discover', icon: Compass, color: 'var(--color-discover)' },
-		{ href: '/downloads', label: 'Downloads', icon: Download, color: 'var(--color-downloads)' },
-		{ href: '/playlists', label: 'Playlists', icon: ListMusic, color: 'var(--color-playlists)' },
-		{ href: '/favorites', label: 'Favorites', icon: Heart, color: 'var(--color-favorites)' },
-		{ href: '/duplicates', label: 'Duplicates', icon: Copy, color: 'var(--color-duplicates)' },
-		{ href: '/upgrades', label: 'Upgrades', icon: ArrowUpCircle, color: 'var(--color-upgrades)' },
-		{ href: '/analysis', label: 'Analysis', icon: AudioWaveform, color: 'var(--color-analysis)' },
-		{ href: '/map', label: 'Music Map', icon: Network, color: 'var(--color-map)' },
-		{ href: '/stats', label: 'Stats', icon: BarChart3, color: 'var(--color-stats)' },
-		{ href: '/schedule', label: 'Schedule', icon: Clock, color: 'var(--color-schedule)' },
-		{ href: '/logs', label: 'Logs', icon: ScrollText, color: 'var(--color-logs)' },
-		{ href: '/settings', label: 'Settings', icon: Settings, color: 'var(--color-settings)' },
+	const navGroups = [
+		{
+			label: 'Library',
+			items: [
+				{ href: '/', label: 'Dashboard', icon: LayoutDashboard, color: 'var(--color-dashboard)' },
+				{ href: '/library', label: 'Tracks', icon: Library, color: 'var(--color-library)' },
+				{ href: '/favorites', label: 'Favorites', icon: Heart, color: 'var(--color-favorites)' },
+				{ href: '/stats', label: 'Stats', icon: BarChart3, color: 'var(--color-stats)' },
+			]
+		},
+		{
+			label: 'Discover',
+			items: [
+				{ href: '/discover', label: 'Discover', icon: Compass, color: 'var(--color-discover)' },
+				{ href: '/map', label: 'Music Map', icon: Network, color: 'var(--color-map)' },
+				{ href: '/analysis', label: 'Analysis', icon: AudioWaveform, color: 'var(--color-analysis)' },
+			]
+		},
+		{
+			label: 'Manage',
+			items: [
+				{ href: '/downloads', label: 'Downloads', icon: Download, color: 'var(--color-downloads)' },
+				{ href: '/playlists', label: 'Playlists', icon: ListMusic, color: 'var(--color-playlists)' },
+				{ href: '/duplicates', label: 'Duplicates', icon: Copy, color: 'var(--color-duplicates)' },
+				{ href: '/upgrades', label: 'Upgrades', icon: ArrowUpCircle, color: 'var(--color-upgrades)' },
+			]
+		},
+		{
+			label: 'System',
+			items: [
+				{ href: '/schedule', label: 'Schedule', icon: Clock, color: 'var(--color-schedule)' },
+				{ href: '/logs', label: 'Logs', icon: ScrollText, color: 'var(--color-logs)' },
+				{ href: '/settings', label: 'Settings', icon: Settings, color: 'var(--color-settings)' },
+			]
+		},
 	];
 
 	function isActive(pathname, href) {
@@ -45,45 +65,54 @@
 <!-- Mobile backdrop -->
 {#if $sidebarOpen}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<div class="fixed inset-0 bg-black/50 z-40 md:hidden" onclick={() => $sidebarOpen = false}
+	<div class="fixed inset-0 glass-subtle z-40 md:hidden" onclick={() => $sidebarOpen = false}
 		role="presentation"></div>
 {/if}
 
-<aside class="{$sidebarOpen ? '' : 'hidden'} w-[80vw] max-w-64 bg-[var(--bg-primary)] flex flex-col h-full shrink-0 border-r border-[var(--border-subtle)]
+<aside class="{$sidebarOpen ? '' : 'hidden'} w-[80vw] max-w-64 bg-[var(--surface-container-low)] flex flex-col h-full shrink-0
 	fixed inset-y-0 left-0 z-50 md:static md:z-auto md:w-64 md:max-w-none">
 
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-5">
-		<h1 class="text-3xl font-bold tracking-[0.15em]"><span class="text-[var(--color-accent)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
+		<h1 class="text-3xl font-bold tracking-editorial"><span class="text-[var(--color-primary)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
 		<p class="text-xs font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 
-	<nav class="flex-1 px-3 space-y-0.5 overflow-y-auto">
-		{#each nav as item, i}
-			{@const active = isActive($page.url.pathname, item.href)}
-			{@const Icon = item.icon}
-			<a href={item.href}
-				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}
-				class="group flex items-center gap-3 px-3 py-2 text-sm transition-all duration-200 border-l-2 rounded-r-md
-					{active
-						? 'text-white bg-[var(--bg-primary)]'
-						: 'text-[var(--text-secondary)] hover:text-white hover:bg-white/5 border-transparent hover:border-white/20'}"
-				style={active ? `border-color: ${item.color}` : ''}
-			>
-				<Icon
-					class="w-4 h-4 shrink-0 transition-colors"
-					style={active ? `color: ${item.color}` : ''}
-				/>
-				<span class="flex-1 font-medium">{item.label}</span>
-				{#if item.href === '/settings' && $updateAvailable}
-					<span class="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" title="Update available"></span>
-				{/if}
-			</a>
+	<nav class="flex-1 px-3 overflow-y-auto space-y-5">
+		{#each navGroups as group}
+			<div>
+				<p class="px-3 mb-1.5 text-[10px] font-medium uppercase tracking-widest text-[var(--text-muted)]">{group.label}</p>
+				<div class="space-y-0.5">
+					{#each group.items as item}
+						{@const active = isActive($page.url.pathname, item.href)}
+						{@const Icon = item.icon}
+						<a href={item.href}
+							onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}
+							class="group flex items-center gap-3 px-3 py-2 text-sm transition-all duration-200 rounded-md relative
+								{active
+									? 'text-[var(--text-primary)] bg-[var(--surface-container-high)]'
+									: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container)]'}"
+						>
+							{#if active}
+								<div class="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-r" style="background: {item.color}; box-shadow: 0 0 8px {item.color};"></div>
+							{/if}
+							<Icon
+								class="w-4 h-4 shrink-0 transition-colors"
+								style={active ? `color: ${item.color}` : ''}
+							/>
+							<span class="flex-1 font-medium">{item.label}</span>
+							{#if item.href === '/settings' && $updateAvailable}
+								<span class="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" title="Update available"></span>
+							{/if}
+						</a>
+					{/each}
+				</div>
+			</div>
 		{/each}
 	</nav>
 
 	<!-- Footer -->
-	<div class="px-5 py-4 border-t border-[var(--border-subtle)]">
+	<div class="px-5 py-4">
 		{#if currentTransfer}
 			<a href="/downloads" class="block mb-2 -mx-2 px-2 py-1.5 hover:bg-white/5 rounded transition-colors"
 				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>

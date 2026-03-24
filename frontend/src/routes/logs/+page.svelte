@@ -250,16 +250,16 @@
 	</PageHeader>
 
 	<!-- View toggle -->
-	<div class="flex gap-1 mb-4 bg-[var(--bg-secondary)] rounded-lg p-1 w-fit">
+	<div class="flex gap-1 mb-4 bg-[var(--surface-base)] rounded-lg p-1 w-fit">
 		<button onclick={() => switchView('jobs')}
-			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'jobs' ? 'bg-[var(--bg-tertiary)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
+			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'jobs' ? 'bg-[var(--surface-container)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
 			<ScrollText class="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Jobs
 		</button>
 		<button onclick={() => switchView('app')}
-			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'app' ? 'bg-[var(--bg-tertiary)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
+			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'app' ? 'bg-[var(--surface-container)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
 			<Smartphone class="w-3.5 h-3.5 inline -mt-0.5 mr-1" />App Logs
 			{#if appTotal > 0}
-				<span class="ml-1 text-xs bg-[var(--bg-hover)] px-1.5 py-0.5 rounded-full">{appTotal}</span>
+				<span class="ml-1 text-xs bg-[var(--surface-container-high)] px-1.5 py-0.5 rounded-full">{appTotal}</span>
 			{/if}
 		</button>
 	</div>
@@ -275,7 +275,7 @@
 
 		<Card padding="p-0">
 			{#if loading}
-				<div class="divide-y divide-[var(--border-subtle)]">
+				<div class="space-y-0.5">
 					{#each Array(8) as _}
 						<div class="px-4 py-3 flex items-center gap-4">
 							<Skeleton class="h-4 w-24" />
@@ -289,7 +289,7 @@
 			{:else if jobs.length}
 				<table class="w-full text-sm">
 					<thead>
-						<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+						<tr class="text-[var(--text-muted)] text-left">
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Type</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Progress</th>
@@ -297,10 +297,10 @@
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Started</th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-[var(--border-subtle)]">
+					<tbody class="space-y-0.5">
 						{#each jobs as job}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors min-h-[44px]" onclick={() => toggleExpand(job)}>
+							<tr class="hover:bg-[var(--surface-container-high)] cursor-pointer transition-colors min-h-[44px]" onclick={() => toggleExpand(job)}>
 								<td class="px-3 sm:px-4 py-3">
 									<div class="flex items-center gap-2">
 										{#if expandedJob === job.id}
@@ -350,7 +350,7 @@
 							</tr>
 							{#if expandedJob === job.id && jobDetail}
 								<tr>
-									<td colspan="5" class="px-4 py-3 bg-[var(--bg-tertiary)]">
+									<td colspan="5" class="px-4 py-3 bg-[var(--surface-container)]">
 										<div class="space-y-2 text-xs animate-fade-slide-in">
 											<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
@@ -452,7 +452,7 @@
 		<!-- App Logs view -->
 		<Card padding="p-0">
 			{#if appLoading}
-				<div class="divide-y divide-[var(--border-subtle)]">
+				<div class="space-y-0.5">
 					{#each Array(5) as _}
 						<div class="px-4 py-3 flex items-center gap-4">
 							<Skeleton class="h-4 w-32" />
@@ -465,7 +465,7 @@
 			{:else if appLogs.length}
 				<table class="w-full text-sm">
 					<thead>
-						<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+						<tr class="text-[var(--text-muted)] text-left">
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Device</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Version</th>
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">User</th>
@@ -474,10 +474,10 @@
 							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider w-10"></th>
 						</tr>
 					</thead>
-					<tbody class="divide-y divide-[var(--border-subtle)]">
+					<tbody class="space-y-0.5">
 						{#each appLogs as log}
 							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors" onclick={() => toggleLogExpand(log)}>
+							<tr class="hover:bg-[var(--surface-container-high)] cursor-pointer transition-colors" onclick={() => toggleLogExpand(log)}>
 								<td class="px-3 sm:px-4 py-3">
 									<div class="flex items-center gap-2">
 										{#if expandedLog === log.id}
@@ -514,7 +514,7 @@
 							</tr>
 							{#if expandedLog === log.id && logDetail}
 								<tr>
-									<td colspan="6" class="px-4 py-3 bg-[var(--bg-tertiary)]">
+									<td colspan="6" class="px-4 py-3 bg-[var(--surface-container)]">
 										<div class="space-y-2 text-xs animate-fade-slide-in">
 											<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">

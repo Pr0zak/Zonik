@@ -798,7 +798,7 @@
 	<!-- Collapsible Schedule -->
 	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar || schedTasks.recommendation_refresh}
 		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
 			<Clock class="w-3.5 h-3.5" />
 			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
 			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
@@ -814,14 +814,14 @@
 								<input type="number" min="10" max="100" step="5"
 									value={Math.round((schedTasks.recommendation_refresh.config?.min_score ?? 0.5) * 100)}
 									onchange={(e) => updateSchedConfig('recommendation_refresh', { min_score: parseInt(e.target.value) / 100 })}
-									class="w-16 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
+									class="w-16 bg-[var(--surface-lowest)] ghost-border rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
 							</label>
 							<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
 								Max Downloads
 								<input type="number" min="1" max="50" step="1"
 									value={schedTasks.recommendation_refresh.config?.max_downloads ?? 10}
 									onchange={(e) => updateSchedConfig('recommendation_refresh', { max_downloads: parseInt(e.target.value) })}
-									class="w-16 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
+									class="w-16 bg-[var(--surface-lowest)] ghost-border rounded px-2 py-0.5 text-xs text-[var(--text-body)] text-center" />
 							</label>
 						</div>
 					{/if}
@@ -857,7 +857,7 @@
 				class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
 					{activeTab === tab.key
 						? 'bg-[var(--color-discover)] text-white'
-						: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
+						: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-highest)]'}">
 				<Icon class="w-3.5 h-3.5" />
 				{tab.label}
 			</button>
@@ -871,7 +871,7 @@
 				<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
 				<input type="text" placeholder="Search Last.fm for tracks or artists..." bind:value={searchQuery}
 					onkeydown={(e) => e.key === 'Enter' && discoverSearch()}
-					class="w-full bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
+					class="w-full bg-[var(--surface-base)] ghost-border rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
 						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-discover)]/50 focus:ring-[var(--color-discover)]/20" />
 			</div>
 			<Button variant="primary" loading={searchLoading} disabled={!searchQuery.trim()} onclick={discoverSearch}>
@@ -962,14 +962,14 @@
 						</div>
 					</button>
 					{#if profileExpanded}
-						<div class="mt-3 pt-3 border-t border-[var(--border-subtle)] grid grid-cols-1 md:grid-cols-3 gap-4">
+						<div class="mt-3 pt-3  grid grid-cols-1 md:grid-cols-3 gap-4">
 							<!-- Genres -->
 							<div>
 								<span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-medium">Top Genres</span>
 								<div class="mt-2 space-y-1">
 									{#each Object.entries(tasteProfile.genre_distribution || {}).slice(0, 8) as [genre, pct]}
 										<div class="flex items-center gap-2">
-											<div class="flex-1 h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden">
+											<div class="flex-1 h-1.5 bg-[var(--surface-container-high)] rounded-full overflow-hidden">
 												<div class="h-full bg-[var(--color-discover)] rounded-full" style="width: {Math.round(pct * 100)}%"></div>
 											</div>
 											<span class="text-xs text-[var(--text-secondary)] w-24 truncate">{genre}</span>
@@ -1057,15 +1057,15 @@
 									<!-- svelte-ignore a11y_click_events_have_key_events -->
 									<!-- svelte-ignore a11y_no_static_element_interactions -->
 									<div class="fixed inset-0 z-40" onclick={() => showBulkMenu = false}></div>
-									<div class="absolute right-0 top-full mt-1 w-48 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden">
+									<div class="absolute right-0 top-full mt-1 w-48 bg-[var(--surface-base)] ghost-border rounded-lg shadow-xl z-50 overflow-hidden">
 										<button onclick={() => bulkDownloadRecs('top', 10)}
-											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)]">Top 10</button>
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-container-high)] text-[var(--text-body)]">Top 10</button>
 										<button onclick={() => bulkDownloadRecs('top', 20)}
-											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)]">Top 20</button>
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-container-high)] text-[var(--text-body)]">Top 20</button>
 										<button onclick={() => bulkDownloadRecs('above_score', 0, 0.7)}
-											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)] border-t border-[var(--border-subtle)]">Score &gt; 70%</button>
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-container-high)] text-[var(--text-body)] ">Score &gt; 70%</button>
 										<button onclick={() => bulkDownloadRecs('above_score', 0, 0.5)}
-											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--bg-hover)] text-[var(--text-body)]">Score &gt; 50%</button>
+											class="w-full text-left px-3 py-2 text-sm hover:bg-[var(--surface-container-high)] text-[var(--text-body)]">Score &gt; 50%</button>
 									</div>
 								{/if}
 							</div>
@@ -1096,7 +1096,7 @@
 									class="px-2.5 py-1 rounded-full text-xs font-medium transition-colors
 										{recFilter === sf.key
 											? 'bg-[var(--color-discover)] text-white'
-											: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]'}">
+											: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-highest)]'}">
 									{sf.label}
 									<span class="ml-1 opacity-70">{count}</span>
 								</button>
@@ -1109,7 +1109,7 @@
 			<!-- Recommendation list -->
 			{#if recLoading && !recommendations.length}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each Array(8) as _}
 							<div class="px-4 py-4 flex items-center gap-4">
 								<Skeleton class="h-10 w-10 rounded" />
@@ -1125,15 +1125,15 @@
 				</Card>
 			{:else if filteredRecs.length}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each filteredRecs as rec}
 							{@const recKey = `${rec.artist}::${rec.track}`.toLowerCase()}
 							{@const dlStatus = trackStatus[recKey] || null}
-							<div class="px-4 py-3 flex items-center gap-3 hover:bg-[var(--bg-hover)] transition-colors
+							<div class="px-4 py-3 flex items-center gap-3 hover:bg-[var(--surface-container-high)] transition-colors
 								{rec.status === 'downloaded' ? 'bg-green-500/5' : ''}
 								{rec.feedback === 'thumbs_up' ? 'bg-green-500/5' : ''}">
 								<!-- Cover art -->
-								<div class="flex-shrink-0 w-10 h-10 rounded overflow-hidden bg-[var(--bg-hover)] relative group">
+								<div class="flex-shrink-0 w-10 h-10 rounded overflow-hidden bg-[var(--surface-container-high)] relative group">
 									{#if rec.image_url}
 										<img src={rec.image_url} alt="" class="w-full h-full object-cover" loading="lazy" />
 									{:else}
@@ -1166,7 +1166,7 @@
 								<div class="flex-1 min-w-0">
 									<div class="flex items-center gap-2">
 										<span class="font-medium text-sm text-[var(--text-primary)] truncate">{rec.track}</span>
-										<span class="text-xs text-[var(--text-muted)] px-1.5 py-0.5 rounded bg-[var(--bg-hover)]">{rec.source}</span>
+										<span class="text-xs text-[var(--text-muted)] px-1.5 py-0.5 rounded bg-[var(--surface-container-high)]">{rec.source}</span>
 									</div>
 									<div class="flex items-center gap-2 mt-0.5">
 										<span class="text-xs text-[var(--text-secondary)]">{rec.artist}</span>
@@ -1179,11 +1179,11 @@
 									{/if}
 									<!-- Score breakdown (expandable) -->
 									{#if expandedScoreId === rec.id && rec.score_breakdown}
-										<div class="mt-2 pt-2 border-t border-[var(--border-subtle)] space-y-1">
+										<div class="mt-2 pt-2  space-y-1">
 											{#each Object.entries(rec.score_breakdown) as [signal, value]}
 												<div class="flex items-center gap-2">
 													<span class="text-xs text-[var(--text-muted)] w-28 truncate capitalize">{signal.replace(/_/g, ' ')}</span>
-													<div class="flex-1 h-1.5 bg-[var(--bg-hover)] rounded-full overflow-hidden max-w-[100px]">
+													<div class="flex-1 h-1.5 bg-[var(--surface-container-high)] rounded-full overflow-hidden max-w-[100px]">
 														<div class="h-full rounded-full transition-all {value > 0.6 ? 'bg-green-500' : value > 0.3 ? 'bg-yellow-500' : 'bg-red-500'}"
 															style="width: {Math.round(Math.min(1, value) * 100)}%"></div>
 													</div>
@@ -1245,7 +1245,7 @@
 									{:else if explainData?.error}
 										<p class="text-xs text-red-400">{explainData.error}</p>
 									{:else if explainData}
-										<div class="bg-[var(--bg-tertiary)] rounded-lg p-3 text-sm">
+										<div class="bg-[var(--surface-container)] rounded-lg p-3 text-sm">
 											<p class="text-[var(--text-body)] mb-2">{explainData.explanation}</p>
 											{#if explainData.factors?.length}
 												<ul class="space-y-0.5">
@@ -1277,7 +1277,7 @@
 		{:else if activeTab === 'top'}
 			{#if topLoading && !topTracks.length}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each Array(10) as _}
 							<div class="px-4 py-3 flex items-center gap-4">
 								<Skeleton class="h-4 w-8" />
@@ -1292,7 +1292,7 @@
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-left">
+							<tr class=" text-left">
 								<th class="px-4 py-3 w-8 font-medium text-xs uppercase tracking-wider text-[var(--text-muted)]">#</th>
 								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('name')}>
@@ -1312,12 +1312,12 @@
 								</th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-[var(--border-subtle)]">
+						<tbody class="space-y-0.5">
 							{#each sortedTopTracks as t, i}
 								{@const status = getStatus(t)}
 								{@const art = getArtwork(t.artist, t.name)}
 								{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
-								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
 									<td class="px-4 py-3">
 										<div class="flex items-center gap-3">
@@ -1326,7 +1326,7 @@
 												{#if art?.image}
 													<img src={art.image} alt="" class="w-full h-full object-cover" />
 												{:else}
-													<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+													<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
 														<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
 													</div>
 												{/if}
@@ -1388,7 +1388,7 @@
 		{:else if activeTab === 'similar'}
 			{#if similarLoading && !similarTracks.length}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each Array(10) as _}
 							<div class="px-4 py-3 flex items-center gap-4">
 								<Skeleton class="h-4 w-40" />
@@ -1402,7 +1402,7 @@
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-left">
+							<tr class=" text-left">
 								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
@@ -1421,12 +1421,12 @@
 								</th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-[var(--border-subtle)]">
+						<tbody class="space-y-0.5">
 							{#each sortedSimilarTracks as t}
 								{@const status = getStatus(t)}
 								{@const art = getArtwork(t.artist, t.name)}
 								{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
-								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
 									<td class="px-4 py-3">
 										<div class="flex items-center gap-3">
 											<button onclick={() => playPreview(art?.preview, tKey)}
@@ -1434,7 +1434,7 @@
 												{#if art?.image}
 													<img src={art.image} alt="" class="w-full h-full object-cover" />
 												{:else}
-													<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+													<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
 														<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
 													</div>
 												{/if}
@@ -1500,7 +1500,7 @@
 		{:else if activeTab === 'search'}
 			{#if searchLoading && !searchResults.length}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each Array(10) as _}
 							<div class="px-4 py-3 flex items-center gap-4">
 								<Skeleton class="h-4 w-40" />
@@ -1514,7 +1514,7 @@
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-left">
+							<tr class=" text-left">
 								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 									onclick={() => toggleSort('name')}>
 									Track {sortIndicator('name')}
@@ -1530,10 +1530,10 @@
 								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right text-[var(--text-muted)]">Status</th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-[var(--border-subtle)]">
+						<tbody class="space-y-0.5">
 							{#each sortedSearchResults as t}
 								{@const status = getStatus(t)}
-								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
 									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
 									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
 									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
@@ -1581,7 +1581,7 @@
 		{:else if activeTab === 'artists'}
 			{#if artistsLoading}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each Array(10) as _}
 							<div class="px-4 py-3 flex items-center gap-4">
 								<Skeleton class="h-4 w-40" />
@@ -1592,9 +1592,9 @@
 				</Card>
 			{:else if similarArtists.length}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each similarArtists as a}
-							<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--bg-hover)] transition-colors">
+							<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--surface-container-high)] transition-colors">
 								<div>
 									<span class="font-medium text-[var(--text-primary)]">{a.name}</span>
 									<span class="text-xs text-[var(--text-muted)] ml-2 font-mono">similar to {a.source_artist}</span>
@@ -1622,7 +1622,7 @@
 				{#each [{ key: 'popular', label: 'Popular' }, { key: 'favorites', label: 'Favorites' }, { key: 'random', label: 'Random' }] as src}
 					<button
 						onclick={() => { remixSource = src.key; remixTypeFilter = 'all'; loadRemixes(); }}
-						class="px-3 py-1.5 text-xs rounded-md transition-colors {remixSource === src.key ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+						class="px-3 py-1.5 text-xs rounded-md transition-colors {remixSource === src.key ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
 					>{src.label}</button>
 				{/each}
 				<Button variant="ghost" onclick={loadRemixes} disabled={remixLoading}>
@@ -1643,12 +1643,12 @@
 				<div class="flex items-center gap-1.5 mb-4 flex-wrap">
 					<button
 						onclick={() => remixTypeFilter = 'all'}
-						class="px-2.5 py-1 text-xs rounded-md transition-colors {remixTypeFilter === 'all' ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent-light)] border border-[var(--color-accent)]/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+						class="px-2.5 py-1 text-xs rounded-md transition-colors {remixTypeFilter === 'all' ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent-light)] border border-[var(--color-accent)]/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
 					>All {counts.all || 0}</button>
 					{#each Object.entries(counts).filter(([k]) => k !== 'all').sort((a, b) => b[1] - a[1]) as [type, count]}
 						<button
 							onclick={() => remixTypeFilter = type}
-							class="px-2.5 py-1 text-xs rounded-md transition-colors capitalize {remixTypeFilter === type ? (versionTypeColors[type] || 'bg-gray-500/20 text-gray-400') + ' border border-current/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+							class="px-2.5 py-1 text-xs rounded-md transition-colors capitalize {remixTypeFilter === type ? (versionTypeColors[type] || 'bg-gray-500/20 text-gray-400') + ' border border-current/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
 						>{type} {count}</button>
 					{/each}
 				</div>
@@ -1656,7 +1656,7 @@
 
 			{#if remixLoading}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each Array(10) as _}
 							<div class="px-4 py-3 flex items-center gap-4">
 								<Skeleton class="w-10 h-10 rounded" />
@@ -1674,7 +1674,7 @@
 					<div class="overflow-x-auto">
 						<table class="w-full text-sm">
 							<thead>
-								<tr class="border-b border-[var(--border-subtle)]">
+								<tr class="">
 									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
 										onclick={() => toggleSort('name')}>
 										Track {sortIndicator('name')}
@@ -1701,12 +1701,12 @@
 									</th>
 								</tr>
 							</thead>
-							<tbody class="divide-y divide-[var(--border-subtle)]">
+							<tbody class="space-y-0.5">
 								{#each sortedRemixes as r}
 									{@const key = `${r.artist}::${r.name}`.toLowerCase()}
 									{@const status = trackStatus[key]}
 									{@const art = getArtwork(r.artist, r.name)}
-									<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+									<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
 										<td class="px-4 py-3">
 											<div class="flex items-center gap-3">
 												<button onclick={() => playPreview(art?.preview, key)}
@@ -1714,7 +1714,7 @@
 													{#if art?.image}
 														<img src={art.image} alt="" class="w-full h-full object-cover" />
 													{:else}
-														<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+														<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
 															<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
 														</div>
 													{/if}

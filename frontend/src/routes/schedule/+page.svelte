@@ -116,7 +116,7 @@
 							</div>
 
 							<div class="px-4 pb-3">
-								<div class="divide-y divide-[var(--border-subtle)]">
+								<div class="space-y-0.5">
 									{#each groupTasks as task}
 										<div class="flex items-center gap-2 sm:gap-3 py-2 flex-wrap sm:flex-nowrap {DANGER_TASKS.has(task.task_name) ? 'opacity-75' : ''}">
 											<div class="w-2 h-2 rounded-full flex-shrink-0 {task.enabled ? (DANGER_TASKS.has(task.task_name) ? 'bg-amber-400' : 'bg-emerald-400') : 'bg-[var(--border-interactive)]'}"></div>

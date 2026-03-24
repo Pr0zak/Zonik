@@ -270,7 +270,7 @@
 					{ label: 'Format Mismatches', value: stats.formatMismatches, color: 'text-purple-400' },
 					{ label: 'Largest Group', value: stats.largestGroup + ' copies', color: 'text-blue-400' },
 				] as stat}
-					<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-center">
+					<div class="bg-[var(--surface-base)] ghost-border rounded-lg px-3 py-2 text-center">
 						<p class="text-lg font-bold {stat.color}">{stat.value}</p>
 						<p class="text-xs text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
 					</div>
@@ -279,7 +279,7 @@
 		{/if}
 
 		<!-- Toolbar -->
-		<div class="sticky top-0 z-10 bg-[var(--bg-primary)] pt-3 pb-2 mt-3 mb-3 border-b border-[var(--border-subtle)] space-y-2">
+		<div class="sticky top-0 z-10 bg-[var(--bg-primary)] pt-3 pb-2 mt-3 mb-3 space-y-2">
 			<!-- Row 1: Filters + Search + Sort -->
 			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
 				<div class="flex items-center gap-2 flex-wrap">
@@ -291,7 +291,7 @@
 					] as f}
 						<button
 							onclick={() => filterBy = f.value}
-							class="px-2.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+							class="px-2.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
 						>
 							{f.label}
 						</button>
@@ -301,10 +301,10 @@
 					<div class="relative flex-1 sm:flex-none">
 						<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
 						<input type="text" bind:value={searchQuery} placeholder="Search..."
-							class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-full sm:w-36 focus:outline-none focus:border-[var(--color-accent)]" />
+							class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--surface-base)] ghost-border text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-full sm:w-36 focus:outline-none focus:border-[var(--color-accent)]" />
 					</div>
 					<select bind:value={sortBy}
-						class="text-xs rounded-md bg-[var(--bg-secondary)] border border-[var(--border-subtle)] text-[var(--text-secondary)] px-2 py-1.5 focus:outline-none focus:border-[var(--color-accent)]">
+						class="text-xs rounded-md bg-[var(--surface-base)] ghost-border text-[var(--text-secondary)] px-2 py-1.5 focus:outline-none focus:border-[var(--color-accent)]">
 						<option value="space">Reclaimable Space</option>
 						<option value="copies">Most Copies</option>
 						<option value="gap">Quality Gap</option>
@@ -354,16 +354,16 @@
 		<!-- Duplicate groups -->
 		<div class="space-y-3">
 			{#each displayGroups as group, gi}
-				<Card padding="p-0" class="border border-[var(--border-subtle)] overflow-hidden">
+				<Card padding="p-0" class="ghost-border overflow-hidden">
 					<!-- Group header -->
 					<button onclick={() => toggleGroup(gi)}
-						class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors text-left">
+						class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors text-left">
 						{#if group.tracks[0]?.album_id}
 							<img src="/rest/getCoverArt?id={group.tracks[0].album_id}&size=56" alt=""
-								class="w-12 h-12 rounded object-cover flex-shrink-0 bg-[var(--bg-tertiary)]"
+								class="w-12 h-12 rounded object-cover flex-shrink-0 bg-[var(--surface-container)]"
 								onerror={(e) => e.target.style.display='none'} />
 						{:else}
-							<div class="w-12 h-12 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
+							<div class="w-12 h-12 rounded bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0">
 								<Music class="w-6 h-6 text-[var(--text-disabled)]" />
 							</div>
 						{/if}
@@ -398,11 +398,11 @@
 
 					<!-- Expanded track list -->
 					{#if expandedGroups.has(gi)}
-						<div class="border-t border-[var(--border-subtle)] divide-y divide-[var(--border-primary)]">
+						<div class="divide-y divide-[var(--border-primary)]">
 							{#each group.tracks as track}
 								{@const qpct = qualityPercent(track.quality_score, maxQuality)}
 								<div class="px-4 py-3 transition-colors
-									{track.is_best ? 'bg-emerald-500/5' : selected.has(track.id) ? (track.is_favorite ? 'bg-amber-500/5 border-l-2 border-l-amber-500' : 'bg-red-500/5') : 'hover:bg-[var(--bg-hover)]'}">
+									{track.is_best ? 'bg-emerald-500/5' : selected.has(track.id) ? (track.is_favorite ? 'bg-amber-500/5 border-l-2 border-l-amber-500' : 'bg-red-500/5') : 'hover:bg-[var(--surface-container-high)]'}">
 
 									<!-- Row 1: Main info -->
 									<div class="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap">
@@ -420,10 +420,10 @@
 										<!-- Cover art -->
 										{#if track.album_id}
 											<img src="/rest/getCoverArt?id={track.album_id}&size=44" alt=""
-												class="w-10 h-10 sm:w-11 sm:h-11 rounded object-cover flex-shrink-0 bg-[var(--bg-tertiary)]"
+												class="w-10 h-10 sm:w-11 sm:h-11 rounded object-cover flex-shrink-0 bg-[var(--surface-container)]"
 												onerror={(e) => e.target.style.display='none'} />
 										{:else}
-											<div class="w-10 h-10 sm:w-11 sm:h-11 rounded bg-[var(--bg-tertiary)] flex items-center justify-center flex-shrink-0">
+											<div class="w-10 h-10 sm:w-11 sm:h-11 rounded bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0">
 												<Music class="w-5 h-5 text-[var(--text-disabled)]" />
 											</div>
 										{/if}
@@ -456,7 +456,7 @@
 
 										<!-- Quality bar -->
 										<div class="flex items-center gap-2 flex-shrink-0 hidden md:flex min-w-[100px]">
-											<div class="w-16 h-2 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+											<div class="w-16 h-2 bg-[var(--surface-container)] rounded-full overflow-hidden">
 												<div class="h-full rounded-full transition-all {qualityBarColor(qpct)}" style="width: {qpct}%"></div>
 											</div>
 											<span class="text-xs text-[var(--text-muted)] font-mono w-6 text-right">{track.quality_score}</span>

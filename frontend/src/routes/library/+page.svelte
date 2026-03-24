@@ -722,7 +722,7 @@
 	<!-- Collapsible Schedule -->
 	{#if schedTasks.library_scan || schedTasks.upgrade_scan}
 		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
 			<Clock class="w-3.5 h-3.5" />
 			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
 			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
@@ -740,7 +740,7 @@
 							<select
 								value={schedTasks.upgrade_scan.config?.mode || 'low_bitrate'}
 								onchange={(e) => updateSchedConfig('upgrade_scan', { mode: e.target.value })}
-								class="bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-xs text-[var(--text-body)]"
+								class="bg-[var(--surface-container)] ghost-border rounded px-2 py-1 text-xs text-[var(--text-body)]"
 							>
 								<option value="low_bitrate">Low Bitrate</option>
 								<option value="lossy_to_lossless">Lossy → Lossless</option>
@@ -756,7 +756,7 @@
 									value={schedTasks.upgrade_scan.config?.max_bitrate || 256}
 									onchange={(e) => updateSchedConfig('upgrade_scan', { max_bitrate: parseInt(e.target.value) || 256 })}
 									min="64" max="512" step="32"
-									class="w-20 bg-[var(--bg-tertiary)] border border-[var(--border-interactive)] rounded px-2 py-1 text-xs text-[var(--text-body)]"
+									class="w-20 bg-[var(--surface-container)] ghost-border rounded px-2 py-1 text-xs text-[var(--text-body)]"
 								/>
 								<span class="text-[var(--text-disabled)]">kbps</span>
 							</label>
@@ -768,14 +768,14 @@
 	{/if}
 
 	<!-- Tabs row -->
-	<div class="flex items-center gap-1 border-b border-[var(--border-subtle)] overflow-x-auto">
+	<div class="flex items-center gap-1.5 mb-1 overflow-x-auto">
 		{#each tabs as t}
 			{@const Icon = t.icon}
 			<button onclick={() => switchTab(t.id)}
-				class="flex items-center gap-2 px-3 sm:px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px whitespace-nowrap
+				class="flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all rounded-lg whitespace-nowrap
 					{tab === t.id
-						? 'border-[var(--color-library)] text-[var(--text-primary)]'
-						: 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+						? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-ambient'
+						: 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--surface-container)]'}">
 				<Icon class="w-4 h-4" />
 				{t.label}
 			</button>
@@ -788,8 +788,8 @@
 			<Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-disabled)]" />
 			<input type="text" placeholder="Search..."
 				bind:value={search} oninput={debouncedSearch}
-				class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md pl-8 pr-3 py-1.5 text-sm w-48
-					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				class="bg-[var(--surface-lowest)] ghost-border rounded-lg pl-8 pr-3 py-1.5 text-sm w-48
+					placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
 		</div>
 	</div>
 
@@ -797,7 +797,7 @@
 	<div class="flex items-center gap-1.5 mb-4 mt-2 flex-wrap">
 		<!-- Active filter pills -->
 		{#if filterArtistId}
-			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
 				Artist: {filterArtistName}
 				<button onclick={() => { filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -805,7 +805,7 @@
 			</span>
 		{/if}
 		{#if filterAlbumId}
-			<span class="inline-flex items-center gap-1 bg-[var(--bg-tertiary)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
 				Album: {filterAlbumName}
 				<button onclick={() => { filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -824,20 +824,20 @@
 		<div class="flex-1"></div>
 
 		<!-- Per-page select -->
-		<select class="bg-[var(--bg-tertiary)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
+		<select class="bg-[var(--surface-container)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
 			{#each limitOptions as opt}
 				<option value={opt}>{opt}/page</option>
 			{/each}
 		</select>
 
 		<!-- View toggle -->
-		<div class="flex border border-[var(--border-subtle)] rounded-md overflow-hidden">
+		<div class="flex ghost-border rounded-md overflow-hidden">
 			<button onclick={() => viewMode = 'grid'}
-				class="p-2 sm:p-1.5 transition-colors {viewMode === 'grid' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+				class="p-2 sm:p-1.5 transition-colors {viewMode === 'grid' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
 				<Grid3x3 class="w-4 h-4" />
 			</button>
 			<button onclick={() => viewMode = 'list'}
-				class="p-2 sm:p-1.5 transition-colors {viewMode === 'list' ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+				class="p-2 sm:p-1.5 transition-colors {viewMode === 'list' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
 				<List class="w-4 h-4" />
 			</button>
 		</div>
@@ -846,7 +846,7 @@
 		{#if viewMode === 'list' && !$isMobile}
 			<div class="relative">
 				<button onclick={() => showColPicker = !showColPicker}
-					class="p-1.5 rounded-md transition-colors border border-[var(--border-subtle)] {showColPicker ? 'bg-[var(--bg-hover)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
+					class="p-1.5 rounded-md transition-colors ghost-border {showColPicker ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
 					title="Toggle columns">
 					<Columns3 class="w-4 h-4" />
 				</button>
@@ -854,11 +854,11 @@
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
 					<!-- svelte-ignore a11y_click_events_have_key_events -->
 					<div class="fixed inset-0 z-20" onclick={() => showColPicker = false}></div>
-					<div class="absolute right-0 top-full mt-1 z-30 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl p-2 min-w-[160px]"
+					<div class="absolute right-0 top-full mt-1 z-30 glass rounded-lg shadow-float p-2 min-w-[160px]"
 						onclick={(e) => e.stopPropagation()}>
 						<p class="text-xs text-[var(--text-disabled)] uppercase tracking-wider px-2 py-1">Columns</p>
 						{#each ALL_COLUMNS as col}
-							<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--bg-hover)] cursor-pointer text-xs text-[var(--text-secondary)]">
+							<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-[var(--surface-container-high)] cursor-pointer text-xs text-[var(--text-secondary)]">
 								<input type="checkbox" checked={visibleCols.has(col.id)}
 									onchange={() => toggleColumn(col.id)}
 									class="rounded accent-[var(--color-accent)] cursor-pointer" />
@@ -886,8 +886,8 @@
 		<div class="relative">
 			<Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-disabled)]" />
 			<input type="text" placeholder="Search..." bind:value={search} oninput={debouncedSearch}
-				class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md pl-8 pr-3 py-2 text-sm
-					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
+				class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg pl-8 pr-3 py-2 text-sm
+					placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
 		</div>
 	</div>
 
@@ -926,7 +926,7 @@
 			<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 				{#each Array(12) as _}
 					<div class="animate-pulse">
-						<div class="aspect-square bg-[var(--bg-secondary)] rounded-lg mb-2"></div>
+						<div class="aspect-square bg-[var(--surface-base)] rounded-lg mb-2"></div>
 						<Skeleton class="h-3 w-3/4 mb-1" />
 						<Skeleton class="h-2.5 w-1/2" />
 					</div>
@@ -938,12 +938,12 @@
 					{#each tracks as track}
 						<div class="group text-left transition-all">
 							<button class="w-full text-left" onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
-								<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]
+								<div class="relative aspect-square bg-[var(--surface-base)] rounded-lg overflow-hidden mb-2 ghost-border
 									{selectMode && selected.has(track.id) ? 'ring-2 ring-[var(--color-accent)]' : ''}">
 									{#if coverUrl(track.cover_art)}
 										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
 											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
+										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--surface-base)]">
 											<Music class="w-8 h-8 text-[var(--text-disabled)]" />
 										</div>
 									{:else}
@@ -1006,8 +1006,8 @@
 				{#if $isMobile}
 					<div class="space-y-1">
 						{#each tracks as track}
-							<button class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--bg-hover)] transition-colors
-								{selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10 ring-1 ring-[var(--color-accent)]' : 'bg-[var(--bg-secondary)]'}"
+							<button class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors
+								{selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10 ring-1 ring-[var(--color-accent)]' : 'bg-[var(--surface-base)]'}"
 								onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
 								{#if selectMode}
 									<div class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0
@@ -1017,7 +1017,7 @@
 										{/if}
 									</div>
 								{/if}
-								<div class="w-10 h-10 rounded bg-[var(--bg-tertiary)] overflow-hidden flex-shrink-0">
+								<div class="w-10 h-10 rounded bg-[var(--surface-container)] overflow-hidden flex-shrink-0">
 									{#if coverUrl(track.cover_art)}
 										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 									{:else}
@@ -1052,7 +1052,7 @@
 				<Card padding="p-0">
 					<table class="w-full text-sm">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+							<tr class="text-[var(--text-muted)] text-left">
 								{#if selectMode}
 									<th class="px-3 py-2.5 w-10">
 										<input type="checkbox" checked={selected.size === tracks.length && tracks.length > 0}
@@ -1075,9 +1075,9 @@
 								<th class="px-3 py-2.5 w-10"></th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-[var(--border-subtle)]">
+						<tbody>
 							{#each tracks as track}
-								<tr class="hover:bg-[var(--bg-hover)] cursor-pointer transition-colors group"
+								<tr class="hover:bg-[var(--surface-container-high)] cursor-pointer transition-colors group"
 									onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
 									{#if selectMode}
 										<td class="px-3 py-2 w-10">
@@ -1086,7 +1086,7 @@
 										</td>
 									{/if}
 									<td class="px-3 py-2 w-10">
-										<div class="w-8 h-8 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+										<div class="w-8 h-8 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
 											{#if coverUrl(track.cover_art)}
 												<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 											{:else}
@@ -1188,7 +1188,7 @@
 				<ChevronLeft class="w-4 h-4" /> Back to Artists
 			</button>
 			<div class="flex items-center gap-4 mb-6">
-				<div class="w-20 h-20 rounded-full bg-[var(--bg-secondary)] overflow-hidden border border-[var(--border-subtle)] flex-shrink-0">
+				<div class="w-20 h-20 rounded-full bg-[var(--surface-base)] overflow-hidden ghost-border flex-shrink-0">
 					{#if coverUrl(selectedArtist.cover_art)}
 						<img src={coverUrl(selectedArtist.cover_art)} alt="" class="w-full h-full object-cover" />
 					{:else}
@@ -1205,7 +1205,7 @@
 						await api.addToBlacklist(selectedArtist.name);
 						addToast(`Blacklisted: ${selectedArtist.name}`, 'success');
 					} catch (e) { addToast('Blacklist failed: ' + e.message, 'error'); }
-				}} class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-orange-400 hover:text-orange-300 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] rounded-md transition-colors"
+				}} class="flex items-center gap-1.5 px-3 py-1.5 text-sm text-orange-400 hover:text-orange-300 bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] rounded-md transition-colors"
 					title="Blacklist this artist from downloads">
 					<ShieldBan class="w-3.5 h-3.5" /> Blacklist
 				</button>
@@ -1216,7 +1216,7 @@
 				<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
 					{#each artistAlbums as album}
 						<button class="group text-left" onclick={() => openAlbum(album)}>
-							<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]">
+							<div class="relative aspect-square bg-[var(--surface-base)] rounded-lg overflow-hidden mb-2 ghost-border">
 								{#if coverUrl(album.cover_art)}
 									<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 								{:else}
@@ -1234,12 +1234,12 @@
 			{#if artistTracks.length}
 				<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Tracks</h3>
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each artistTracks as track, i}
-							<div class="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--bg-hover)] transition-colors group">
+							<div class="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface-container-high)] transition-colors group">
 								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => playTrack(track)}>
 									<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right">{i + 1}</span>
-									<div class="w-8 h-8 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+									<div class="w-8 h-8 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
 										{#if coverUrl(track.cover_art)}
 											<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 										{:else}
@@ -1271,7 +1271,7 @@
 			<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 				{#each Array(12) as _}
 					<div class="animate-pulse">
-						<div class="aspect-square bg-[var(--bg-secondary)] rounded-full mb-2"></div>
+						<div class="aspect-square bg-[var(--surface-base)] rounded-full mb-2"></div>
 						<Skeleton class="h-3 w-3/4 mx-auto mb-1" />
 						<Skeleton class="h-2.5 w-1/2 mx-auto" />
 					</div>
@@ -1283,12 +1283,12 @@
 					{#each artists as artist}
 						<div class="group text-center">
 							<button class="w-full" onclick={() => openArtist(artist)}>
-								<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-full overflow-hidden mb-2 border border-[var(--border-subtle)] mx-auto
+								<div class="relative aspect-square bg-[var(--surface-base)] rounded-full overflow-hidden mb-2 ghost-border mx-auto
 									group-hover:border-[var(--color-accent)]/50 transition-colors">
 									{#if coverUrl(artist.cover_art)}
 										<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
 											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
+										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--surface-base)]">
 											<Users class="w-8 h-8 text-[var(--text-disabled)]" />
 										</div>
 									{:else}
@@ -1311,11 +1311,11 @@
 				</div>
 			{:else}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each artists as artist}
-							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors">
+							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors">
 								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => openArtist(artist)}>
-									<div class="w-10 h-10 rounded-full bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+									<div class="w-10 h-10 rounded-full bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
 										{#if coverUrl(artist.cover_art)}
 											<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 										{:else}
@@ -1348,7 +1348,7 @@
 			<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
 				{#each Array(12) as _}
 					<div class="animate-pulse">
-						<div class="aspect-square bg-[var(--bg-secondary)] rounded-lg mb-2"></div>
+						<div class="aspect-square bg-[var(--surface-base)] rounded-lg mb-2"></div>
 						<Skeleton class="h-3 w-3/4 mb-1" />
 						<Skeleton class="h-2.5 w-1/2" />
 					</div>
@@ -1360,11 +1360,11 @@
 					{#each albums as album}
 						<div class="group text-left">
 							<button class="w-full text-left" onclick={() => openAlbum(album)}>
-								<div class="relative aspect-square bg-[var(--bg-secondary)] rounded-lg overflow-hidden mb-2 border border-[var(--border-subtle)]">
+								<div class="relative aspect-square bg-[var(--surface-base)] rounded-lg overflow-hidden mb-2 ghost-border">
 									{#if coverUrl(album.cover_art)}
 										<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
 											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--bg-secondary)]">
+										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--surface-base)]">
 											<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
 										</div>
 									{:else}
@@ -1393,11 +1393,11 @@
 				</div>
 			{:else}
 				<Card padding="p-0">
-					<div class="divide-y divide-[var(--border-subtle)]">
+					<div class="space-y-0.5">
 						{#each albums as album}
-							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors">
+							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors">
 								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => openAlbum(album)}>
-									<div class="w-10 h-10 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+									<div class="w-10 h-10 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
 										{#if coverUrl(album.cover_art)}
 											<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 										{:else}
@@ -1439,7 +1439,7 @@
 		</div>
 		<p class="text-xs text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-			<a href="/duplicates" class="text-left p-3 rounded-lg border transition-colors border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5">
+			<a href="/duplicates" class="text-left p-3 rounded-lg border transition-colors border-amber-500/20 bg-[var(--surface-base)] hover:bg-amber-500/5">
 				<div class="flex items-center gap-2 mb-1">
 					<Copy class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Deduplication</span>
@@ -1447,7 +1447,7 @@
 				</div>
 				<p class="text-xs text-[var(--text-muted)]">Manage duplicate tracks with full details — format, quality, play count, ratings.</p>
 			</a>
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--bg-secondary)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('organize')}>
+			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--surface-base)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('organize')}>
 				<div class="flex items-center gap-2 mb-1">
 					<FolderTree class="w-4 h-4 text-amber-400" />
 					<span class="text-sm font-medium text-[var(--text-primary)]">Rename & Sort</span>
@@ -1517,36 +1517,36 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="fixed inset-0 z-40" onclick={closeMenu}></div>
-	<div class="fixed z-50 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1 min-w-[160px]"
+	<div class="fixed z-50 glass rounded-lg shadow-float py-1 min-w-[160px]"
 		style="left: {Math.min(menuPos.x, window.innerWidth - 180)}px; top: {Math.min(menuPos.y, window.innerHeight - 200)}px">
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => { const t = menuTrack; closeMenu(); findSimilar(t, new Event('click')); }}>
 			<AudioWaveform class="w-3.5 h-3.5 text-purple-400" /> Find Similar
 		</button>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => openEdit(menuTrack)}>
 			<Pencil class="w-3.5 h-3.5 text-blue-400" /> Edit Info
 		</button>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => { toggleFav('track', menuTrack.id); closeMenu(); }}>
 			<Heart class="w-3.5 h-3.5 {favTrackIds.has(menuTrack.id) ? 'text-red-400' : ''}"
 				fill={favTrackIds.has(menuTrack.id) ? 'currentColor' : 'none'} />
 			{favTrackIds.has(menuTrack.id) ? 'Unfavorite' : 'Favorite'}
 		</button>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => { const t = menuTrack; closeMenu(); findRemixes(t); }}>
 			<Disc3 class="w-3.5 h-3.5 text-teal-400" /> Find Remixes
 		</button>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => { openUpgradeModal(menuTrack); }}>
 			<Download class="w-3.5 h-3.5 text-green-400" /> Find Upgrade
 		</button>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-body)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => blacklistArtist(menuTrack)}>
 			<ShieldBan class="w-3.5 h-3.5 text-orange-400" /> Blacklist Artist
 		</button>
 		<div class="border-t border-[var(--border-subtle)] my-1"></div>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[var(--bg-hover)] transition-colors text-left"
+		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[var(--surface-container-high)] transition-colors text-left"
 			onclick={() => deleteTrack(menuTrack)}>
 			<Trash2 class="w-3.5 h-3.5" /> Delete Track
 		</button>
@@ -1560,31 +1560,31 @@
 			<div>
 				<label class="block text-xs text-[var(--text-muted)] mb-1">Title</label>
 				<input type="text" bind:value={editForm.title}
-					class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+					class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 						focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 			</div>
 			<div class="grid grid-cols-3 gap-3">
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1">Genre</label>
 					<input type="text" bind:value={editForm.genre}
-						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+						class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				</div>
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1">Year</label>
 					<input type="number" bind:value={editForm.year}
-						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+						class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				</div>
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1">Track #</label>
 					<input type="number" bind:value={editForm.track_number}
-						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+						class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				</div>
 			</div>
 			{#if editTrack?.file_path}
-			<div class="mt-1 px-2.5 py-2 rounded bg-[var(--bg-primary)] border border-[var(--border-subtle)] space-y-1.5">
+			<div class="mt-1 px-2.5 py-2 rounded bg-[var(--bg-primary)] ghost-border space-y-1.5">
 				<div>
 					<p class="text-xs text-[var(--text-disabled)] uppercase tracking-wider mb-0.5">File Path</p>
 					<p class="text-xs text-[var(--text-muted)] font-mono break-all">{editTrack.file_path}</p>
@@ -1643,12 +1643,12 @@
 		<div class="flex gap-1 mb-4">
 			<button onclick={() => switchSimilarTab('lastfm')}
 				class="px-3 py-1 rounded-md text-xs font-medium transition-colors
-					{similarTab === 'lastfm' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white'}">
+					{similarTab === 'lastfm' ? 'bg-[var(--color-accent)] text-white' : 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white'}">
 				Last.fm
 			</button>
 			<button onclick={() => switchSimilarTab('vibe')}
 				class="px-3 py-1 rounded-md text-xs font-medium transition-colors
-					{similarTab === 'vibe' ? 'bg-purple-600 text-white' : 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white'}">
+					{similarTab === 'vibe' ? 'bg-purple-600 text-white' : 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white'}">
 				Vibe Match
 			</button>
 		</div>
@@ -1657,7 +1657,7 @@
 		{:else if similarTracks.length}
 			<div class="space-y-1">
 				{#each similarTracks as t}
-					<div class="flex items-center justify-between px-3 py-2 rounded-md hover:bg-[var(--bg-hover)] text-sm transition-colors">
+					<div class="flex items-center justify-between px-3 py-2 rounded-md hover:bg-[var(--surface-container-high)] text-sm transition-colors">
 						<div class="flex-1 min-w-0">
 							<span class="font-medium text-[var(--text-primary)]">{t.name}</span>
 							<span class="text-[var(--text-secondary)]"> - {t.artist}</span>
@@ -1724,7 +1724,7 @@
 			<div class="space-y-1 max-h-96 overflow-y-auto">
 				{#each remixes as remix}
 					{@const rkey = `${remix.artist}|${remix.name}`}
-					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--bg-hover)] transition-colors group">
+					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--surface-container-high)] transition-colors group">
 						<div class="flex-1 min-w-0">
 							<p class="text-sm text-[var(--text-primary)] truncate">{remix.name}</p>
 							<p class="text-xs text-[var(--text-muted)]">{remix.artist}</p>
@@ -1779,7 +1779,7 @@
 <Modal bind:open={showUpgrade} title="Find Upgrade">
 	{#snippet children()}
 		{#if upgradeTrack}
-			<div class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-[var(--bg-secondary)]">
+			<div class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-[var(--surface-base)]">
 				{#if coverUrl(upgradeTrack.id)}
 					<img src={coverUrl(upgradeTrack.id)} alt="" class="w-12 h-12 rounded object-cover" />
 				{/if}
@@ -1814,7 +1814,7 @@
 					{@const key = result.username + result.filename}
 					{@const ext = result.filename?.split('.').pop()?.toUpperCase() || '?'}
 					{@const st = upgradeStatuses[key]}
-					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--bg-hover)] transition-colors group">
+					<div class="flex items-center gap-3 px-3 py-2 rounded hover:bg-[var(--surface-container-high)] transition-colors group">
 						<div class="flex-1 min-w-0">
 							<p class="text-sm text-[var(--text-primary)] truncate" title={result.filename}>{result.filename?.split(/[/\\]/).pop()}</p>
 							<p class="text-xs text-[var(--text-muted)]">

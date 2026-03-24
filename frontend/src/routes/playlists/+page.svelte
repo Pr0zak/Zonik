@@ -269,7 +269,7 @@
 	<!-- Collapsible Schedule -->
 	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites || schedTasks.playlist_unfavorites}
 		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--bg-secondary)] hover:bg-[var(--bg-hover)] transition-colors text-xs text-[var(--text-muted)]">
+			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
 			<Clock class="w-3.5 h-3.5" />
 			<span class="font-mono uppercase tracking-wider">Auto-generate Schedule</span>
 			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
@@ -312,7 +312,7 @@
 			</div>
 
 			<!-- Or search -->
-			<div class="border-t border-[var(--border-subtle)] pt-3">
+			<div class=" pt-3">
 				<label class="block text-xs text-[var(--text-muted)] mb-1.5">Or search for playlists</label>
 				<div class="flex gap-2">
 					<input type="text" bind:value={importSearchQuery} placeholder="Search Spotify & Deezer..." class="{inputClass} flex-1"
@@ -327,12 +327,12 @@
 			{#if importSearchResults.length}
 				<div class="mt-3 space-y-2">
 					{#each importSearchResults as result}
-						<button class="w-full flex items-center gap-3 p-2 rounded-lg bg-[var(--bg-tertiary)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+						<button class="w-full flex items-center gap-3 p-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-left"
 							onclick={() => previewSearchResult(result)}>
 							{#if result.image_url}
 								<img src={result.image_url} alt="" class="w-10 h-10 rounded object-cover flex-shrink-0" />
 							{:else}
-								<div class="w-10 h-10 rounded bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
+								<div class="w-10 h-10 rounded bg-[var(--surface-base)] flex items-center justify-center flex-shrink-0">
 									<ListMusic class="w-4 h-4 text-[var(--text-disabled)]" />
 								</div>
 							{/if}
@@ -348,7 +348,7 @@
 
 			<!-- Preview -->
 			{#if importPreview}
-				<div class="mt-4 border-t border-[var(--border-subtle)] pt-4">
+				<div class="mt-4 pt-4">
 					<div class="flex items-center gap-3 mb-3">
 						{#if importPreview.image_url}
 							<img src={importPreview.image_url} alt="" class="w-14 h-14 rounded-lg object-cover" />
@@ -365,7 +365,7 @@
 					<!-- Track list preview -->
 					<div class="max-h-60 overflow-y-auto space-y-1 mb-3">
 						{#each importPreview.tracks?.slice(0, 50) || [] as track}
-							<div class="flex items-center gap-2 text-xs px-2 py-1 rounded {track.in_library ? 'bg-emerald-500/10' : 'bg-[var(--bg-tertiary)]'}">
+							<div class="flex items-center gap-2 text-xs px-2 py-1 rounded {track.in_library ? 'bg-emerald-500/10' : 'bg-[var(--surface-container)]'}">
 								{#if track.in_library}
 									<Check class="w-3 h-3 text-emerald-400 flex-shrink-0" />
 								{:else}
@@ -529,12 +529,12 @@
 			</div>
 		{:else if playlistDetail?.tracks?.length}
 			<Card padding="p-0">
-				<div class="divide-y divide-[var(--border-subtle)]">
+				<div class="space-y-0.5">
 					{#each paginatedTracks as track, i}
-						<button class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--bg-hover)] transition-colors group text-left"
+						<button class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors group text-left"
 							onclick={() => playTrack(track)}>
 							<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right flex-shrink-0">{trackOffset + i + 1}</span>
-							<div class="relative w-9 h-9 rounded bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0">
+							<div class="relative w-9 h-9 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
 								{#if coverUrl(track.cover_art)}
 									<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 								{:else}
@@ -580,7 +580,7 @@
 				<div onclick={() => openPlaylist(playlist)}>
 					<Card hover padding="p-4" class="cursor-pointer group">
 						<div class="flex items-center gap-3">
-							<div class="w-10 h-10 rounded-lg bg-[var(--bg-tertiary)] flex items-center justify-center group-hover:bg-amber-500/10 transition-colors">
+							<div class="w-10 h-10 rounded-lg bg-[var(--surface-container)] flex items-center justify-center group-hover:bg-amber-500/10 transition-colors">
 								<ListMusic class="w-5 h-5 text-[var(--text-disabled)] group-hover:text-amber-400 transition-colors" />
 							</div>
 							<div>

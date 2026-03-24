@@ -14,7 +14,7 @@
 	{#each $toasts as toast (toast.id)}
 		{@const s = styles[toast.type] || styles.info}
 		{@const Icon = s.icon}
-		<div class="flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm shadow-lg backdrop-blur-sm animate-slide-in {s.bg}">
+		<div class="flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm shadow-float glass-subtle animate-slide-in {s.bg}">
 			<Icon class="w-4 h-4 shrink-0 {s.color}" />
 			<span class="text-[var(--text-body)]">{toast.message}</span>
 		</div>

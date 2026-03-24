@@ -13,15 +13,15 @@
 		...rest
 	} = $props();
 
-	const base = 'inline-flex items-center justify-center font-medium transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--bg-primary)] disabled:opacity-50 disabled:cursor-not-allowed';
+	const base = 'inline-flex items-center justify-center font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--surface-base)] disabled:opacity-50 disabled:cursor-not-allowed';
 
 	const variants = {
-		primary: 'bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)] text-white rounded-md',
-		secondary: 'bg-[var(--bg-hover)] hover:bg-[#222] text-white border border-[var(--border-interactive)] rounded-md',
-		ghost: 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)] rounded-md',
-		danger: 'text-red-400 hover:bg-red-500/10 border border-red-500/20 hover:border-red-500/40 rounded-md',
+		primary: 'bg-gradient-primary text-[var(--color-on-primary)] hover:opacity-90 rounded-md shadow-glow',
+		secondary: 'bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] text-[var(--text-primary)] ghost-border rounded-md',
+		ghost: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] rounded-md',
+		danger: 'text-red-400 hover:bg-red-500/10 ghost-border hover:border-red-500/30 rounded-md',
 		success: 'bg-emerald-600 hover:bg-emerald-700 text-white rounded-md',
-		icon: 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-hover)] rounded-md',
+		icon: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] rounded-md',
 	};
 
 	const sizes = {

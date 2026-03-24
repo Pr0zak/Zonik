@@ -160,22 +160,22 @@
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Quick Actions</h2>
 				<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
 					<button onclick={quickScan}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--bg-hover)] hover:bg-[var(--bg-active)] transition-colors">
+						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
 						<RefreshCw class="w-5 h-5 text-[var(--color-library)]" />
 						<span class="text-xs text-[var(--text-secondary)]">Scan Library</span>
 					</button>
 					<button onclick={quickRefreshRecs}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--bg-hover)] hover:bg-[var(--bg-active)] transition-colors">
+						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
 						<Sparkles class="w-5 h-5 text-[var(--color-discover)]" />
 						<span class="text-xs text-[var(--text-secondary)]">Refresh Recs</span>
 					</button>
 					<button onclick={quickCharts}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--bg-hover)] hover:bg-[var(--bg-active)] transition-colors">
+						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
 						<TrendingUp class="w-5 h-5 text-[var(--color-downloads)]" />
 						<span class="text-xs text-[var(--text-secondary)]">Check Charts</span>
 					</button>
 					<button onclick={quickAnalysis}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--bg-hover)] hover:bg-[var(--bg-active)] transition-colors">
+						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
 						<AudioWaveform class="w-5 h-5 text-[var(--color-analysis)]" />
 						<span class="text-xs text-[var(--text-secondary)]">Run Analysis</span>
 					</button>
@@ -296,12 +296,12 @@
 					<div class="space-y-2">
 						{#each transfers.slice(0, 5) as t}
 							{@const pct = t.file_size ? Math.round((t.received_bytes / t.file_size) * 100) : 0}
-							<div class="p-2 rounded bg-[var(--bg-hover)]">
+							<div class="p-2 rounded bg-[var(--surface-container-high)]">
 								<div class="flex items-center justify-between mb-1">
 									<span class="text-xs text-[var(--text-primary)] truncate flex-1">{t.filename?.split(/[\\/]/).pop() || 'Unknown'}</span>
 									<span class="text-xs text-[var(--text-muted)] font-mono ml-2">{pct}%</span>
 								</div>
-								<div class="h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+								<div class="h-1.5 bg-[var(--surface-container)] rounded-full overflow-hidden">
 									<div class="h-full bg-blue-500 rounded-full transition-all" style="width: {pct}%"></div>
 								</div>
 								<div class="flex justify-between mt-1">
@@ -338,7 +338,7 @@
 						{#each dashboard.recent_activity.slice(0, 8) as job}
 							{@const SIcon = statusIcon(job.status)}
 							<button onclick={() => goto(`/logs?job=${job.id}`)}
-								class="w-full flex items-center gap-2 py-1.5 px-2 rounded hover:bg-[var(--bg-hover)] transition-colors text-left">
+								class="w-full flex items-center gap-2 py-1.5 px-2 rounded hover:bg-[var(--surface-container-high)] transition-colors text-left">
 								<SIcon class="w-3 h-3 flex-shrink-0 {statusColor(job.status)} {job.status === 'running' ? 'animate-spin' : ''}" />
 								<span class="text-xs text-[var(--text-secondary)] flex-1 truncate">{jobLabel(job.type)}</span>
 								<span class="text-xs text-[var(--text-disabled)] font-mono">{formatRelativeTime(job.finished_at)}</span>

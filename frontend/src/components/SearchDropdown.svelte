@@ -233,23 +233,23 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="absolute top-full left-0 right-0 mt-1 w-full max-w-80 sm:max-w-none bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg shadow-xl z-50 overflow-hidden animate-fade-slide-in max-h-[70vh] overflow-y-auto">
+<div class="absolute top-full left-0 right-0 mt-1 w-full max-w-80 sm:max-w-none glass rounded-lg shadow-float z-50 overflow-hidden animate-fade-slide-in max-h-[70vh] overflow-y-auto">
 	<!-- Library Section -->
 	{#if libraryLoading && !libraryResults.length}
-		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--text-disabled)] border-b border-[var(--border-subtle)]">In Your Library</div>
+		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--text-disabled)] ">In Your Library</div>
 		<div class="px-3 py-2 space-y-2">
 			<Skeleton class="h-4 w-3/4" />
 			<Skeleton class="h-4 w-1/2" />
 		</div>
 	{:else if libraryResults.length}
-		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--text-disabled)] border-b border-[var(--border-subtle)] flex items-center justify-between">
+		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--text-disabled)]  flex items-center justify-between">
 			<span>In Your Library</span>
 			<span class="text-[var(--text-disabled)]">{libraryResults.length}</span>
 		</div>
 		{#each libraryResults as track, i}
 			{@const flatIdx = i}
 			<button onclick={() => handlePlay(track)}
-				class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[var(--bg-hover)] transition-colors group {selectedIndex === flatIdx ? 'bg-[var(--bg-hover)]' : ''}">
+				class="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[var(--surface-container-high)] transition-colors group {selectedIndex === flatIdx ? 'bg-[var(--surface-container-high)]' : ''}">
 				<div class="flex-1 min-w-0">
 					<p class="text-sm text-[var(--text-primary)] truncate">{track.title}</p>
 					<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
@@ -264,20 +264,20 @@
 
 	<!-- Last.fm Section -->
 	{#if lastfmLoading && !filteredLastfm().length}
-		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-discovery)] border-b border-[var(--border-subtle)]">Last.fm</div>
+		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-discovery)] ">Last.fm</div>
 		<div class="px-3 py-2 space-y-2">
 			<Skeleton class="h-4 w-3/4" />
 			<Skeleton class="h-4 w-1/2" />
 		</div>
 	{:else if filteredLastfm().length}
-		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-discovery)] border-b border-[var(--border-subtle)] flex items-center justify-between">
+		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-discovery)]  flex items-center justify-between">
 			<span>Last.fm</span>
 			<span class="text-[var(--text-disabled)]">{filteredLastfm().length}</span>
 		</div>
 		{#each filteredLastfm() as track, i}
 			{@const flatIdx = libraryResults.length + i}
 			{@const key = `lastfm:${track.artist}:${track.name}`}
-			<div class="w-full flex items-center gap-3 px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors {selectedIndex === flatIdx ? 'bg-[var(--bg-hover)]' : ''}">
+			<div class="w-full flex items-center gap-3 px-3 py-2 hover:bg-[var(--surface-container-high)] transition-colors {selectedIndex === flatIdx ? 'bg-[var(--surface-container-high)]' : ''}">
 				<div class="flex-1 min-w-0">
 					<p class="text-sm text-[var(--text-primary)] truncate">{track.name}</p>
 					<p class="text-xs text-[var(--text-muted)] truncate">{track.artist || ''}</p>
@@ -291,7 +291,7 @@
 					<Loader2 class="w-3.5 h-3.5 text-[var(--color-downloads)] animate-spin flex-shrink-0" />
 				{:else}
 					<button onclick={() => downloadLastfm(track)}
-						class="p-1 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-disabled)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0"
+						class="p-1 rounded hover:bg-[var(--surface-container)] text-[var(--text-disabled)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0"
 						title="Download">
 						<Download class="w-3.5 h-3.5" />
 					</button>
@@ -302,20 +302,20 @@
 
 	<!-- P2P Section -->
 	{#if p2pLoading && !p2pResults.length}
-		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-downloads)] border-b border-[var(--border-subtle)]">P2P Sources</div>
+		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-downloads)] ">P2P Sources</div>
 		<div class="px-3 py-2 space-y-2">
 			<Skeleton class="h-4 w-full" />
 			<Skeleton class="h-4 w-2/3" />
 		</div>
 	{:else if p2pResults.length}
-		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-downloads)] border-b border-[var(--border-subtle)] flex items-center justify-between">
+		<div class="px-3 py-1.5 text-xs uppercase tracking-wider text-[var(--color-downloads)]  flex items-center justify-between">
 			<span>P2P Sources</span>
 			<span class="text-[var(--text-disabled)]">{p2pResults.length}</span>
 		</div>
 		{#each p2pResults as result, i}
 			{@const flatIdx = libraryResults.length + filteredLastfm().length + i}
 			{@const key = `p2p:${result.username}:${result.filename}`}
-			<div class="w-full flex items-center gap-2 px-3 py-2 hover:bg-[var(--bg-hover)] transition-colors {selectedIndex === flatIdx ? 'bg-[var(--bg-hover)]' : ''}">
+			<div class="w-full flex items-center gap-2 px-3 py-2 hover:bg-[var(--surface-container-high)] transition-colors {selectedIndex === flatIdx ? 'bg-[var(--surface-container-high)]' : ''}">
 				<div class="flex-1 min-w-0">
 					<p class="text-sm text-[var(--text-primary)] truncate font-mono text-xs">{shortFilename(result.filename)}</p>
 					<p class="text-xs text-[var(--text-muted)] truncate">{result.username}</p>
@@ -328,7 +328,7 @@
 					<Loader2 class="w-3.5 h-3.5 text-[var(--color-downloads)] animate-spin flex-shrink-0" />
 				{:else}
 					<button onclick={() => downloadP2P(result)}
-						class="p-1 rounded hover:bg-[var(--bg-tertiary)] text-[var(--text-disabled)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0"
+						class="p-1 rounded hover:bg-[var(--surface-container)] text-[var(--text-disabled)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0"
 						title="Download">
 						<Download class="w-3.5 h-3.5" />
 					</button>
@@ -340,7 +340,7 @@
 	<!-- Footer: always visible when there's a query -->
 	{#if query.trim()}
 		<button onclick={goToDownloads}
-			class="w-full flex items-center gap-2 px-3 py-2.5 text-left border-t border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] transition-colors text-[var(--color-downloads)]">
+			class="w-full flex items-center gap-2 px-3 py-2.5 text-left  hover:bg-[var(--surface-container-high)] transition-colors text-[var(--color-downloads)]">
 			<Search class="w-3.5 h-3.5" />
 			<span class="text-sm">Search all sources for "{query.trim()}"</span>
 		</button>

@@ -4,30 +4,63 @@
 
 @layer base {
 	:root {
-		/* Background Layers */
+		/* Surface Hierarchy (Material 3 / Stitch) */
+		--surface-lowest: #0e0e0e;
+		--surface-base: #131313;
+		--surface-container-low: #1c1b1b;
+		--surface-container: #201f1f;
+		--surface-container-high: #2a2a2a;
+		--surface-container-highest: #353534;
+		--surface-bright: #3a3939;
+
+		/* Background Layers (mapped to surface hierarchy for backward compat) */
 		--bg-primary: #0a0a0a;
-		--bg-secondary: #0f0f0f;
-		--bg-tertiary: #141414;
-		--bg-hover: #1a1a1a;
-		--bg-active: #1c1c1c;
+		--bg-secondary: #131313;
+		--bg-tertiary: #1c1b1b;
+		--bg-hover: #2a2a2a;
+		--bg-active: #353534;
 
-		/* Borders */
-		--border-subtle: #1c1c1c;
-		--border-interactive: #262626;
-		--border-focus: #333333;
+		/* Borders — "No-Line" rule: ghost borders only */
+		--border-subtle: rgba(70, 69, 84, 0.15);
+		--border-interactive: rgba(70, 69, 84, 0.3);
+		--border-focus: rgba(192, 193, 255, 0.4);
 
-		/* Text */
-		--text-primary: #ffffff;
-		--text-body: #e5e5e5;
+		/* Text — no pure white (prevents halation on dark bg) */
+		--text-primary: #e5e2e1;
+		--text-body: #c7c4d7;
 		--text-secondary: #a3a3a3;
-		--text-muted: #737373;
+		--text-muted: #908fa0;
 		--text-disabled: #525252;
 
-		/* Accent (indigo-blue) */
+		/* Primary Accent (indigo) */
 		--color-accent: #6366f1;
 		--color-accent-hover: #4f46e5;
-		--color-accent-light: #818cf8;
+		--color-accent-light: #c0c1ff;
 		--color-accent-dark: #4338ca;
+		--color-primary: #c0c1ff;
+		--color-primary-container: #8083ff;
+		--color-on-primary: #1000a9;
+
+		/* Secondary Accent (purple) */
+		--color-secondary: #d0bcff;
+		--color-secondary-container: #571bc1;
+
+		/* Tertiary Accent (amber) */
+		--color-tertiary: #ffb783;
+		--color-tertiary-container: #d97721;
+
+		/* Gradients */
+		--gradient-primary: linear-gradient(135deg, #c0c1ff, #8083ff);
+		--gradient-accent: linear-gradient(135deg, #6366f1, #4338ca);
+
+		/* Ambient Shadows (indigo-tinted, not pure black) */
+		--shadow-ambient: 0px 10px 40px rgba(99, 102, 241, 0.08);
+		--shadow-float: 0px 20px 40px rgba(0, 0, 0, 0.4);
+		--shadow-glow: 0px 0px 15px rgba(192, 193, 255, 0.15);
+
+		/* Outline */
+		--outline: #908fa0;
+		--outline-variant: #464554;
 
 		/* Section Colors */
 		--color-dashboard: #6366f1;
@@ -60,24 +93,118 @@
 		-moz-osx-font-smoothing: grayscale;
 	}
 
+	/* Selection highlight */
+	::selection {
+		background: rgba(192, 193, 255, 0.25);
+		color: var(--text-primary);
+	}
+
+	/* Global focus-visible — indigo glow ring for keyboard nav */
+	:focus-visible {
+		outline: 2px solid rgba(192, 193, 255, 0.4);
+		outline-offset: 2px;
+	}
+
+	/* Override focus-visible on elements that handle their own focus */
+	button:focus-visible,
+	input:focus-visible,
+	select:focus-visible,
+	a:focus-visible {
+		outline: none;
+	}
+
 	/* Scrollbar */
 	::-webkit-scrollbar {
 		width: 10px;
 	}
 
 	::-webkit-scrollbar-track {
-		background: var(--bg-primary);
+		background: var(--surface-base);
 	}
 
 	::-webkit-scrollbar-thumb {
-		background: var(--bg-hover);
-		border: 2px solid var(--bg-primary);
+		background: var(--surface-container-high);
+		border: 2px solid var(--surface-base);
 		border-radius: 5px;
 	}
 
 	::-webkit-scrollbar-thumb:hover {
-		background: var(--border-focus);
+		background: var(--surface-container-highest);
 	}
+}
+
+/* Glassmorphism Utilities */
+.glass {
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	background: rgba(32, 31, 31, 0.7);
+}
+
+.glass-subtle {
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	background: rgba(28, 27, 27, 0.8);
+}
+
+/* Fallback for devices that don't support backdrop-filter */
+@supports not (backdrop-filter: blur(20px)) {
+	.glass {
+		background: rgba(32, 31, 31, 0.95);
+	}
+	.glass-subtle {
+		background: rgba(28, 27, 27, 0.95);
+	}
+}
+
+/* Ambient Shadow Utilities */
+.shadow-ambient {
+	box-shadow: var(--shadow-ambient);
+}
+
+.shadow-float {
+	box-shadow: var(--shadow-float);
+}
+
+.shadow-glow {
+	box-shadow: var(--shadow-glow);
+}
+
+/* Ghost Border Utility */
+.ghost-border {
+	border: 1px solid rgba(70, 69, 84, 0.15);
+}
+
+.ghost-border-focus:focus {
+	border-color: rgba(192, 193, 255, 0.3);
+	box-shadow: 0 0 0 2px rgba(192, 193, 255, 0.1);
+}
+
+/* Gradient Utilities */
+.bg-gradient-primary {
+	background: var(--gradient-primary);
+}
+
+.bg-gradient-accent {
+	background: var(--gradient-accent);
+}
+
+/* Editorial Typography Helpers */
+.tracking-editorial {
+	letter-spacing: -0.02em;
+}
+
+.text-display {
+	font-size: 2.25rem;
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	line-height: 1.1;
+}
+
+.text-headline {
+	font-size: 1.5rem;
+	font-weight: 600;
+	letter-spacing: -0.01em;
+	line-height: 1.2;
 }
 
 /* Animations */
@@ -125,6 +252,20 @@
 	}
 }
 
+@keyframes glow-pulse {
+	0%, 100% {
+		box-shadow: 0 0 8px rgba(192, 193, 255, 0.2);
+	}
+	50% {
+		box-shadow: 0 0 16px rgba(192, 193, 255, 0.4);
+	}
+}
+
+@keyframes equalizer {
+	0%, 100% { height: 30%; }
+	50% { height: 100%; }
+}
+
 .animate-fade-in {
 	animation: fade-in 0.4s ease-out;
 }
@@ -139,6 +280,10 @@
 
 .animate-slide-up {
 	animation: slide-up 0.3s ease-out;
+}
+
+.animate-glow-pulse {
+	animation: glow-pulse 2s ease-in-out infinite;
 }
 
 @keyframes indeterminate {
@@ -167,11 +312,51 @@
 	background: linear-gradient(90deg, transparent, var(--text-muted), transparent);
 }
 
+/* Card hover scale */
+.hover-lift {
+	transition: transform 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+	transform: scale(1.02);
+	box-shadow: var(--shadow-ambient);
+}
+
+/* Smooth transitions for interactive elements */
+a, button, input, select, textarea {
+	transition-property: color, background-color, border-color, box-shadow, opacity;
+	transition-duration: 200ms;
+	transition-timing-function: ease;
+}
+
+/* Scrollbar gutter to prevent layout shift */
+.overflow-y-auto,
+.overflow-y-scroll {
+	scrollbar-gutter: stable;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
 	*::after {
 		animation-duration: 0.01ms !important;
 		transition-duration: 0.01ms !important;
+	}
+
+	.hover-lift:hover {
+		transform: none;
+	}
+}
+
+/* High contrast / forced colors: restore visible borders */
+@media (forced-colors: active) {
+	.ghost-border {
+		border: 1px solid ButtonText;
+	}
+
+	.glass,
+	.glass-subtle {
+		background: Canvas;
+		backdrop-filter: none;
 	}
 }

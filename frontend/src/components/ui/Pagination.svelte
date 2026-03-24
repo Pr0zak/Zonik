@@ -28,7 +28,7 @@
 		{#if limitOptions.length > 0}
 			<select value={limit}
 				onchange={(e) => onchange?.(0, parseInt(e.target.value))}
-				class="bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
+				class="bg-[var(--surface-container)] ghost-border rounded-md px-2 py-1 text-xs text-[var(--text-body)] focus:outline-none">
 				{#each limitOptions as opt}
 					<option value={opt} selected={opt === limit}>{opt} / page</option>
 				{/each}

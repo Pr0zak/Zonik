@@ -7,9 +7,9 @@
 		children,
 	} = $props();
 
-	const base = 'bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg transition-colors duration-200';
+	const base = 'bg-[var(--surface-container)] rounded-lg transition-colors duration-200';
 
-	const hoverClass = hover ? 'hover:border-[var(--border-interactive)]' : '';
+	const hoverClass = hover ? 'hover:bg-[var(--surface-container-high)]' : '';
 </script>
 
 <div class="{base} {hoverClass} {padding} overflow-x-auto {className}">

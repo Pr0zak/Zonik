@@ -677,7 +677,7 @@
 
 		<div class="flex items-center gap-2 flex-wrap">
 			<!-- View mode selector -->
-			<div class="flex items-center bg-[var(--bg-tertiary)] rounded border border-[var(--border-subtle)] overflow-hidden">
+			<div class="flex items-center bg-[var(--surface-container)] rounded ghost-border overflow-hidden">
 				{#each VIEW_MODES as mode}
 					{@const Icon = mode.icon}
 					<button onclick={() => switchViewMode(mode.id)}
@@ -697,7 +697,7 @@
 				class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border transition-colors
 					{useVibeLayout
 						? 'bg-purple-500/20 text-purple-400 border-purple-500/30'
-						: 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:text-[var(--text-secondary)]'}"
+						: 'bg-[var(--surface-container)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:text-[var(--text-secondary)]'}"
 				title={useVibeLayout ? 'Switch to Force layout' : 'Switch to Vibe layout (sound-based)'}>
 				<Shuffle class="w-3.5 h-3.5" />
 				<span class="hidden sm:inline">{useVibeLayout ? 'Vibe' : 'Force'}</span>
@@ -708,7 +708,7 @@
 				class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded border transition-colors
 					{showFilters || filterFavOnly || filterMinTracks > 1 || filterGenre
 						? 'bg-[var(--color-map)]/20 text-[var(--color-map)] border-[var(--color-map)]/30'
-						: 'bg-[var(--bg-tertiary)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:text-[var(--text-secondary)]'}"
+						: 'bg-[var(--surface-container)] text-[var(--text-muted)] border-[var(--border-subtle)] hover:text-[var(--text-secondary)]'}"
 				title="Filters">
 				<Filter class="w-3.5 h-3.5" />
 			</button>
@@ -721,13 +721,13 @@
 					onblur={() => setTimeout(() => searchFocused = false, 200)}
 					onkeydown={(e) => e.key === 'Enter' && handleSearch()}
 					placeholder="Search..."
-					class="bg-[var(--bg-tertiary)] text-[var(--text-primary)] text-xs px-3 py-1.5 pl-8 rounded border border-[var(--border-subtle)] w-28 sm:w-40 focus:outline-none focus:border-[var(--color-map)]" />
+					class="bg-[var(--surface-container)] text-[var(--text-primary)] text-xs px-3 py-1.5 pl-8 rounded ghost-border w-28 sm:w-40 focus:outline-none focus:border-[var(--color-map)]" />
 				<Search class="w-3.5 h-3.5 text-[var(--text-muted)] absolute left-2.5 top-1/2 -translate-y-1/2" />
 				{#if searchFocused && searchResults.length}
-					<div class="absolute top-full left-0 right-0 mt-1 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded shadow-lg z-50 max-h-64 overflow-y-auto">
+					<div class="absolute top-full left-0 right-0 mt-1 bg-[var(--surface-base)] ghost-border rounded shadow-lg z-50 max-h-64 overflow-y-auto">
 						{#each searchResults as node}
 							<button onclick={() => navigateToNode(node)}
-								class="w-full text-left px-3 py-1.5 hover:bg-[var(--bg-hover)] flex items-center gap-2 transition-colors">
+								class="w-full text-left px-3 py-1.5 hover:bg-[var(--surface-container-high)] flex items-center gap-2 transition-colors">
 								<div class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {node.color}"></div>
 								<span class="text-xs text-[var(--text-primary)] truncate">{node.label}</span>
 								<span class="text-xs text-[var(--text-disabled)] ml-auto flex-shrink-0 capitalize">{node.type}</span>
@@ -738,7 +738,7 @@
 			</div>
 
 			<!-- Zoom controls -->
-			<div class="flex items-center gap-1 bg-[var(--bg-tertiary)] rounded border border-[var(--border-subtle)] px-1">
+			<div class="flex items-center gap-1 bg-[var(--surface-container)] rounded ghost-border px-1">
 				<button onclick={() => handleZoom('out')} class="p-1 hover:bg-white/10 rounded transition-colors" title="Zoom out">
 					<ZoomOut class="w-4 h-4 text-[var(--text-secondary)]" />
 				</button>
@@ -756,7 +756,7 @@
 			<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
 				Genre
 				<select bind:value={filterGenre} onchange={() => applyViewMode()}
-					class="bg-[var(--bg-tertiary)] text-[var(--text-primary)] text-xs px-2 py-1 rounded border border-[var(--border-subtle)]">
+					class="bg-[var(--surface-container)] text-[var(--text-primary)] text-xs px-2 py-1 rounded ghost-border">
 					<option value="">All</option>
 					{#each availableGenres as g}
 						<option value={g}>{g}</option>
@@ -808,7 +808,7 @@
 
 			<!-- Tooltip -->
 			{#if tooltip.show && tooltip.node}
-				<div class="fixed pointer-events-none z-[100] bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 shadow-lg"
+				<div class="fixed pointer-events-none z-[100] bg-[var(--surface-base)] ghost-border rounded-lg px-3 py-2 shadow-lg"
 					style="left: {tooltip.x}px; top: {tooltip.y}px; max-width: 220px;">
 					<p class="text-xs font-semibold text-[var(--text-primary)] truncate">{tooltip.node.label}</p>
 					<p class="text-xs text-[var(--text-muted)]">{getTooltipStat(tooltip.node)}</p>
@@ -816,7 +816,7 @@
 			{/if}
 
 			<!-- Legend overlay -->
-			<div class="absolute bottom-4 left-4 bg-[var(--bg-secondary)]/90 border border-[var(--border-subtle)] rounded-lg px-3 py-2.5 backdrop-blur-sm max-w-xs">
+			<div class="absolute bottom-4 left-4 bg-[var(--surface-base)]/90 ghost-border rounded-lg px-3 py-2.5 backdrop-blur-sm max-w-xs">
 				{#if viewMode === 'genre'}
 					<p class="text-xs text-[var(--text-muted)] mb-2 uppercase tracking-wider font-medium">Legend</p>
 					<div class="space-y-1.5">
@@ -893,7 +893,7 @@
 
 		<!-- Detail panel -->
 		{#if selectedNode}
-			<div class="absolute inset-x-0 bottom-0 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-80 h-2/3 sm:h-full bg-[var(--bg-secondary)] border-t sm:border-t-0 sm:border-l border-[var(--border-subtle)] p-4 overflow-y-auto shadow-lg rounded-t-xl sm:rounded-none">
+			<div class="absolute inset-x-0 bottom-0 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-80 h-2/3 sm:h-full bg-[var(--surface-base)] border-t sm:border-t-0 sm:border-l border-[var(--border-subtle)] p-4 overflow-y-auto shadow-lg rounded-t-xl sm:rounded-none">
 				<div class="flex items-center justify-between mb-3">
 					<div class="flex items-center gap-2">
 						<div class="w-3 h-3 rounded-full" style="background-color: {getNodeColor(selectedNode)}"></div>
@@ -941,11 +941,11 @@
 
 						<!-- Top tracks with play button -->
 						{#if detailTracks.length}
-							<div class="mt-3 pt-3 border-t border-[var(--border-subtle)]">
+							<div class="mt-3 pt-3 ">
 								<p class="text-xs font-mono text-[var(--text-muted)] uppercase tracking-wider mb-2">Top Tracks</p>
 								{#each detailTracks.slice(0, 5) as track}
 									<button onclick={() => storePlayTrack(track, detailTracks)}
-										class="w-full text-left flex items-center gap-2 py-1 hover:bg-[var(--bg-hover)] rounded px-1 transition-colors group">
+										class="w-full text-left flex items-center gap-2 py-1 hover:bg-[var(--surface-container-high)] rounded px-1 transition-colors group">
 										<Play class="w-3 h-3 text-[var(--text-disabled)] group-hover:text-[var(--color-accent)] flex-shrink-0" />
 										<span class="text-xs text-[var(--text-body)] truncate">{track.title}</span>
 										{#if track.play_count}
@@ -957,7 +957,7 @@
 						{/if}
 
 						<!-- Action buttons -->
-						<div class="mt-3 pt-3 border-t border-[var(--border-subtle)] flex flex-wrap gap-2">
+						<div class="mt-3 pt-3 flex flex-wrap gap-2">
 							<button onclick={() => highlightSimilar(selectedNode)}
 								class="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 transition-colors">
 								<Crosshair class="w-3 h-3" /> Find Similar

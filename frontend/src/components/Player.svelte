@@ -170,12 +170,12 @@
 </script>
 
 <!-- Mobile: 2-row stacked layout; Desktop: single row -->
-<div class="bg-[var(--bg-secondary)] border-t border-[var(--border-subtle)] shrink-0">
+<div class="glass shrink-0">
 	{#if $currentTrack}
 		<!-- Row 1: track info + controls + actions -->
 		<div class="flex items-center px-3 sm:px-4 gap-2 sm:gap-4 h-14 sm:h-16">
 			<!-- Cover art: hidden on mobile -->
-			<div class="hidden sm:block w-10 h-10 bg-[var(--bg-tertiary)] rounded flex-shrink-0 overflow-hidden">
+			<div class="hidden sm:block w-10 h-10 bg-[var(--surface-container)] rounded-lg flex-shrink-0 overflow-hidden">
 				{#if $currentTrack.id}
 					<img src="/rest/getCoverArt?id={$currentTrack.id}&size=80"
 						alt="" class="w-full h-full object-cover"
@@ -206,7 +206,7 @@
 					<SkipBack class="w-4 h-4" />
 				</button>
 				<button onclick={togglePlay}
-					class="w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform">
+					class="w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-gradient-primary text-[var(--color-on-primary)] flex items-center justify-center hover:scale-105 transition-transform shadow-glow">
 					{#if $isPlaying}
 						<Pause class="w-4 h-4" />
 					{:else}
@@ -224,9 +224,11 @@
 				<span class="font-mono tabular-nums">{formatDuration(currentTime)}</span>
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full cursor-pointer group" onclick={seek}>
-					<div class="h-full bg-[var(--color-accent)] rounded-full transition-all"
-						style="width: {duration ? (currentTime / duration * 100) : 0}%"></div>
+				<div class="flex-1 h-1 bg-[var(--surface-container-highest)] rounded-full cursor-pointer group relative" onclick={seek}>
+					<div class="h-full bg-[var(--color-primary)] rounded-full transition-all relative"
+						style="width: {duration ? (currentTime / duration * 100) : 0}%">
+						<div class="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-[var(--color-primary)] opacity-0 group-hover:opacity-100 transition-opacity shadow-glow"></div>
+					</div>
 				</div>
 				<span class="font-mono tabular-nums">{formatDuration(duration)}</span>
 			</div>
@@ -258,8 +260,8 @@
 			<span class="font-mono tabular-nums text-xs">{formatDuration(currentTime)}</span>
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="flex-1 h-1.5 bg-[var(--border-interactive)] rounded-full cursor-pointer" onclick={seek}>
-				<div class="h-full bg-[var(--color-accent)] rounded-full transition-all"
+			<div class="flex-1 h-1.5 bg-[var(--surface-container-highest)] rounded-full cursor-pointer" onclick={seek}>
+				<div class="h-full bg-[var(--color-primary)] rounded-full transition-all"
 					style="width: {duration ? (currentTime / duration * 100) : 0}%"></div>
 			</div>
 			<span class="font-mono tabular-nums text-xs">{formatDuration(duration)}</span>
@@ -277,32 +279,32 @@
 	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" onclick={() => showEditModal = false}>
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-xl shadow-2xl p-6 w-full max-w-md mx-4" onclick={(e) => e.stopPropagation()}>
+		<div class="bg-[var(--surface-container)] ghost-border rounded-xl shadow-float p-6 w-full max-w-md mx-4" onclick={(e) => e.stopPropagation()}>
 			<h3 class="text-lg font-semibold text-[var(--text-primary)] mb-4">Edit Track</h3>
 			<div class="space-y-3">
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1">Title</label>
 					<input type="text" bind:value={editForm.title}
-						class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+						class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 							focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				</div>
 				<div class="grid grid-cols-3 gap-3">
 					<div>
 						<label class="block text-xs text-[var(--text-muted)] mb-1">Genre</label>
 						<input type="text" bind:value={editForm.genre}
-							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 								focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 					</div>
 					<div>
 						<label class="block text-xs text-[var(--text-muted)] mb-1">Year</label>
 						<input type="number" bind:value={editForm.year}
-							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 								focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 					</div>
 					<div>
 						<label class="block text-xs text-[var(--text-muted)] mb-1">Track #</label>
 						<input type="number" bind:value={editForm.track_number}
-							class="w-full bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-2 text-sm
+							class="w-full bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm
 								focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 					</div>
 				</div>
@@ -311,7 +313,7 @@
 				<button onclick={() => showEditModal = false}
 					class="px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-white transition-colors">Cancel</button>
 				<button onclick={saveEdit} disabled={editSaving}
-					class="px-4 py-2 text-sm bg-[var(--color-accent)] text-white rounded-md hover:opacity-90 transition-opacity disabled:opacity-50">
+					class="px-4 py-2 text-sm bg-gradient-primary text-[var(--color-on-primary)] rounded-md hover:opacity-90 transition-opacity disabled:opacity-50">
 					{editSaving ? 'Saving...' : 'Save'}
 				</button>
 			</div>

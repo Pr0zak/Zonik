@@ -68,7 +68,7 @@
 	<div
 		use:swipeRow={{ onSwipeLeft, onSwipeRight }}
 		onswipemove={handleSwipeMove}
-		class="relative bg-[var(--bg-primary)]"
+		class="relative bg-[var(--surface-base)]"
 	>
 		{@render children()}
 	</div>

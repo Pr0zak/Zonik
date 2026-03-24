@@ -20,7 +20,7 @@
 	let src = $derived(coverUrl(id, s?.px));
 </script>
 
-<div class="{s?.box || ''} {rounded ? 'rounded' : ''} bg-[var(--bg-secondary)] overflow-hidden flex-shrink-0 {className}">
+<div class="{s?.box || ''} {rounded ? 'rounded-lg' : ''} bg-[var(--surface-container)] overflow-hidden flex-shrink-0 {className}">
 	{#if src}
 		<img {src} alt="" class="w-full h-full object-cover" loading="lazy"
 			onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />

@@ -230,7 +230,7 @@
 				{#if pl.image_url}
 					<img src={pl.image_url} alt="" class="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
 				{:else}
-					<div class="w-12 h-12 rounded-lg bg-[var(--bg-secondary)] flex items-center justify-center flex-shrink-0">
+					<div class="w-12 h-12 rounded-lg bg-[var(--surface-base)] flex items-center justify-center flex-shrink-0">
 						<ListMusic class="w-5 h-5 text-[var(--text-disabled)]" />
 					</div>
 				{/if}
@@ -292,7 +292,7 @@
 
 	{#if tracksLoading}
 		<Card padding="p-0">
-			<div class="divide-y divide-[var(--border-subtle)]">
+			<div class="space-y-0.5">
 				{#each Array(10) as _}
 					<div class="px-4 py-3 flex items-center gap-4">
 						<Skeleton class="h-4 w-8" />
@@ -308,7 +308,7 @@
 			<div class="overflow-x-auto">
 				<table class="w-full text-sm">
 					<thead>
-						<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-xs">
+						<tr class=" text-[var(--text-muted)] text-xs">
 							<th class="px-4 py-2 text-left w-10">#</th>
 							<th class="px-4 py-2 text-left">Track</th>
 							<th class="px-4 py-2 text-left hidden sm:table-cell">Artist</th>
@@ -320,7 +320,7 @@
 							{@const status = trackStatus[trackKey(t)]}
 							{@const art = getArtwork(t.artist, t.title)}
 							{@const tKey = trackKey(t)}
-							<tr class="border-b border-[var(--border-subtle)] last:border-0 transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--bg-hover)]'}">
+							<tr class=" last:border-0 transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
 								<td class="px-4 py-3 text-[var(--text-disabled)] font-mono text-xs">{i + 1}</td>
 								<td class="px-4 py-3">
 									<div class="flex items-center gap-3">
@@ -329,7 +329,7 @@
 											{#if art?.image}
 												<img src={art.image} alt="" class="w-full h-full object-cover" />
 											{:else}
-												<div class="w-full h-full bg-[var(--bg-tertiary)] flex items-center justify-center">
+												<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
 													<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
 												</div>
 											{/if}
@@ -398,7 +398,7 @@
 				bind:value={searchQuery}
 				onkeydown={handleSearchKeydown}
 				placeholder="Search playlists on Spotify & Deezer..."
-				class="w-full pl-9 pr-3 py-2 text-sm bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-interactive)]"
+				class="w-full pl-9 pr-3 py-2 text-sm bg-[var(--surface-base)] ghost-border rounded-lg text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-interactive)]"
 			/>
 		</div>
 		<Button variant="ghost" onclick={searchPlaylists} disabled={searchLoading || !searchQuery.trim()}>

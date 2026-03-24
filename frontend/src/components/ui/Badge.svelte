@@ -10,7 +10,7 @@
 		warning: 'bg-amber-500/10 text-amber-400 ring-amber-500/20',
 		error: 'bg-red-500/10 text-red-400 ring-red-500/20',
 		info: 'bg-blue-500/10 text-blue-400 ring-blue-500/20',
-		default: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] ring-[var(--border-interactive)]',
+		default: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] ring-[var(--outline-variant)]/30',
 	};
 </script>
 

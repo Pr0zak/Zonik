@@ -10,11 +10,11 @@
 	const styles = {
 		solid: {
 			active: (color) => `bg-[var(--color-${color})] text-white`,
-			inactive: 'bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-active)]',
+			inactive: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-highest)]',
 		},
 		outline: {
-			active: (color) => `bg-[var(--color-${color})]/20 text-emerald-400 border border-emerald-500/30`,
-			inactive: 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]',
+			active: (color) => `bg-[var(--color-${color})]/20 text-emerald-400 ghost-border`,
+			inactive: 'bg-[var(--surface-container)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]',
 		},
 	};
 </script>

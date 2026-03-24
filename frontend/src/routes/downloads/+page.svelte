@@ -510,7 +510,7 @@
 		<div class="flex-1 relative">
 			<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
 			<input type="text" placeholder="Search P2P network... (e.g. Artist - Track)" bind:value={searchQuery} onkeydown={handleKeydown}
-				class="w-full bg-[var(--bg-secondary)] border border-[var(--border-interactive)] rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
+				class="w-full bg-[var(--surface-base)] ghost-border rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
 					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
 		</div>
 		<Button variant="primary" loading={searching} disabled={!searchQuery.trim()} onclick={searchSoulseek}>
@@ -533,7 +533,7 @@
 	{:else if searchDone}
 		<Card padding="p-0" class="mb-6">
 			<!-- Results header -->
-			<div class="px-4 py-3 border-b border-[var(--border-subtle)]">
+			<div class="px-4 py-3 ">
 				<div class="flex items-center justify-between flex-wrap gap-2">
 					<p class="text-xs text-[var(--text-muted)]">
 						{resultCount} results from {resultUsers} users
@@ -554,7 +554,7 @@
 						/>
 						<!-- Per page selector -->
 						<select bind:value={resultsPerPage} onchange={() => resultsPage = 0}
-							class="bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-2 py-1 text-xs text-[var(--text-muted)]">
+							class="bg-[var(--surface-lowest)] ghost-border rounded-md px-2 py-1 text-xs text-[var(--text-muted)]">
 							{#each [25, 50, 100] as n}
 								<option value={n}>{n}/page</option>
 							{/each}
@@ -567,7 +567,7 @@
 				<div class="overflow-x-auto">
 					<table class="w-full text-sm min-w-[600px]">
 						<thead>
-							<tr class="border-b border-[var(--border-subtle)] text-[var(--text-muted)] text-left">
+							<tr class=" text-[var(--text-muted)] text-left">
 								<th class="px-4 py-2 w-5">
 									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors"
 										title="Sort by quality">
@@ -598,13 +598,13 @@
 								<th class="px-4 py-2"></th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-[var(--border-subtle)]">
+						<tbody class="space-y-0.5">
 							{#each filteredResults as r}
 								{@const key = r.username + r.filename}
 								{@const fname = shortFilename(r.filename)}
 								{@const pathArtist = extractArtistFromPath(r.filename)}
 								{@const inline = getResultInlineStatus(r)}
-								<tr class="hover:bg-[var(--bg-hover)] transition-colors group
+								<tr class="hover:bg-[var(--surface-container-high)] transition-colors group
 									{inline?.status === 'completed' ? 'bg-green-500/5' : inline?.status === 'failed' ? 'bg-red-500/5' : inline?.status === 'downloading' ? 'bg-blue-500/5' : ''}">
 									<td class="px-4 py-2">
 										{#if r.slots_free}
@@ -686,7 +686,7 @@
 				</div>
 				<!-- Results pagination -->
 				{#if totalResultPages > 1}
-					<div class="flex items-center justify-between px-4 py-2 border-t border-[var(--border-subtle)]">
+					<div class="flex items-center justify-between px-4 py-2 ">
 						<Button variant="ghost" size="sm" disabled={resultsPage === 0}
 							onclick={() => resultsPage--}>
 							<ChevronLeft class="w-3.5 h-3.5" /> Prev
@@ -739,7 +739,7 @@
 							class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
 								{jobStatusFilter === tab.key
 									? 'bg-[var(--color-downloads)] text-white'
-									: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'}">
+									: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)]'}">
 							{tab.label}
 							{#if jobStatusCounts[tab.key] > 0 && tab.key !== 'all'}
 								<span class="ml-0.5 opacity-60">{jobStatusCounts[tab.key]}</span>
@@ -771,7 +771,7 @@
 							<div class="space-y-1 pl-2 border-l-2 border-amber-500/20 ml-1">
 								{#each queuedJobs as job (job.id)}
 									<div class="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/5 text-xs group/job">
-										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}</span>
+										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}</span>
 										<Badge variant="warning"><Clock class="w-3 h-3 mr-0.5 inline-block" />queued</Badge>
 									</div>
 								{/each}
@@ -783,12 +783,12 @@
 						{@const status = friendlyStatus(job, transfer)}
 						{@const jobResult = parseJobResult(job)}
 						{@const jobTracks = parseJobTracks(job)}
-						<div class="{status === 'completed' ? 'bg-emerald-500/5' : status === 'failed' ? 'bg-red-500/5' : status === 'downloading' ? 'bg-blue-500/5' : status === 'queued' ? 'bg-amber-500/5' : 'bg-[var(--bg-tertiary)]'} rounded-lg overflow-hidden group/job">
+						<div class="{status === 'completed' ? 'bg-emerald-500/5' : status === 'failed' ? 'bg-red-500/5' : status === 'downloading' ? 'bg-blue-500/5' : status === 'queued' ? 'bg-amber-500/5' : 'bg-[var(--surface-container)]'} rounded-lg overflow-hidden group/job">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
 									<p class="text-sm text-[var(--text-primary)] font-medium truncate">
 										{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}
-										{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--bg-hover)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
+										{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
 									</p>
 									{#if job.status === 'completed' && (jobResult || jobTracks?.[0])}
 										{@const t = jobTracks?.[0]}
@@ -932,7 +932,7 @@
 							{#if expandedJob === job.id}
 								{#if jobResult?.source_errors?.length}
 									<!-- Per-source error breakdown (single download) -->
-									<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
+									<div class="px-4 py-2 space-y-1  animate-fade-slide-in">
 										<p class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-1">Sources tried</p>
 										{#each jobResult.source_errors as se, i}
 											<div class="flex items-center gap-2 text-xs py-1">
@@ -945,7 +945,7 @@
 									</div>
 								{:else if jobDetails[job.id]}
 									<!-- Bulk track details -->
-									<div class="px-4 py-2 space-y-1 border-t border-[var(--border-subtle)] animate-fade-slide-in">
+									<div class="px-4 py-2 space-y-1  animate-fade-slide-in">
 										{#each jobDetails[job.id] as t, i}
 											<div class="flex items-center gap-2 text-xs py-1 flex-wrap">
 												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
@@ -1016,7 +1016,7 @@
 				<div class="flex flex-col sm:flex-row gap-2 mb-2">
 					<input type="text" placeholder="Search library to blacklist..." bind:value={blSearch}
 						onkeydown={(e) => e.key === 'Enter' && searchLibraryForBlacklist()}
-						class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+						class="flex-1 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
 							placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 					<Button variant="secondary" size="sm" disabled={!blSearch.trim() || blSearching} onclick={searchLibraryForBlacklist}>
 						<Search class="w-3 h-3" />
@@ -1026,7 +1026,7 @@
 				{#if blSearchResults.length}
 					<div class="space-y-1 mb-3 max-h-48 overflow-y-auto">
 						{#each blSearchResults as artist}
-							<div class="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-tertiary)] rounded-md text-sm hover:bg-[var(--bg-hover)] transition-colors">
+							<div class="flex items-center justify-between px-3 py-1.5 bg-[var(--surface-container)] rounded-md text-sm hover:bg-[var(--surface-container-high)] transition-colors">
 								<span class="text-[var(--text-primary)]">{artist}</span>
 								<button onclick={async () => {
 									try {
@@ -1050,13 +1050,13 @@
 			<!-- Manual add -->
 			<div class="flex flex-col sm:flex-row gap-2 mb-4 animate-fade-slide-in">
 				<input type="text" placeholder="Artist *" bind:value={blArtist}
-					class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+					class="flex-1 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
 						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				<input type="text" placeholder="Track (blank = entire artist)" bind:value={blTrack}
-					class="flex-1 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+					class="flex-1 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
 						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				<input type="text" placeholder="Reason" bind:value={blReason}
-					class="w-48 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+					class="w-48 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
 						placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				<Button variant="danger" size="sm" disabled={!blArtist.trim()} onclick={addBlacklistEntry}>
 					<ShieldBan class="w-3 h-3" />
@@ -1067,14 +1067,14 @@
 			{#if blacklist.length > 3}
 				<div class="mb-2">
 					<input type="text" placeholder="Filter blacklist..." bind:value={blFilter}
-						class="w-full sm:w-64 bg-[var(--bg-primary)] border border-[var(--border-interactive)] rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
+						class="w-full sm:w-64 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-1.5 text-sm text-[var(--text-body)]
 							placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
 				</div>
 			{/if}
 			{#if filteredBlacklist.length}
 				<div class="space-y-1 animate-fade-slide-in">
 					{#each filteredBlacklist as entry}
-						<div class="flex items-center justify-between px-3 py-2 bg-[var(--bg-tertiary)] rounded-md text-sm hover:bg-[var(--bg-hover)] transition-colors">
+						<div class="flex items-center justify-between px-3 py-2 bg-[var(--surface-container)] rounded-md text-sm hover:bg-[var(--surface-container-high)] transition-colors">
 							<div>
 								<span class="font-medium text-[var(--text-primary)]">{entry.artist}</span>
 								{#if entry.track}

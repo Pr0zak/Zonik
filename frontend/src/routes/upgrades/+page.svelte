@@ -253,7 +253,7 @@
 				{ label: 'Failed', value: stats.failed, color: 'text-red-400' },
 				{ label: 'Skipped', value: stats.skipped, color: 'text-amber-400' },
 			] as stat}
-				<div class="bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg px-3 py-2 text-center">
+				<div class="bg-[var(--surface-base)] ghost-border rounded-lg px-3 py-2 text-center">
 					<p class="text-lg font-bold {stat.color}">{stat.value}</p>
 					<p class="text-xs text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
 				</div>
@@ -271,7 +271,7 @@
 		{#each statusFilters as f}
 			<button
 				onclick={() => setFilter(f.value)}
-				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeFilter === f.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeFilter === f.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
 			>
 				{f.label}
 				{#if stats}
@@ -286,7 +286,7 @@
 		{#each reasonFilters as r}
 			<button
 				onclick={() => setReason(r.value)}
-				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeReason === r.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--bg-secondary)] text-[var(--text-secondary)] border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)]'}"
+				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeReason === r.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
 			>
 				{r.label}
 			</button>
@@ -341,7 +341,7 @@
 		<div class="overflow-x-auto">
 			<table class="w-full text-sm">
 				<thead>
-					<tr class="text-[var(--text-muted)] text-xs uppercase border-b border-[var(--border-subtle)]">
+					<tr class="text-[var(--text-muted)] text-xs uppercase ">
 						<th class="px-3 py-2 text-left w-8">
 							<input type="checkbox" onchange={toggleSelectAll}
 								checked={upgrades.filter(u => u.status === 'pending').length > 0 && upgrades.filter(u => u.status === 'pending').every(u => selected.has(u.id))}
@@ -366,7 +366,7 @@
 						<th class="px-3 py-2 text-right">Actions</th>
 					</tr>
 				</thead>
-				<tbody class="divide-y divide-[var(--border-subtle)]">
+				<tbody class="space-y-0.5">
 					{#if upgrades.length === 0}
 						<tr>
 							<td colspan="8" class="px-3 py-8 text-center text-sm text-[var(--text-muted)]">
@@ -375,7 +375,7 @@
 						</tr>
 					{/if}
 					{#each upgrades as u (u.id)}
-						<tr class="hover:bg-[var(--bg-hover)] transition-colors">
+						<tr class="hover:bg-[var(--surface-container-high)] transition-colors">
 							<td class="px-3 py-2">
 								{#if u.status === 'pending'}
 									<input type="checkbox" checked={selected.has(u.id)} onchange={() => toggleSelect(u.id)}

@@ -41,7 +41,7 @@ const FORMAT_COLORS = {
 };
 
 export function formatBadgeClass(fmt) {
-	return FORMAT_COLORS[fmt?.toLowerCase()] || 'text-[var(--text-muted)] bg-[var(--bg-tertiary)] border-[var(--border-subtle)]';
+	return FORMAT_COLORS[fmt?.toLowerCase()] || 'text-[var(--text-muted)] bg-[var(--surface-container)] border-[var(--outline-variant)]/20';
 }
 
 /** Hex colors for format pie/bar charts */
