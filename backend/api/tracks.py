@@ -595,3 +595,103 @@ async def repair_tags(req: RepairTagsRequest, db: AsyncSession = Depends(get_db)
         "applied": applied if not req.dry_run else 0,
         "dry_run": req.dry_run,
     }
+
+
+# ---------------------------------------------------------------------------
+# Waveform endpoint — pre-computed amplitude data for seek bar rendering
+# ---------------------------------------------------------------------------
+
+WAVEFORM_CACHE_DIR = None  # lazy-init
+
+
+def _get_waveform_cache_dir():
+    global WAVEFORM_CACHE_DIR
+    if WAVEFORM_CACHE_DIR is None:
+        from backend.config import get_settings
+        settings = get_settings()
+        base = getattr(settings.library, "cover_cache_dir", "/opt/zonik/cache/covers")
+        from pathlib import Path
+        WAVEFORM_CACHE_DIR = Path(base).parent / "waveforms"
+        WAVEFORM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    return WAVEFORM_CACHE_DIR
+
+
+async def _generate_waveform(file_path: str, bars: int = 200) -> list[float]:
+    """Decode audio to PCM via ffmpeg and compute RMS amplitude per segment."""
+    import asyncio
+    import struct
+    import math
+
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-i", file_path,
+        "-f", "s16le", "-acodec", "pcm_s16le",
+        "-ac", "1", "-ar", "8000",
+        "-v", "quiet", "-",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    pcm_data, _ = await proc.communicate()
+
+    if proc.returncode != 0 or len(pcm_data) < 4:
+        return []
+
+    num_samples = len(pcm_data) // 2
+    samples = struct.unpack(f"<{num_samples}h", pcm_data)
+
+    samples_per_bar = max(num_samples // bars, 1)
+    waveform = []
+    for i in range(bars):
+        start = i * samples_per_bar
+        end = min(start + samples_per_bar, num_samples)
+        segment = samples[start:end]
+        if not segment:
+            waveform.append(0.0)
+            continue
+        rms = math.sqrt(sum(s * s for s in segment) / len(segment)) / 32768
+        waveform.append(rms)
+
+    peak = max(waveform) if waveform else 1.0
+    if peak > 0:
+        waveform = [round(v / peak, 4) for v in waveform]
+
+    return waveform
+
+
+@router.get("/{track_id}/waveform")
+async def get_waveform(
+    track_id: str,
+    bars: int = Query(200, ge=10, le=1000),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return pre-computed waveform amplitude data for a track."""
+    import json
+    from pathlib import Path
+    from fastapi.responses import JSONResponse
+    from backend.config import get_settings
+
+    result = await db.execute(select(Track).where(Track.id == track_id))
+    track = result.scalar_one_or_none()
+    if not track:
+        raise HTTPException(404, "Track not found")
+
+    settings = get_settings()
+    file_path = Path(settings.library.music_dir) / track.file_path
+    if not file_path.exists():
+        raise HTTPException(404, "Audio file not found")
+
+    # Check cache
+    cache_dir = _get_waveform_cache_dir()
+    cache_file = cache_dir / f"{track_id}_{bars}.json"
+
+    if cache_file.exists():
+        waveform = json.loads(cache_file.read_text())
+    else:
+        waveform = await _generate_waveform(str(file_path), bars)
+        if not waveform:
+            raise HTTPException(500, "Failed to decode audio")
+        cache_file.write_text(json.dumps(waveform))
+
+    return JSONResponse(
+        content={"waveform": waveform},
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
