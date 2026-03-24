@@ -4,7 +4,7 @@
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass, formatDateTime } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -85,6 +85,7 @@
 		api.getUsers().then(d => users = d).catch(() => {});
 		api.getBackups().then(d => backups = d).catch(() => {});
 		api.getAIUsage().then(d => aiUsage = d).catch(() => {});
+		loadAnalysisStats();
 		api.getSchedule().then(tasks => {
 			for (const t of tasks) schedTasks[t.task_name] = t;
 		}).catch(() => {});
@@ -342,7 +343,14 @@
 		} catch (e) { addToast('Restore failed', 'error'); }
 	}
 
-	const { toggleSched, updateSched, runSched } = createScheduleHelpers(
+	let analysisStats = $state(null);
+
+	// Load analysis stats
+	function loadAnalysisStats() {
+		fetch('/api/analysis/stats').then(r => r.json()).then(d => analysisStats = d).catch(() => {});
+	}
+
+	const { toggleSched, updateSched, runSched, updateSchedConfig } = createScheduleHelpers(
 		() => schedTasks,
 		(name, val) => { schedTasks[name] = val; },
 		addToast
@@ -913,7 +921,82 @@
 			</div>
 		</Card>
 
-		<!-- 8. Database -->
+		<!-- 8. Audio Analysis -->
+		<Card padding="p-4">
+			<div class="flex items-center justify-between mb-4">
+				<div class="flex items-center gap-3">
+					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-analysis) 15%, transparent)">
+						<AudioWaveform class="w-4 h-4" style="color: var(--color-analysis)" />
+					</div>
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Audio Analysis</h2>
+				</div>
+			</div>
+
+			<!-- Stats -->
+			{#if analysisStats}
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+					<div class="px-3 py-2 rounded-lg bg-[var(--surface-container)]">
+						<p class="text-lg font-bold text-[var(--text-primary)]">{analysisStats.analyzed?.toLocaleString() || 0}</p>
+						<p class="text-xs text-[var(--text-muted)]">Analyzed</p>
+					</div>
+					<div class="px-3 py-2 rounded-lg bg-[var(--surface-container)]">
+						<p class="text-lg font-bold text-[var(--text-primary)]">{analysisStats.total_tracks?.toLocaleString() || 0}</p>
+						<p class="text-xs text-[var(--text-muted)]">Total Tracks</p>
+					</div>
+					<div class="px-3 py-2 rounded-lg bg-[var(--surface-container)]">
+						<p class="text-lg font-bold text-[var(--text-primary)]">{analysisStats.total_tracks ? Math.round((analysisStats.analyzed / analysisStats.total_tracks) * 100) : 0}%</p>
+						<p class="text-xs text-[var(--text-muted)]">Coverage</p>
+					</div>
+					<div class="px-3 py-2 rounded-lg bg-[var(--surface-container)]">
+						<p class="text-lg font-bold text-[var(--text-primary)]">{(analysisStats.total_tracks || 0) - (analysisStats.analyzed || 0)}</p>
+						<p class="text-xs text-[var(--text-muted)]">Remaining</p>
+					</div>
+				</div>
+				{#if analysisStats.analyzed < analysisStats.total_tracks}
+					<div class="h-1.5 rounded-full bg-[var(--surface-container-highest)] mb-4 overflow-hidden">
+						<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {(analysisStats.analyzed / analysisStats.total_tracks) * 100}%"></div>
+					</div>
+				{/if}
+			{/if}
+
+			<p class="text-xs text-[var(--text-muted)] mb-4">Essentia audio analysis extracts BPM, key, energy, danceability, and loudness from each track. Used by Music Map, vibe search, and AI recommendations.</p>
+
+			<!-- Schedule -->
+			{#if schedTasks.audio_analysis}
+				<div class="space-y-3">
+					<ScheduleControl
+						taskName="audio_analysis"
+						label="Audio Analysis"
+						enabled={schedTasks.audio_analysis.enabled}
+						intervalHours={schedTasks.audio_analysis.interval_hours}
+						runAt={schedTasks.audio_analysis.run_at}
+						lastRunAt={schedTasks.audio_analysis.last_run_at}
+						count={schedTasks.audio_analysis.count}
+						countLabel="Batch Size"
+						running={schedRunning.audio_analysis}
+						onToggle={() => toggleSched('audio_analysis')}
+						onUpdate={(u) => updateSched('audio_analysis', u)}
+						onRun={() => { runSched('audio_analysis'); }}
+					/>
+					<div class="flex items-center gap-4 ml-1 text-xs">
+						<label class="flex items-center gap-1.5 text-[var(--text-muted)]">
+							Batch Size
+							<input
+								type="number"
+								value={schedTasks.audio_analysis.count || 200}
+								onchange={(e) => updateSched('audio_analysis', { count: parseInt(e.target.value) || 200 })}
+								min="10" max="1000" step="10"
+								class="w-20 bg-[var(--surface-container)] ghost-border rounded px-2 py-1 text-xs text-[var(--text-body)]"
+							/>
+							<span class="text-[var(--text-disabled)]">tracks/run</span>
+						</label>
+					</div>
+					<p class="text-xs text-[var(--text-disabled)]">Higher batch sizes use more CPU. 50–100 recommended for low-power servers, 200 for dedicated hardware.</p>
+				</div>
+			{/if}
+		</Card>
+
+		<!-- 9. Database -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-3">
