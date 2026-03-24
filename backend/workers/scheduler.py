@@ -100,13 +100,13 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         elif task_name == "audio_analysis":
             from backend.services.analyzer import analyze_track_async
             from backend.models.analysis import TrackAnalysis
-            batch_limit = count or 50  # Limit per run to stay within ARQ timeout
+            batch_limit = count or 200
             analyzed_ids = (await db.execute(select(TrackAnalysis.track_id))).scalars().all()
             tracks = (await db.execute(
                 select(Track.id, Track.file_path).where(Track.id.notin_(analyzed_ids)).limit(batch_limit)
             )).all()
             analyzed_count = 0
-            failed_count = 0
+            skipped_count = 0
             consecutive_fails = 0
             failed_files = []
             for i, (track_id, file_path) in enumerate(tracks):
@@ -117,10 +117,13 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                         analyzed_count += 1
                         consecutive_fails = 0
                     else:
-                        failed_count += 1
+                        # Insert stub row so this track is excluded from future batches
+                        await db.merge(TrackAnalysis(track_id=track_id))
+                        skipped_count += 1
                         consecutive_fails += 1
                 except Exception as e:
-                    failed_count += 1
+                    await db.merge(TrackAnalysis(track_id=track_id))
+                    skipped_count += 1
                     consecutive_fails += 1
                     short = (file_path or "").rsplit("/", 1)[-1]
                     failed_files.append(f"{short}: {e}")
@@ -135,7 +138,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             await db.commit()
             job.result = json.dumps({
                 "analyzed": analyzed_count,
-                "failed": failed_count,
+                "skipped": skipped_count,
                 "batch": len(tracks),
                 "errors": failed_files[:5],
             })

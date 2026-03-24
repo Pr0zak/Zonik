@@ -30,7 +30,12 @@ async def analysis_stats(db: AsyncSession = Depends(get_db)):
     from backend.services.analyzer import ESSENTIA_SUPPORTED_EXTENSIONS
 
     total_tracks = (await db.execute(select(func.count(Track.id)))).scalar() or 0
-    analyzed = (await db.execute(select(func.count(TrackAnalysis.track_id)))).scalar() or 0
+    analyzed_total = (await db.execute(select(func.count(TrackAnalysis.track_id)))).scalar() or 0
+    # Stub rows (bpm IS NULL) = tracks that failed analysis permanently
+    analysis_skipped = (await db.execute(
+        select(func.count(TrackAnalysis.track_id)).where(TrackAnalysis.bpm.is_(None))
+    )).scalar() or 0
+    analyzed = analyzed_total - analysis_skipped
     with_embeddings = (await db.execute(select(func.count(TrackEmbedding.track_id)))).scalar() or 0
 
     # Count tracks with unsupported formats (skipped by Essentia)
@@ -54,6 +59,7 @@ async def analysis_stats(db: AsyncSession = Depends(get_db)):
         "embedding_pct": round(with_embeddings / total_tracks * 100, 1) if total_tracks else 0,
         "skipped": skipped_total,
         "skipped_by_format": skipped_by_format,
+        "analysis_skipped": analysis_skipped,
     }
 
 
@@ -112,10 +118,13 @@ async def start_analysis(background_tasks: BackgroundTasks, force: bool = False)
                             analyzed_count += 1
                             consecutive_fails = 0
                         else:
+                            # Stub row excludes track from future batches
+                            await db.merge(TrackAnalysis(track_id=track_id))
                             failed_count += 1
                             consecutive_fails += 1
                     except Exception as e:
                         log.warning("Analysis failed for track %s: %s", track_id, e)
+                        await db.merge(TrackAnalysis(track_id=track_id))
                         failed_count += 1
                         consecutive_fails += 1
 

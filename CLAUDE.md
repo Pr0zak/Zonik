@@ -65,7 +65,7 @@ deploy/                # Systemd service files
 - **Track model**: NO `bpm` column — BPM is on TrackAnalysis (requires outerjoin); uses `duration_seconds` not `duration`
 - **Svelte 5**: `{@const}` must be direct child of {#each}/{#if}, NOT inside component children
 - **BrokenProcessPool**: import from `concurrent.futures.process` (NOT top-level concurrent.futures)
-- **Essentia**: .opus needs ffmpeg pre-conversion; >2 channels must be skipped. Pool resets on timeout (not just BrokenProcessPool) — hung workers block the entire queue. Jobs abort after 20 consecutive failures. Pool reset SIGKILL's worker processes (graceful shutdown doesn't stop CPU-bound C code). Lifespan teardown also kills workers.
+- **Essentia**: .opus needs ffmpeg pre-conversion; >2 channels must be skipped. Pool resets on timeout (not just BrokenProcessPool) — hung workers block the entire queue. Jobs abort after 20 consecutive failures. Pool reset SIGKILL's worker processes (graceful shutdown doesn't stop CPU-bound C code). Lifespan teardown also kills workers. Tracks that fail analysis get a stub TrackAnalysis row (all nulls) so they're excluded from future batches — prevents "poison tracks" from wasting batch slots every run. Stats endpoint distinguishes real analyses from stubs via `bpm IS NULL`.
 - **Upgrade track swap**: raw SQL with PRAGMA foreign_keys=OFF (ORM cascade breaks TrackAnalysis PK)
 - **Rate limiter**: excludes /api/download/, /api/jobs, and /rest/ paths; auto-evicts stale IPs every 1000 requests
 - **Sort security**: allowlist sets prevent arbitrary getattr() on model attributes

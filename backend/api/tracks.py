@@ -459,6 +459,9 @@ async def bulk_analyze_tracks(req: BulkAnalyzeRequest, background_tasks: Backgro
                             loudness=analysis.get("loudness"),
                         )
                         await db_inner.merge(ta)
+                    else:
+                        # Stub row excludes track from future batches
+                        await db_inner.merge(TrackAnalysis(track_id=track_id))
 
                     job.progress = i + 1
                     await db_inner.merge(job)
