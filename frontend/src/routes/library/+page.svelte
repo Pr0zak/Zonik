@@ -78,8 +78,8 @@
 	// Tracks state
 	let tracks = $state([]);
 	let trackTotal = $state(0);
-	let sort = $state('title');
-	let order = $state('asc');
+	let sort = $state('created_at');
+	let order = $state('desc');
 	let analyzedFilter = $state(''); // '', 'yes', 'no'
 	let flaggedFilter = $state(false); // show only rating=1 tracks
 	let filterArtistId = $state('');
