@@ -9,6 +9,14 @@
 	} from 'lucide-svelte';
 
 	let currentTransfer = $derived($activeTransfers.find(t => t.state === 'transferring') || null);
+	let appVersion = $state('');
+
+	onMount(async () => {
+		try {
+			const data = await fetch('/api/config/version').then(r => r.json());
+			appVersion = data.version || '';
+		} catch {}
+	});
 
 	const navGroups = [
 		{
@@ -142,7 +150,7 @@
 			</a>
 		{/if}
 		<div class="flex items-center justify-between">
-			<p class="text-xs font-mono text-[var(--text-disabled)]">OpenSubsonic</p>
+			<p class="text-xs font-mono text-[var(--text-disabled)]">{appVersion ? `v${appVersion}` : 'OpenSubsonic'}</p>
 			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
 				class="flex items-center gap-1.5 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors group" title="View on GitHub">
 				<Github class="w-3.5 h-3.5 group-hover:text-white transition-colors" />
