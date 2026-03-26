@@ -11,6 +11,14 @@ SUBSONIC_API_VERSION = "1.16.1"
 XMLNS = "http://subsonic.org/restapi"
 
 
+def _server_version() -> str:
+    from backend.api.config_api import _get_version
+    return _get_version()
+
+
+SERVER_VERSION = _server_version()
+
+
 def _format_dt(dt: datetime | None) -> str | None:
     if dt is None:
         return None
@@ -31,7 +39,7 @@ def _json_response(data: dict, status: str) -> Response:
             "status": status,
             "version": SUBSONIC_API_VERSION,
             "type": "zonik",
-            "serverVersion": "0.1.0",
+            "serverVersion": SERVER_VERSION,
             "openSubsonic": True,
             **data,
         }
@@ -56,7 +64,7 @@ def _xml_response(data: dict, status: str) -> Response:
         "status": status,
         "version": SUBSONIC_API_VERSION,
         "type": "zonik",
-        "serverVersion": "0.1.0",
+        "serverVersion": SERVER_VERSION,
         "openSubsonic": "true",
     })
     _dict_to_xml(root, data)
