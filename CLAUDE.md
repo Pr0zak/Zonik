@@ -86,7 +86,7 @@ deploy/                # Systemd service files
 - Git remote: `https://github.com/Pr0zak/Zonik.git` (user: Pr0zak)
 - Flow: edit → verify → commit → push → upgrade CT 228
 - Verify-loads fails on WSL2 (no /opt/zonik/data) — use syntax check instead
-- **Releases**: after deploying a set of changes, create a GitHub release via `/release [patch|minor|major]`. Version lives in `pyproject.toml` + `frontend/package.json`. Use semver: patch for fixes, minor for features, major for breaking changes.
+- **Releases**: ALWAYS do a version bump and release after every deployed change — never leave deployed code untagged. Use `/release [patch|minor|major]`. Version lives in `pyproject.toml` + `frontend/package.json`. Use semver: patch for fixes, minor for features, major for breaking changes. The subsonic `serverVersion` field reads from `pyproject.toml` at startup.
 
 ## Frontend Notes
 - Svelte 5 runes: `$state`, `$derived` (deprecation warnings are harmless)
