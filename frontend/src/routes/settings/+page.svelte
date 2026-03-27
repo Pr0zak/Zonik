@@ -4,7 +4,7 @@
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass, formatDateTime } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform } from 'lucide-svelte';
+	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform, Tv, Smartphone } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -1140,6 +1140,20 @@
 						{/if}
 					</div>
 				{/if}
+
+				<!-- Quick links -->
+				<div class="flex gap-3 pt-2">
+					<a href="/pair"
+						class="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-sm text-[var(--text-secondary)]">
+						<Tv class="w-4 h-4 text-[var(--color-primary)]" />
+						Pair a Device
+					</a>
+					<a href="/app" target="_blank"
+						class="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-sm text-[var(--text-secondary)]">
+						<Smartphone class="w-4 h-4 text-[var(--color-discover)]" />
+						Download Mobile App
+					</a>
+				</div>
 			</div>
 		</Card>
 	</div>
