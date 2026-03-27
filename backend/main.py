@@ -18,7 +18,7 @@ from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
 from backend.models.job import Job
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair
 from backend.subsonic import router as subsonic_router
 
 
@@ -197,10 +197,21 @@ app.include_router(upgrades.router, prefix="/api/upgrades", tags=["upgrades"])
 app.include_router(ai_search.router, prefix="/api/search", tags=["ai-search"])
 app.include_router(playlist_import.router, prefix="/api/playlists/import", tags=["playlist-import"])
 app.include_router(app_logs.router, prefix="/api/logs", tags=["logs"])
+app.include_router(pair.router, prefix="/api/pair", tags=["pair"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 
 # Subsonic API
 app.include_router(subsonic_router, prefix="/rest")
+
+# /app — redirect to latest Zonik-mobile APK
+@app.get("/app")
+async def app_download():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(
+        "https://github.com/Pr0zak/Zonik-mobile/releases/latest/download/app-debug.apk",
+        status_code=302,
+    )
+
 
 # Serve frontend build in production
 frontend_build = Path(__file__).parent.parent / "frontend" / "build"
