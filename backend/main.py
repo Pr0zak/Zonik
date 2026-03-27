@@ -203,14 +203,37 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 # Subsonic API
 app.include_router(subsonic_router, prefix="/rest")
 
-# /app — redirect to latest Zonik-mobile APK
+# /app — redirect to latest Zonik-mobile APK (fetches asset URL from GitHub API)
+_apk_cache: dict = {"url": None, "ts": 0}
+
 @app.get("/app")
 async def app_download():
+    import time
+    import httpx
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(
-        "https://github.com/Pr0zak/Zonik-mobile/releases/latest/download/app-debug.apk",
-        status_code=302,
-    )
+
+    now = time.time()
+    # Cache for 1 hour
+    if _apk_cache["url"] and now - _apk_cache["ts"] < 3600:
+        return RedirectResponse(_apk_cache["url"], status_code=302)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.github.com/repos/Pr0zak/Zonik-mobile/releases/latest",
+                headers={"Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+            assets = resp.json().get("assets", [])
+            apk = next((a for a in assets if a["name"].startswith("zonik-v") and "wear" not in a["name"]), None)
+            if apk:
+                _apk_cache["url"] = apk["browser_download_url"]
+                _apk_cache["ts"] = now
+                return RedirectResponse(apk["browser_download_url"], status_code=302)
+    except Exception:
+        pass
+    # Fallback to releases page
+    return RedirectResponse("https://github.com/Pr0zak/Zonik-mobile/releases/latest", status_code=302)
 
 
 # Serve frontend build in production
