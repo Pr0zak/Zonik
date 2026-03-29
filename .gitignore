@@ -20,3 +20,9 @@ data/
 zonik.toml
 .claude/
 old_CLAUDE.md
+CLAUDE.md
+TODO.md
+MOBILE-STREAMING-PROMPT.md
+plans/
+*.bak
+*:Zone.Identifier
