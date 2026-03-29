@@ -307,7 +307,7 @@ class SoulseekClient:
             peer.start_reading()
             self.peers[username] = peer
         except Exception as e:
-            log.info(f"[client] Failed to connect to indirect peer {username}: {e}")
+            log.debug(f"[client] Failed to connect to indirect peer {username}: {e}")
             await self.server.cant_connect_to_peer(token, username)
 
     async def _handle_server_disconnect(self) -> None:

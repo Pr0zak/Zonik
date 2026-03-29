@@ -345,8 +345,10 @@ class BulkDeleteRequest(BaseModel):
 @router.post("/bulk-delete")
 async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(get_db)):
     """Delete multiple tracks and their files."""
+    import asyncio
     from pathlib import Path
     from backend.config import get_settings
+    from sqlalchemy.exc import OperationalError
     settings = get_settings()
 
     from backend.models.favorite import Favorite
@@ -370,19 +372,29 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
             file_path.unlink()
 
     if found_ids:
-        # Bulk delete FK-dependent records (single DELETE per table)
-        await db.execute(delete(Favorite).where(Favorite.track_id.in_(found_ids)))
-        await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(found_ids)))
-        await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(found_ids)))
-        await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(found_ids)))
-        await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(found_ids)))
-        await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(found_ids)))
-        await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(found_ids)))
-        await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(found_ids)))
-        for tid in found_ids:
-            await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": tid})
-        await db.execute(delete(Track).where(Track.id.in_(found_ids)))
-    await db.commit()
+        # Retry up to 3 times on database lock (background jobs may hold write lock)
+        for attempt in range(3):
+            try:
+                await db.execute(delete(Favorite).where(Favorite.track_id.in_(found_ids)))
+                await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(found_ids)))
+                await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(found_ids)))
+                await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(found_ids)))
+                await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(found_ids)))
+                await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(found_ids)))
+                await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(found_ids)))
+                await db.execute(delete(TrackUpgrade).where(TrackUpgrade.track_id.in_(found_ids)))
+                for tid in found_ids:
+                    await db.execute(text("DELETE FROM tracks_fts WHERE track_id = :tid"), {"tid": tid})
+                await db.execute(delete(Track).where(Track.id.in_(found_ids)))
+                await db.commit()
+                break
+            except OperationalError as e:
+                await db.rollback()
+                if "database is locked" in str(e) and attempt < 2:
+                    log.warning(f"[bulk-delete] Database locked, retrying ({attempt + 1}/3)...")
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise HTTPException(503, "Database is busy — a background job may be running. Try again in a moment.")
     return {"deleted": len(found_ids)}
 
 

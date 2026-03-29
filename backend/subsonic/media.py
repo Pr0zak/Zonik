@@ -106,6 +106,13 @@ def _get_resized_cover(source: Path, size: int) -> Path | None:
         return cached
     except Exception as e:
         log.warning(f"Cover resize failed: {e}")
+        # Delete corrupt source file so it gets re-fetched on next scan
+        if source.exists() and "cannot identify image file" in str(e):
+            try:
+                source.unlink()
+                log.info(f"Deleted corrupt cover cache: {source.name}")
+            except OSError:
+                pass
         return None
 
 
