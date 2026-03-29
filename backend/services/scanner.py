@@ -839,29 +839,49 @@ async def _mark_upgrade_failed(db, track_id: str, message: str):
         log.debug(f"[import] TrackUpgrade update skipped: {e}")
 
 
-def cleanup_download_dir():
-    """Remove zero-byte files and non-audio files from the download directory."""
+def cleanup_download_dir(max_age_hours: int = 24) -> dict:
+    """Remove stale files from the download directory.
+
+    Removes: zero-byte files, non-audio files, and audio files older than
+    max_age_hours (already imported into library by then).
+    """
+    import time
     settings = get_settings()
     dl_dir = Path(settings.library.download_dir)
     if not dl_dir.exists():
-        return
+        return {"removed": 0, "freed_bytes": 0}
 
+    cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
+    freed = 0
     for f in dl_dir.iterdir():
         if not f.is_file():
             continue
+        try:
+            stat = f.stat()
+        except OSError:
+            continue
         # Remove zero-byte files (failed transfers)
-        if f.stat().st_size == 0:
+        if stat.st_size == 0:
             f.unlink(missing_ok=True)
             log.info(f"[cleanup] Removed zero-byte file: {f.name}")
             removed += 1
             continue
-        # Remove non-audio files (skip known subdirs)
         ext = f.suffix.lower()
+        # Remove non-audio files
         if ext not in AUDIO_EXTENSIONS:
+            freed += stat.st_size
             f.unlink(missing_ok=True)
             log.info(f"[cleanup] Removed non-audio file: {f.name}")
             removed += 1
+            continue
+        # Remove audio files older than max_age_hours (already imported)
+        if stat.st_mtime < cutoff:
+            freed += stat.st_size
+            f.unlink(missing_ok=True)
+            log.info(f"[cleanup] Removed old download: {f.name}")
+            removed += 1
 
     if removed:
-        log.info(f"[cleanup] Removed {removed} files from downloads dir")
+        log.info(f"[cleanup] Removed {removed} files, freed {freed / (1024*1024):.1f} MB")
+    return {"removed": removed, "freed_bytes": freed}

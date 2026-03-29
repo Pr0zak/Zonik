@@ -33,6 +33,7 @@ _TASK_LABELS = {
     "recommendation_refresh": "AI Recommendations",
     "upgrade_scan": "Quality Upgrade Scan",
     "remix_discovery": "Remix Discovery",
+    "download_cleanup": "Download Cleanup",
 }
 
 
@@ -168,6 +169,12 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
 
         elif task_name == "remix_discovery":
             await _run_remix_discovery(db, job, count=count or 30, config=task_config)
+
+        elif task_name == "download_cleanup":
+            from backend.services.scanner import cleanup_download_dir
+            max_age = task_config.get("max_age_hours", 24) if task_config else 24
+            result = cleanup_download_dir(max_age_hours=max_age)
+            job.result = json.dumps(result)
 
         job.status = "completed"
     except Exception as e:
