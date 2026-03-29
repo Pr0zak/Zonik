@@ -388,12 +388,15 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
 
     _cover_cache = {"Cache-Control": "public, max-age=604800"}
 
-    def _serve_cover(source_path: Path) -> FileResponse:
-        """Serve cover art, optionally resized."""
+    def _serve_cover(source_path: Path) -> FileResponse | None:
+        """Serve cover art, optionally resized. Returns None if file missing/corrupt."""
         if target_size:
             resized = _get_resized_cover(source_path, target_size)
-            if resized:
+            if resized and resized.exists():
                 return FileResponse(path=str(resized), media_type="image/jpeg", headers=_cover_cache)
+        # Source may have been deleted by _get_resized_cover (corrupt file cleanup)
+        if not source_path.exists():
+            return None
         media_type = "image/jpeg"
         if source_path.suffix.lower() == ".png":
             media_type = "image/png"
@@ -402,7 +405,9 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
     # cover_id might be a file path to cached cover art
     cover_path = Path(cover_id)
     if cover_path.exists():
-        return _serve_cover(cover_path)
+        resp = _serve_cover(cover_path)
+        if resp:
+            return resp
 
     # Try to find track/album cover
     result = await db.execute(select(Track).where(Track.id == cover_id))
@@ -410,7 +415,9 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
     if track and track.cover_art_path:
         path = Path(track.cover_art_path)
         if path.exists():
-            return _serve_cover(path)
+            resp = _serve_cover(path)
+            if resp:
+                return resp
 
     from backend.models.album import Album
     result = await db.execute(select(Album).where(Album.id == cover_id))
@@ -418,7 +425,9 @@ async def get_cover_art(request: Request, db: AsyncSession = Depends(get_db)):
     if album and album.cover_art_path:
         path = Path(album.cover_art_path)
         if path.exists():
-            return _serve_cover(path)
+            resp = _serve_cover(path)
+            if resp:
+                return resp
 
     # Return 1x1 transparent pixel as fallback
     return Response(
