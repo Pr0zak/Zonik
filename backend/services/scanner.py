@@ -847,7 +847,7 @@ def cleanup_download_dir(max_age_hours: int = 24) -> dict:
     """
     import time
     settings = get_settings()
-    dl_dir = Path(settings.library.download_dir)
+    dl_dir = Path(settings.soulseek.download_dir)
     if not dl_dir.exists():
         return {"removed": 0, "freed_bytes": 0}
 
