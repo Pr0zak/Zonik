@@ -31,6 +31,7 @@ class Transfer:
     started_at: float = field(default_factory=time.time)
     save_path: str | None = None
     error: str | None = None
+    job_id: str | None = None  # links transfer back to the originating Job
 
     @property
     def progress(self) -> float:
@@ -68,6 +69,7 @@ class Transfer:
             "eta_seconds": round(self.eta_seconds) if self.eta_seconds is not None else None,
             "save_path": self.save_path,
             "error": self.error,
+            "job_id": self.job_id,
         }
 
 
@@ -138,9 +140,9 @@ class TransferManager:
                 return t
         return None
 
-    def create_transfer(self, username: str, filename: str) -> Transfer:
+    def create_transfer(self, username: str, filename: str, job_id: str | None = None) -> Transfer:
         key = self._normalize_key(username, filename)
-        transfer = Transfer(username=username, filename=filename)
+        transfer = Transfer(username=username, filename=filename, job_id=job_id)
         self.transfers[key] = transfer
         return transfer
 
