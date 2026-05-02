@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Depends
@@ -295,52 +294,19 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
 
     cmd.extend(["-flush_packets", "1", "-vn"])
 
-    # Transcode to cache file (no timeOffset) or stream directly
-    if time_offset == 0:
-        # Transcode to temp file → rename into cache → serve via FileResponse
-        cache_path = _transcode_cache_path(track.id, target_format, effective_bitrate)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-        async with _get_transcode_semaphore():
-            tmp_fd, tmp_path_str = tempfile.mkstemp(
-                suffix=f".{target_format}", dir=str(cache_path.parent)
-            )
-            import os
-            os.close(tmp_fd)
-            tmp_path = Path(tmp_path_str)
-            try:
-                file_cmd = cmd + [str(tmp_path)]
-                process = await asyncio.create_subprocess_exec(
-                    *file_cmd,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr_data = await process.communicate()
-                if process.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
-                    log.warning(
-                        f"ffmpeg exited {process.returncode} for {file_path.name}: "
-                        f"{stderr_data.decode(errors='replace')[-500:]}"
-                    )
-                    tmp_path.unlink(missing_ok=True)
-                    return error_response(0, "Transcoding failed", _get_format(request))
-                tmp_path.rename(cache_path)
-            except Exception:
-                tmp_path.unlink(missing_ok=True)
-                raise
-
-        # Evict old cache entries in background
-        _evict_transcode_cache()
-
-        return _serve_transcode_cache(cache_path)
-
-    # timeOffset > 0: stream directly (can't cache partial seeks)
+    # Pipe ffmpeg stdout straight to the client. First-byte latency drops from
+    # full-transcode-time to ffmpeg startup + first chunk.
     stream_cmd = cmd + ["-"]
 
     response_headers: dict[str, str] = {
         "Cache-Control": "private, max-age=86400",
         "Accept-Ranges": "none",
     }
-    if estimate and estimated_bytes:
+    if time_offset == 0:
+        response_headers["Content-Disposition"] = (
+            f'inline; filename="{file_path.stem}.{target_format}"'
+        )
+    elif estimate and estimated_bytes:
         response_headers["Content-Length"] = str(estimated_bytes)
 
     async def generate():
