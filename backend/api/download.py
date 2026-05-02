@@ -385,7 +385,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 dl_username = candidate["username"]
                 dl_filename = candidate["filename"]
                 try:
-                    await native_client.download(dl_username, dl_filename)
+                    await native_client.download(dl_username, dl_filename, job_id=job_id)
                     log.info(f"[download] Multi-source queued: {dl_username}")
                 except Exception as e:
                     await native_client.reputation.record_failure(dl_username)
@@ -514,7 +514,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
 
                 try:
-                    await native_client.download(dl_username, dl_filename)
+                    await native_client.download(dl_username, dl_filename, job_id=job_id)
                     log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
                 except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
                     # Transient network errors — don't penalize reputation
