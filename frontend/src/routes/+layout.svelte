@@ -4,6 +4,7 @@
 	import TopBar from '../components/TopBar.svelte';
 	import Player from '../components/Player.svelte';
 	import Toast from '../components/Toast.svelte';
+	import Modal from '../components/ui/Modal.svelte';
 	import { onMount, onDestroy } from 'svelte';
 	import { connectWebSocket, disconnectWebSocket } from '$lib/websocket.js';
 	import { initCast } from '$lib/cast.js';
@@ -95,64 +96,54 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-{#if $showShortcuts}
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center"
-		onclick={() => $showShortcuts = false}
-		role="dialog">
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="bg-[var(--surface-container)] ghost-border rounded-xl p-6 max-w-md w-full mx-4 shadow-float animate-fade-slide-in"
-			onclick={(e) => e.stopPropagation()}>
-			<h2 class="text-lg font-bold text-[var(--text-primary)] mb-4">Keyboard Shortcuts</h2>
-			<div class="space-y-4">
-				<div>
-					<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">General</h3>
-					<div class="space-y-1.5">
-						{#each [
-							['?', 'Show shortcuts'],
-							['Space', 'Play / Pause'],
-							['N', 'Next track'],
-							['P', 'Previous track'],
-							['B', 'Toggle sidebar'],
-							['Esc', 'Close dialog'],
-						] as [key, desc]}
-							<div class="flex items-center justify-between text-sm">
-								<span class="text-[var(--text-secondary)]">{desc}</span>
-								<kbd class="px-2 py-0.5 bg-[var(--surface-lowest)] ghost-border rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
-							</div>
-						{/each}
-					</div>
-				</div>
-				<div>
-					<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">Navigation</h3>
-					<div class="space-y-1.5">
-						{#each [
-							['1', 'Dashboard'],
-							['2', 'Library'],
-							['3', 'Discover'],
-							['4', 'Downloads'],
-							['5', 'Playlists'],
-							['6', 'Favorites'],
-							['7', 'Analysis'],
-							['8', 'Stats'],
-							['9', 'Schedule'],
-							['0', 'Logs'],
-							['S', 'Settings'],
-						] as [key, desc]}
-							<div class="flex items-center justify-between text-sm">
-								<span class="text-[var(--text-secondary)]">{desc}</span>
-								<kbd class="px-2 py-0.5 bg-[var(--surface-lowest)] ghost-border rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
-							</div>
-						{/each}
-					</div>
+<Modal bind:open={$showShortcuts} title="Keyboard Shortcuts" maxWidth="max-w-md">
+	{#snippet children()}
+		<div class="space-y-4">
+			<div>
+				<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">General</h3>
+				<div class="space-y-1.5">
+					{#each [
+						['?', 'Show shortcuts'],
+						['Space', 'Play / Pause'],
+						['N', 'Next track'],
+						['P', 'Previous track'],
+						['B', 'Toggle sidebar'],
+						['Esc', 'Close dialog'],
+					] as [key, desc]}
+						<div class="flex items-center justify-between text-sm">
+							<span class="text-[var(--text-secondary)]">{desc}</span>
+							<kbd class="px-2 py-0.5 bg-[var(--surface-lowest)] rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
+						</div>
+					{/each}
 				</div>
 			</div>
-			<p class="mt-4 text-xs text-[var(--text-disabled)]">Press <kbd class="px-1 py-0.5 bg-[var(--surface-lowest)] ghost-border rounded text-xs font-mono">?</kbd> to toggle this help</p>
+			<div>
+				<h3 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-2">Navigation</h3>
+				<div class="space-y-1.5">
+					{#each [
+						['1', 'Dashboard'],
+						['2', 'Library'],
+						['3', 'Discover'],
+						['4', 'Downloads'],
+						['5', 'Playlists'],
+						['6', 'Favorites'],
+						['7', 'Analysis'],
+						['8', 'Stats'],
+						['9', 'Schedule'],
+						['0', 'Logs'],
+						['S', 'Settings'],
+					] as [key, desc]}
+						<div class="flex items-center justify-between text-sm">
+							<span class="text-[var(--text-secondary)]">{desc}</span>
+							<kbd class="px-2 py-0.5 bg-[var(--surface-lowest)] rounded text-xs font-mono text-[var(--text-muted)]">{key}</kbd>
+						</div>
+					{/each}
+				</div>
+			</div>
+			<p class="text-xs text-[var(--text-disabled)]">Press <kbd class="px-1 py-0.5 bg-[var(--surface-lowest)] rounded text-xs font-mono">?</kbd> to toggle this help</p>
 		</div>
-	</div>
-{/if}
+	{/snippet}
+</Modal>
 
 <div class="h-screen flex flex-col bg-[var(--bg-primary)]">
 	<!-- Mobile header -->

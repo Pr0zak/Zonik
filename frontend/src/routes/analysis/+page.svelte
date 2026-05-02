@@ -2,13 +2,16 @@
 	import { onMount } from 'svelte';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, activeJobs } from '$lib/stores.js';
-	import { AudioWaveform, Sparkles, Database, Search, Clock, ChevronDown, ChevronUp } from 'lucide-svelte';
+	import { AudioWaveform, Sparkles, Database, Search } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import ScheduleSection from '../../components/ui/ScheduleSection.svelte';
+	import Toggle from '../../components/ui/Toggle.svelte';
+	import FormInput from '../../components/ui/FormInput.svelte';
 
 	let stats = $state(null);
 	let loading = $state(true);
@@ -22,7 +25,6 @@
 	let startingEmbeddings = $state(false);
 	let startingEnrichment = $state(false);
 
-	// Derive running state from activeJobs store
 	let analysisJob = $derived($activeJobs.find(j => j.type === 'audio_analysis'));
 	let embeddingsJob = $derived($activeJobs.find(j => j.type === 'vibe_embeddings'));
 	let enrichmentJob = $derived($activeJobs.find(j => j.type === 'enrichment'));
@@ -31,7 +33,6 @@
 	let prevEmbeddings = $state(false);
 	let prevEnrichment = $state(false);
 
-	// Auto-refresh stats when jobs complete
 	$effect(() => {
 		if (prevAnalysis && !analysisJob) { refreshStats(); addToast('Audio analysis complete', 'success'); }
 		prevAnalysis = !!analysisJob;
@@ -158,7 +159,6 @@
 		return Math.round((job.progress / job.total) * 100);
 	}
 
-	// Show progress relative to total library size (aligns with stats card)
 	function analysisProgress(job) {
 		if (!job) return { done: 0, total: 0, pct: 0 };
 		const done = job.progress || 0;
@@ -174,88 +174,68 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Analysis" color="var(--color-analysis)" />
+	<PageHeader title="Analysis" icon={AudioWaveform} color="var(--color-analysis)" />
 
-	<!-- Collapsible Schedule -->
 	{#if schedTasks.audio_analysis || schedTasks.enrichment}
-		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
-			<Clock class="w-3.5 h-3.5" />
-			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
-			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
-		</button>
-		{#if schedExpanded}
-			<Card padding="p-4" class="mb-4">
-				{#if schedTasks.audio_analysis}
-					<ScheduleControl
-						taskName="audio_analysis"
-						label="Audio Analysis"
-						enabled={schedTasks.audio_analysis.enabled}
-						intervalHours={schedTasks.audio_analysis.interval_hours}
-						runAt={schedTasks.audio_analysis.run_at}
-						lastRunAt={schedTasks.audio_analysis.last_run_at}
-						running={schedRunning.audio_analysis}
-						onToggle={() => toggleSched('audio_analysis')}
-						onUpdate={(u) => updateSched('audio_analysis', u)}
-						onRun={() => runSched('audio_analysis')}
-					/>
-				{/if}
-				{#if schedTasks.enrichment}
-					<ScheduleControl
-						taskName="enrichment"
-						label="Enrichment"
-						enabled={schedTasks.enrichment.enabled}
-						intervalHours={schedTasks.enrichment.interval_hours}
-						runAt={schedTasks.enrichment.run_at}
-						lastRunAt={schedTasks.enrichment.last_run_at}
-						running={schedRunning.enrichment}
-						onToggle={() => toggleSched('enrichment')}
-						onUpdate={(u) => updateSched('enrichment', u)}
-						onRun={() => runSched('enrichment')}
-					/>
-				{/if}
-				<!-- Auto-run after scan toggles -->
-				<div class="mt-3 pt-3">
-					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-run after Library Scan</span>
-					<div class="mt-2 space-y-2">
-						{#if schedTasks.audio_analysis}
-							<label class="flex items-center gap-2 cursor-pointer">
-								<button onclick={() => toggleAutoAfterScan('audio_analysis')}
-									class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
-										{schedTasks.audio_analysis.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
-									<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
-										{schedTasks.audio_analysis.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
-								</button>
-								<span class="text-xs text-[var(--text-secondary)]">Audio Analysis</span>
-							</label>
-						{/if}
-						{#if schedTasks.enrichment}
-							<label class="flex items-center gap-2 cursor-pointer">
-								<button onclick={() => toggleAutoAfterScan('enrichment')}
-									class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
-										{schedTasks.enrichment.config?.auto_after_scan ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
-									<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
-										{schedTasks.enrichment.config?.auto_after_scan ? 'left-[14px]' : 'left-0.5'}"></span>
-								</button>
-								<span class="text-xs text-[var(--text-secondary)]">Metadata Enrichment</span>
-							</label>
-						{/if}
-					</div>
-					<p class="text-xs text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
+		<ScheduleSection bind:expanded={schedExpanded}>
+			{#if schedTasks.audio_analysis}
+				<ScheduleControl
+					taskName="audio_analysis"
+					label="Audio Analysis"
+					enabled={schedTasks.audio_analysis.enabled}
+					intervalHours={schedTasks.audio_analysis.interval_hours}
+					runAt={schedTasks.audio_analysis.run_at}
+					lastRunAt={schedTasks.audio_analysis.last_run_at}
+					running={schedRunning.audio_analysis}
+					onToggle={() => toggleSched('audio_analysis')}
+					onUpdate={(u) => updateSched('audio_analysis', u)}
+					onRun={() => runSched('audio_analysis')}
+				/>
+			{/if}
+			{#if schedTasks.enrichment}
+				<ScheduleControl
+					taskName="enrichment"
+					label="Enrichment"
+					enabled={schedTasks.enrichment.enabled}
+					intervalHours={schedTasks.enrichment.interval_hours}
+					runAt={schedTasks.enrichment.run_at}
+					lastRunAt={schedTasks.enrichment.last_run_at}
+					running={schedRunning.enrichment}
+					onToggle={() => toggleSched('enrichment')}
+					onUpdate={(u) => updateSched('enrichment', u)}
+					onRun={() => runSched('enrichment')}
+				/>
+			{/if}
+
+			<div class="mt-3 pt-3">
+				<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Auto-run after Library Scan</span>
+				<div class="mt-2 space-y-2">
+					{#if schedTasks.audio_analysis}
+						<Toggle
+							checked={!!schedTasks.audio_analysis.config?.auto_after_scan}
+							onchange={() => toggleAutoAfterScan('audio_analysis')}
+							label="Audio Analysis"
+						/>
+					{/if}
+					{#if schedTasks.enrichment}
+						<Toggle
+							checked={!!schedTasks.enrichment.config?.auto_after_scan}
+							onchange={() => toggleAutoAfterScan('enrichment')}
+							label="Metadata Enrichment"
+						/>
+					{/if}
 				</div>
-			</Card>
-		{/if}
+				<p class="text-xs text-[var(--text-disabled)] mt-1">When enabled, these tasks will automatically run after a library scan finds new tracks.</p>
+			</div>
+		</ScheduleSection>
 	{/if}
 
 	{#if loading}
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-			{#each Array(3) as _}
-				<Skeleton class="h-28 rounded-lg" />
-			{/each}
+			<Skeleton variant="card" count={3} />
 		</div>
 	{:else if stats}
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-			<!-- Audio Analysis Card -->
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
 					<AudioWaveform class="w-4 h-4 text-[var(--color-accent)]" />
@@ -275,7 +255,7 @@
 				{/if}
 				{#if analysisJob}
 					{@const ap = analysisProgress(analysisJob)}
-					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)] ghost-border">
+					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)]">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-[var(--color-info)] font-medium animate-pulse">Running...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{ap.done}/{ap.total}</span>
@@ -292,7 +272,6 @@
 				{/if}
 			</Card>
 
-			<!-- Vibe Embeddings Card -->
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
 					<Sparkles class="w-4 h-4 text-[var(--color-analysis)]" />
@@ -317,7 +296,6 @@
 				{/if}
 			</Card>
 
-			<!-- Enrichment Card -->
 			<Card padding="p-4">
 				<div class="flex items-center gap-2 mb-2">
 					<Database class="w-4 h-4 text-emerald-400" />
@@ -325,7 +303,7 @@
 				</div>
 				<p class="text-sm text-[var(--text-muted)] mb-1">Fill missing genres, cover art, and metadata from online sources.</p>
 				{#if enrichmentJob}
-					<div class="mt-2 p-2 rounded bg-[var(--bg-primary)] ghost-border">
+					<div class="mt-2 p-2 rounded bg-[var(--bg-primary)]">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-emerald-400 font-medium animate-pulse">Enriching...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{enrichmentJob.progress}/{enrichmentJob.total}</span>
@@ -351,22 +329,23 @@
 		</div>
 		<p class="text-sm text-[var(--text-muted)] mb-4">Search by text description (requires CLAP embeddings)</p>
 		<div class="flex gap-3">
-			<input type="text" placeholder="e.g., chill ambient beats, energetic dance music..."
+			<FormInput
+				type="text"
 				bind:value={vibeQuery}
+				placeholder="e.g., chill ambient beats, energetic dance music..."
 				onkeydown={(e) => { if (e.key === 'Enter') vibeSearch(); }}
-				class="flex-1 bg-[var(--surface-lowest)] ghost-border rounded-md px-3 py-2 text-sm text-[var(--text-body)] placeholder-[var(--text-disabled)]
-					focus:outline-none focus:ring-1 focus:border-[var(--color-accent)]/50 focus:ring-[var(--color-accent)]/20" />
-			<Button variant="secondary" loading={searching} disabled={!vibeQuery}
-				onclick={vibeSearch}>
+				class="flex-1"
+			/>
+			<Button variant="secondary" loading={searching} disabled={!vibeQuery} onclick={vibeSearch}>
 				<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
 				Search Vibes
 			</Button>
 		</div>
 
 		{#if vibeResults.length}
-			<div class="mt-4 ghost-border rounded-lg space-y-0.5">
+			<div class="mt-4 rounded-lg space-y-0.5">
 				{#each vibeResults as r}
-					<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--surface-container-high)] transition-colors">
+					<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--surface-container-high)] transition-colors rounded">
 						<div>
 							<span class="font-medium text-[var(--text-primary)]">{r.title}</span>
 							<span class="text-[var(--text-secondary)] text-sm ml-2">{r.artist || ''}</span>

@@ -22,6 +22,7 @@
 	import Modal from '../../components/ui/Modal.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import ScheduleSection from '../../components/ui/ScheduleSection.svelte';
 	import StarRating from '../../components/ui/StarRating.svelte';
 	import Pagination from '../../components/ui/Pagination.svelte';
 
@@ -712,23 +713,17 @@
 </script>
 
 <div class="max-w-7xl">
-	<PageHeader title="Library" color="var(--color-library)">
-		<Button variant="primary" size="sm" loading={scanning} onclick={scanLibrary}>
-			<ScanLine class="w-3.5 h-3.5" />
-			{scanning ? 'Scanning...' : 'Scan'}
-		</Button>
+	<PageHeader title="Library" icon={Music} color="var(--color-library)">
+		{#snippet actions()}
+			<Button variant="primary" size="sm" loading={scanning} onclick={scanLibrary}>
+				<ScanLine class="w-3.5 h-3.5" />
+				{scanning ? 'Scanning...' : 'Scan'}
+			</Button>
+		{/snippet}
 	</PageHeader>
 
-	<!-- Collapsible Schedule -->
 	{#if schedTasks.library_scan || schedTasks.upgrade_scan}
-		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
-			<Clock class="w-3.5 h-3.5" />
-			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
-			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
-		</button>
-		{#if schedExpanded}
-			<Card padding="p-4" class="mb-4">
+		<ScheduleSection bind:expanded={schedExpanded}>
 				{#if schedTasks.library_scan}
 					<ScheduleControl taskName="library_scan" label="Library Scan" enabled={schedTasks.library_scan.enabled} intervalHours={schedTasks.library_scan.interval_hours} runAt={schedTasks.library_scan.run_at} lastRunAt={schedTasks.library_scan.last_run_at} running={schedRunning.library_scan} onToggle={() => toggleSched('library_scan')} onUpdate={(u) => updateSched('library_scan', u)} onRun={() => runSched('library_scan')} />
 				{/if}
@@ -763,8 +758,7 @@
 						{/if}
 					</div>
 				{/if}
-			</Card>
-		{/if}
+		</ScheduleSection>
 	{/if}
 
 	<!-- Tabs row -->

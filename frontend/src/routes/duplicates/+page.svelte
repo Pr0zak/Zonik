@@ -18,6 +18,9 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import Modal from '../../components/ui/Modal.svelte';
 	import StarRating from '../../components/ui/StarRating.svelte';
+	import StatTile from '../../components/ui/StatTile.svelte';
+	import FilterPills from '../../components/ui/FilterPills.svelte';
+	import Toolbar from '../../components/ui/Toolbar.svelte';
 
 	let loading = $state(true);
 	let data = $state(null);
@@ -249,9 +252,9 @@
 
 	{#if loading}
 		<div class="space-y-4 mt-4">
-			{#each Array(3) as _}
-				<Skeleton class="h-40 rounded-lg" />
-			{/each}
+			<Skeleton class="h-40 rounded-lg" />
+			<Skeleton class="h-40 rounded-lg" />
+			<Skeleton class="h-40 rounded-lg" />
 		</div>
 	{:else if !data?.groups?.length}
 		<div class="mt-8">
@@ -263,88 +266,72 @@
 		<!-- Stats Bar -->
 		{#if stats}
 			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
-				{#each [
-					{ label: 'Groups', value: stats.totalGroups, color: 'text-amber-400' },
-					{ label: 'Extra Files', value: stats.totalExtra, color: 'text-red-400' },
-					{ label: 'Reclaimable', value: formatSize(stats.reclaimable), color: 'text-emerald-400' },
-					{ label: 'Format Mismatches', value: stats.formatMismatches, color: 'text-purple-400' },
-					{ label: 'Largest Group', value: stats.largestGroup + ' copies', color: 'text-blue-400' },
-				] as stat}
-					<div class="bg-[var(--surface-base)] ghost-border rounded-lg px-3 py-2 text-center">
-						<p class="text-lg font-bold {stat.color}">{stat.value}</p>
-						<p class="text-xs text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
-					</div>
-				{/each}
+				<StatTile label="Groups" value={stats.totalGroups} color="#fbbf24" />
+				<StatTile label="Extra Files" value={stats.totalExtra} color="#f87171" />
+				<StatTile label="Reclaimable" value={formatSize(stats.reclaimable)} color="#34d399" />
+				<StatTile label="Format Mismatches" value={stats.formatMismatches} color="#c084fc" />
+				<StatTile label="Largest Group" value="{stats.largestGroup} copies" color="#60a5fa" />
 			</div>
 		{/if}
 
-		<!-- Toolbar -->
-		<div class="sticky top-0 z-10 bg-[var(--bg-primary)] pt-3 pb-2 mt-3 mb-3 space-y-2">
-			<!-- Row 1: Filters + Search + Sort -->
-			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
-				<div class="flex items-center gap-2 flex-wrap">
-					{#each [
-						{ value: 'all', label: 'All' },
-						{ value: 'format_mismatch', label: 'Format Mismatch' },
-						{ value: 'same_format', label: 'Same Format' },
-						{ value: 'has_favorites', label: 'Has Favorites' },
-					] as f}
-						<button
-							onclick={() => filterBy = f.value}
-							class="px-2.5 py-1.5 text-xs rounded-md transition-colors whitespace-nowrap {filterBy === f.value ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
-						>
-							{f.label}
-						</button>
-					{/each}
+		<Toolbar>
+			{#snippet row1Left()}
+				<FilterPills
+					options={[
+						{ value: 'all', label: 'All', color: 'duplicates' },
+						{ value: 'format_mismatch', label: 'Format Mismatch', color: 'duplicates' },
+						{ value: 'same_format', label: 'Same Format', color: 'duplicates' },
+						{ value: 'has_favorites', label: 'Has Favorites', color: 'duplicates' },
+					]}
+					value={filterBy}
+					onchange={(v) => filterBy = v}
+					variant="outline"
+				/>
+			{/snippet}
+			{#snippet row1Right()}
+				<div class="relative flex-1 sm:flex-none">
+					<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
+					<input type="text" bind:value={searchQuery} placeholder="Search..."
+						class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--surface-lowest)] text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-full sm:w-36 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20" />
 				</div>
-				<div class="flex items-center gap-2 flex-shrink-0">
-					<div class="relative flex-1 sm:flex-none">
-						<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-						<input type="text" bind:value={searchQuery} placeholder="Search..."
-							class="pl-8 pr-3 py-1.5 text-xs rounded-md bg-[var(--surface-base)] ghost-border text-[var(--text-primary)] placeholder:text-[var(--text-disabled)] w-full sm:w-36 focus:outline-none focus:border-[var(--color-accent)]" />
-					</div>
-					<select bind:value={sortBy}
-						class="text-xs rounded-md bg-[var(--surface-base)] ghost-border text-[var(--text-secondary)] px-2 py-1.5 focus:outline-none focus:border-[var(--color-accent)]">
-						<option value="space">Reclaimable Space</option>
-						<option value="copies">Most Copies</option>
-						<option value="gap">Quality Gap</option>
-						<option value="artist">Artist A-Z</option>
-						<option value="recent">Recently Added</option>
-					</select>
-				</div>
-			</div>
-			<!-- Row 2: Selection controls + Actions -->
-			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
-				<div class="flex items-center gap-2 text-xs flex-wrap">
-					<span class="text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
-					<button onclick={selectAllInferior} class="text-[var(--color-accent)] hover:underline whitespace-nowrap">Select Inferior</button>
-					<button onclick={deselectAll} class="text-[var(--text-muted)] hover:underline whitespace-nowrap">Deselect</button>
-					<span class="text-[var(--border-subtle)] hidden sm:inline">|</span>
-					<button onclick={expandAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
-						<ChevronsDown class="w-3 h-3" /> Expand
-					</button>
-					<button onclick={collapseAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
-						<ChevronsUp class="w-3 h-3" /> Collapse
-					</button>
-				</div>
-				<div class="flex items-center gap-2 flex-wrap">
-					<Button variant="secondary" size="sm" loading={aiResolveLoading} onclick={aiResolve}>
-						<Sparkles class="w-3.5 h-3.5 mr-1 text-amber-400" /> AI Resolve
+				<select bind:value={sortBy}
+					class="text-xs rounded-md bg-[var(--surface-lowest)] text-[var(--text-secondary)] px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20">
+					<option value="space">Reclaimable Space</option>
+					<option value="copies">Most Copies</option>
+					<option value="gap">Quality Gap</option>
+					<option value="artist">Artist A-Z</option>
+					<option value="recent">Recently Added</option>
+				</select>
+			{/snippet}
+			{#snippet row2Left()}
+				<span class="text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
+				<button onclick={selectAllInferior} class="text-[var(--color-accent)] hover:underline whitespace-nowrap">Select Inferior</button>
+				<button onclick={deselectAll} class="text-[var(--text-muted)] hover:underline whitespace-nowrap">Deselect</button>
+				<span class="text-[var(--text-disabled)] hidden sm:inline">&middot;</span>
+				<button onclick={expandAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
+					<ChevronsDown class="w-3 h-3" /> Expand
+				</button>
+				<button onclick={collapseAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
+					<ChevronsUp class="w-3 h-3" /> Collapse
+				</button>
+			{/snippet}
+			{#snippet row2Right()}
+				<Button variant="secondary" size="sm" loading={aiResolveLoading} onclick={aiResolve}>
+					<Sparkles class="w-3.5 h-3.5 mr-1 text-amber-400" /> AI Resolve
+				</Button>
+				<Button variant="primary" size="sm" onclick={autoResolve}>
+					<Zap class="w-3.5 h-3.5 mr-1" /> Auto-Resolve
+				</Button>
+				{#if selected.size > 0}
+					<Button variant="warning" size="sm" onclick={() => confirmModal = 'db'}>
+						<Trash2 class="w-3.5 h-3.5 mr-1" /> Remove
 					</Button>
-					<Button variant="primary" size="sm" onclick={autoResolve}>
-						<Zap class="w-3.5 h-3.5 mr-1" /> Auto-Resolve
+					<Button variant="danger" size="sm" onclick={() => confirmModal = 'files'}>
+						<Trash2 class="w-3.5 h-3.5 mr-1" /> Delete Files
 					</Button>
-					{#if selected.size > 0}
-						<Button variant="warning" size="sm" onclick={() => confirmModal = 'db'}>
-							<Trash2 class="w-3.5 h-3.5 mr-1" /> Remove
-						</Button>
-						<Button variant="danger" size="sm" onclick={() => confirmModal = 'files'}>
-							<Trash2 class="w-3.5 h-3.5 mr-1" /> Delete Files
-						</Button>
-					{/if}
-				</div>
-			</div>
-		</div>
+				{/if}
+			{/snippet}
+		</Toolbar>
 
 		<!-- Results count -->
 		{#if displayGroups.length !== (data?.groups?.length || 0)}
@@ -354,7 +341,7 @@
 		<!-- Duplicate groups -->
 		<div class="space-y-3">
 			{#each displayGroups as group, gi}
-				<Card padding="p-0" class="ghost-border overflow-hidden">
+				<Card padding="p-0" class="overflow-hidden">
 					<!-- Group header -->
 					<button onclick={() => toggleGroup(gi)}
 						class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors text-left">

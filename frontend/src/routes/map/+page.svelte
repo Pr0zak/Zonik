@@ -8,6 +8,7 @@
 	import Card from '../../components/ui/Card.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
+	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import { Network, ZoomIn, ZoomOut, Search, X, Eye, Copy, Music, BarChart3, Gem, Zap, Heart, Calendar, Play, Crosshair, Filter, Shuffle } from 'lucide-svelte';
 	import * as d3 from 'd3';
 
@@ -797,11 +798,9 @@
 			</div>
 		{:else if !graphData?.nodes?.length}
 			<div class="flex items-center justify-center h-full">
-				<div class="text-center">
-					<Network class="w-12 h-12 text-[var(--text-disabled)] mx-auto mb-3" />
-					<p class="text-sm text-[var(--text-muted)]">No data to visualize yet</p>
-					<p class="text-xs text-[var(--text-disabled)] mt-1">Add tracks to your library to see the map</p>
-				</div>
+				<EmptyState title="No data to visualize yet" description="Add tracks to your library to see the map">
+					{#snippet icon()}<Network class="w-12 h-12" />{/snippet}
+				</EmptyState>
 			</div>
 		{:else}
 			<div bind:this={container} class="w-full h-full"></div>
