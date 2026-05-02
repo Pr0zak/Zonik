@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Request, Depends
@@ -33,6 +32,12 @@ TRANSCODE_CONTENT_TYPES = {
 # Concurrency limiter for ffmpeg processes
 _transcode_semaphore: asyncio.Semaphore | None = None
 
+# Per-cache-key locks: serialize concurrent requests for the same uncached
+# transcode so we don't spawn duplicate ffmpeg processes both writing to the
+# same .partial. Second arrival waits, then re-checks the cache and serves
+# from disk if the first request finished.
+_transcode_locks: dict[str, asyncio.Lock] = {}
+
 
 def _get_transcode_semaphore() -> asyncio.Semaphore:
     global _transcode_semaphore
@@ -40,6 +45,14 @@ def _get_transcode_semaphore() -> asyncio.Semaphore:
         settings = get_settings()
         _transcode_semaphore = asyncio.Semaphore(settings.streaming.max_concurrent_transcodes)
     return _transcode_semaphore
+
+
+def _get_transcode_lock(cache_key: str) -> asyncio.Lock:
+    lock = _transcode_locks.get(cache_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _transcode_locks[cache_key] = lock
+    return lock
 
 
 def _get_format(request: Request) -> str:
@@ -266,8 +279,9 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         }
         return Response(media_type=content_type, headers=headers)
 
-    # Build ffmpeg command (-y to overwrite temp files from mkstemp)
-    cmd = ["ffmpeg", "-y", "-fflags", "+flush_packets", "-threads", "1"]
+    # Build ffmpeg command. Output goes to stdout ("-") below so we can tee
+    # bytes to both the HTTP response and the persistent cache as they flow.
+    cmd = ["ffmpeg", "-fflags", "+flush_packets", "-threads", "1"]
     if time_offset > 0:
         cmd.extend(["-ss", str(time_offset)])
     cmd.extend(["-i", str(file_path)])
@@ -295,77 +309,106 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
 
     cmd.extend(["-flush_packets", "1", "-vn"])
 
-    # Transcode to cache file (no timeOffset) or stream directly
-    if time_offset == 0:
-        # Transcode to temp file → rename into cache → serve via FileResponse
-        cache_path = _transcode_cache_path(track.id, target_format, effective_bitrate)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-        async with _get_transcode_semaphore():
-            tmp_fd, tmp_path_str = tempfile.mkstemp(
-                suffix=f".{target_format}", dir=str(cache_path.parent)
-            )
-            import os
-            os.close(tmp_fd)
-            tmp_path = Path(tmp_path_str)
-            try:
-                file_cmd = cmd + [str(tmp_path)]
-                process = await asyncio.create_subprocess_exec(
-                    *file_cmd,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr_data = await process.communicate()
-                if process.returncode != 0 or not tmp_path.exists() or tmp_path.stat().st_size == 0:
-                    log.warning(
-                        f"ffmpeg exited {process.returncode} for {file_path.name}: "
-                        f"{stderr_data.decode(errors='replace')[-500:]}"
-                    )
-                    tmp_path.unlink(missing_ok=True)
-                    return error_response(0, "Transcoding failed", _get_format(request))
-                tmp_path.rename(cache_path)
-            except Exception:
-                tmp_path.unlink(missing_ok=True)
-                raise
-
-        # Evict old cache entries in background
-        _evict_transcode_cache()
-
-        return _serve_transcode_cache(cache_path)
-
-    # timeOffset > 0: stream directly (can't cache partial seeks)
+    # Pipe ffmpeg stdout straight to the client. First-byte latency drops from
+    # full-transcode-time to ffmpeg startup + first chunk.
     stream_cmd = cmd + ["-"]
 
     response_headers: dict[str, str] = {
         "Cache-Control": "private, max-age=86400",
         "Accept-Ranges": "none",
     }
-    if estimate and estimated_bytes:
-        response_headers["Content-Length"] = str(estimated_bytes)
+
+    # timeOffset > 0: stream-only (can't cache partial seeks).
+    if time_offset > 0:
+        if estimate and estimated_bytes:
+            response_headers["Content-Length"] = str(estimated_bytes)
+
+        async def generate_seek():
+            async with _get_transcode_semaphore():
+                process = await asyncio.create_subprocess_exec(
+                    *stream_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    while True:
+                        chunk = await process.stdout.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    if process.returncode is None:
+                        process.kill()
+                    await process.wait()
+                    if process.returncode and process.returncode != 0:
+                        stderr_out = await process.stderr.read()
+                        log.warning(
+                            f"ffmpeg exited {process.returncode} for {file_path.name}: "
+                            f"{stderr_out.decode(errors='replace')[-500:]}"
+                        )
+
+        return StreamingResponse(generate_seek(), media_type=content_type, headers=response_headers)
+
+    # time_offset == 0: tee ffmpeg stdout into the persistent cache as we go.
+    cache_path = _transcode_cache_path(track.id, target_format, effective_bitrate)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_key = f"{track.id}_{target_format}_{effective_bitrate}"
+    # .partial sits next to the final file so the rename is on the same fs (atomic).
+    partial_path = cache_path.with_suffix(cache_path.suffix + ".partial")
+    response_headers["Content-Disposition"] = (
+        f'inline; filename="{file_path.stem}.{target_format}"'
+    )
 
     async def generate():
-        async with _get_transcode_semaphore():
-            process = await asyncio.create_subprocess_exec(
-                *stream_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            try:
-                while True:
-                    chunk = await process.stdout.read(65536)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                if process.returncode is None:
-                    process.kill()
-                await process.wait()
-                if process.returncode and process.returncode != 0:
-                    stderr_out = await process.stderr.read()
-                    log.warning(
-                        f"ffmpeg exited {process.returncode} for {file_path.name}: "
-                        f"{stderr_out.decode(errors='replace')[-500:]}"
-                    )
+        async with _get_transcode_lock(cache_key):
+            # Re-check the cache inside the lock: a concurrent request that
+            # arrived just ahead of us may have already populated it.
+            if _transcode_cache_hit(cache_path, file_path):
+                with open(cache_path, "rb") as f:
+                    while chunk := f.read(65536):
+                        yield chunk
+                return
+
+            async with _get_transcode_semaphore():
+                process = await asyncio.create_subprocess_exec(
+                    *stream_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                partial_file = open(partial_path, "wb")
+                completed = False
+                try:
+                    while True:
+                        chunk = await process.stdout.read(65536)
+                        if not chunk:
+                            break
+                        partial_file.write(chunk)
+                        yield chunk
+                    await process.wait()
+                    if process.returncode == 0:
+                        completed = True
+                finally:
+                    # On client disconnect we land here mid-yield with the generator
+                    # being closed. Cancel ffmpeg and discard the .partial: cheaper
+                    # to re-transcode on the next request than risk publishing a
+                    # truncated file. Same path covers ffmpeg failure / empty output.
+                    partial_file.close()
+                    if process.returncode is None:
+                        process.kill()
+                        await process.wait()
+                    if completed and partial_path.exists() and partial_path.stat().st_size > 0:
+                        # Atomic publish: rename .partial → final cache path so
+                        # concurrent readers never observe a half-written file.
+                        partial_path.replace(cache_path)
+                        _evict_transcode_cache()
+                    else:
+                        partial_path.unlink(missing_ok=True)
+                        if process.returncode and process.returncode != 0:
+                            stderr_out = await process.stderr.read()
+                            log.warning(
+                                f"ffmpeg exited {process.returncode} for {file_path.name}: "
+                                f"{stderr_out.decode(errors='replace')[-500:]}"
+                            )
 
     return StreamingResponse(generate(), media_type=content_type, headers=response_headers)
 
