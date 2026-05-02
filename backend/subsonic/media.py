@@ -279,8 +279,9 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         }
         return Response(media_type=content_type, headers=headers)
 
-    # Build ffmpeg command (-y to overwrite temp files from mkstemp)
-    cmd = ["ffmpeg", "-y", "-fflags", "+flush_packets", "-threads", "1"]
+    # Build ffmpeg command. Output goes to stdout ("-") below so we can tee
+    # bytes to both the HTTP response and the persistent cache as they flow.
+    cmd = ["ffmpeg", "-fflags", "+flush_packets", "-threads", "1"]
     if time_offset > 0:
         cmd.extend(["-ss", str(time_offset)])
     cmd.extend(["-i", str(file_path)])
