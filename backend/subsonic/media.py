@@ -302,12 +302,46 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         "Cache-Control": "private, max-age=86400",
         "Accept-Ranges": "none",
     }
-    if time_offset == 0:
-        response_headers["Content-Disposition"] = (
-            f'inline; filename="{file_path.stem}.{target_format}"'
-        )
-    elif estimate and estimated_bytes:
-        response_headers["Content-Length"] = str(estimated_bytes)
+
+    # timeOffset > 0: stream-only (can't cache partial seeks).
+    if time_offset > 0:
+        if estimate and estimated_bytes:
+            response_headers["Content-Length"] = str(estimated_bytes)
+
+        async def generate_seek():
+            async with _get_transcode_semaphore():
+                process = await asyncio.create_subprocess_exec(
+                    *stream_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                try:
+                    while True:
+                        chunk = await process.stdout.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    if process.returncode is None:
+                        process.kill()
+                    await process.wait()
+                    if process.returncode and process.returncode != 0:
+                        stderr_out = await process.stderr.read()
+                        log.warning(
+                            f"ffmpeg exited {process.returncode} for {file_path.name}: "
+                            f"{stderr_out.decode(errors='replace')[-500:]}"
+                        )
+
+        return StreamingResponse(generate_seek(), media_type=content_type, headers=response_headers)
+
+    # time_offset == 0: tee ffmpeg stdout into the persistent cache as we go.
+    cache_path = _transcode_cache_path(track.id, target_format, effective_bitrate)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    # .partial sits next to the final file so the rename is on the same fs (atomic).
+    partial_path = cache_path.with_suffix(cache_path.suffix + ".partial")
+    response_headers["Content-Disposition"] = (
+        f'inline; filename="{file_path.stem}.{target_format}"'
+    )
 
     async def generate():
         async with _get_transcode_semaphore():
@@ -316,16 +350,25 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            partial_file = open(partial_path, "wb")
             try:
                 while True:
                     chunk = await process.stdout.read(65536)
                     if not chunk:
                         break
+                    partial_file.write(chunk)
                     yield chunk
+                await process.wait()
             finally:
+                partial_file.close()
                 if process.returncode is None:
                     process.kill()
-                await process.wait()
+                    await process.wait()
+                if process.returncode == 0 and partial_path.exists() and partial_path.stat().st_size > 0:
+                    # Atomic publish: rename .partial → final cache path so
+                    # concurrent readers never observe a half-written file.
+                    partial_path.replace(cache_path)
+                    _evict_transcode_cache()
                 if process.returncode and process.returncode != 0:
                     stderr_out = await process.stderr.read()
                     log.warning(
