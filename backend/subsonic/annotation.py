@@ -133,32 +133,54 @@ async def unstar(request: Request, db: AsyncSession = Depends(get_db)):
 @router.post("/scrobble.view")
 async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
     params = dict(request.query_params)
+    if request.method == "POST":
+        try:
+            form = await request.form()
+            params.update(form)
+        except Exception:
+            pass
+
     song_id = params.get("id")
-    submission = params.get("submission", "true")
+    # submission=true (the default per Subsonic spec) means "completed play".
+    # submission=false means "now-playing notification". Accept common truthy
+    # spellings defensively — some clients send "1" / "True".
+    submission_raw = str(params.get("submission", "true")).strip().lower()
+    is_submission = submission_raw in ("true", "1", "yes")
+
+    # Optional `time` parameter — ms since epoch, when the play occurred.
+    # Subsonic clients use this to backfill scrobbles that were queued offline.
+    time_param = params.get("time")
+    played_at = datetime.utcnow()
+    if time_param:
+        try:
+            played_at = datetime.utcfromtimestamp(int(time_param) / 1000)
+        except (ValueError, TypeError):
+            played_at = datetime.utcnow()
 
     if not song_id:
         return error_response(10, "Missing id parameter", _get_format(request))
 
     result = await db.execute(select(Track).where(Track.id == song_id))
     track = result.scalar_one_or_none()
+    if not track:
+        # Track unknown — return success (clients shouldn't error out the queue)
+        return subsonic_response({}, _get_format(request))
 
-    if submission == "true":
+    if is_submission:
         # Update play count and record history
-        if track:
-            track.play_count = (track.play_count or 0) + 1
-            track.last_played_at = datetime.utcnow()
-            from backend.models.play_history import PlayHistory
-            db.add(PlayHistory(track_id=song_id, played_at=datetime.utcnow(), source="subsonic"))
-            await db.commit()
+        track.play_count = (track.play_count or 0) + 1
+        track.last_played_at = played_at
+        from backend.models.play_history import PlayHistory
+        db.add(PlayHistory(track_id=song_id, played_at=played_at, source="subsonic"))
+        await db.commit()
     else:
         # Now-playing notification
-        if track:
-            username = params.get("u", "admin")
-            _now_playing[username] = {
-                "track": track,
-                "playerId": params.get("c", ""),
-                "started_at": datetime.utcnow(),
-            }
+        username = params.get("u", "admin")
+        _now_playing[username] = {
+            "track": track,
+            "playerId": params.get("c", ""),
+            "started_at": datetime.utcnow(),
+        }
 
     return subsonic_response({}, _get_format(request))
 
