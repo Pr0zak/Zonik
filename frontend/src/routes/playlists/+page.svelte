@@ -8,6 +8,7 @@
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import ScheduleSection from '../../components/ui/ScheduleSection.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
@@ -239,57 +240,47 @@
 </script>
 
 <div class="max-w-6xl">
-	<div class="flex flex-wrap items-center justify-between gap-3 mb-6">
-		<PageHeader title="Playlists" color="var(--color-playlists)" />
-		<div class="flex flex-wrap items-center gap-2">
+	<PageHeader title="Playlists" icon={ListMusic} color="var(--color-playlists)">
+		{#snippet actions()}
 			<Button onclick={() => { showImport = !showImport; if (showImport) { showAIGen = false; showGenerator = false; } }} variant="secondary" size="sm">
 				{#if showImport}
-					<span class="flex items-center gap-1.5">Hide Import</span>
+					Hide Import
 				{:else}
-					<span class="flex items-center gap-1.5"><Import class="w-4 h-4" /> Import</span>
+					<Import class="w-4 h-4" /> Import
 				{/if}
 			</Button>
 			<Button onclick={() => { showAIGen = !showAIGen; if (showAIGen) { showGenerator = false; showImport = false; } }} variant="secondary" size="sm">
 				{#if showAIGen}
-					<span class="flex items-center gap-1.5">Hide AI</span>
+					Hide AI
 				{:else}
-					<span class="flex items-center gap-1.5"><Sparkles class="w-4 h-4 text-amber-400" /> AI Generate</span>
+					<Sparkles class="w-4 h-4 text-amber-400" /> AI Generate
 				{/if}
 			</Button>
 			<Button onclick={() => { showGenerator = !showGenerator; if (showGenerator) { showAIGen = false; showImport = false; } }} variant="secondary" size="sm">
 				{#if showGenerator}
-					<span class="flex items-center gap-1.5">Hide Generator</span>
+					Hide Generator
 				{:else}
-					<span class="flex items-center gap-1.5"><Wand2 class="w-4 h-4" /> Smart Playlist</span>
+					<Wand2 class="w-4 h-4" /> Smart Playlist
 				{/if}
 			</Button>
-		</div>
-	</div>
+		{/snippet}
+	</PageHeader>
 
-	<!-- Collapsible Schedule -->
 	{#if schedTasks.playlist_weekly_top || schedTasks.playlist_weekly_discover || schedTasks.playlist_favorites || schedTasks.playlist_unfavorites}
-		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
-			<Clock class="w-3.5 h-3.5" />
-			<span class="font-mono uppercase tracking-wider">Auto-generate Schedule</span>
-			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
-		</button>
-		{#if schedExpanded}
-			<Card padding="p-4" class="mb-4">
-				{#if schedTasks.playlist_weekly_top}
-					<ScheduleControl taskName="playlist_weekly_top" label="Weekly Top" enabled={schedTasks.playlist_weekly_top.enabled} intervalHours={schedTasks.playlist_weekly_top.interval_hours} runAt={schedTasks.playlist_weekly_top.run_at} dayOfWeek={schedTasks.playlist_weekly_top.day_of_week} count={schedTasks.playlist_weekly_top.count} lastRunAt={schedTasks.playlist_weekly_top.last_run_at} running={schedRunning.playlist_weekly_top} onToggle={() => toggleSched('playlist_weekly_top')} onUpdate={(u) => updateSched('playlist_weekly_top', u)} onRun={() => runSched('playlist_weekly_top')} />
-				{/if}
-				{#if schedTasks.playlist_weekly_discover}
-					<ScheduleControl taskName="playlist_weekly_discover" label="Weekly Discover" enabled={schedTasks.playlist_weekly_discover.enabled} intervalHours={schedTasks.playlist_weekly_discover.interval_hours} runAt={schedTasks.playlist_weekly_discover.run_at} dayOfWeek={schedTasks.playlist_weekly_discover.day_of_week} count={schedTasks.playlist_weekly_discover.count} lastRunAt={schedTasks.playlist_weekly_discover.last_run_at} running={schedRunning.playlist_weekly_discover} onToggle={() => toggleSched('playlist_weekly_discover')} onUpdate={(u) => updateSched('playlist_weekly_discover', u)} onRun={() => runSched('playlist_weekly_discover')} />
-				{/if}
-				{#if schedTasks.playlist_favorites}
-					<ScheduleControl taskName="playlist_favorites" label="Favorites Playlist" enabled={schedTasks.playlist_favorites.enabled} intervalHours={schedTasks.playlist_favorites.interval_hours} runAt={schedTasks.playlist_favorites.run_at} lastRunAt={schedTasks.playlist_favorites.last_run_at} running={schedRunning.playlist_favorites} onToggle={() => toggleSched('playlist_favorites')} onUpdate={(u) => updateSched('playlist_favorites', u)} onRun={() => runSched('playlist_favorites')} />
-				{/if}
-				{#if schedTasks.playlist_unfavorites}
-					<ScheduleControl taskName="playlist_unfavorites" label="Unfavorites Playlist" enabled={schedTasks.playlist_unfavorites.enabled} intervalHours={schedTasks.playlist_unfavorites.interval_hours} runAt={schedTasks.playlist_unfavorites.run_at} lastRunAt={schedTasks.playlist_unfavorites.last_run_at} running={schedRunning.playlist_unfavorites} onToggle={() => toggleSched('playlist_unfavorites')} onUpdate={(u) => updateSched('playlist_unfavorites', u)} onRun={() => runSched('playlist_unfavorites')} />
-				{/if}
-			</Card>
-		{/if}
+		<ScheduleSection bind:expanded={schedExpanded} label="Auto-generate Schedule">
+			{#if schedTasks.playlist_weekly_top}
+				<ScheduleControl taskName="playlist_weekly_top" label="Weekly Top" enabled={schedTasks.playlist_weekly_top.enabled} intervalHours={schedTasks.playlist_weekly_top.interval_hours} runAt={schedTasks.playlist_weekly_top.run_at} dayOfWeek={schedTasks.playlist_weekly_top.day_of_week} count={schedTasks.playlist_weekly_top.count} lastRunAt={schedTasks.playlist_weekly_top.last_run_at} running={schedRunning.playlist_weekly_top} onToggle={() => toggleSched('playlist_weekly_top')} onUpdate={(u) => updateSched('playlist_weekly_top', u)} onRun={() => runSched('playlist_weekly_top')} />
+			{/if}
+			{#if schedTasks.playlist_weekly_discover}
+				<ScheduleControl taskName="playlist_weekly_discover" label="Weekly Discover" enabled={schedTasks.playlist_weekly_discover.enabled} intervalHours={schedTasks.playlist_weekly_discover.interval_hours} runAt={schedTasks.playlist_weekly_discover.run_at} dayOfWeek={schedTasks.playlist_weekly_discover.day_of_week} count={schedTasks.playlist_weekly_discover.count} lastRunAt={schedTasks.playlist_weekly_discover.last_run_at} running={schedRunning.playlist_weekly_discover} onToggle={() => toggleSched('playlist_weekly_discover')} onUpdate={(u) => updateSched('playlist_weekly_discover', u)} onRun={() => runSched('playlist_weekly_discover')} />
+			{/if}
+			{#if schedTasks.playlist_favorites}
+				<ScheduleControl taskName="playlist_favorites" label="Favorites Playlist" enabled={schedTasks.playlist_favorites.enabled} intervalHours={schedTasks.playlist_favorites.interval_hours} runAt={schedTasks.playlist_favorites.run_at} lastRunAt={schedTasks.playlist_favorites.last_run_at} running={schedRunning.playlist_favorites} onToggle={() => toggleSched('playlist_favorites')} onUpdate={(u) => updateSched('playlist_favorites', u)} onRun={() => runSched('playlist_favorites')} />
+			{/if}
+			{#if schedTasks.playlist_unfavorites}
+				<ScheduleControl taskName="playlist_unfavorites" label="Unfavorites Playlist" enabled={schedTasks.playlist_unfavorites.enabled} intervalHours={schedTasks.playlist_unfavorites.interval_hours} runAt={schedTasks.playlist_unfavorites.run_at} lastRunAt={schedTasks.playlist_unfavorites.last_run_at} running={schedRunning.playlist_unfavorites} onToggle={() => toggleSched('playlist_unfavorites')} onUpdate={(u) => updateSched('playlist_unfavorites', u)} onRun={() => runSched('playlist_unfavorites')} />
+			{/if}
+		</ScheduleSection>
 	{/if}
 
 	{#if showImport}
@@ -522,11 +513,9 @@
 		</div>
 
 		{#if detailLoading}
-			<div class="space-y-2">
-				{#each Array(8) as _}
-					<Skeleton class="h-14 rounded-lg" />
-				{/each}
-			</div>
+			<Card padding="p-0">
+				<Skeleton variant="list-item" count={8} />
+			</Card>
 		{:else if playlistDetail?.tracks?.length}
 			<Card padding="p-0">
 				<div class="space-y-0.5">
@@ -568,9 +557,7 @@
 		{/if}
 	{:else if loading}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-			{#each Array(6) as _}
-				<Skeleton class="h-20 rounded-lg" />
-			{/each}
+			<Skeleton variant="card" count={6} />
 		</div>
 	{:else if playlists.length}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

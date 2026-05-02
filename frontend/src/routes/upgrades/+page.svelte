@@ -3,9 +3,8 @@
 	import { addToast } from '$lib/stores.js';
 	import { api } from '$lib/api.js';
 	import FormatBadge from '../../components/ui/FormatBadge.svelte';
-	import { parseUTC } from '$lib/utils.js';
 	import {
-		ArrowUpCircle, Search, Play, SkipForward, RotateCcw, Trash2, Check, X,
+		ArrowUpCircle, Search, Play, SkipForward, RotateCcw, Trash2,
 		Loader2, ArrowRight
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -13,14 +12,15 @@
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import Pagination from '../../components/ui/Pagination.svelte';
+	import StatTile from '../../components/ui/StatTile.svelte';
+	import FilterPills from '../../components/ui/FilterPills.svelte';
+	import DataTable from '../../components/ui/DataTable.svelte';
+	import Toolbar from '../../components/ui/Toolbar.svelte';
+	import Badge from '../../components/ui/Badge.svelte';
 
-	// Stats
 	let stats = $state(null);
-
-	// Scan controls
 	let scanning = $state(false);
 
-	// List
 	let upgrades = $state([]);
 	let total = $state(0);
 	let loading = $state(true);
@@ -33,25 +33,6 @@
 	let starting = $state(false);
 	let selected = $state(new Set());
 
-	const statusFilters = [
-		{ value: null, label: 'All' },
-		{ value: 'pending', label: 'Pending' },
-		{ value: 'queued', label: 'Queued' },
-		{ value: 'downloading', label: 'Downloading' },
-		{ value: 'completed', label: 'Completed' },
-		{ value: 'failed', label: 'Failed' },
-		{ value: 'skipped', label: 'Skipped' },
-	];
-
-	const statusColors = {
-		pending: 'bg-gray-500/20 text-gray-400',
-		queued: 'bg-blue-500/20 text-blue-400',
-		downloading: 'bg-indigo-500/20 text-indigo-400',
-		completed: 'bg-green-500/20 text-green-400',
-		failed: 'bg-red-500/20 text-red-400',
-		skipped: 'bg-amber-500/20 text-amber-400',
-	};
-
 	const reasonLabels = {
 		low_bitrate: 'Low Bitrate',
 		lossy_to_lossless: 'Lossy → Lossless',
@@ -59,18 +40,50 @@
 		all_lossy: 'All Lossy',
 	};
 
-	const reasonFilters = [
-		{ value: null, label: 'All Reasons' },
-		{ value: 'low_bitrate', label: 'Low Bitrate' },
-		{ value: 'lossy_to_lossless', label: 'Lossy → Lossless' },
-		{ value: 'opus_to_flac', label: 'Opus → FLAC' },
-		{ value: 'all_lossy', label: 'All Lossy' },
+	const statusVariants = {
+		pending: 'default',
+		queued: 'info',
+		downloading: 'info',
+		completed: 'success',
+		failed: 'error',
+		skipped: 'warning',
+	};
+
+	const statTiles = $derived([
+		{ label: 'Total', value: stats?.total ?? 0, color: 'var(--text-secondary)' },
+		{ label: 'Pending', value: stats?.pending ?? 0, color: '#9ca3af' },
+		{ label: 'Queued', value: stats?.queued ?? 0, color: '#60a5fa' },
+		{ label: 'Downloading', value: stats?.downloading ?? 0, color: '#818cf8' },
+		{ label: 'Completed', value: stats?.completed ?? 0, color: '#4ade80' },
+		{ label: 'Failed', value: stats?.failed ?? 0, color: '#f87171' },
+		{ label: 'Skipped', value: stats?.skipped ?? 0, color: '#fbbf24' },
+	]);
+
+	const statusOptions = $derived([
+		{ value: null, label: 'All', color: 'upgrades', count: stats?.total },
+		{ value: 'pending', label: 'Pending', color: 'upgrades', count: stats?.pending },
+		{ value: 'queued', label: 'Queued', color: 'upgrades', count: stats?.queued },
+		{ value: 'downloading', label: 'Downloading', color: 'upgrades', count: stats?.downloading },
+		{ value: 'completed', label: 'Completed', color: 'upgrades', count: stats?.completed },
+		{ value: 'failed', label: 'Failed', color: 'upgrades', count: stats?.failed },
+		{ value: 'skipped', label: 'Skipped', color: 'upgrades', count: stats?.skipped },
+	]);
+
+	const reasonOptions = [
+		{ value: null, label: 'All Reasons', color: 'upgrades' },
+		{ value: 'low_bitrate', label: 'Low Bitrate', color: 'upgrades' },
+		{ value: 'lossy_to_lossless', label: 'Lossy → Lossless', color: 'upgrades' },
+		{ value: 'opus_to_flac', label: 'Opus → FLAC', color: 'upgrades' },
+		{ value: 'all_lossy', label: 'All Lossy', color: 'upgrades' },
 	];
 
+	let allPendingSelected = $derived.by(() => {
+		const pending = upgrades.filter(u => u.status === 'pending');
+		return pending.length > 0 && pending.every(u => selected.has(u.id));
+	});
+
 	async function loadStats() {
-		try {
-			stats = await api.getUpgradeStats();
-		} catch { /* ignore */ }
+		try { stats = await api.getUpgradeStats(); } catch { /* ignore */ }
 	}
 
 	async function loadUpgrades() {
@@ -178,21 +191,16 @@
 		loadUpgrades();
 	}
 
-	function toggleSort(col) {
-		if (sortCol === col) {
-			if (sortOrder === 'desc') sortOrder = 'asc';
-			else if (sortOrder === 'asc') { sortCol = 'created_at'; sortOrder = 'desc'; }
-		} else {
-			sortCol = col;
+	function handleSort(key, dir) {
+		if (key === null) {
+			sortCol = 'created_at';
 			sortOrder = 'desc';
+		} else {
+			sortCol = key;
+			sortOrder = dir;
 		}
 		offset = 0;
 		loadUpgrades();
-	}
-
-	function sortIndicator(col) {
-		if (sortCol !== col) return '';
-		return sortOrder === 'asc' ? ' ↑' : ' ↓';
 	}
 
 	function handlePageChange(newOffset, newLimit) {
@@ -231,7 +239,6 @@
 		return Math.round(bps / 1000) + 'k';
 	}
 
-
 	onMount(() => {
 		loadStats();
 		loadUpgrades();
@@ -241,209 +248,178 @@
 <div class="space-y-6">
 	<PageHeader title="Upgrades" icon={ArrowUpCircle} color="var(--color-upgrades)" />
 
-	<!-- Stats Bar -->
 	{#if stats}
 		<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
-			{#each [
-				{ label: 'Total', value: stats.total, color: 'text-[var(--text-secondary)]' },
-				{ label: 'Pending', value: stats.pending, color: 'text-gray-400' },
-				{ label: 'Queued', value: stats.queued, color: 'text-blue-400' },
-				{ label: 'Downloading', value: stats.downloading, color: 'text-indigo-400' },
-				{ label: 'Completed', value: stats.completed, color: 'text-green-400' },
-				{ label: 'Failed', value: stats.failed, color: 'text-red-400' },
-				{ label: 'Skipped', value: stats.skipped, color: 'text-amber-400' },
-			] as stat}
-				<div class="bg-[var(--surface-base)] ghost-border rounded-lg px-3 py-2 text-center">
-					<p class="text-lg font-bold {stat.color}">{stat.value}</p>
-					<p class="text-xs text-[var(--text-muted)] uppercase tracking-wider">{stat.label}</p>
-				</div>
+			{#each statTiles as tile}
+				<StatTile label={tile.label} value={tile.value} color={tile.color} />
 			{/each}
 		</div>
 		{#if stats.size_delta !== 0}
 			<p class="text-xs text-[var(--text-muted)] text-center">
-				Size change from completed upgrades: <span class="{stats.size_delta > 0 ? 'text-emerald-400' : 'text-red-400'}">{stats.size_delta > 0 ? '+' : ''}{formatBytes(stats.size_delta)}</span>
+				Size change from completed upgrades:
+				<span class="{stats.size_delta > 0 ? 'text-emerald-400' : 'text-red-400'}">
+					{stats.size_delta > 0 ? '+' : ''}{formatBytes(stats.size_delta)}
+				</span>
 			</p>
 		{/if}
 	{/if}
 
-	<!-- Filter Tabs -->
-	<div class="flex items-center gap-2 flex-wrap">
-		{#each statusFilters as f}
-			<button
-				onclick={() => setFilter(f.value)}
-				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeFilter === f.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
-			>
-				{f.label}
-				{#if stats}
-					{@const count = f.value ? stats[f.value] || 0 : stats.total}
-					{#if count > 0}
-						<span class="ml-1 text-xs opacity-70">({count})</span>
-					{/if}
-				{/if}
-			</button>
-		{/each}
-		<span class="text-[var(--border-subtle)]">|</span>
-		{#each reasonFilters as r}
-			<button
-				onclick={() => setReason(r.value)}
-				class="px-3 py-1.5 text-xs rounded-md transition-colors {activeReason === r.value ? 'bg-[var(--color-upgrades)]/20 text-emerald-400 border border-emerald-500/30' : 'bg-[var(--surface-base)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]'}"
-			>
-				{r.label}
-			</button>
-		{/each}
-	</div>
+	<Toolbar>
+		{#snippet row1Left()}
+			<FilterPills options={statusOptions} value={activeFilter} onchange={setFilter} variant="outline" />
+		{/snippet}
+		{#snippet row1Right()}
+			<FilterPills options={reasonOptions} value={activeReason} onchange={setReason} variant="outline" />
+		{/snippet}
+		{#snippet row2Left()}
+			<span class="text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
+		{/snippet}
+		{#snippet row2Right()}
+			<Button variant="secondary" size="sm" onclick={scanLibrary} disabled={scanning} loading={scanning}>
+				<Search class="w-3.5 h-3.5" />
+				Scan Library
+			</Button>
+			<Button variant="primary" size="sm" onclick={startAll} disabled={starting || !stats?.pending} loading={starting}>
+				<Play class="w-3.5 h-3.5" />
+				Start All
+			</Button>
+			{#if selected.size > 0}
+				<Button variant="secondary" size="sm" onclick={startSelected} disabled={starting}>
+					<Play class="w-3.5 h-3.5" />
+					Start Selected ({selected.size})
+				</Button>
+			{/if}
+			{#if stats?.failed}
+				<Button variant="ghost" size="sm" onclick={() => clearByStatus('failed')}>
+					<Trash2 class="w-3.5 h-3.5" /> Clear Failed
+				</Button>
+			{/if}
+			{#if stats?.completed}
+				<Button variant="ghost" size="sm" onclick={() => clearByStatus('completed')}>
+					<Trash2 class="w-3.5 h-3.5" /> Clear Completed
+				</Button>
+			{/if}
+			{#if stats?.skipped}
+				<Button variant="ghost" size="sm" onclick={() => clearByStatus('skipped')}>
+					<Trash2 class="w-3.5 h-3.5" /> Clear Skipped
+				</Button>
+			{/if}
+		{/snippet}
+	</Toolbar>
 
-	<!-- Actions -->
-	<div class="flex items-center gap-2 flex-wrap">
-		<Button variant="default" onclick={scanLibrary} disabled={scanning}>
-			{#if scanning}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Search class="w-4 h-4" />{/if}
-			Scan Library
-		</Button>
-		<Button variant="primary" onclick={startAll} disabled={starting || !stats?.pending}>
-			{#if starting}<Loader2 class="w-4 h-4 animate-spin" />{:else}<Play class="w-4 h-4" />{/if}
-			Start All Pending
-		</Button>
-		{#if selected.size > 0}
-			<Button variant="default" onclick={startSelected} disabled={starting}>
-				<Play class="w-4 h-4" />
-				Start Selected ({selected.size})
-			</Button>
-		{/if}
-		{#if stats?.failed}
-			<Button variant="ghost" onclick={() => clearByStatus('failed')}>
-				<Trash2 class="w-4 h-4" /> Clear Failed
-			</Button>
-		{/if}
-		{#if stats?.completed}
-			<Button variant="ghost" onclick={() => clearByStatus('completed')}>
-				<Trash2 class="w-4 h-4" /> Clear Completed
-			</Button>
-		{/if}
-		{#if stats?.skipped}
-			<Button variant="ghost" onclick={() => clearByStatus('skipped')}>
-				<Trash2 class="w-4 h-4" /> Clear Skipped
-			</Button>
-		{/if}
-	</div>
-
-	<!-- Upgrade Queue Table -->
 	{#if loading}
-		<div class="space-y-2">
-			{#each Array(5) as _}
-				<Skeleton class="h-12" />
-			{/each}
-		</div>
+		<Skeleton variant="table-row" count={5} />
 	{:else if upgrades.length === 0 && !activeFilter && !activeReason}
 		<EmptyState title="No upgrades found" description="Scan your library to find tracks that could be upgraded to higher quality.">
 			{#snippet icon()}<ArrowUpCircle class="w-12 h-12" />{/snippet}
 		</EmptyState>
 	{:else}
-		<div class="overflow-x-auto">
-			<table class="w-full text-sm">
-				<thead>
-					<tr class="text-[var(--text-muted)] text-xs uppercase ">
-						<th class="px-3 py-2 text-left w-8">
-							<input type="checkbox" onchange={toggleSelectAll}
-								checked={upgrades.filter(u => u.status === 'pending').length > 0 && upgrades.filter(u => u.status === 'pending').every(u => selected.has(u.id))}
-								class="rounded accent-emerald-500" />
-						</th>
-						<th class="px-3 py-2 text-left whitespace-nowrap">
-							<button onclick={() => toggleSort('created_at')} class="hover:text-[var(--text-primary)] transition-colors">Track{sortIndicator('created_at')}</button>
-						</th>
-						<th class="px-3 py-2 text-left whitespace-nowrap">
-							<button onclick={() => toggleSort('original_format')} class="hover:text-[var(--text-primary)] transition-colors">Current{sortIndicator('original_format')}</button>
-						</th>
-						<th class="px-3 py-2 text-left hidden md:table-cell">Result</th>
-						<th class="px-3 py-2 text-left whitespace-nowrap">
-							<button onclick={() => toggleSort('status')} class="hover:text-[var(--text-primary)] transition-colors">Status{sortIndicator('status')}</button>
-						</th>
-						<th class="px-3 py-2 text-left whitespace-nowrap hidden lg:table-cell">
-							<button onclick={() => toggleSort('reason')} class="hover:text-[var(--text-primary)] transition-colors">Reason{sortIndicator('reason')}</button>
-						</th>
-						<th class="px-3 py-2 text-center whitespace-nowrap hidden sm:table-cell">
-							<button onclick={() => toggleSort('attempts')} class="hover:text-[var(--text-primary)] transition-colors">Tries{sortIndicator('attempts')}</button>
-						</th>
-						<th class="px-3 py-2 text-right">Actions</th>
-					</tr>
-				</thead>
-				<tbody class="space-y-0.5">
-					{#if upgrades.length === 0}
-						<tr>
-							<td colspan="8" class="px-3 py-8 text-center text-sm text-[var(--text-muted)]">
-								No {activeFilter || ''} upgrades found{activeReason ? ` for ${reasonLabels[activeReason] || activeReason}` : ''}.
-							</td>
-						</tr>
+		{@const tableColumns = [
+			{ key: '__select', label: '', width: '32px' },
+			{ key: 'created_at', label: 'Track', sortable: true },
+			{ key: 'original_format', label: 'Current', sortable: true },
+			{ key: '__result', label: 'Result', headerClass: 'hidden md:table-cell' },
+			{ key: 'status', label: 'Status', sortable: true },
+			{ key: 'reason', label: 'Reason', sortable: true, headerClass: 'hidden lg:table-cell' },
+			{ key: 'attempts', label: 'Tries', sortable: true, align: 'center', headerClass: 'hidden sm:table-cell' },
+			{ key: '__actions', label: 'Actions', align: 'right' },
+		]}
+		<DataTable
+			columns={tableColumns}
+			rows={upgrades}
+			sortKey={sortCol}
+			sortDir={sortOrder}
+			onsort={handleSort}>
+			{#snippet header()}
+				<th class="px-3 py-2.5 w-8">
+					<input type="checkbox" onchange={toggleSelectAll}
+						checked={allPendingSelected}
+						class="rounded accent-emerald-500" />
+				</th>
+				{#each tableColumns.slice(1) as col}
+					<th class="px-3 py-2.5 font-medium text-xs uppercase tracking-wider whitespace-nowrap {col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'} {col.headerClass || ''}">
+						{#if col.sortable}
+							<button onclick={() => {
+								if (sortCol === col.key) {
+									if (sortOrder === 'asc') handleSort(col.key, 'desc');
+									else if (sortOrder === 'desc') handleSort(null, null);
+									else handleSort(col.key, 'asc');
+								} else handleSort(col.key, 'asc');
+							}} class="hover:text-[var(--text-primary)] transition-colors">
+								{col.label}{sortCol === col.key ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : ''}
+							</button>
+						{:else}
+							{col.label}
+						{/if}
+					</th>
+				{/each}
+			{/snippet}
+			{#snippet row(u)}
+				<td class="px-3 py-2">
+					{#if u.status === 'pending'}
+						<input type="checkbox" checked={selected.has(u.id)} onchange={() => toggleSelect(u.id)}
+							class="rounded accent-emerald-500" />
 					{/if}
-					{#each upgrades as u (u.id)}
-						<tr class="hover:bg-[var(--surface-container-high)] transition-colors">
-							<td class="px-3 py-2">
-								{#if u.status === 'pending'}
-									<input type="checkbox" checked={selected.has(u.id)} onchange={() => toggleSelect(u.id)}
-										class="rounded accent-emerald-500" />
-								{/if}
-							</td>
-							<td class="px-3 py-2">
-								<div class="flex items-center gap-3">
-									{#if u.album_id}
-										<img src="/rest/getCoverArt?id={u.album_id}&size=40" alt=""
-											class="w-8 h-8 rounded object-cover flex-shrink-0"
-											onerror={(e) => e.target.style.display = 'none'} />
-									{/if}
-									<div class="min-w-0">
-										<p class="text-[var(--text-primary)] truncate">{u.title || 'Unknown'}</p>
-										<p class="text-xs text-[var(--text-muted)] truncate">{u.artist || 'Unknown'}</p>
-									</div>
-								</div>
-							</td>
-							<td class="px-3 py-2">
-								<div class="flex items-center gap-2">
-									<FormatBadge format={u.original_format} />
-									<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.original_bitrate)}</span>
-								</div>
-							</td>
-							<td class="px-3 py-2 hidden md:table-cell">
-								{#if u.status === 'completed' && u.upgraded_format}
-									<div class="flex items-center gap-2">
-										<ArrowRight class="w-3 h-3 text-emerald-400" />
-										<FormatBadge format={u.upgraded_format} />
-										<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.upgraded_bitrate)}</span>
-									</div>
-								{:else if u.error_message}
-									<span class="text-xs text-red-400 truncate max-w-[200px] block" title={u.error_message}>{u.error_message}</span>
-								{:else}
-									<span class="text-xs text-[var(--text-disabled)]">—</span>
-								{/if}
-							</td>
-							<td class="px-3 py-2">
-								<span class="px-2 py-0.5 rounded-full text-xs font-medium {statusColors[u.status] || ''}">{u.status}</span>
-								{#if u.status === 'downloading'}
-									<Loader2 class="w-3 h-3 text-indigo-400 animate-spin inline ml-1" />
-								{/if}
-							</td>
-							<td class="px-3 py-2 hidden lg:table-cell">
-								<span class="text-xs text-[var(--text-muted)]">{reasonLabels[u.reason] || u.reason}</span>
-							</td>
-							<td class="px-3 py-2 text-center hidden sm:table-cell">
-								<span class="text-xs text-[var(--text-muted)]">{u.attempts}/{u.max_attempts}</span>
-							</td>
-							<td class="px-3 py-2 text-right">
-								<div class="flex items-center gap-1 justify-end">
-									{#if u.status === 'pending'}
-										<button onclick={() => skipUpgrade(u.id)} class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-amber-400 transition-colors" title="Skip">
-											<SkipForward class="w-4 h-4" />
-										</button>
-									{:else if u.status === 'failed'}
-										<button onclick={() => retryUpgrade(u.id)} class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-blue-400 transition-colors" title="Retry">
-											<RotateCcw class="w-4 h-4" />
-										</button>
-									{/if}
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+				</td>
+				<td class="px-3 py-2">
+					<div class="flex items-center gap-3">
+						{#if u.album_id}
+							<img src="/rest/getCoverArt?id={u.album_id}&size=40" alt=""
+								class="w-8 h-8 rounded object-cover flex-shrink-0"
+								onerror={(e) => e.target.style.display = 'none'} />
+						{/if}
+						<div class="min-w-0">
+							<p class="text-[var(--text-primary)] truncate">{u.title || 'Unknown'}</p>
+							<p class="text-xs text-[var(--text-muted)] truncate">{u.artist || 'Unknown'}</p>
+						</div>
+					</div>
+				</td>
+				<td class="px-3 py-2">
+					<div class="flex items-center gap-2">
+						<FormatBadge format={u.original_format} />
+						<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.original_bitrate)}</span>
+					</div>
+				</td>
+				<td class="px-3 py-2 hidden md:table-cell">
+					{#if u.status === 'completed' && u.upgraded_format}
+						<div class="flex items-center gap-2">
+							<ArrowRight class="w-3 h-3 text-emerald-400" />
+							<FormatBadge format={u.upgraded_format} />
+							<span class="text-xs text-[var(--text-muted)]">{formatBitrate(u.upgraded_bitrate)}</span>
+						</div>
+					{:else if u.error_message}
+						<span class="text-xs text-red-400 truncate max-w-[200px] block" title={u.error_message}>{u.error_message}</span>
+					{:else}
+						<span class="text-xs text-[var(--text-disabled)]">—</span>
+					{/if}
+				</td>
+				<td class="px-3 py-2">
+					<Badge variant={statusVariants[u.status] || 'default'}>{u.status}</Badge>
+					{#if u.status === 'downloading'}
+						<Loader2 class="w-3 h-3 text-indigo-400 animate-spin inline ml-1" />
+					{/if}
+				</td>
+				<td class="px-3 py-2 hidden lg:table-cell">
+					<span class="text-xs text-[var(--text-muted)]">{reasonLabels[u.reason] || u.reason}</span>
+				</td>
+				<td class="px-3 py-2 text-center hidden sm:table-cell">
+					<span class="text-xs text-[var(--text-muted)]">{u.attempts}/{u.max_attempts}</span>
+				</td>
+				<td class="px-3 py-2 text-right">
+					<div class="flex items-center gap-1 justify-end">
+						{#if u.status === 'pending'}
+							<button onclick={() => skipUpgrade(u.id)} class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-amber-400 transition-colors" title="Skip">
+								<SkipForward class="w-4 h-4" />
+							</button>
+						{:else if u.status === 'failed'}
+							<button onclick={() => retryUpgrade(u.id)} class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-blue-400 transition-colors" title="Retry">
+								<RotateCcw class="w-4 h-4" />
+							</button>
+						{/if}
+					</div>
+				</td>
+			{/snippet}
+		</DataTable>
 
 		<Pagination {total} {offset} limit={perPage} onchange={handlePageChange} />
 	{/if}

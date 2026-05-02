@@ -240,16 +240,17 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title={viewMode === 'jobs' ? 'Job History' : 'App Logs'} color="var(--color-logs)">
-		{#if viewMode === 'jobs' && $activeJobs.length > 0}
-			<Badge variant="info">
-				<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1.5"></span>
-				Live
-			</Badge>
-		{/if}
+	<PageHeader title={viewMode === 'jobs' ? 'Job History' : 'App Logs'} icon={ScrollText} color="var(--color-logs)">
+		{#snippet actions()}
+			{#if viewMode === 'jobs' && $activeJobs.length > 0}
+				<Badge variant="info">
+					<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1.5"></span>
+					Live
+				</Badge>
+			{/if}
+		{/snippet}
 	</PageHeader>
 
-	<!-- View toggle -->
 	<div class="flex gap-1 mb-4 bg-[var(--surface-base)] rounded-lg p-1 w-fit">
 		<button onclick={() => switchView('jobs')}
 			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'jobs' ? 'bg-[var(--surface-container)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
@@ -275,17 +276,7 @@
 
 		<Card padding="p-0">
 			{#if loading}
-				<div class="space-y-0.5">
-					{#each Array(8) as _}
-						<div class="px-4 py-3 flex items-center gap-4">
-							<Skeleton class="h-4 w-24" />
-							<Skeleton class="h-5 w-16 rounded-full" />
-							<Skeleton class="h-4 w-12" />
-							<Skeleton class="h-4 w-20 hidden md:block" />
-							<Skeleton class="h-3 w-32" />
-						</div>
-					{/each}
-				</div>
+				<Skeleton variant="table-row" count={8} />
 			{:else if jobs.length}
 				<table class="w-full text-sm">
 					<thead>
@@ -452,16 +443,7 @@
 		<!-- App Logs view -->
 		<Card padding="p-0">
 			{#if appLoading}
-				<div class="space-y-0.5">
-					{#each Array(5) as _}
-						<div class="px-4 py-3 flex items-center gap-4">
-							<Skeleton class="h-4 w-32" />
-							<Skeleton class="h-5 w-16 rounded-full" />
-							<Skeleton class="h-4 w-20" />
-							<Skeleton class="h-3 w-28 hidden md:block" />
-						</div>
-					{/each}
-				</div>
+				<Skeleton variant="table-row" count={5} />
 			{:else if appLogs.length}
 				<table class="w-full text-sm">
 					<thead>

@@ -11,6 +11,7 @@
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import FilterPills from '../../components/ui/FilterPills.svelte';
+	import EmptyState from '../../components/ui/EmptyState.svelte';
 
 	// Search state
 	let searchQuery = $state('');
@@ -507,7 +508,7 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Downloads" color="var(--color-downloads)" />
+	<PageHeader title="Downloads" icon={Download} color="var(--color-downloads)" />
 
 	<!-- Search Bar -->
 	<div class="flex gap-3 mb-6">
@@ -705,7 +706,9 @@
 					</div>
 				{/if}
 			{:else}
-				<p class="text-sm text-[var(--text-muted)] text-center py-6">No results match the current filter.</p>
+				<EmptyState title="No results" description="No P2P results match the current filter.">
+					{#snippet icon()}<Search class="w-10 h-10" />{/snippet}
+				</EmptyState>
 			{/if}
 		</Card>
 	{/if}
@@ -730,28 +733,18 @@
 					</button>
 				{/if}
 			</div>
-			<div class="flex flex-wrap gap-1 mb-4">
-				{#each [
-					{ key: 'all', label: 'All' },
-					{ key: 'queued', label: 'Queued' },
-					{ key: 'running', label: 'Running' },
-					{ key: 'completed', label: 'Done' },
-					{ key: 'failed', label: 'Failed' },
-				] as tab}
-					{#if jobStatusCounts[tab.key] > 0 || tab.key === 'all'}
-						<button onclick={() => jobStatusFilter = tab.key}
-							class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors
-								{jobStatusFilter === tab.key
-									? 'bg-[var(--color-downloads)] text-white'
-									: 'text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)]'}">
-							{tab.label}
-							{#if jobStatusCounts[tab.key] > 0 && tab.key !== 'all'}
-								<span class="ml-0.5 opacity-60">{jobStatusCounts[tab.key]}</span>
-							{/if}
-						</button>
-					{/if}
-				{/each}
-			</div>
+			<FilterPills
+				class="mb-4"
+				options={[
+					{ value: 'all', label: 'All', color: 'downloads' },
+					{ value: 'queued', label: 'Queued', color: 'downloads', count: jobStatusCounts.queued },
+					{ value: 'running', label: 'Running', color: 'downloads', count: jobStatusCounts.running },
+					{ value: 'completed', label: 'Done', color: 'downloads', count: jobStatusCounts.completed },
+					{ value: 'failed', label: 'Failed', color: 'downloads', count: jobStatusCounts.failed },
+				].filter(opt => opt.value === 'all' || (jobStatusCounts[opt.value] || 0) > 0)}
+				value={jobStatusFilter}
+				onchange={(v) => jobStatusFilter = v}
+			/>
 
 			{#if jobsLoading && !jobs.length}
 				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>

@@ -83,21 +83,22 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Favorites" color="var(--color-favorites)">
-		{#if !loading && total}
-			<span class="text-sm text-[var(--text-muted)] font-mono">{total} total</span>
-		{/if}
-		<Button variant="secondary" size="sm" onclick={() => showImport = true}>
-			<Upload class="w-3.5 h-3.5" /> Import
-		</Button>
+	<PageHeader
+		title="Favorites"
+		icon={Heart}
+		color="var(--color-favorites)"
+		subtitle={!loading && total ? `${total} total` : ''}>
+		{#snippet actions()}
+			<Button variant="secondary" size="sm" onclick={() => showImport = true}>
+				<Upload class="w-3.5 h-3.5" /> Import
+			</Button>
+		{/snippet}
 	</PageHeader>
 
 	{#if loading}
-		<div class="space-y-2">
-			{#each Array(8) as _}
-				<Skeleton class="h-16 rounded-lg" />
-			{/each}
-		</div>
+		<Card padding="p-0">
+			<Skeleton variant="list-item" count={8} />
+		</Card>
 	{:else if favorites.length}
 		<Card padding="p-0">
 			<div class="space-y-0.5">
@@ -140,14 +141,11 @@
 
 		<Pagination {total} {offset} {limit} onchange={handlePageChange} />
 	{:else if total === 0}
-		<Card>
-			<EmptyState
-				title="No favorites yet"
-				description="Star tracks, albums, or artists from the Library page, or use Zonik-mobile."
-			>
-				{#snippet icon()}<Heart class="w-10 h-10" />{/snippet}
-			</EmptyState>
-		</Card>
+		<EmptyState
+			title="No favorites yet"
+			description="Star tracks, albums, or artists from the Library page, or use Zonik-mobile.">
+			{#snippet icon()}<Heart class="w-10 h-10" />{/snippet}
+		</EmptyState>
 	{/if}
 </div>
 
