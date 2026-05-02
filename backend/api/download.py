@@ -337,7 +337,25 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         parallel_sources = dl_settings.soulseek.parallel_sources
         source_strategy = dl_settings.soulseek.source_strategy
 
-        if req.username and req.filename and native_client:
+        # If the native client exists but the server connection just dropped
+        # (auto-reconnect in flight), wait briefly for it to come back rather
+        # than instantly failing or falling through to a slskd path that may
+        # not be configured. Up to ~30s — short relative to the per-job
+        # download timeout (150 polls × 2s = 300s) but enough to ride through
+        # most reconnect blips.
+        if native_client and not native_client.logged_in:
+            log.info(f"[download] Native client not logged in — waiting up to 30s for reconnect")
+            for _ in range(30):
+                await asyncio.sleep(1)
+                if native_client.logged_in:
+                    log.info("[download] Native client reconnected — proceeding")
+                    break
+
+        # Treat a not-logged-in native client as "no native client" so we don't
+        # waste a full search timeout against a dead connection.
+        native_ready = bool(native_client and native_client.logged_in)
+
+        if req.username and req.filename and native_ready:
             # Direct download — try requested source first, then fall back to search
             candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
             try:
@@ -350,10 +368,17 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 candidates = candidates[:5]  # Limit total attempts
             except Exception as e:
                 log.debug("Fallback search failed: %s", e)
-        elif native_client:
+        elif native_ready:
             # Auto-download — get candidates from search
             from backend.soulseek.search import search_multi_strategy_native
             candidates = await search_multi_strategy_native(native_client, req.artist, req.track)
+        elif native_client:
+            # Native client exists but never reconnected — fail fast with a
+            # clear, recognizable error instead of falling through to slskd.
+            job.status = "failed"
+            job.result = json.dumps({"error": "Soulseek server not connected — try again later"})
+            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": "Soulseek server not connected"}])
+            candidates = []  # Skip native loop
         else:
             from backend.services.soulseek import search_and_download
             result = await search_and_download(req.artist, req.track)
@@ -363,12 +388,12 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded" if ok else "failed"}])
             candidates = []  # Skip native loop
 
-        if native_client and not candidates:
+        if native_ready and not candidates and job.status != "failed":
             job.status = "failed"
             job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
-        if candidates and native_client and parallel_sources > 1:
+        if candidates and native_ready and parallel_sources > 1:
             # === Multi-source parallel download ===
             batch = candidates[:parallel_sources]
             usernames_str = ", ".join(c["username"] for c in batch)
@@ -496,7 +521,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "best", "failed_sources": failed_users, "source_errors": source_errors})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
 
-        elif candidates and native_client:
+        elif candidates and native_ready:
             # === Sequential download (parallel_sources == 1, original behavior) ===
             last_error = ""
             source_errors = []  # [(username, error), ...]
