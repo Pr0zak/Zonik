@@ -182,6 +182,10 @@
 
 	function getTransferForJob(job) {
 		if (job.status !== 'running') return null;
+		// Direct lookup via job_id (set when the transfer is created).
+		const direct = $activeTransfers.find(tr => tr.job_id === job.id);
+		if (direct) return direct;
+		// Fallback for legacy transfers that pre-date the job_id link.
 		let tracks;
 		try { tracks = jobDetails[job.id]; } catch { return null; }
 		if (!tracks?.length) return null;

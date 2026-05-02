@@ -142,11 +142,11 @@ class SoulseekClient:
         self._search_events.pop(token, None)
         return results[:max_responses]
 
-    async def download(self, username: str, filename: str) -> Transfer:
-        """Initiate a download from a specific user."""
+    async def download(self, username: str, filename: str, job_id: str | None = None) -> Transfer:
+        """Initiate a download from a specific user. job_id links the transfer to its Job for progress sync."""
         peer = await self._get_or_connect_peer(username)
 
-        transfer = self.transfers.create_transfer(username, filename)
+        transfer = self.transfers.create_transfer(username, filename, job_id=job_id)
         await peer.send_queue_upload(filename)
         await peer.send_place_in_queue_request(filename)
 
@@ -463,6 +463,7 @@ class SoulseekClient:
         if now - self._last_broadcast < 0.5:
             return
         self._last_broadcast = now
+        await self._sync_job_progress(transfer)
         await self._broadcast_transfers()
 
     async def _on_transfer_complete(self, transfer: Transfer) -> None:
@@ -471,9 +472,30 @@ class SoulseekClient:
             await self.reputation.record_success(transfer.username)
         else:
             await self.reputation.record_failure(transfer.username)
+        await self._sync_job_progress(transfer)
         await self._broadcast_transfers()
         # Don't remove immediately — let poll_transfer see the final state.
         # The cleanup loop will remove terminal transfers after 60s.
+
+    async def _sync_job_progress(self, transfer: Transfer) -> None:
+        """Mirror transfer bytes onto the linked Job row so any UI that reads job.progress
+        (TopBar, sidebar, dashboard activity) reflects real download progress. Uses a
+        short-lived session — never the caller's session."""
+        if not transfer.job_id or transfer.total_bytes <= 0:
+            return
+        try:
+            from sqlalchemy import update
+            from backend.database import async_session
+            from backend.models.job import Job
+            async with async_session() as s:
+                await s.execute(
+                    update(Job)
+                    .where(Job.id == transfer.job_id)
+                    .values(progress=transfer.received_bytes, total=transfer.total_bytes)
+                )
+                await s.commit()
+        except Exception as e:
+            log.debug("Job progress sync failed for %s: %s", transfer.job_id, e)
 
     async def _broadcast_transfers(self) -> None:
         """Broadcast current transfers to all WebSocket clients."""

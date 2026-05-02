@@ -3,7 +3,17 @@
 	import { Search, X, RefreshCw, Bell } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { activeJobs, addToast } from '$lib/stores.js';
+	import { formatSize } from '$lib/utils.js';
 	import SearchDropdown from './SearchDropdown.svelte';
+
+	function jobProgressLabel(job) {
+		// Downloads track bytes (total > 1024); other jobs track item counts.
+		if (job.type === 'download' && job.total > 1024) {
+			const pct = job.total > 0 ? Math.round((job.progress / job.total) * 100) : 0;
+			return `${pct}% · ${formatSize(job.progress || 0)} / ${formatSize(job.total)}`;
+		}
+		return `${job.progress || 0}/${job.total}`;
+	}
 
 	let query = $state('');
 	let showResults = $state(false);
@@ -135,7 +145,7 @@
 									<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
 										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
 								</div>
-								<p class="text-xs text-[var(--text-muted)] mt-1">{job.progress || 0}/{job.total}</p>
+								<p class="text-xs text-[var(--text-muted)] mt-1">{jobProgressLabel(job)}</p>
 							{/if}
 						</button>
 					{/each}
