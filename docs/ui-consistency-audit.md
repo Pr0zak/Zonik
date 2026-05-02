@@ -207,3 +207,33 @@ Primitives to add/strengthen (Stage 2):
 - `Modal.svelte` — STRENGTHEN. Add `onclose` callback alongside `bind:open` for non-bound usage.
 
 Pages affected: all 16. Order: pair → schedule → favorites → analysis → upgrades → logs → duplicates → playlists → map → stats → downloads → settings → discover → library → dashboard → layout.
+
+## Stage 4 — Resolved
+
+| Page       | PageHeader icon | Toolbar | DataTable | EmptyState | Skeleton variant | ScheduleSection | StatTile | Modal | Notes                                                        |
+|------------|-----------------|---------|-----------|------------|------------------|-----------------|----------|-------|--------------------------------------------------------------|
+| layout     | n/a             | n/a     | n/a       | n/a        | n/a              | n/a             | n/a      | DONE  | Shortcuts dialog now uses Modal primitive.                   |
+| dashboard  | DONE            | n/a     | n/a       | n/a        | DONE (card)      | n/a             | deferred | n/a   | Quick-action tiles bespoke (page-specific composition).      |
+| library    | DONE            | deferred| deferred  | n/a        | n/a              | DONE            | n/a      | n/a   | Tables/grid/modals deferred — too many bespoke variants.     |
+| discover   | DONE            | n/a     | deferred  | n/a        | n/a              | DONE            | n/a      | n/a   | 5 tables deferred — bespoke per-row download states.         |
+| settings   | DONE            | n/a     | n/a       | n/a        | n/a              | n/a             | n/a      | n/a   | Toggle/ServiceCard extraction deferred — risk of regression. |
+| downloads  | DONE            | n/a     | deferred  | DONE       | n/a              | n/a             | n/a      | n/a   | Search-result table has bespoke per-row download progress.   |
+| stats      | n/a             | n/a     | n/a       | n/a        | DONE             | n/a             | deferred | n/a   | Loading→data structural split preserved for chart.js refs.   |
+| map        | n/a (already)   | n/a     | n/a       | DONE       | n/a              | n/a             | n/a      | n/a   | Floating toolbar bespoke (overlays D3 canvas).               |
+| playlists  | DONE            | n/a     | n/a       | n/a        | DONE (card,list) | DONE            | n/a      | n/a   | Inline panels (Import/AI/Smart) deferred for follow-up.      |
+| duplicates | DONE (was)      | DONE    | n/a       | DONE (was) | n/a              | n/a             | DONE     | DONE  | Reference page; ghost-border violations removed.             |
+| logs       | DONE            | n/a     | deferred  | DONE (was) | DONE             | n/a             | n/a      | n/a   | Expand-row pattern preserved (DataTable doesn't support).    |
+| upgrades   | DONE (was)      | DONE    | DONE      | DONE       | DONE             | n/a             | DONE     | n/a   | Custom header snippet for the checkbox-first column.         |
+| analysis   | DONE            | n/a     | n/a       | n/a        | DONE             | DONE            | n/a      | n/a   | Toggle primitive used for auto-after-scan switches.          |
+| favorites  | DONE            | n/a     | n/a       | DONE (was) | DONE             | n/a             | n/a      | DONE  | Drops Card wrapper around EmptyState.                        |
+| schedule   | DONE (was)      | n/a     | n/a       | DONE (was) | DONE             | n/a             | n/a      | n/a   | DANGER_TASKS dead branch consolidated.                       |
+| pair       | n/a (centered)  | n/a     | n/a       | n/a        | n/a              | n/a             | n/a      | n/a   | Three of four inputs now use FormInput; large code input keeps bespoke styling. |
+
+### Verification
+- `npm run build` — clean (0 errors) after every commit.
+- `npx svelte-check` ran 0 files (no tsconfig/jsconfig in this project) — vite build is the canonical correctness signal.
+
+### Pre-existing observations (not fixed in this PR)
+- `Button` primitive's `variants` map lacks `warning` and `default` — pages using `<Button variant="warning">` or `<Button variant="default">` (downloads, duplicates, upgrades, analysis) silently get no class. Pages render correctly today only because those buttons happen to layer onto pages with surface contrast already. Recommend adding both variants in a follow-up.
+- The `FilterPills` primitive uses `bg-[var(--color-${color})]/15` interpolation that Tailwind's JIT may not detect at build time for new color names; current usage of `discover`, `downloads`, `logs`, `upgrades`, `duplicates` works because they're already referenced statically in app.css/other files. Adding a brand-new section color via FilterPills may surprise.
+- `pair/+page.svelte` does not apply the `var(--color-pair)` token (the design brief implies indigo, which is `var(--color-primary)` ≈ `var(--color-dashboard)`). Token hasn't been needed yet because the page uses `var(--color-primary)` directly.
