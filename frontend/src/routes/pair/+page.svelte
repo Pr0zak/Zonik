@@ -1,7 +1,9 @@
 <script>
 	import { onMount } from 'svelte';
 	import { addToast } from '$lib/stores.js';
-	import { Tv, Check, Loader2 } from 'lucide-svelte';
+	import { Tv, Check } from 'lucide-svelte';
+	import Button from '../../components/ui/Button.svelte';
+	import FormInput from '../../components/ui/FormInput.svelte';
 
 	let code = $state('');
 	let url = $state('');
@@ -42,6 +44,12 @@
 			submitting = false;
 		}
 	}
+
+	function pairAnother() {
+		submitted = false;
+		code = '';
+		apiKey = '';
+	}
 </script>
 
 <div class="flex items-center justify-center min-h-[70vh]">
@@ -53,8 +61,9 @@
 				</div>
 				<h1 class="text-xl font-bold text-[var(--text-primary)] tracking-editorial">Paired</h1>
 				<p class="text-sm text-[var(--text-muted)]">Your device should connect automatically. You can close this page.</p>
-				<button onclick={() => { submitted = false; code = ''; apiKey = ''; }}
-					class="text-sm text-[var(--color-primary)] hover:underline">Pair another device</button>
+				<button onclick={pairAnother} class="text-sm text-[var(--color-primary)] hover:underline">
+					Pair another device
+				</button>
 			</div>
 		{:else}
 			<div class="text-center mb-6">
@@ -67,45 +76,43 @@
 
 			<div class="space-y-4">
 				<div>
-					<label class="block text-xs text-[var(--text-muted)] mb-1">Pairing Code</label>
-					<input type="text" bind:value={code} maxlength="6" placeholder="000000"
-						class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg px-4 py-3 text-2xl font-mono text-center text-[var(--text-primary)] tracking-[0.3em]
-							placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15"
+					<label for="pair-code" class="block text-xs text-[var(--text-muted)] mb-1">Pairing Code</label>
+					<input
+						id="pair-code"
+						type="text"
+						bind:value={code}
+						maxlength="6"
+						placeholder="000000"
+						class="w-full bg-[var(--surface-lowest)] rounded-lg px-4 py-3 text-2xl font-mono text-center text-[var(--text-primary)] tracking-[0.3em]
+							placeholder-[var(--text-disabled)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
 						oninput={(e) => { code = e.target.value.replace(/\D/g, '').slice(0, 6); }} />
 				</div>
 
 				<div>
-					<label class="block text-xs text-[var(--text-muted)] mb-1">Server URL</label>
-					<input type="text" bind:value={url}
-						class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg px-3 py-2 text-sm text-[var(--text-primary)]
-							focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
+					<label for="pair-url" class="block text-xs text-[var(--text-muted)] mb-1">Server URL</label>
+					<FormInput id="pair-url" type="text" bind:value={url} />
 				</div>
 
 				<div class="grid grid-cols-2 gap-3">
 					<div>
-						<label class="block text-xs text-[var(--text-muted)] mb-1">Username</label>
-						<input type="text" bind:value={username}
-							class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg px-3 py-2 text-sm text-[var(--text-primary)]
-								focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
+						<label for="pair-user" class="block text-xs text-[var(--text-muted)] mb-1">Username</label>
+						<FormInput id="pair-user" type="text" bind:value={username} />
 					</div>
 					<div>
-						<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
-						<input type="text" bind:value={apiKey} placeholder="Subsonic API key"
-							class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg px-3 py-2 text-sm text-[var(--text-primary)]
-								placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
+						<label for="pair-key" class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
+						<FormInput id="pair-key" type="text" bind:value={apiKey} placeholder="Subsonic API key" />
 					</div>
 				</div>
 
-				<button onclick={submit} disabled={submitting || code.length !== 6}
-					class="w-full bg-gradient-primary text-[var(--color-on-primary)] rounded-lg py-2.5 text-sm font-medium shadow-glow
-						hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-					{#if submitting}
-						<Loader2 class="w-4 h-4 animate-spin" />
-						Pairing...
-					{:else}
-						Pair Device
-					{/if}
-				</button>
+				<Button
+					variant="primary"
+					size="lg"
+					class="w-full"
+					loading={submitting}
+					disabled={code.length !== 6}
+					onclick={submit}>
+					{submitting ? 'Pairing...' : 'Pair Device'}
+				</Button>
 			</div>
 		{/if}
 	</div>
