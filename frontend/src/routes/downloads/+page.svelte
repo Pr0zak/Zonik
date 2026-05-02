@@ -172,13 +172,23 @@
 		return SOURCE_LABELS[job.card] || '';
 	}
 
-	let jobStatusCounts = $derived({
-		all: jobs.filter(j => !hiddenJobIds.has(j.id)).length,
-		queued: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'pending').length,
-		running: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'running').length,
-		completed: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'completed').length,
-		failed: jobs.filter(j => !hiddenJobIds.has(j.id) && j.status === 'failed').length,
-	});
+	// Server-side counts (independent of pagination) — fetched alongside loadJobs.
+	let jobStatusCounts = $state({ all: 0, queued: 0, running: 0, completed: 0, failed: 0 });
+
+	async function loadJobCounts() {
+		try {
+			const r = await fetch('/api/jobs/counts?type=download');
+			if (!r.ok) return;
+			const c = await r.json();
+			jobStatusCounts = {
+				all: c.all || 0,
+				queued: c.pending || 0,
+				running: c.running || 0,
+				completed: c.completed || 0,
+				failed: c.failed || 0,
+			};
+		} catch {}
+	}
 
 	let hasCleanable = $derived(jobs.some(j => j.status === 'completed' || j.status === 'failed'));
 
@@ -274,6 +284,7 @@
 
 	async function loadJobs() {
 		jobsLoading = true;
+		loadJobCounts();
 		try {
 			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
 			jobs = data.items || data;
