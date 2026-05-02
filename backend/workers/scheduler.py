@@ -676,6 +676,14 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
             "track_id": t.id,
         })
 
+    # Commit the new TrackUpgrade rows now — the run_task wrapper rolls back
+    # the main session at the end, so without this the rows would be discarded
+    # and the auto-download phase would have nothing to link to. (This was a
+    # silent pre-existing bug: the scheduler appeared to scan but produced no
+    # `track_upgrades` rows from its scheduled runs — only manual /scan calls
+    # via the API persisted any.)
+    await db.commit()
+
     job.total = len(tracks)
     job.progress = 0
     job.tracks = json.dumps(upgrade_list)
