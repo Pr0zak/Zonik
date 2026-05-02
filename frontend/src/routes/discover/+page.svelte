@@ -16,7 +16,8 @@
 	import DataTable from '../../components/ui/DataTable.svelte';
 	import PlaylistDiscoveryTab from './PlaylistDiscoveryTab.svelte';
 	import NewReleasesTab from './NewReleasesTab.svelte';
-	import { Compass, Rocket } from 'lucide-svelte';
+	import WeeklyRadarTab from './WeeklyRadarTab.svelte';
+	import { Compass, Rocket, Radar } from 'lucide-svelte';
 
 	// AbortController for in-flight fetches — cancelled on destroy
 	let _abortCtrl = new AbortController();
@@ -175,6 +176,7 @@
 	const tabs = [
 		{ key: 'foryou', label: 'For You', icon: Sparkles },
 		{ key: 'newreleases', label: 'New Releases', icon: Rocket },
+		{ key: 'weeklyradar', label: 'Weekly Radar', icon: Radar },
 		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
 		{ key: 'similar', label: 'Similar Tracks', icon: Music },
 		{ key: 'artists', label: 'Similar Artists', icon: Users },
@@ -184,6 +186,7 @@
 	];
 
 	let newReleasesLoaded = $state(false);
+	let weeklyRadarLoaded = $state(false);
 
 	function trackKey(t) {
 		return `${t.artist}::${t.name}`.toLowerCase();
@@ -274,6 +277,7 @@
 		sortDir = null;
 		if (tab === 'foryou' && !recommendations.length && !recLoading) loadRecommendations();
 		if (tab === 'newreleases') newReleasesLoaded = true;
+		if (tab === 'weeklyradar') weeklyRadarLoaded = true;
 		if (tab === 'top' && !topTracks.length && !topLoading) scanTopTracks();
 		if (tab === 'similar' && !similarTracks.length && !similarLoading) scanSimilarTracks();
 		if (tab === 'artists' && !similarArtists.length && !artistsLoading) scanSimilarArtists();
@@ -1787,6 +1791,11 @@
 		{:else if activeTab === 'newreleases'}
 			{#if newReleasesLoaded}
 				<NewReleasesTab bind:trackStatus />
+			{/if}
+
+		{:else if activeTab === 'weeklyradar'}
+			{#if weeklyRadarLoaded}
+				<WeeklyRadarTab />
 			{/if}
 
 		{:else if activeTab === 'playlists'}
