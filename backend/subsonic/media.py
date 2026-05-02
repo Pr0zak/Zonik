@@ -255,14 +255,15 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         if remaining > 0:
             estimated_bytes = int((remaining * effective_bitrate * 1000) / 8)
 
-    # HEAD request — return headers only, no ffmpeg
+    # HEAD request — return headers only, no ffmpeg.
+    # Omit Content-Length: the bitrate-based estimate often differs from the
+    # actual transcode size, and a wrong Content-Length here causes clients to
+    # truncate playback or send mismatched Range requests on a follow-up GET.
     if request.method == "HEAD":
         headers: dict[str, str] = {
             "Cache-Control": "private, max-age=86400",
             "Accept-Ranges": "none",
         }
-        if estimated_bytes:
-            headers["Content-Length"] = str(estimated_bytes)
         return Response(media_type=content_type, headers=headers)
 
     # Build ffmpeg command (-y to overwrite temp files from mkstemp)
