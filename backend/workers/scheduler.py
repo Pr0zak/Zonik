@@ -34,6 +34,7 @@ _TASK_LABELS = {
     "upgrade_scan": "Quality Upgrade Scan",
     "remix_discovery": "Remix Discovery",
     "download_cleanup": "Download Cleanup",
+    "job_cleanup": "Job History Cleanup",
 }
 
 
@@ -174,6 +175,10 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             from backend.services.scanner import cleanup_download_dir
             max_age = task_config.get("max_age_hours", 24) if task_config else 24
             result = cleanup_download_dir(max_age_hours=max_age)
+            job.result = json.dumps(result)
+
+        elif task_name == "job_cleanup":
+            result = await _run_job_cleanup(db, job, config=task_config)
             job.result = json.dumps(result)
 
         job.status = "completed"
@@ -766,3 +771,61 @@ async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, conf
     })
 
     log.info(f"Remix discovery ({source}): scanned {len(source_tracks)} tracks, found {len(all_remixes)} remixes")
+
+
+async def _run_job_cleanup(db: AsyncSession, job: Job, config: dict | None = None) -> dict:
+    """Prune old rows from the jobs table.
+
+    Defaults: drop completed/failed/cancelled jobs older than 30 days, and any
+    job (including stuck running/pending) older than 90 days. Both thresholds
+    are overridable via task config (`terminal_age_days`, `hard_age_days`).
+    """
+    from datetime import timedelta
+    from sqlalchemy import delete as _delete, or_, and_
+
+    cfg = config or {}
+    terminal_days = int(cfg.get("terminal_age_days", 30))
+    hard_days = int(cfg.get("hard_age_days", 90))
+
+    now = datetime.utcnow()
+    terminal_cutoff = now - timedelta(days=terminal_days)
+    hard_cutoff = now - timedelta(days=hard_days)
+
+    # 1) Delete terminal-status jobs older than terminal_cutoff. Compare against
+    #    finished_at when present, otherwise fall back to started_at.
+    terminal_result = await db.execute(
+        _delete(Job).where(
+            Job.status.in_(("completed", "failed", "cancelled")),
+            or_(
+                and_(Job.finished_at.isnot(None), Job.finished_at < terminal_cutoff),
+                and_(Job.finished_at.is_(None), Job.started_at < terminal_cutoff),
+            ),
+        )
+    )
+    terminal_deleted = terminal_result.rowcount or 0
+
+    # 2) Hard cap — delete anything (including stuck running/pending) older than
+    #    hard_cutoff so the table can't grow unbounded.
+    hard_result = await db.execute(
+        _delete(Job).where(
+            or_(
+                and_(Job.finished_at.isnot(None), Job.finished_at < hard_cutoff),
+                and_(Job.finished_at.is_(None), Job.started_at < hard_cutoff),
+            )
+        )
+    )
+    hard_deleted = hard_result.rowcount or 0
+    await db.commit()
+
+    job.total = 1
+    job.progress = 1
+    log.info(
+        f"[job_cleanup] Deleted {terminal_deleted} terminal jobs "
+        f"older than {terminal_days}d and {hard_deleted} jobs older than {hard_days}d"
+    )
+    return {
+        "terminal_deleted": terminal_deleted,
+        "hard_deleted": hard_deleted,
+        "terminal_age_days": terminal_days,
+        "hard_age_days": hard_days,
+    }
