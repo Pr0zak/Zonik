@@ -429,30 +429,34 @@
 			{/if}
 		</div>
 
-		<!-- AI Insights -->
+		<!-- AI Insights (warm gradient card) -->
 		{#if insights && !insights.error && insights.summary}
-			<Card padding="p-4" class="mb-6">
-				<div class="flex items-center justify-between mb-3">
-					<div class="flex items-center gap-2">
-						<Sparkles class="w-4 h-4 text-amber-400" />
-						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Weekly Insights</h2>
+			<div class="relative mb-6 rounded-lg overflow-hidden p-4" style="background: linear-gradient(135deg, rgba(255,183,131,.08), rgba(192,193,255,.05))">
+				<!-- Decorative glow orb -->
+				<div class="absolute top-0 right-0 w-32 h-32 rounded-full opacity-20 blur-3xl" style="background: radial-gradient(circle, #ffb783, transparent 70%)"></div>
+				<div class="relative">
+					<div class="flex items-center justify-between mb-3">
+						<div class="flex items-center gap-2">
+							<Sparkles class="w-4 h-4 text-amber-400" />
+							<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Weekly Insights</h2>
+						</div>
+						{#if insights.play_count}
+							<Badge>{insights.play_count} plays this week</Badge>
+						{/if}
 					</div>
-					{#if insights.play_count}
-						<Badge>{insights.play_count} plays this week</Badge>
+					<p class="text-sm text-[var(--text-body)] mb-3">{insights.summary}</p>
+					{#if insights.highlights?.length}
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+							{#each insights.highlights as highlight}
+								<div class="flex items-start gap-2 py-1">
+									<Sparkles class="w-3 h-3 text-amber-400/60 mt-0.5 shrink-0" />
+									<span class="text-xs text-[var(--text-secondary)]">{highlight}</span>
+								</div>
+							{/each}
+						</div>
 					{/if}
 				</div>
-				<p class="text-sm text-[var(--text-body)] mb-3">{insights.summary}</p>
-				{#if insights.highlights?.length}
-					<div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-						{#each insights.highlights as highlight}
-							<div class="flex items-start gap-2 py-1">
-								<Sparkles class="w-3 h-3 text-amber-400/60 mt-0.5 shrink-0" />
-								<span class="text-xs text-[var(--text-secondary)]">{highlight}</span>
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</Card>
+			</div>
 		{/if}
 
 		<!-- Row 6: Soulseek P2P + System Health + Version/Scan -->

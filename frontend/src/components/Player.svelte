@@ -169,13 +169,13 @@
 	}
 </script>
 
-<!-- Mobile: 2-row stacked layout; Desktop: single row -->
-<div class="glass shrink-0">
+<!-- Floating pill player -->
+<div class="glass shrink-0 sm:mx-3.5 sm:mb-3.5 sm:rounded-xl">
 	{#if $currentTrack}
 		<!-- Row 1: track info + controls + actions -->
-		<div class="flex items-center px-3 sm:px-4 gap-2 sm:gap-4 h-14 sm:h-16">
+		<div class="flex items-center px-3 sm:px-5 gap-2 sm:gap-4 h-14 sm:h-[76px]">
 			<!-- Cover art: hidden on mobile -->
-			<div class="hidden sm:block w-10 h-10 bg-[var(--surface-container)] rounded-lg flex-shrink-0 overflow-hidden">
+			<div class="hidden sm:block w-12 h-12 bg-[var(--surface-container)] rounded-lg flex-shrink-0 overflow-hidden">
 				{#if $currentTrack.id}
 					<img src="/rest/getCoverArt?id={$currentTrack.id}&size=80"
 						alt="" class="w-full h-full object-cover"
@@ -206,7 +206,7 @@
 					<SkipBack class="w-4 h-4" />
 				</button>
 				<button onclick={togglePlay}
-					class="w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-gradient-primary text-[var(--color-on-primary)] flex items-center justify-center hover:scale-105 transition-transform shadow-glow">
+					class="w-10 h-10 sm:w-9 sm:h-9 rounded-full bg-gradient-primary text-[var(--color-on-primary)] flex items-center justify-center hover:scale-105 transition-transform {$isPlaying ? 'animate-glow-pulse' : 'shadow-glow'}">
 					{#if $isPlaying}
 						<Pause class="w-4 h-4" />
 					{:else}

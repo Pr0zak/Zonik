@@ -82,7 +82,7 @@
 
 	<!-- Logo -->
 	<div class="px-5 pt-6 pb-5">
-		<h1 class="text-3xl font-bold tracking-editorial"><span class="text-[var(--color-primary)]">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
+		<h1 class="text-3xl font-bold tracking-editorial"><span class="bg-gradient-primary bg-clip-text text-transparent">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
 		<p class="text-xs font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 
