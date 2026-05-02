@@ -12,7 +12,9 @@
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import ScheduleSection from '../../components/ui/ScheduleSection.svelte';
 	import PlaylistDiscoveryTab from './PlaylistDiscoveryTab.svelte';
+	import { Compass } from 'lucide-svelte';
 
 	// AbortController for in-flight fetches — cancelled on destroy
 	let _abortCtrl = new AbortController();
@@ -793,18 +795,10 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Discover" color="var(--color-discover)" />
+	<PageHeader title="Discover" icon={Compass} color="var(--color-discover)" />
 
-	<!-- Collapsible Schedule -->
 	{#if schedTasks.lastfm_top_tracks || schedTasks.discover_similar || schedTasks.recommendation_refresh}
-		<button onclick={() => schedExpanded = !schedExpanded}
-			class="flex items-center gap-2 mb-3 px-3 py-1.5 rounded-md bg-[var(--surface-base)] hover:bg-[var(--surface-container-high)] transition-colors text-xs text-[var(--text-muted)]">
-			<Clock class="w-3.5 h-3.5" />
-			<span class="font-mono uppercase tracking-wider">Schedule & Automation</span>
-			{#if schedExpanded}<ChevronUp class="w-3 h-3" />{:else}<ChevronDown class="w-3 h-3" />{/if}
-		</button>
-		{#if schedExpanded}
-			<Card padding="p-4" class="mb-4">
+		<ScheduleSection bind:expanded={schedExpanded}>
 				{#if schedTasks.recommendation_refresh}
 					<ScheduleControl taskName="recommendation_refresh" label="Music Discovery AI" enabled={schedTasks.recommendation_refresh.enabled} intervalHours={schedTasks.recommendation_refresh.interval_hours} runAt={schedTasks.recommendation_refresh.run_at} lastRunAt={schedTasks.recommendation_refresh.last_run_at} running={schedRunning.recommendation_refresh} onToggle={() => toggleSched('recommendation_refresh')} onUpdate={(u) => updateSched('recommendation_refresh', u)} onRun={() => runSched('recommendation_refresh')} autoDownload={schedTasks.recommendation_refresh.config?.auto_download || false} onToggleAutoDownload={() => toggleAutoDownload('recommendation_refresh')} />
 					{#if schedTasks.recommendation_refresh.config?.auto_download}
@@ -845,8 +839,7 @@
 				{#if schedTasks.discover_artists}
 					<ScheduleControl taskName="discover_artists" label="Similar Artists Scan" enabled={schedTasks.discover_artists.enabled} intervalHours={schedTasks.discover_artists.interval_hours} runAt={schedTasks.discover_artists.run_at} count={schedTasks.discover_artists.count} lastRunAt={schedTasks.discover_artists.last_run_at} running={schedRunning.discover_artists} onToggle={() => toggleSched('discover_artists')} onUpdate={(u) => updateSched('discover_artists', u)} onRun={() => runSched('discover_artists')} />
 				{/if}
-			</Card>
-		{/if}
+		</ScheduleSection>
 	{/if}
 
 	<!-- Tabs -->
