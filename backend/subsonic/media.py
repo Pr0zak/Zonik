@@ -178,12 +178,39 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         pass
 
     if not needs_transcode:
-        return FileResponse(
-            path=str(file_path),
-            media_type=track.mime_type or "audio/mpeg",
-            filename=file_path.name,
-            content_disposition_type="inline",
-            headers={"Cache-Control": "private, max-age=86400"},
+        # Stream without Range support so the client can't replay a stale
+        # Range (e.g. seek offset cached against a previous transcode bitrate)
+        # against the original file and trigger 416. Mirrors the transcode-cache
+        # path below.
+        file_size = file_path.stat().st_size
+        media_type = track.mime_type or "audio/mpeg"
+        filename = file_path.name
+
+        async def iterate_direct_file():
+            with open(file_path, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        if request.method == "HEAD":
+            return Response(
+                media_type=media_type,
+                headers={
+                    "Cache-Control": "private, max-age=86400",
+                    "Accept-Ranges": "none",
+                    "Content-Length": str(file_size),
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                },
+            )
+
+        return StreamingResponse(
+            iterate_direct_file(),
+            media_type=media_type,
+            headers={
+                "Cache-Control": "private, max-age=86400",
+                "Accept-Ranges": "none",
+                "Content-Length": str(file_size),
+                "Content-Disposition": f'inline; filename="{filename}"',
+            },
         )
 
     # --- Transcoding path ---
@@ -228,14 +255,15 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         if remaining > 0:
             estimated_bytes = int((remaining * effective_bitrate * 1000) / 8)
 
-    # HEAD request — return headers only, no ffmpeg
+    # HEAD request — return headers only, no ffmpeg.
+    # Omit Content-Length: the bitrate-based estimate often differs from the
+    # actual transcode size, and a wrong Content-Length here causes clients to
+    # truncate playback or send mismatched Range requests on a follow-up GET.
     if request.method == "HEAD":
         headers: dict[str, str] = {
             "Cache-Control": "private, max-age=86400",
             "Accept-Ranges": "none",
         }
-        if estimated_bytes:
-            headers["Content-Length"] = str(estimated_bytes)
         return Response(media_type=content_type, headers=headers)
 
     # Build ffmpeg command (-y to overwrite temp files from mkstemp)
