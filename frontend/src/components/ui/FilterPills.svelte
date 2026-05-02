@@ -13,7 +13,7 @@
 			inactive: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-highest)]',
 		},
 		outline: {
-			active: (color) => `bg-[var(--color-${color})]/20 text-emerald-400 ghost-border`,
+			active: (color) => `bg-[var(--color-${color})]/15 text-[var(--color-${color})] ghost-border`,
 			inactive: 'bg-[var(--surface-container)] text-[var(--text-secondary)] ghost-border hover:bg-[var(--surface-container-high)]',
 		},
 	};

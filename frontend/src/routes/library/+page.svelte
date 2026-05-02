@@ -797,7 +797,7 @@
 	<div class="flex items-center gap-1.5 mb-4 mt-2 flex-wrap">
 		<!-- Active filter pills -->
 		{#if filterArtistId}
-			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] ghost-border rounded px-2 py-1">
 				Artist: {filterArtistName}
 				<button onclick={() => { filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -805,7 +805,7 @@
 			</span>
 		{/if}
 		{#if filterAlbumId}
-			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] border border-[var(--border-primary)] rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] ghost-border rounded px-2 py-1">
 				Album: {filterAlbumName}
 				<button onclick={() => { filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -824,7 +824,7 @@
 		<div class="flex-1"></div>
 
 		<!-- Per-page select -->
-		<select class="bg-[var(--surface-container)] text-[var(--text-body)] text-xs border border-[var(--border-primary)] rounded px-2 py-1" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
+		<select class="bg-[var(--surface-lowest)] text-[var(--text-body)] text-xs ghost-border rounded px-2 py-1 focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
 			{#each limitOptions as opt}
 				<option value={opt}>{opt}/page</option>
 			{/each}
@@ -1463,7 +1463,7 @@
 				<span class="text-sm">Scanning library...</span>
 			</div>
 		{:else if cleanupTab === 'organize' && cleanupPreview}
-			<div class="border border-[var(--border-primary)] rounded-lg p-3">
+			<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
 				<div class="flex items-center justify-between mb-2">
 					<div class="flex items-center gap-3">
 						<span class="text-sm font-medium text-[var(--text-primary)]">
@@ -1494,7 +1494,7 @@
 				{#if cleanupPreview.moves?.length}
 					<div class="max-h-80 overflow-y-auto space-y-1">
 						{#each cleanupPreview.moves as move}
-							<div class="flex items-start gap-2 text-xs py-1 border-b border-[var(--border-primary)] last:border-0 {organizeSelected.has(move.track_id) ? '' : 'opacity-40'}">
+							<div class="flex items-start gap-2 text-xs py-1.5 {organizeSelected.has(move.track_id) ? '' : 'opacity-40'}">
 								<input type="checkbox" checked={organizeSelected.has(move.track_id)} onchange={() => toggleOrganizeTrack(move.track_id)}
 									class="w-3.5 h-3.5 mt-0.5 rounded accent-blue-500 cursor-pointer flex-shrink-0" />
 								<div class="min-w-0 flex-1">
@@ -1545,11 +1545,12 @@
 			onclick={() => blacklistArtist(menuTrack)}>
 			<ShieldBan class="w-3.5 h-3.5 text-orange-400" /> Blacklist Artist
 		</button>
-		<div class="border-t border-[var(--border-subtle)] my-1"></div>
-		<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[var(--surface-container-high)] transition-colors text-left"
-			onclick={() => deleteTrack(menuTrack)}>
-			<Trash2 class="w-3.5 h-3.5" /> Delete Track
-		</button>
+		<div class="mt-1 pt-1">
+			<button class="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[var(--surface-container-high)] transition-colors text-left"
+				onclick={() => deleteTrack(menuTrack)}>
+				<Trash2 class="w-3.5 h-3.5" /> Delete Track
+			</button>
+		</div>
 	</div>
 {/if}
 

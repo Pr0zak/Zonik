@@ -161,7 +161,7 @@
 					</div>
 				{/if}
 				<button onclick={() => { showNotifications = false; goto('/logs'); }}
-					class="w-full px-3 py-2 text-xs text-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors border-t border-[var(--border-subtle)]">
+					class="w-full px-3 py-2 mt-1 text-xs text-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors">
 					View all jobs
 				</button>
 			</div>

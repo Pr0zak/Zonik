@@ -893,7 +893,7 @@
 
 		<!-- Detail panel -->
 		{#if selectedNode}
-			<div class="absolute inset-x-0 bottom-0 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-80 h-2/3 sm:h-full bg-[var(--surface-base)] border-t sm:border-t-0 sm:border-l border-[var(--border-subtle)] p-4 overflow-y-auto shadow-lg rounded-t-xl sm:rounded-none">
+			<div class="absolute inset-x-0 bottom-0 sm:inset-x-auto sm:top-0 sm:right-0 sm:bottom-0 w-full sm:w-80 h-2/3 sm:h-full bg-[var(--surface-container)] p-4 overflow-y-auto shadow-float rounded-t-xl sm:rounded-none">
 				<div class="flex items-center justify-between mb-3">
 					<div class="flex items-center gap-2">
 						<div class="w-3 h-3 rounded-full" style="background-color: {getNodeColor(selectedNode)}"></div>
@@ -973,7 +973,7 @@
 						</div>
 
 						{#if viewMode === 'duplicates' && duplicateArtistIds.has(selectedNode.id.replace('artist:', ''))}
-							<div class="mt-2 pt-2 border-t border-[var(--border-primary)]">
+							<div class="mt-3 pt-3">
 								<button onclick={() => goto('/duplicates')}
 									class="text-xs text-amber-400 hover:underline">
 									View in Duplicates Manager

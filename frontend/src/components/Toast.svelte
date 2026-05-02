@@ -3,10 +3,10 @@
 	import { CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-svelte';
 
 	const styles = {
-		info: { bg: 'bg-blue-500/10 border-blue-500/30', icon: Info, color: 'text-blue-400' },
-		success: { bg: 'bg-emerald-500/10 border-emerald-500/30', icon: CheckCircle, color: 'text-emerald-400' },
-		error: { bg: 'bg-red-500/10 border-red-500/30', icon: AlertCircle, color: 'text-red-400' },
-		warning: { bg: 'bg-amber-500/10 border-amber-500/30', icon: AlertTriangle, color: 'text-amber-400' },
+		info: { stripe: 'var(--color-info)', icon: Info, color: 'text-blue-400' },
+		success: { stripe: 'var(--color-success)', icon: CheckCircle, color: 'text-emerald-400' },
+		error: { stripe: 'var(--color-error)', icon: AlertCircle, color: 'text-red-400' },
+		warning: { stripe: 'var(--color-warning)', icon: AlertTriangle, color: 'text-amber-400' },
 	};
 </script>
 
@@ -14,7 +14,8 @@
 	{#each $toasts as toast (toast.id)}
 		{@const s = styles[toast.type] || styles.info}
 		{@const Icon = s.icon}
-		<div class="flex items-center gap-2.5 px-4 py-2.5 rounded-lg border text-sm shadow-float glass-subtle animate-slide-in {s.bg}">
+		<div class="flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm shadow-float glass-subtle animate-slide-in"
+			style="border-left: 3px solid {s.stripe};">
 			<Icon class="w-4 h-4 shrink-0 {s.color}" />
 			<span class="text-[var(--text-body)]">{toast.message}</span>
 		</div>

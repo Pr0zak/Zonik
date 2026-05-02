@@ -398,7 +398,7 @@
 
 					<!-- Expanded track list -->
 					{#if expandedGroups.has(gi)}
-						<div class="divide-y divide-[var(--border-primary)]">
+						<div>
 							{#each group.tracks as track}
 								{@const qpct = qualityPercent(track.quality_score, maxQuality)}
 								<div class="px-4 py-3 transition-colors
