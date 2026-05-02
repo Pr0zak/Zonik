@@ -13,6 +13,7 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 	import ScheduleSection from '../../components/ui/ScheduleSection.svelte';
+	import DataTable from '../../components/ui/DataTable.svelte';
 	import PlaylistDiscoveryTab from './PlaylistDiscoveryTab.svelte';
 	import { Compass } from 'lucide-svelte';
 
@@ -1283,94 +1284,97 @@
 				</Card>
 			{:else if topTracks.length}
 				<Card padding="p-0">
-					<table class="w-full text-sm">
-						<thead>
-							<tr class=" text-left">
-								<th class="px-4 py-3 w-8 font-medium text-xs uppercase tracking-wider text-[var(--text-muted)]">#</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('name')}>
-									Track {sortIndicator('name')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('artist')}>
-									Artist {sortIndicator('artist')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('listeners')}>
-									Listeners {sortIndicator('listeners')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('status')}>
-									Status {sortIndicator('status')}
-								</th>
-							</tr>
-						</thead>
-						<tbody class="space-y-0.5">
-							{#each sortedTopTracks as t, i}
-								{@const status = getStatus(t)}
-								{@const art = getArtwork(t.artist, t.name)}
-								{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
-								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
-									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
-									<td class="px-4 py-3">
-										<div class="flex items-center gap-3">
-											<button onclick={() => playPreview(art?.preview, tKey)}
-												class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
-												{#if art?.image}
-													<img src={art.image} alt="" class="w-full h-full object-cover" />
-												{:else}
-													<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
-														<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-													</div>
-												{/if}
-												{#if art?.preview}
-													<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
-														{#if previewKey === tKey}
-															<Pause class="w-3.5 h-3.5 text-white" />
-														{:else}
-															<Play class="w-3.5 h-3.5 text-white" />
-														{/if}
-													</div>
-												{/if}
-											</button>
-											<div class="min-w-0">
-												<span class="font-medium text-[var(--text-primary)] truncate block">{t.name}</span>
-												<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
-											</div>
-										</div>
-									</td>
-									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
-									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
-									<td class="px-4 py-3 text-right">
-										{#if t.in_library}
-											<Badge variant="success">In Library</Badge>
-										{:else if status === 'completed'}
-											<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
-												<Check class="w-3.5 h-3.5" /> Downloaded
-											</span>
-										{:else if status === 'failed'}
-											<span class="inline-flex items-center gap-2">
-												<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
-													<X class="w-3.5 h-3.5" /> Failed
-												</span>
-												<button onclick={() => downloadTrack(t)}
-													class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
-											</span>
-										{:else if status === 'downloading' || status === 'queued'}
-											<span class="inline-flex items-center gap-1.5 text-blue-400 text-xs font-medium">
-												<Loader2 class="w-3.5 h-3.5 animate-spin" />
-												{status === 'queued' ? 'Queued' : 'Downloading'}
-											</span>
+					<DataTable
+						columns={[]}
+						rows={sortedTopTracks}
+						rowKey={(t) => `${t.artist}::${t.name}`.toLowerCase()}
+						rowClass={(t) => {
+							const s = getStatus(t);
+							if (s === 'completed') return 'bg-green-500/5';
+							if (s === 'failed') return 'bg-red-500/5';
+							return '';
+						}}>
+						{#snippet header()}
+							<th class="px-4 py-3 w-8 font-medium text-xs uppercase tracking-wider text-[var(--text-muted)]">#</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('name')}>
+								Track {sortIndicator('name')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('artist')}>
+								Artist {sortIndicator('artist')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('listeners')}>
+								Listeners {sortIndicator('listeners')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('status')}>
+								Status {sortIndicator('status')}
+							</th>
+						{/snippet}
+						{#snippet row(t, i)}
+							{@const status = getStatus(t)}
+							{@const art = getArtwork(t.artist, t.name)}
+							{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
+							<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs">{i + 1}</td>
+							<td class="px-4 py-3">
+								<div class="flex items-center gap-3">
+									<button onclick={() => playPreview(art?.preview, tKey)}
+										class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+										{#if art?.image}
+											<img src={art.image} alt="" class="w-full h-full object-cover" />
 										{:else}
-											<Button variant="success" size="sm" onclick={() => downloadTrack(t)}>
-												<Download class="w-3 h-3" />
-											</Button>
+											<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
+												<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+											</div>
 										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+										{#if art?.preview}
+											<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
+												{#if previewKey === tKey}
+													<Pause class="w-3.5 h-3.5 text-white" />
+												{:else}
+													<Play class="w-3.5 h-3.5 text-white" />
+												{/if}
+											</div>
+										{/if}
+									</button>
+									<div class="min-w-0">
+										<span class="font-medium text-[var(--text-primary)] truncate block">{t.name}</span>
+										<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
+									</div>
+								</div>
+							</td>
+							<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
+							<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
+							<td class="px-4 py-3 text-right">
+								{#if t.in_library}
+									<Badge variant="success">In Library</Badge>
+								{:else if status === 'completed'}
+									<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
+										<Check class="w-3.5 h-3.5" /> Downloaded
+									</span>
+								{:else if status === 'failed'}
+									<span class="inline-flex items-center gap-2">
+										<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
+											<X class="w-3.5 h-3.5" /> Failed
+										</span>
+										<button onclick={() => downloadTrack(t)}
+											class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
+									</span>
+								{:else if status === 'downloading' || status === 'queued'}
+									<span class="inline-flex items-center gap-1.5 text-blue-400 text-xs font-medium">
+										<Loader2 class="w-3.5 h-3.5 animate-spin" />
+										{status === 'queued' ? 'Queued' : 'Downloading'}
+									</span>
+								{:else}
+									<Button variant="success" size="sm" onclick={() => downloadTrack(t)}>
+										<Download class="w-3 h-3" />
+									</Button>
+								{/if}
+							</td>
+						{/snippet}
+					</DataTable>
 				</Card>
 			{:else}
 				<Card>
@@ -1393,96 +1397,99 @@
 				</Card>
 			{:else if similarTracks.length}
 				<Card padding="p-0">
-					<table class="w-full text-sm">
-						<thead>
-							<tr class=" text-left">
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('name')}>
-									Track {sortIndicator('name')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('artist')}>
-									Artist {sortIndicator('artist')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'source_artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('source_artist')}>
-									Similar to {sortIndicator('source_artist')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('status')}>
-									Status {sortIndicator('status')}
-								</th>
-							</tr>
-						</thead>
-						<tbody class="space-y-0.5">
-							{#each sortedSimilarTracks as t}
-								{@const status = getStatus(t)}
-								{@const art = getArtwork(t.artist, t.name)}
-								{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
-								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
-									<td class="px-4 py-3">
-										<div class="flex items-center gap-3">
-											<button onclick={() => playPreview(art?.preview, tKey)}
-												class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
-												{#if art?.image}
-													<img src={art.image} alt="" class="w-full h-full object-cover" />
-												{:else}
-													<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
-														<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-													</div>
-												{/if}
-												{#if art?.preview}
-													<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
-														{#if previewKey === tKey}
-															<Pause class="w-3.5 h-3.5 text-white" />
-														{:else}
-															<Play class="w-3.5 h-3.5 text-white" />
-														{/if}
-													</div>
-												{/if}
-											</button>
-											<div class="min-w-0">
-												<span class="font-medium text-[var(--text-primary)] truncate block">{t.name}</span>
-												<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
-											</div>
-										</div>
-									</td>
-									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
-									<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
-										{#if t.source_artist}
-											{t.source_artist} — {t.source_track}
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-right">
-										{#if t.in_library}
-											<Badge variant="success">In Library</Badge>
-										{:else if status === 'completed'}
-											<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
-												<Check class="w-3.5 h-3.5" /> Downloaded
-											</span>
-										{:else if status === 'failed'}
-											<span class="inline-flex items-center gap-2">
-												<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
-													<X class="w-3.5 h-3.5" /> Failed
-												</span>
-												<button onclick={() => downloadTrack(t)}
-													class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
-											</span>
-										{:else if status === 'downloading' || status === 'queued'}
-											<span class="inline-flex items-center gap-1.5 text-blue-400 text-xs font-medium">
-												<Loader2 class="w-3.5 h-3.5 animate-spin" />
-												{status === 'queued' ? 'Queued' : 'Downloading'}
-											</span>
+					<DataTable
+						columns={[]}
+						rows={sortedSimilarTracks}
+						rowKey={(t) => `${t.artist}::${t.name}`.toLowerCase()}
+						rowClass={(t) => {
+							const s = getStatus(t);
+							if (s === 'completed') return 'bg-green-500/5';
+							if (s === 'failed') return 'bg-red-500/5';
+							return '';
+						}}>
+						{#snippet header()}
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('name')}>
+								Track {sortIndicator('name')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('artist')}>
+								Artist {sortIndicator('artist')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'source_artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('source_artist')}>
+								Similar to {sortIndicator('source_artist')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('status')}>
+								Status {sortIndicator('status')}
+							</th>
+						{/snippet}
+						{#snippet row(t)}
+							{@const status = getStatus(t)}
+							{@const art = getArtwork(t.artist, t.name)}
+							{@const tKey = `${t.artist}::${t.name}`.toLowerCase()}
+							<td class="px-4 py-3">
+								<div class="flex items-center gap-3">
+									<button onclick={() => playPreview(art?.preview, tKey)}
+										class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+										{#if art?.image}
+											<img src={art.image} alt="" class="w-full h-full object-cover" />
 										{:else}
-											<Button variant="success" size="sm" onclick={() => downloadTrack(t)}>
-												<Download class="w-3 h-3" />
-											</Button>
+											<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
+												<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+											</div>
 										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+										{#if art?.preview}
+											<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
+												{#if previewKey === tKey}
+													<Pause class="w-3.5 h-3.5 text-white" />
+												{:else}
+													<Play class="w-3.5 h-3.5 text-white" />
+												{/if}
+											</div>
+										{/if}
+									</button>
+									<div class="min-w-0">
+										<span class="font-medium text-[var(--text-primary)] truncate block">{t.name}</span>
+										<span class="text-xs text-[var(--text-muted)] truncate block sm:hidden">{t.artist}</span>
+									</div>
+								</div>
+							</td>
+							<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
+							<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
+								{#if t.source_artist}
+									{t.source_artist} — {t.source_track}
+								{/if}
+							</td>
+							<td class="px-4 py-3 text-right">
+								{#if t.in_library}
+									<Badge variant="success">In Library</Badge>
+								{:else if status === 'completed'}
+									<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
+										<Check class="w-3.5 h-3.5" /> Downloaded
+									</span>
+								{:else if status === 'failed'}
+									<span class="inline-flex items-center gap-2">
+										<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
+											<X class="w-3.5 h-3.5" /> Failed
+										</span>
+										<button onclick={() => downloadTrack(t)}
+											class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
+									</span>
+								{:else if status === 'downloading' || status === 'queued'}
+									<span class="inline-flex items-center gap-1.5 text-blue-400 text-xs font-medium">
+										<Loader2 class="w-3.5 h-3.5 animate-spin" />
+										{status === 'queued' ? 'Queued' : 'Downloading'}
+									</span>
+								{:else}
+									<Button variant="success" size="sm" onclick={() => downloadTrack(t)}>
+										<Download class="w-3 h-3" />
+									</Button>
+								{/if}
+							</td>
+						{/snippet}
+					</DataTable>
 				</Card>
 			{:else}
 				<Card>
@@ -1505,61 +1512,64 @@
 				</Card>
 			{:else if sortedSearchResults.length}
 				<Card padding="p-0">
-					<table class="w-full text-sm">
-						<thead>
-							<tr class=" text-left">
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('name')}>
-									Track {sortIndicator('name')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('artist')}>
-									Artist {sortIndicator('artist')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-									onclick={() => toggleSort('listeners')}>
-									Listeners {sortIndicator('listeners')}
-								</th>
-								<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right text-[var(--text-muted)]">Status</th>
-							</tr>
-						</thead>
-						<tbody class="space-y-0.5">
-							{#each sortedSearchResults as t}
-								{@const status = getStatus(t)}
-								<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
-									<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
-									<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
-									<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
-									<td class="px-4 py-3 text-right">
-										{#if t.in_library}
-											<Badge variant="success">In Library</Badge>
-										{:else if status === 'completed'}
-											<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
-												<Check class="w-3.5 h-3.5" /> Downloaded
-											</span>
-										{:else if status === 'failed'}
-											<span class="inline-flex items-center gap-2">
-												<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
-													<X class="w-3.5 h-3.5" /> Failed
-												</span>
-												<button onclick={() => downloadTrack(t)}
-													class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
-											</span>
-										{:else if status === 'downloading' || status === 'queued'}
-											<span class="inline-flex items-center gap-1 text-[var(--color-accent)] text-xs">
-												<Loader2 class="w-3.5 h-3.5 animate-spin" />
-											</span>
-										{:else}
-											<button onclick={() => downloadTrack(t)}
-												class="inline-flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--color-discover)] transition-colors">
-												<Download class="w-3.5 h-3.5" /> Download
-											</button>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+					<DataTable
+						columns={[]}
+						rows={sortedSearchResults}
+						rowKey={(t, i) => `${t.artist}::${t.name}::${i}`.toLowerCase()}
+						rowClass={(t) => {
+							const s = getStatus(t);
+							if (s === 'completed') return 'bg-green-500/5';
+							if (s === 'failed') return 'bg-red-500/5';
+							return '';
+						}}>
+						{#snippet header()}
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('name')}>
+								Track {sortIndicator('name')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('artist')}>
+								Artist {sortIndicator('artist')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('listeners')}>
+								Listeners {sortIndicator('listeners')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right text-[var(--text-muted)]">Status</th>
+						{/snippet}
+						{#snippet row(t)}
+							{@const status = getStatus(t)}
+							<td class="px-4 py-3 font-medium text-[var(--text-primary)]">{t.name}</td>
+							<td class="px-4 py-3 text-[var(--text-secondary)] hidden sm:table-cell">{t.artist}</td>
+							<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{t.listeners?.toLocaleString() || ''}</td>
+							<td class="px-4 py-3 text-right">
+								{#if t.in_library}
+									<Badge variant="success">In Library</Badge>
+								{:else if status === 'completed'}
+									<span class="inline-flex items-center gap-1 text-green-400 text-xs font-medium">
+										<Check class="w-3.5 h-3.5" /> Downloaded
+									</span>
+								{:else if status === 'failed'}
+									<span class="inline-flex items-center gap-2">
+										<span class="text-red-400 text-xs font-medium inline-flex items-center gap-1">
+											<X class="w-3.5 h-3.5" /> Failed
+										</span>
+										<button onclick={() => downloadTrack(t)}
+											class="text-[var(--text-muted)] hover:text-white text-xs underline">retry</button>
+									</span>
+								{:else if status === 'downloading' || status === 'queued'}
+									<span class="inline-flex items-center gap-1 text-[var(--color-accent)] text-xs">
+										<Loader2 class="w-3.5 h-3.5 animate-spin" />
+									</span>
+								{:else}
+									<button onclick={() => downloadTrack(t)}
+										class="inline-flex items-center gap-1 text-xs text-[var(--text-muted)] hover:text-[var(--color-discover)] transition-colors">
+										<Download class="w-3.5 h-3.5" /> Download
+									</button>
+								{/if}
+							</td>
+						{/snippet}
+					</DataTable>
 				</Card>
 			{:else if searchDone}
 				<Card>
@@ -1664,100 +1674,102 @@
 				</Card>
 			{:else if remixes.length}
 				<Card padding="p-0">
-					<div class="overflow-x-auto">
-						<table class="w-full text-sm">
-							<thead>
-								<tr class="">
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-										onclick={() => toggleSort('name')}>
-										Track {sortIndicator('name')}
-									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-										onclick={() => toggleSort('artist')}>
-										Artist {sortIndicator('artist')}
-									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'version_type' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-										onclick={() => toggleSort('version_type')}>
-										Type {sortIndicator('version_type')}
-									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'source_artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-										onclick={() => toggleSort('source_artist')}>
-										Source {sortIndicator('source_artist')}
-									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-										onclick={() => toggleSort('listeners')}>
-										Listeners {sortIndicator('listeners')}
-									</th>
-									<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
-										onclick={() => toggleSort('status')}>
-										Status {sortIndicator('status')}
-									</th>
-								</tr>
-							</thead>
-							<tbody class="space-y-0.5">
-								{#each sortedRemixes as r}
-									{@const key = `${r.artist}::${r.name}`.toLowerCase()}
-									{@const status = trackStatus[key]}
-									{@const art = getArtwork(r.artist, r.name)}
-									<tr class="transition-colors {status === 'completed' ? 'bg-green-500/5' : status === 'failed' ? 'bg-red-500/5' : 'hover:bg-[var(--surface-container-high)]'}">
-										<td class="px-4 py-3">
-											<div class="flex items-center gap-3">
-												<button onclick={() => playPreview(art?.preview, key)}
-													class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
-													{#if art?.image}
-														<img src={art.image} alt="" class="w-full h-full object-cover" />
-													{:else}
-														<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
-															<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-														</div>
-													{/if}
-													{#if art?.preview}
-														<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === key ? 'opacity-100' : ''}">
-															{#if previewKey === key}
-																<Pause class="w-3.5 h-3.5 text-white" />
-															{:else}
-																<Play class="w-3.5 h-3.5 text-white" />
-															{/if}
-														</div>
-													{/if}
-												</button>
-												<span class="font-medium text-[var(--text-primary)]">{r.name}</span>
+					<DataTable
+						columns={[]}
+						rows={sortedRemixes}
+						rowKey={(r) => `${r.artist}::${r.name}`.toLowerCase()}
+						rowClass={(r) => {
+							const k = `${r.artist}::${r.name}`.toLowerCase();
+							const s = trackStatus[k];
+							if (s === 'completed') return 'bg-green-500/5';
+							if (s === 'failed') return 'bg-red-500/5';
+							return '';
+						}}>
+						{#snippet header()}
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'name' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('name')}>
+								Track {sortIndicator('name')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider whitespace-nowrap cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors hidden sm:table-cell {sortColumn === 'artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('artist')}>
+								Artist {sortIndicator('artist')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'version_type' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('version_type')}>
+								Type {sortIndicator('version_type')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'source_artist' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('source_artist')}>
+								Source {sortIndicator('source_artist')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'listeners' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('listeners')}>
+								Listeners {sortIndicator('listeners')}
+							</th>
+							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider text-right cursor-pointer select-none hover:text-[var(--text-secondary)] transition-colors {sortColumn === 'status' ? 'text-[var(--text-primary)]' : 'text-[var(--text-muted)]'}"
+								onclick={() => toggleSort('status')}>
+								Status {sortIndicator('status')}
+							</th>
+						{/snippet}
+						{#snippet row(r)}
+							{@const key = `${r.artist}::${r.name}`.toLowerCase()}
+							{@const status = trackStatus[key]}
+							{@const art = getArtwork(r.artist, r.name)}
+							<td class="px-4 py-3">
+								<div class="flex items-center gap-3">
+									<button onclick={() => playPreview(art?.preview, key)}
+										class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+										{#if art?.image}
+											<img src={art.image} alt="" class="w-full h-full object-cover" />
+										{:else}
+											<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
+												<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
 											</div>
-										</td>
-										<td class="px-4 py-3 text-[var(--text-secondary)]">{r.artist}</td>
-										<td class="px-4 py-3 hidden md:table-cell">
-											{#if r.version_type}
-												<span class="px-2 py-0.5 rounded-full text-xs font-medium {versionTypeColors[r.version_type] || 'bg-gray-500/20 text-gray-400'}">{r.version_type}</span>
-											{/if}
-										</td>
-										<td class="px-4 py-3 hidden sm:table-cell">
-											{#if r.source_track}
-												<span class="text-xs text-[var(--text-muted)]">{r.source_artist} — {r.source_track}</span>
-											{/if}
-										</td>
-										<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{r.listeners ? Number(r.listeners).toLocaleString() : ''}</td>
-										<td class="px-4 py-3 text-right">
-											{#if r.in_library || status === 'completed'}
-												<Badge variant="success">In Library</Badge>
-											{:else if status === 'downloading' || status === 'queued'}
-												<Loader2 class="w-4 h-4 text-[var(--color-info)] animate-spin inline" />
-											{:else if status === 'failed'}
-												<button onclick={() => downloadTrack({artist: r.artist, name: r.name})}
-													class="p-1.5 text-red-400 hover:text-red-300 transition-colors" title="Retry download">
-													<X class="w-4 h-4" />
-												</button>
-											{:else}
-												<button onclick={() => downloadTrack({artist: r.artist, name: r.name})}
-													class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Download">
-													<Download class="w-4 h-4" />
-												</button>
-											{/if}
-										</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
+										{/if}
+										{#if art?.preview}
+											<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === key ? 'opacity-100' : ''}">
+												{#if previewKey === key}
+													<Pause class="w-3.5 h-3.5 text-white" />
+												{:else}
+													<Play class="w-3.5 h-3.5 text-white" />
+												{/if}
+											</div>
+										{/if}
+									</button>
+									<span class="font-medium text-[var(--text-primary)]">{r.name}</span>
+								</div>
+							</td>
+							<td class="px-4 py-3 text-[var(--text-secondary)]">{r.artist}</td>
+							<td class="px-4 py-3 hidden md:table-cell">
+								{#if r.version_type}
+									<span class="px-2 py-0.5 rounded-full text-xs font-medium {versionTypeColors[r.version_type] || 'bg-gray-500/20 text-gray-400'}">{r.version_type}</span>
+								{/if}
+							</td>
+							<td class="px-4 py-3 hidden sm:table-cell">
+								{#if r.source_track}
+									<span class="text-xs text-[var(--text-muted)]">{r.source_artist} — {r.source_track}</span>
+								{/if}
+							</td>
+							<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">{r.listeners ? Number(r.listeners).toLocaleString() : ''}</td>
+							<td class="px-4 py-3 text-right">
+								{#if r.in_library || status === 'completed'}
+									<Badge variant="success">In Library</Badge>
+								{:else if status === 'downloading' || status === 'queued'}
+									<Loader2 class="w-4 h-4 text-[var(--color-info)] animate-spin inline" />
+								{:else if status === 'failed'}
+									<button onclick={() => downloadTrack({artist: r.artist, name: r.name})}
+										class="p-1.5 text-red-400 hover:text-red-300 transition-colors" title="Retry download">
+										<X class="w-4 h-4" />
+									</button>
+								{:else}
+									<button onclick={() => downloadTrack({artist: r.artist, name: r.name})}
+										class="p-1.5 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Download">
+										<Download class="w-4 h-4" />
+									</button>
+								{/if}
+							</td>
+						{/snippet}
+					</DataTable>
 				</Card>
 			{:else}
 				<Card>
