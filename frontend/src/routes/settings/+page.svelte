@@ -10,6 +10,7 @@
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+	import Toggle from '../../components/ui/Toggle.svelte';
 
 	let stats = $state(null);
 	let testResults = $state({});
@@ -449,11 +450,11 @@
 					<span class="text-sm text-[var(--text-secondary)]">Share Library</span>
 					<p class="text-xs text-[var(--text-disabled)]">Share your music library with Soulseek peers so others can browse and download from you</p>
 				</div>
-				<button type="button" onclick={() => { services.slsk_share_library = !services.slsk_share_library; markDirty(); }}
-					class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.slsk_share_library ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
-					role="switch" aria-checked={services.slsk_share_library}>
-					<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.slsk_share_library ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-				</button>
+				<Toggle
+					checked={services.slsk_share_library}
+					onchange={(v) => { services.slsk_share_library = v; markDirty(); }}
+					color="#10b981"
+				/>
 			</div>
 		</Card>
 
@@ -621,11 +622,11 @@
 						<HardDrive class="w-4 h-4" style="color: var(--color-discover)" />
 					</div>
 					<h2 class="text-base font-semibold text-[var(--text-primary)]">Lidarr</h2>
-					<button type="button" onclick={() => { services.lidarr_enabled = !services.lidarr_enabled; markDirty(); }}
-						class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 {services.lidarr_enabled ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
-						role="switch" aria-checked={services.lidarr_enabled}>
-						<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services.lidarr_enabled ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-					</button>
+					<Toggle
+						checked={services.lidarr_enabled}
+						onchange={(v) => { services.lidarr_enabled = v; markDirty(); }}
+						color="#10b981"
+					/>
 					{#if testDotColor('lidarr')}
 						<span class="w-2 h-2 rounded-full {testDotColor('lidarr')}"></span>
 					{/if}
@@ -909,11 +910,13 @@
 								<span class="text-sm text-[var(--text-secondary)]">{toggle.label}</span>
 								<p class="text-xs text-[var(--text-disabled)] truncate">{toggle.desc}</p>
 							</div>
-							<button type="button" onclick={() => { services[toggle.key] = !services[toggle.key]; markDirty(); }}
-								class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors duration-200 ml-3 {services[toggle.key] ? 'bg-emerald-500' : 'bg-[var(--border-interactive)]'}"
-								role="switch" aria-checked={services[toggle.key]}>
-								<span class="pointer-events-none inline-block h-4 w-4 translate-y-0.5 rounded-full bg-white shadow transition-transform duration-200 {services[toggle.key] ? 'translate-x-4' : 'translate-x-0.5'}"></span>
-							</button>
+							<div class="ml-3">
+								<Toggle
+									checked={services[toggle.key]}
+									onchange={(v) => { services[toggle.key] = v; markDirty(); }}
+									color="#10b981"
+								/>
+							</div>
 						</div>
 					{/each}
 				</div>
