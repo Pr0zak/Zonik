@@ -14,6 +14,7 @@
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
 	import Skeleton from '../components/ui/Skeleton.svelte';
+	import { LayoutDashboard } from 'lucide-svelte';
 
 	let stats = $state(null);
 	let health = $state(null);
@@ -118,13 +119,11 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Dashboard" color="var(--color-dashboard)" />
+	<PageHeader title="Dashboard" icon={LayoutDashboard} color="var(--color-dashboard)" />
 
 	{#if loading}
 		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-			{#each Array(4) as _}
-				<Skeleton class="h-24 rounded-lg" />
-			{/each}
+			<Skeleton variant="card" count={4} />
 		</div>
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
 			<Skeleton class="h-48 rounded-lg" />
