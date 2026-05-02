@@ -18,6 +18,7 @@ from backend.database import get_db
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.favorite import Favorite
+from backend.models.playlist import Playlist, PlaylistTrack
 from backend.services import lastfm
 from backend.services.soulseek import normalize_text
 
@@ -198,6 +199,72 @@ async def new_releases(
         "missing": sum(1 for t in tracks if not t.get("in_library")),
         "fetched_at": fetched_at,
         "cached": False,
+    }
+
+
+@router.get("/weekly-radar")
+async def weekly_radar(db: AsyncSession = Depends(get_db)):
+    """Return tracks from the auto-generated 'Weekly Discover' playlist.
+
+    The scheduled task `playlist_weekly_discover` populates this playlist with
+    a random selection of in-library tracks. All tracks are in_library by
+    definition; the field is kept for response-shape consistency.
+    """
+    playlist = (await db.execute(
+        select(Playlist)
+        .options(
+            selectinload(Playlist.entries)
+            .selectinload(PlaylistTrack.track)
+            .selectinload(Track.artist),
+            selectinload(Playlist.entries)
+            .selectinload(PlaylistTrack.track)
+            .selectinload(Track.album),
+        )
+        .where(Playlist.name == "Weekly Discover")
+    )).scalar_one_or_none()
+
+    if not playlist:
+        return {
+            "tracks": [],
+            "total": 0,
+            "in_library": 0,
+            "missing": 0,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "last_refreshed": None,
+            "message": "Weekly Discover hasn't run yet — schedule it on the Schedule page",
+        }
+
+    tracks: list[dict] = []
+    for entry in playlist.entries:
+        t = entry.track
+        if not t:
+            continue
+        artist_name = t.artist.name if t.artist else ""
+        album_name = t.album.title if t.album else ""
+        tracks.append({
+            "track": t.title,
+            "name": t.title,
+            "artist": artist_name,
+            "album": album_name,
+            "year": t.year,
+            "cover_art": t.album_id or t.id,
+            "track_id": t.id,
+            "in_library": True,
+            "duration_seconds": t.duration_seconds,
+        })
+
+    last_refreshed = getattr(playlist, "updated_at", None) or getattr(playlist, "created_at", None)
+    last_refreshed_iso = last_refreshed.isoformat() if last_refreshed else None
+
+    return {
+        "tracks": tracks,
+        "total": len(tracks),
+        "in_library": len(tracks),
+        "missing": 0,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "last_refreshed": last_refreshed_iso,
+        "playlist_id": playlist.id,
+        "playlist_name": playlist.name,
     }
 
 
