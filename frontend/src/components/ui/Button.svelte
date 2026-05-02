@@ -21,6 +21,8 @@
 		ghost: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] rounded-md',
 		danger: 'text-red-400 hover:bg-red-500/10 ghost-border hover:border-red-500/30 rounded-md',
 		success: 'bg-emerald-600 hover:bg-emerald-700 text-white rounded-md',
+		warning: 'bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 rounded-md',
+		default: 'bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] text-[var(--text-body)] rounded-md',
 		icon: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] rounded-md',
 	};
 
