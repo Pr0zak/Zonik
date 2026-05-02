@@ -393,7 +393,7 @@
 </script>
 
 <div class="max-w-4xl">
-	<PageHeader title="Settings" color="var(--color-settings)" />
+	<PageHeader title="Settings" icon={Settings} color="var(--color-settings)" />
 
 	<div class="space-y-6">
 		<!-- 1. Library & Storage -->
