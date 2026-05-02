@@ -36,9 +36,40 @@ async def get_album_list2(request: Request, db: AsyncSession = Depends(get_db)):
     elif list_type == "newest":
         query = query.order_by(Album.created_at.desc())
     elif list_type == "recent":
-        query = query.order_by(Album.created_at.desc())
+        # "recent" = recently played (per Subsonic spec). Order by max(last_played_at)
+        # of any track in the album. Albums with no plays fall through to created_at.
+        last_played_subq = (
+            select(
+                Track.album_id.label("album_id"),
+                func.max(Track.last_played_at).label("last_played"),
+            )
+            .where(Track.album_id.isnot(None))
+            .group_by(Track.album_id)
+            .subquery()
+        )
+        query = (
+            query.join(last_played_subq, Album.id == last_played_subq.c.album_id)
+            .where(last_played_subq.c.last_played.isnot(None))
+            .order_by(last_played_subq.c.last_played.desc())
+        )
     elif list_type == "frequent":
-        query = query.order_by(Album.created_at.desc())  # TODO: track play counts
+        # "frequent" = most played. Aggregate play_count across each album's tracks
+        # so albums with many high-play tracks float to the top. Albums with zero
+        # total plays are excluded (spec: "albums sorted by play count").
+        play_count_subq = (
+            select(
+                Track.album_id.label("album_id"),
+                func.coalesce(func.sum(Track.play_count), 0).label("total_plays"),
+            )
+            .where(Track.album_id.isnot(None))
+            .group_by(Track.album_id)
+            .subquery()
+        )
+        query = (
+            query.join(play_count_subq, Album.id == play_count_subq.c.album_id)
+            .where(play_count_subq.c.total_plays > 0)
+            .order_by(play_count_subq.c.total_plays.desc())
+        )
     elif list_type == "random":
         query = query.order_by(func.random())
     elif list_type == "byYear":
