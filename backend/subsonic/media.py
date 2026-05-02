@@ -190,17 +190,36 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
     effective_bitrate = target_bitrate or 192
     content_type = TRANSCODE_CONTENT_TYPES.get(target_format, "audio/mpeg")
 
+    def _serve_transcode_cache(cache_path: Path) -> StreamingResponse:
+        """Serve a cached transcode file without range support.
+
+        Uses StreamingResponse instead of FileResponse to avoid Starlette's
+        built-in range handling, which causes 416 errors when clients send
+        Range headers based on stale estimateContentLength values.
+        """
+        file_size = cache_path.stat().st_size
+
+        async def iterate_file():
+            with open(cache_path, "rb") as f:
+                while chunk := f.read(65536):
+                    yield chunk
+
+        return StreamingResponse(
+            iterate_file(),
+            media_type=content_type,
+            headers={
+                "Cache-Control": "private, max-age=86400",
+                "Accept-Ranges": "none",
+                "Content-Length": str(file_size),
+                "Content-Disposition": f'inline; filename="{file_path.stem}.{target_format}"',
+            },
+        )
+
     # Check transcode cache (skip for timeOffset seeks)
     if time_offset == 0:
         cache_path = _transcode_cache_path(track.id, target_format, effective_bitrate)
         if _transcode_cache_hit(cache_path, file_path):
-            return FileResponse(
-                path=str(cache_path),
-                media_type=content_type,
-                filename=f"{file_path.stem}.{target_format}",
-                content_disposition_type="inline",
-                headers={"Cache-Control": "private, max-age=86400"},
-            )
+            return _serve_transcode_cache(cache_path)
 
     # Build estimated content-length for HEAD or estimateContentLength
     estimated_bytes = None
@@ -284,13 +303,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
         # Evict old cache entries in background
         _evict_transcode_cache()
 
-        return FileResponse(
-            path=str(cache_path),
-            media_type=content_type,
-            filename=f"{file_path.stem}.{target_format}",
-            content_disposition_type="inline",
-            headers={"Cache-Control": "private, max-age=86400"},
-        )
+        return _serve_transcode_cache(cache_path)
 
     # timeOffset > 0: stream directly (can't cache partial seeks)
     stream_cmd = cmd + ["-"]
