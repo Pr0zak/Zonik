@@ -773,11 +773,11 @@
 				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
 			{:else}
 				<div class="space-y-2">
-					{#if queuedJobs.length > 0 && jobStatusFilter === 'all'}
+					{#if (jobStatusCounts.queued > 0 || queuedJobs.length > 0) && jobStatusFilter === 'all'}
 						<button onclick={() => queueExpanded = !queueExpanded}
 							class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors">
 							<Clock class="w-3.5 h-3.5 flex-shrink-0" />
-							<span class="font-medium">{queuedJobs.length} queued</span>
+							<span class="font-medium">{jobStatusCounts.queued || queuedJobs.length} queued</span>
 							<span class="text-amber-400/60">waiting for download slot</span>
 							<span class="ml-auto flex-shrink-0">
 								{#if queueExpanded}
