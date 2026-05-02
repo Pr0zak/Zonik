@@ -351,6 +351,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                 stderr=asyncio.subprocess.PIPE,
             )
             partial_file = open(partial_path, "wb")
+            completed = False
             try:
                 while True:
                     chunk = await process.stdout.read(65536)
@@ -359,22 +360,30 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                     partial_file.write(chunk)
                     yield chunk
                 await process.wait()
+                if process.returncode == 0:
+                    completed = True
             finally:
+                # On client disconnect we land here mid-yield with the generator
+                # being closed. Cancel ffmpeg and discard the .partial: cheaper
+                # to re-transcode on the next request than risk publishing a
+                # truncated file. Same path covers ffmpeg failure / empty output.
                 partial_file.close()
                 if process.returncode is None:
                     process.kill()
                     await process.wait()
-                if process.returncode == 0 and partial_path.exists() and partial_path.stat().st_size > 0:
+                if completed and partial_path.exists() and partial_path.stat().st_size > 0:
                     # Atomic publish: rename .partial → final cache path so
                     # concurrent readers never observe a half-written file.
                     partial_path.replace(cache_path)
                     _evict_transcode_cache()
-                if process.returncode and process.returncode != 0:
-                    stderr_out = await process.stderr.read()
-                    log.warning(
-                        f"ffmpeg exited {process.returncode} for {file_path.name}: "
-                        f"{stderr_out.decode(errors='replace')[-500:]}"
-                    )
+                else:
+                    partial_path.unlink(missing_ok=True)
+                    if process.returncode and process.returncode != 0:
+                        stderr_out = await process.stderr.read()
+                        log.warning(
+                            f"ffmpeg exited {process.returncode} for {file_path.name}: "
+                            f"{stderr_out.decode(errors='replace')[-500:]}"
+                        )
 
     return StreamingResponse(generate(), media_type=content_type, headers=response_headers)
 
