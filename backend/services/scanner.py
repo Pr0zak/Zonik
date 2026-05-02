@@ -804,14 +804,19 @@ async def import_downloaded_file(
 
 
 async def _mark_upgrade_completed(db, track_id: str, fmt: str, bitrate: int | None, file_size: int | None):
-    """Mark a TrackUpgrade as completed after successful upgrade import."""
+    """Mark a TrackUpgrade as completed after successful upgrade import.
+
+    Matches `pending`, `queued`, or `downloading` rows — auto-downloads triggered
+    by the scheduled upgrade_scan task leave rows at `pending` since they don't
+    go through the manual /upgrades/start flow.
+    """
     try:
         from backend.models.upgrade import TrackUpgrade
         from sqlalchemy import update
         result = await db.execute(
             update(TrackUpgrade)
-            .where(TrackUpgrade.track_id == track_id, TrackUpgrade.status.in_(["queued", "downloading"]))
-            .values(status="completed", upgraded_format=fmt, upgraded_bitrate=bitrate, upgraded_file_size=file_size, completed_at=datetime.utcnow())
+            .where(TrackUpgrade.track_id == track_id, TrackUpgrade.status.in_(["pending", "queued", "downloading"]))
+            .values(status="completed", upgraded_format=fmt, upgraded_bitrate=bitrate, upgraded_file_size=file_size, completed_at=datetime.utcnow(), updated_at=datetime.utcnow())
         )
         if result.rowcount:
             await db.commit()
@@ -823,14 +828,17 @@ async def _mark_upgrade_completed(db, track_id: str, fmt: str, bitrate: int | No
 
 
 async def _mark_upgrade_failed(db, track_id: str, message: str):
-    """Mark a TrackUpgrade as failed when download is not an upgrade."""
+    """Mark a TrackUpgrade as failed when download is not an upgrade.
+
+    Matches `pending`, `queued`, or `downloading` rows (see _mark_upgrade_completed).
+    """
     try:
         from backend.models.upgrade import TrackUpgrade
         from sqlalchemy import update
         result = await db.execute(
             update(TrackUpgrade)
-            .where(TrackUpgrade.track_id == track_id, TrackUpgrade.status.in_(["queued", "downloading"]))
-            .values(status="failed", error_message=message)
+            .where(TrackUpgrade.track_id == track_id, TrackUpgrade.status.in_(["pending", "queued", "downloading"]))
+            .values(status="failed", error_message=message, updated_at=datetime.utcnow())
         )
         if result.rowcount:
             await db.commit()

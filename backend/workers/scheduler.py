@@ -34,6 +34,7 @@ _TASK_LABELS = {
     "upgrade_scan": "Quality Upgrade Scan",
     "remix_discovery": "Remix Discovery",
     "download_cleanup": "Download Cleanup",
+    "job_cleanup": "Job History Cleanup",
 }
 
 
@@ -176,6 +177,10 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             result = cleanup_download_dir(max_age_hours=max_age)
             job.result = json.dumps(result)
 
+        elif task_name == "job_cleanup":
+            result = await _run_job_cleanup(db, job, config=task_config)
+            job.result = json.dumps(result)
+
         job.status = "completed"
     except Exception as e:
         log.error(f"Scheduled task {task_name} failed: {e}")
@@ -283,9 +288,18 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
 
 async def _auto_download_missing(missing: list[dict], source: str):
     """Trigger individual download jobs for each missing track via enqueue_download.
-    Uses enqueue_download which has short-lived DB sessions to avoid pool exhaustion."""
+    Uses enqueue_download which has short-lived DB sessions to avoid pool exhaustion.
+
+    For source="upgrade_scan", entries may carry `upgrade_id` and `track_id`. We
+    attach the download job_id to the TrackUpgrade row, bump `attempts`, and on
+    job failure mark the row as `failed` so it doesn't sit at `pending` forever.
+    Successful uploads are marked `completed` by the scanner during import.
+    """
     import asyncio
+    import uuid as _uuid
+    from sqlalchemy import update as _update
     from backend.api.download import enqueue_download
+    from backend.models.upgrade import TrackUpgrade
 
     total = len(missing)
     log.info(f"Auto-downloading {total} missing tracks from {source}")
@@ -300,11 +314,73 @@ async def _auto_download_missing(missing: list[dict], source: str):
         track = t.get("track", "")
         if not artist or not track:
             return
+
+        upgrade_id = t.get("upgrade_id") if source == "upgrade_scan" else None
+        job_id = str(_uuid.uuid4())
+
+        # Pre-link upgrade row to this job + bump attempts so the pipeline is observable.
+        if upgrade_id:
+            try:
+                async with async_session() as link_db:
+                    await link_db.execute(
+                        _update(TrackUpgrade)
+                        .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "pending")
+                        .values(
+                            status="downloading",
+                            job_id=job_id,
+                            attempts=TrackUpgrade.attempts + 1,
+                            updated_at=datetime.utcnow(),
+                        )
+                    )
+                    await link_db.commit()
+            except Exception as e:
+                log.debug(f"[auto-download] Could not pre-link upgrade {upgrade_id}: {e}")
+
         async with sem:
             try:
-                await enqueue_download(artist, track, source=dl_source)
+                returned_job_id = await enqueue_download(artist, track, job_id=job_id, source=dl_source)
             except Exception as e:
                 log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
+                returned_job_id = job_id
+
+        # If this was an upgrade row that's STILL `downloading`, the scanner never
+        # called _mark_upgrade_completed (download failed or imported file wasn't
+        # an upgrade). Mark it failed with the job's error message.
+        if upgrade_id:
+            try:
+                async with async_session() as final_db:
+                    row = (await final_db.execute(
+                        select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
+                    )).scalar_one_or_none()
+                    if not row or row.status != "downloading":
+                        return
+                    err = "Download failed"
+                    job_row = (await final_db.execute(
+                        select(Job).where(Job.id == returned_job_id)
+                    )).scalar_one_or_none()
+                    if job_row and job_row.result:
+                        try:
+                            err_payload = json.loads(job_row.result)
+                            err = (
+                                err_payload.get("last_error")
+                                or err_payload.get("error")
+                                or err_payload.get("message")
+                                or err
+                            )
+                        except (ValueError, TypeError):
+                            err = str(job_row.result)[:500]
+                    await final_db.execute(
+                        _update(TrackUpgrade)
+                        .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "downloading")
+                        .values(
+                            status="failed",
+                            error_message=str(err)[:500],
+                            updated_at=datetime.utcnow(),
+                        )
+                    )
+                    await final_db.commit()
+            except Exception as e:
+                log.debug(f"[auto-download] Could not finalize upgrade {upgrade_id}: {e}")
 
     tasks = [asyncio.create_task(download_one(t)) for t in missing]
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -558,19 +634,25 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
     )
     skip_ids = {r[0] for r in existing_upgrades.all()}
 
+    # Lookup any existing pending upgrade rows so we can pass their IDs through
+    # to the auto-download path (used to update status/job_id/attempts on failure).
+    existing_pending_rows = (await db.execute(
+        select(TrackUpgrade.track_id, TrackUpgrade.id).where(
+            TrackUpgrade.track_id.in_([t.id for t in tracks]),
+            TrackUpgrade.status == "pending",
+        )
+    )).all()
+    pending_by_track = {tid: uid for tid, uid in existing_pending_rows}
+
     upgrade_list = []
     for t in tracks:
         artist_name = t.artist.name if t.artist else "Unknown"
-        upgrade_list.append({
-            "artist": artist_name,
-            "track": t.title,
-            "status": "missing",  # Expected by _auto_download_missing
-            "format": t.format,
-            "bitrate": t.bitrate,
-        })
-        if t.id not in skip_ids:
+        if t.id in skip_ids and t.id in pending_by_track:
+            upgrade_id = pending_by_track[t.id]
+        elif t.id not in skip_ids:
+            upgrade_id = str(uuid.uuid4())
             db.add(TrackUpgrade(
-                id=str(uuid.uuid4()),
+                id=upgrade_id,
                 track_id=t.id,
                 track_title=t.title,
                 track_artist=t.artist.name if t.artist else None,
@@ -581,6 +663,26 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
                 status="pending",
                 created_at=datetime.utcnow(),
             ))
+        else:
+            # In skip_ids but no pending row (queued/downloading) — skip auto-download
+            continue
+        upgrade_list.append({
+            "artist": artist_name,
+            "track": t.title,
+            "status": "missing",  # Expected by _auto_download_missing
+            "format": t.format,
+            "bitrate": t.bitrate,
+            "upgrade_id": upgrade_id,
+            "track_id": t.id,
+        })
+
+    # Commit the new TrackUpgrade rows now — the run_task wrapper rolls back
+    # the main session at the end, so without this the rows would be discarded
+    # and the auto-download phase would have nothing to link to. (This was a
+    # silent pre-existing bug: the scheduler appeared to scan but produced no
+    # `track_upgrades` rows from its scheduled runs — only manual /scan calls
+    # via the API persisted any.)
+    await db.commit()
 
     job.total = len(tracks)
     job.progress = 0
@@ -677,3 +779,61 @@ async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, conf
     })
 
     log.info(f"Remix discovery ({source}): scanned {len(source_tracks)} tracks, found {len(all_remixes)} remixes")
+
+
+async def _run_job_cleanup(db: AsyncSession, job: Job, config: dict | None = None) -> dict:
+    """Prune old rows from the jobs table.
+
+    Defaults: drop completed/failed/cancelled jobs older than 30 days, and any
+    job (including stuck running/pending) older than 90 days. Both thresholds
+    are overridable via task config (`terminal_age_days`, `hard_age_days`).
+    """
+    from datetime import timedelta
+    from sqlalchemy import delete as _delete, or_, and_
+
+    cfg = config or {}
+    terminal_days = int(cfg.get("terminal_age_days", 30))
+    hard_days = int(cfg.get("hard_age_days", 90))
+
+    now = datetime.utcnow()
+    terminal_cutoff = now - timedelta(days=terminal_days)
+    hard_cutoff = now - timedelta(days=hard_days)
+
+    # 1) Delete terminal-status jobs older than terminal_cutoff. Compare against
+    #    finished_at when present, otherwise fall back to started_at.
+    terminal_result = await db.execute(
+        _delete(Job).where(
+            Job.status.in_(("completed", "failed", "cancelled")),
+            or_(
+                and_(Job.finished_at.isnot(None), Job.finished_at < terminal_cutoff),
+                and_(Job.finished_at.is_(None), Job.started_at < terminal_cutoff),
+            ),
+        )
+    )
+    terminal_deleted = terminal_result.rowcount or 0
+
+    # 2) Hard cap — delete anything (including stuck running/pending) older than
+    #    hard_cutoff so the table can't grow unbounded.
+    hard_result = await db.execute(
+        _delete(Job).where(
+            or_(
+                and_(Job.finished_at.isnot(None), Job.finished_at < hard_cutoff),
+                and_(Job.finished_at.is_(None), Job.started_at < hard_cutoff),
+            )
+        )
+    )
+    hard_deleted = hard_result.rowcount or 0
+    await db.commit()
+
+    job.total = 1
+    job.progress = 1
+    log.info(
+        f"[job_cleanup] Deleted {terminal_deleted} terminal jobs "
+        f"older than {terminal_days}d and {hard_deleted} jobs older than {hard_days}d"
+    )
+    return {
+        "terminal_deleted": terminal_deleted,
+        "hard_deleted": hard_deleted,
+        "terminal_age_days": terminal_days,
+        "hard_age_days": hard_days,
+    }
