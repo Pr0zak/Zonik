@@ -84,6 +84,23 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
     return {"items": items, "total": total}
 
 
+@router.get("/counts")
+async def job_counts(type: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Server-side counts grouped by status, for any UI badge that shouldn't
+    derive its count from a paginated job list."""
+    q = select(Job.status, func.count(Job.id)).group_by(Job.status)
+    if type:
+        q = q.where(Job.type == type)
+    counts = dict((await db.execute(q)).all())
+    return {
+        "pending": counts.get("pending", 0),
+        "running": counts.get("running", 0),
+        "completed": counts.get("completed", 0),
+        "failed": counts.get("failed", 0),
+        "all": sum(counts.values()),
+    }
+
+
 @router.get("/dashboard")
 async def job_dashboard(db: AsyncSession = Depends(get_db)):
     """Job pipeline health metrics for the dashboard."""
