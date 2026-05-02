@@ -15,6 +15,7 @@
 		row,
 		header,
 		empty,
+		expandRow,
 		class: className = '',
 	} = $props();
 
@@ -95,6 +96,9 @@
 							{/each}
 						{/if}
 					</tr>
+					{#if expandRow}
+						{@render expandRow(r, i)}
+					{/if}
 				{/each}
 			{/if}
 		</tbody>

@@ -13,6 +13,7 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import Pagination from '../../components/ui/Pagination.svelte';
 	import FilterPills from '../../components/ui/FilterPills.svelte';
+	import DataTable from '../../components/ui/DataTable.svelte';
 
 	// --- View mode: 'jobs' or 'app' ---
 	let viewMode = $state('jobs');
@@ -278,155 +279,157 @@
 			{#if loading}
 				<Skeleton variant="table-row" count={8} />
 			{:else if jobs.length}
-				<table class="w-full text-sm">
-					<thead>
-						<tr class="text-[var(--text-muted)] text-left">
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Type</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Progress</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Duration</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Started</th>
-						</tr>
-					</thead>
-					<tbody class="space-y-0.5">
-						{#each jobs as job}
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<tr class="hover:bg-[var(--surface-container-high)] cursor-pointer transition-colors min-h-[44px]" onclick={() => toggleExpand(job)}>
-								<td class="px-3 sm:px-4 py-3">
-									<div class="flex items-center gap-2">
-										{#if expandedJob === job.id}
-											<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
-										{:else}
-											<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
-										{/if}
-										<div class="min-w-0">
-											<p class="font-medium text-[var(--text-body)]">{job.type}</p>
-											{#if job.description}
-												<p class="text-xs text-[var(--text-muted)] truncate max-w-xs">{job.description}</p>
-											{/if}
-											<p class="text-xs text-[var(--text-disabled)] sm:hidden">
-												{#if job.total}{job.progress}/{job.total} &middot; {/if}{job.started_at ? formatDateTime(job.started_at) : ''}
-											</p>
-										</div>
-									</div>
-								</td>
-								<td class="px-4 py-3">
-									<div class="flex items-center gap-2">
-										{#if job.status === 'running'}
-											<span class="animate-pulse">
-												<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
-											</span>
-											<button onclick={(e) => { e.stopPropagation(); cancelJob(job.id); }}
-												class="text-[var(--text-muted)] hover:text-red-400 transition-colors" title="Cancel job">
-												<XCircle class="w-4 h-4" />
-											</button>
-										{:else}
-											<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
-										{/if}
-									</div>
-								</td>
-								<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs hidden sm:table-cell">
-									{#if job.total}
-										{job.progress}/{job.total}
-									{:else}
-										-
+				{@const jobColumns = [
+					{ key: 'type', label: 'Type' },
+					{ key: 'status', label: 'Status' },
+					{ key: 'progress', label: 'Progress', headerClass: 'hidden sm:table-cell' },
+					{ key: 'duration', label: 'Duration', headerClass: 'hidden md:table-cell' },
+					{ key: 'started_at', label: 'Started', headerClass: 'hidden sm:table-cell' },
+				]}
+				<DataTable columns={jobColumns} rows={jobs} rowKey={(j) => j.id} onrowclick={toggleExpand}>
+					{#snippet header()}
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Type</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Status</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Progress</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Duration</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Started</th>
+					{/snippet}
+					{#snippet row(job)}
+						<td class="px-3 sm:px-4 py-3">
+							<div class="flex items-center gap-2">
+								{#if expandedJob === job.id}
+									<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
+								{:else}
+									<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
+								{/if}
+								<div class="min-w-0">
+									<p class="font-medium text-[var(--text-body)]">{job.type}</p>
+									{#if job.description}
+										<p class="text-xs text-[var(--text-muted)] truncate max-w-xs">{job.description}</p>
 									{/if}
-								</td>
-								<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">
-									{formatJobDuration(job.started_at, job.finished_at)}
-								</td>
-								<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden sm:table-cell">
-									{job.started_at ? formatDateTime(job.started_at) : '-'}
-								</td>
-							</tr>
-							{#if expandedJob === job.id && jobDetail}
-								<tr>
-									<td colspan="5" class="px-4 py-3 bg-[var(--surface-container)]">
-										<div class="space-y-2 text-xs animate-fade-slide-in">
-											<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+									<p class="text-xs text-[var(--text-disabled)] sm:hidden">
+										{#if job.total}{job.progress}/{job.total} &middot; {/if}{job.started_at ? formatDateTime(job.started_at) : ''}
+									</p>
+								</div>
+							</div>
+						</td>
+						<td class="px-4 py-3">
+							<div class="flex items-center gap-2">
+								{#if job.status === 'running'}
+									<span class="animate-pulse">
+										<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+									</span>
+									<button onclick={(e) => { e.stopPropagation(); cancelJob(job.id); }}
+										class="text-[var(--text-muted)] hover:text-red-400 transition-colors" title="Cancel job">
+										<XCircle class="w-4 h-4" />
+									</button>
+								{:else}
+									<Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+								{/if}
+							</div>
+						</td>
+						<td class="px-4 py-3 text-[var(--text-secondary)] font-mono text-xs hidden sm:table-cell">
+							{#if job.total}
+								{job.progress}/{job.total}
+							{:else}
+								-
+							{/if}
+						</td>
+						<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden md:table-cell">
+							{formatJobDuration(job.started_at, job.finished_at)}
+						</td>
+						<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden sm:table-cell">
+							{job.started_at ? formatDateTime(job.started_at) : '-'}
+						</td>
+					{/snippet}
+					{#snippet expandRow(job)}
+						{#if expandedJob === job.id && jobDetail}
+							<tr>
+								<td colspan="5" class="px-4 py-3 bg-[var(--surface-container)]">
+									<div class="space-y-2 text-xs animate-fade-slide-in">
+										<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Job ID</span>
+												<p class="text-[var(--text-body)] font-mono text-xs truncate">{jobDetail.id}</p>
+											</div>
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Progress</span>
+												<p class="text-[var(--text-body)] font-mono font-bold">{jobDetail.progress ?? 0} / {jobDetail.total ?? 0}</p>
+											</div>
+											{#if jobDetail.started_at}
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Job ID</span>
-													<p class="text-[var(--text-body)] font-mono text-xs truncate">{jobDetail.id}</p>
+													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Started</span>
+													<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(jobDetail.started_at)}</p>
 												</div>
+											{/if}
+											{#if jobDetail.finished_at}
 												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Progress</span>
-													<p class="text-[var(--text-body)] font-mono font-bold">{jobDetail.progress ?? 0} / {jobDetail.total ?? 0}</p>
+													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Finished</span>
+													<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(jobDetail.finished_at)}</p>
 												</div>
-												{#if jobDetail.started_at}
-													<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-														<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Started</span>
-														<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(jobDetail.started_at)}</p>
+											{/if}
+										</div>
+
+										{#if jobDetail.result}
+											{@const parsed = (() => { try { return JSON.parse(jobDetail.result); } catch { return null; } })()}
+											<div>
+												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Result</span>
+												{#if parsed && typeof parsed === 'object' && !parsed.error}
+													<div class="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
+														{#each Object.entries(parsed) as [key, value]}
+															<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+																<span class="text-[var(--text-muted)] font-mono text-xs uppercase">{key}</span>
+																<p class="text-[var(--text-body)] font-mono font-bold">{typeof value === 'number' ? value.toLocaleString() : value}</p>
+															</div>
+														{/each}
 													</div>
-												{/if}
-												{#if jobDetail.finished_at}
-													<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-														<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Finished</span>
-														<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(jobDetail.finished_at)}</p>
-													</div>
+												{:else}
+													<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto font-mono">{jobDetail.result}</pre>
 												{/if}
 											</div>
-
-											{#if jobDetail.result}
-												{@const parsed = (() => { try { return JSON.parse(jobDetail.result); } catch { return null; } })()}
-												<div>
-													<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Result</span>
-													{#if parsed && typeof parsed === 'object' && !parsed.error}
-														<div class="mt-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
-															{#each Object.entries(parsed) as [key, value]}
-																<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-																	<span class="text-[var(--text-muted)] font-mono text-xs uppercase">{key}</span>
-																	<p class="text-[var(--text-body)] font-mono font-bold">{typeof value === 'number' ? value.toLocaleString() : value}</p>
-																</div>
-															{/each}
-														</div>
-													{:else}
-														<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto font-mono">{jobDetail.result}</pre>
-													{/if}
-												</div>
-											{:else if !jobDetail.tracks}
-												<p class="text-[var(--text-muted)] italic">No result data — job may have been interrupted by a restart.</p>
-											{/if}
-											{#if jobDetail.tracks}
-												{@const trackList = (() => { try { return JSON.parse(jobDetail.tracks); } catch { return null; } })()}
-												<div>
-													<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Tracks</span>
-													{#if Array.isArray(trackList)}
-														<div class="mt-1 space-y-1 max-h-48 overflow-y-auto">
-															{#each trackList as t}
-																<div class="flex items-center gap-2 bg-[var(--bg-primary)] px-2 py-1.5 rounded-md flex-wrap">
-																	<Badge variant={t.status === 'downloaded' ? 'success' : t.status === 'failed' ? 'error' : t.status === 'skipped' ? 'warning' : 'default'}>{t.status}</Badge>
-																	<span class="text-[var(--text-body)] truncate">{t.artist} — {t.track}</span>
-																	{#if t.username}
-																		<span class="text-[var(--text-muted)] text-xs">from {t.username}</span>
-																	{/if}
-																	{#if t.error}
-																		<span class="text-red-400 text-xs ml-auto" title={t.error}>{t.error}</span>
-																	{:else if t.reason}
-																		<span class="text-orange-400 text-xs ml-auto">{t.reason}</span>
-																	{/if}
-																</div>
-															{/each}
-														</div>
-													{:else}
-														<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-48 overflow-y-auto font-mono">{jobDetail.tracks}</pre>
-													{/if}
-												</div>
-											{/if}
-											{#if job.status === 'failed' && (job.type === 'download' || job.type === 'bulk_download')}
-												<div class="pt-2">
-													<Button variant="primary" size="sm" loading={retrying} onclick={() => retryJob(job.id)}>
-														<RotateCcw class="w-3.5 h-3.5" />
-														Retry Failed Tracks
-													</Button>
-												</div>
-											{/if}
-										</div>
-									</td>
-								</tr>
-							{/if}
-						{/each}
-					</tbody>
-				</table>
+										{:else if !jobDetail.tracks}
+											<p class="text-[var(--text-muted)] italic">No result data — job may have been interrupted by a restart.</p>
+										{/if}
+										{#if jobDetail.tracks}
+											{@const trackList = (() => { try { return JSON.parse(jobDetail.tracks); } catch { return null; } })()}
+											<div>
+												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Tracks</span>
+												{#if Array.isArray(trackList)}
+													<div class="mt-1 space-y-1 max-h-48 overflow-y-auto">
+														{#each trackList as t}
+															<div class="flex items-center gap-2 bg-[var(--bg-primary)] px-2 py-1.5 rounded-md flex-wrap">
+																<Badge variant={t.status === 'downloaded' ? 'success' : t.status === 'failed' ? 'error' : t.status === 'skipped' ? 'warning' : 'default'}>{t.status}</Badge>
+																<span class="text-[var(--text-body)] truncate">{t.artist} — {t.track}</span>
+																{#if t.username}
+																	<span class="text-[var(--text-muted)] text-xs">from {t.username}</span>
+																{/if}
+																{#if t.error}
+																	<span class="text-red-400 text-xs ml-auto" title={t.error}>{t.error}</span>
+																{:else if t.reason}
+																	<span class="text-orange-400 text-xs ml-auto">{t.reason}</span>
+																{/if}
+															</div>
+														{/each}
+													</div>
+												{:else}
+													<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-48 overflow-y-auto font-mono">{jobDetail.tracks}</pre>
+												{/if}
+											</div>
+										{/if}
+										{#if job.status === 'failed' && (job.type === 'download' || job.type === 'bulk_download')}
+											<div class="pt-2">
+												<Button variant="primary" size="sm" loading={retrying} onclick={() => retryJob(job.id)}>
+													<RotateCcw class="w-3.5 h-3.5" />
+													Retry Failed Tracks
+												</Button>
+											</div>
+										{/if}
+									</div>
+								</td>
+							</tr>
+						{/if}
+					{/snippet}
+				</DataTable>
 			{:else}
 				<EmptyState
 					title="No job history yet"
@@ -445,90 +448,93 @@
 			{#if appLoading}
 				<Skeleton variant="table-row" count={5} />
 			{:else if appLogs.length}
-				<table class="w-full text-sm">
-					<thead>
-						<tr class="text-[var(--text-muted)] text-left">
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Device</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Version</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">User</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Size</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Received</th>
-							<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider w-10"></th>
-						</tr>
-					</thead>
-					<tbody class="space-y-0.5">
-						{#each appLogs as log}
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<tr class="hover:bg-[var(--surface-container-high)] cursor-pointer transition-colors" onclick={() => toggleLogExpand(log)}>
-								<td class="px-3 sm:px-4 py-3">
-									<div class="flex items-center gap-2">
-										{#if expandedLog === log.id}
-											<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
-										{:else}
-											<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
-										{/if}
-										<div class="min-w-0">
-											<p class="font-medium text-[var(--text-body)] truncate">{log.device}</p>
-											<p class="text-xs text-[var(--text-disabled)] sm:hidden">
-												v{log.app_version} &middot; {log.created_at ? formatDateTime(log.created_at) : ''}
-											</p>
+				{@const appLogColumns = [
+					{ key: 'device', label: 'Device' },
+					{ key: 'version', label: 'Version' },
+					{ key: 'user', label: 'User', headerClass: 'hidden sm:table-cell' },
+					{ key: 'size', label: 'Size', headerClass: 'hidden sm:table-cell' },
+					{ key: 'received', label: 'Received', headerClass: 'hidden md:table-cell' },
+					{ key: 'actions', label: '' },
+				]}
+				<DataTable columns={appLogColumns} rows={appLogs} rowKey={(l) => l.id} onrowclick={toggleLogExpand}>
+					{#snippet header()}
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Device</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider">Version</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">User</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden sm:table-cell">Size</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider hidden md:table-cell">Received</th>
+						<th class="px-4 py-3 font-medium text-xs uppercase tracking-wider w-10"></th>
+					{/snippet}
+					{#snippet row(log)}
+						<td class="px-3 sm:px-4 py-3">
+							<div class="flex items-center gap-2">
+								{#if expandedLog === log.id}
+									<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
+								{:else}
+									<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
+								{/if}
+								<div class="min-w-0">
+									<p class="font-medium text-[var(--text-body)] truncate">{log.device}</p>
+									<p class="text-xs text-[var(--text-disabled)] sm:hidden">
+										v{log.app_version} &middot; {log.created_at ? formatDateTime(log.created_at) : ''}
+									</p>
+								</div>
+							</div>
+						</td>
+						<td class="px-4 py-3">
+							<Badge variant="default">{log.app_version}</Badge>
+						</td>
+						<td class="px-4 py-3 text-[var(--text-secondary)] text-xs hidden sm:table-cell">
+							{log.username || '-'}
+						</td>
+						<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
+							{formatSize(log.log_size)}
+						</td>
+						<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
+							{log.created_at ? formatDateTime(log.created_at) : '-'}
+						</td>
+						<td class="px-4 py-3">
+							<button onclick={(e) => { e.stopPropagation(); deleteLog(log.id); }}
+								class="text-[var(--text-muted)] hover:text-red-400 transition-colors" title="Delete log">
+								<Trash2 class="w-3.5 h-3.5" />
+							</button>
+						</td>
+					{/snippet}
+					{#snippet expandRow(log)}
+						{#if expandedLog === log.id && logDetail}
+							<tr>
+								<td colspan="6" class="px-4 py-3 bg-[var(--surface-container)]">
+									<div class="space-y-2 text-xs animate-fade-slide-in">
+										<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Device</span>
+												<p class="text-[var(--text-body)] text-xs">{logDetail.device}</p>
+											</div>
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">App Version</span>
+												<p class="text-[var(--text-body)] font-mono font-bold">{logDetail.app_version}</p>
+											</div>
+											<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+												<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Timestamp</span>
+												<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(logDetail.timestamp)}</p>
+											</div>
+											{#if logDetail.username}
+												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
+													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">User</span>
+													<p class="text-[var(--text-body)] font-mono">{logDetail.username}</p>
+												</div>
+											{/if}
+										</div>
+										<div>
+											<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Log Output</span>
+											<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-96 overflow-y-auto font-mono text-xs whitespace-pre-wrap break-all">{logDetail.logs}</pre>
 										</div>
 									</div>
 								</td>
-								<td class="px-4 py-3">
-									<Badge variant="default">{log.app_version}</Badge>
-								</td>
-								<td class="px-4 py-3 text-[var(--text-secondary)] text-xs hidden sm:table-cell">
-									{log.username || '-'}
-								</td>
-								<td class="px-4 py-3 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
-									{formatSize(log.log_size)}
-								</td>
-								<td class="px-4 py-3 text-[var(--text-muted)] text-xs font-mono hidden md:table-cell">
-									{log.created_at ? formatDateTime(log.created_at) : '-'}
-								</td>
-								<td class="px-4 py-3">
-									<button onclick={(e) => { e.stopPropagation(); deleteLog(log.id); }}
-										class="text-[var(--text-muted)] hover:text-red-400 transition-colors" title="Delete log">
-										<Trash2 class="w-3.5 h-3.5" />
-									</button>
-								</td>
 							</tr>
-							{#if expandedLog === log.id && logDetail}
-								<tr>
-									<td colspan="6" class="px-4 py-3 bg-[var(--surface-container)]">
-										<div class="space-y-2 text-xs animate-fade-slide-in">
-											<div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Device</span>
-													<p class="text-[var(--text-body)] text-xs">{logDetail.device}</p>
-												</div>
-												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">App Version</span>
-													<p class="text-[var(--text-body)] font-mono font-bold">{logDetail.app_version}</p>
-												</div>
-												<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-													<span class="text-[var(--text-muted)] font-mono text-xs uppercase">Timestamp</span>
-													<p class="text-[var(--text-body)] font-mono text-xs">{formatDateTime(logDetail.timestamp)}</p>
-												</div>
-												{#if logDetail.username}
-													<div class="bg-[var(--bg-primary)] p-2 rounded-md">
-														<span class="text-[var(--text-muted)] font-mono text-xs uppercase">User</span>
-														<p class="text-[var(--text-body)] font-mono">{logDetail.username}</p>
-													</div>
-												{/if}
-											</div>
-											<div>
-												<span class="text-[var(--text-muted)] font-mono uppercase tracking-wider">Log Output</span>
-												<pre class="mt-1 bg-[var(--bg-primary)] text-[var(--text-secondary)] p-3 rounded-md overflow-x-auto max-h-96 overflow-y-auto font-mono text-xs whitespace-pre-wrap break-all">{logDetail.logs}</pre>
-											</div>
-										</div>
-									</td>
-								</tr>
-							{/if}
-						{/each}
-					</tbody>
-				</table>
+						{/if}
+					{/snippet}
+				</DataTable>
 			{:else}
 				<EmptyState
 					title="No app logs yet"

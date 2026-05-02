@@ -12,6 +12,7 @@
 	import Badge from '../../components/ui/Badge.svelte';
 	import FilterPills from '../../components/ui/FilterPills.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import DataTable from '../../components/ui/DataTable.svelte';
 
 	// Search state
 	let searchQuery = $state('');
@@ -569,126 +570,137 @@
 			</div>
 
 			{#if filteredResults.length}
-				<div class="overflow-x-auto">
-					<table class="w-full text-sm min-w-[600px]">
-						<thead>
-							<tr class=" text-[var(--text-muted)] text-left">
-								<th class="px-4 py-2 w-5">
-									<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors"
-										title="Sort by quality">
-										{sortCol === 'quality' ? (sortAsc ? '↑' : '↓') : '◆'}
+				{@const resultColumns = [
+					{ key: 'quality', label: '' },
+					{ key: 'title', label: 'Title' },
+					{ key: 'user', label: 'User' },
+					{ key: 'format', label: 'Format' },
+					{ key: 'bitrate', label: 'Bitrate' },
+					{ key: 'size', label: 'Size' },
+					{ key: 'actions', label: '' },
+				]}
+				<DataTable
+					columns={resultColumns}
+					rows={filteredResults}
+					rowKey={(r) => r.username + r.filename}
+					minWidth="600px"
+					rowClass={(r) => {
+						const inline = getResultInlineStatus(r);
+						if (inline?.status === 'completed') return 'bg-green-500/5 group';
+						if (inline?.status === 'failed') return 'bg-red-500/5 group';
+						if (inline?.status === 'downloading') return 'bg-blue-500/5 group';
+						return 'group';
+					}}>
+					{#snippet header()}
+						<th class="px-4 py-2 w-5">
+							<button onclick={() => toggleSort('quality')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors"
+								title="Sort by quality">
+								{sortCol === 'quality' ? (sortAsc ? '↑' : '↓') : '◆'}
+							</button>
+						</th>
+						<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
+						<th class="px-4 py-2 hidden md:table-cell">
+							<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
+								User {sortCol === 'user' ? (sortAsc ? '↑' : '↓') : ''}
+							</button>
+						</th>
+						<th class="px-4 py-2">
+							<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
+								Format {sortCol === 'format' ? (sortAsc ? '↑' : '↓') : ''}
+							</button>
+						</th>
+						<th class="px-4 py-2 hidden sm:table-cell">
+							<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
+								Bitrate {sortCol === 'bitrate' ? (sortAsc ? '↑' : '↓') : ''}
+							</button>
+						</th>
+						<th class="px-4 py-2">
+							<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
+								Size {sortCol === 'size' ? (sortAsc ? '↑' : '↓') : ''}
+							</button>
+						</th>
+						<th class="px-4 py-2"></th>
+					{/snippet}
+					{#snippet row(r)}
+						{@const key = r.username + r.filename}
+						{@const fname = shortFilename(r.filename)}
+						{@const pathArtist = extractArtistFromPath(r.filename)}
+						{@const inline = getResultInlineStatus(r)}
+						<td class="px-4 py-2">
+							{#if r.slots_free}
+								<Wifi class="w-3.5 h-3.5 text-green-400" />
+							{:else}
+								<Wifi class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+							{/if}
+						</td>
+						<td class="px-4 py-2 max-w-xs">
+							<p class="text-[var(--text-body)] truncate" title={r.filename}>{fname}</p>
+							{#if inline?.status === 'downloading' && inline.progress > 0}
+								<div class="mt-1 flex items-center gap-2">
+									<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+										<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
+											style="width: {inline.progress}%"></div>
+									</div>
+									<span class="text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">
+										{inline.speed > 0 ? formatSpeed(inline.speed) : `${Math.round(inline.progress)}%`}
+									</span>
+								</div>
+							{:else if pathArtist}
+								<p class="text-xs text-[var(--text-muted)] truncate">{pathArtist}</p>
+							{/if}
+						</td>
+						<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">
+							<span class="truncate block max-w-[120px]" title={r.username}>
+								{r.username}
+							</span>
+						</td>
+						<td class="px-4 py-2">
+							<div class="flex items-center gap-1">
+								<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
+									{r.extension.toUpperCase()}
+								</Badge>
+								{#if r.ai_pick}
+									<Badge variant="warning">AI Pick</Badge>
+								{/if}
+							</div>
+						</td>
+						<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
+							{formatBitrate(r.bitrate) || '—'}
+						</td>
+						<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">
+							{formatSize(r.size)}
+						</td>
+						<td class="px-4 py-2">
+							{#if inline?.status === 'completed'}
+								<Badge variant="success">
+									<CircleCheck class="w-3 h-3 mr-0.5" />
+									done
+								</Badge>
+							{:else if inline?.status === 'failed'}
+								<div class="flex items-center gap-1">
+									<Badge variant="error">failed</Badge>
+									<button onclick={() => downloadFile(r)} class="p-1 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Retry">
+										<RotateCcw class="w-3 h-3" />
 									</button>
-								</th>
-								<th class="px-4 py-2 font-medium text-xs uppercase tracking-wider">Title</th>
-								<th class="px-4 py-2 hidden md:table-cell">
-									<button onclick={() => toggleSort('user')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
-										User {sortCol === 'user' ? (sortAsc ? '↑' : '↓') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2">
-									<button onclick={() => toggleSort('format')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
-										Format {sortCol === 'format' ? (sortAsc ? '↑' : '↓') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2 hidden sm:table-cell">
-									<button onclick={() => toggleSort('bitrate')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
-										Bitrate {sortCol === 'bitrate' ? (sortAsc ? '↑' : '↓') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2">
-									<button onclick={() => toggleSort('size')} class="font-medium text-xs uppercase tracking-wider whitespace-nowrap hover:text-[var(--text-primary)] transition-colors">
-										Size {sortCol === 'size' ? (sortAsc ? '↑' : '↓') : ''}
-									</button>
-								</th>
-								<th class="px-4 py-2"></th>
-							</tr>
-						</thead>
-						<tbody class="space-y-0.5">
-							{#each filteredResults as r}
-								{@const key = r.username + r.filename}
-								{@const fname = shortFilename(r.filename)}
-								{@const pathArtist = extractArtistFromPath(r.filename)}
-								{@const inline = getResultInlineStatus(r)}
-								<tr class="hover:bg-[var(--surface-container-high)] transition-colors group
-									{inline?.status === 'completed' ? 'bg-green-500/5' : inline?.status === 'failed' ? 'bg-red-500/5' : inline?.status === 'downloading' ? 'bg-blue-500/5' : ''}">
-									<td class="px-4 py-2">
-										{#if r.slots_free}
-											<Wifi class="w-3.5 h-3.5 text-green-400" />
-										{:else}
-											<Wifi class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-										{/if}
-									</td>
-									<td class="px-4 py-2 max-w-xs">
-										<p class="text-[var(--text-body)] truncate" title={r.filename}>{fname}</p>
-										{#if inline?.status === 'downloading' && inline.progress > 0}
-											<div class="mt-1 flex items-center gap-2">
-												<div class="flex-1 h-1 bg-[var(--border-interactive)] rounded-full overflow-hidden">
-													<div class="h-full bg-[var(--color-downloads)] rounded-full transition-all duration-300"
-														style="width: {inline.progress}%"></div>
-												</div>
-												<span class="text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">
-													{inline.speed > 0 ? formatSpeed(inline.speed) : `${Math.round(inline.progress)}%`}
-												</span>
-											</div>
-										{:else if pathArtist}
-											<p class="text-xs text-[var(--text-muted)] truncate">{pathArtist}</p>
-										{/if}
-									</td>
-									<td class="px-4 py-2 text-[var(--text-secondary)] hidden md:table-cell">
-										<span class="truncate block max-w-[120px]" title={r.username}>
-											{r.username}
-										</span>
-									</td>
-									<td class="px-4 py-2">
-										<div class="flex items-center gap-1">
-											<Badge variant={r.extension === 'flac' ? 'success' : r.extension === 'mp3' ? 'default' : 'warning'}>
-												{r.extension.toUpperCase()}
-											</Badge>
-											{#if r.ai_pick}
-												<Badge variant="warning">AI Pick</Badge>
-											{/if}
-										</div>
-									</td>
-									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs hidden sm:table-cell">
-										{formatBitrate(r.bitrate) || '—'}
-									</td>
-									<td class="px-4 py-2 text-[var(--text-muted)] font-mono text-xs">
-										{formatSize(r.size)}
-									</td>
-									<td class="px-4 py-2">
-										{#if inline?.status === 'completed'}
-											<Badge variant="success">
-												<CircleCheck class="w-3 h-3 mr-0.5" />
-												done
-											</Badge>
-										{:else if inline?.status === 'failed'}
-											<div class="flex items-center gap-1">
-												<Badge variant="error">failed</Badge>
-												<button onclick={() => downloadFile(r)} class="p-1 text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors" title="Retry">
-													<RotateCcw class="w-3 h-3" />
-												</button>
-											</div>
-										{:else if inline?.status === 'downloading'}
-											<Badge variant="info">
-												<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
-												{inline.progress > 0 ? `${Math.round(inline.progress)}%` : 'dl'}
-											</Badge>
-										{:else if inline?.status === 'searching' || inline?.status === 'queued'}
-											<Badge variant="default">
-												<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
-												{inline.status === 'searching' ? 'search' : 'wait'}
-											</Badge>
-										{:else}
-											<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
-												<Download class="w-3 h-3" />
-											</Button>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+								</div>
+							{:else if inline?.status === 'downloading'}
+								<Badge variant="info">
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+									{inline.progress > 0 ? `${Math.round(inline.progress)}%` : 'dl'}
+								</Badge>
+							{:else if inline?.status === 'searching' || inline?.status === 'queued'}
+								<Badge variant="default">
+									<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
+									{inline.status === 'searching' ? 'search' : 'wait'}
+								</Badge>
+							{:else}
+								<Button variant="success" size="sm" loading={downloading[key]} onclick={() => downloadFile(r)}>
+									<Download class="w-3 h-3" />
+								</Button>
+							{/if}
+						</td>
+					{/snippet}
+				</DataTable>
 				<!-- Results pagination -->
 				{#if totalResultPages > 1}
 					<div class="flex items-center justify-between px-4 py-2 ">
