@@ -455,14 +455,18 @@
 
 	{#if loading}
 		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
-			{#each Array(6) as _}
-				<Skeleton class="h-20 rounded-lg" />
-			{/each}
+			<Skeleton class="h-20 rounded-lg" />
+			<Skeleton class="h-20 rounded-lg" />
+			<Skeleton class="h-20 rounded-lg" />
+			<Skeleton class="h-20 rounded-lg" />
+			<Skeleton class="h-20 rounded-lg" />
+			<Skeleton class="h-20 rounded-lg" />
 		</div>
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-			{#each Array(4) as _}
-				<Skeleton class="h-64 rounded-lg" />
-			{/each}
+			<Skeleton class="h-64 rounded-lg" />
+			<Skeleton class="h-64 rounded-lg" />
+			<Skeleton class="h-64 rounded-lg" />
+			<Skeleton class="h-64 rounded-lg" />
 		</div>
 	{:else if data}
 		<!-- Overview Cards -->
