@@ -179,13 +179,13 @@
 	box-shadow: 0 0 0 2px rgba(192, 193, 255, 0.1);
 }
 
-/* Gradient Utilities */
+/* Gradient Utilities — use background-image (not shorthand) so background-clip: text isn't reset */
 .bg-gradient-primary {
-	background: var(--gradient-primary);
+	background-image: var(--gradient-primary);
 }
 
 .bg-gradient-accent {
-	background: var(--gradient-accent);
+	background-image: var(--gradient-accent);
 }
 
 /* Editorial Typography Helpers */

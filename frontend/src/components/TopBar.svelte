@@ -1,7 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
-	import { Search, X, RefreshCw, Bell, Wifi } from 'lucide-svelte';
+	import { Search, X, RefreshCw, Bell } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { activeJobs, addToast } from '$lib/stores.js';
 	import SearchDropdown from './SearchDropdown.svelte';
@@ -12,13 +11,8 @@
 	let syncing = $state(false);
 	let inputEl;
 	let dropdownRef;
-	let slskConnected = $state(null);
 
 	let runningJobs = $derived($activeJobs.filter(j => j.status === 'running'));
-
-	onMount(() => {
-		fetch('/api/download/soulseek-stats').then(r => r.json()).then(d => slskConnected = d?.connected ?? false).catch(() => slskConnected = false);
-	});
 
 	function onInput() {
 		if (!query.trim()) {
@@ -97,18 +91,8 @@
 	{/if}
 </div>
 
-<!-- Status + Action icons -->
+<!-- Action icons -->
 <div class="flex items-center gap-1">
-	<!-- SLSK connection status (desktop only) -->
-	{#if slskConnected !== null}
-		<div class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[var(--surface-container)] text-[10px] font-mono uppercase tracking-wider mr-1">
-			<span class="w-1.5 h-1.5 rounded-full {slskConnected ? 'bg-emerald-400' : 'bg-red-400'}" style={slskConnected ? 'box-shadow: 0 0 6px rgba(34,197,94,.5)' : ''}></span>
-			<span class="text-[var(--text-muted)]">SLSK {slskConnected ? 'ONLINE' : 'OFFLINE'}</span>
-		</div>
-	{/if}
-
-	<div class="hidden sm:block w-px h-5 bg-[var(--surface-container-highest)] mx-1"></div>
-
 	<!-- Sync library -->
 	<button onclick={syncLibrary}
 		class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors"
@@ -167,13 +151,4 @@
 			</div>
 		{/if}
 	</div>
-
-	<div class="hidden sm:block w-px h-5 bg-[var(--surface-container-highest)] mx-1"></div>
-
-	<!-- User avatar -->
-	<button onclick={() => goto('/settings')}
-		class="w-8 h-8 rounded-full bg-gradient-primary flex items-center justify-center text-xs font-bold text-[var(--color-on-primary)] hover:opacity-90 transition-opacity"
-		title="Settings">
-		AD
-	</button>
 </div>
