@@ -140,8 +140,12 @@ Base URL: `/api`
 | `/api/discovery/artist-info?artist=` | GET | Last.fm artist info |
 | `/api/discovery/similar-by-track?artist=&track=&limit=` | GET | Similar tracks to a specific track via Last.fm (with library status) |
 | `/api/discovery/remix-suggestions?source=&tracks_to_scan=&limit=` | GET | Find remixes across library tracks (source: popular/favorites/random) |
+| `/api/discovery/new-releases?country=` | GET | Spotify `browse/new-releases` expanded into per-album top tracks. Cached 6h per country. Returns `{tracks, total, in_library, missing, fetched_at, cached}`. |
+| `/api/discovery/weekly-radar?mode=` | GET | `mode=tailored` reads taste-driven pending recommendations; `mode=general` mixes Spotify new-releases (cache-warmed if cold) + Last.fm chart, deduped, in-library tracks filtered out. |
 | `/api/discovery/lastfm/auth-url` | GET | Last.fm OAuth URL |
 | `/api/discovery/lastfm/callback?token=` | GET | Exchange token for session |
+
+**Library-match note:** every `/api/discovery/*` endpoint that flags `in_library` uses a permissive matcher: parenthetical title suffixes (`(Radio Edit)`, `(Remastered 2014)`), `feat./featuring/ft` artist sections, and comma-joined primary artists are all normalized before comparison. Affects all listed endpoints (v0.11.1+).
 
 ### Favorites
 
@@ -248,15 +252,19 @@ Scan modes: `low_bitrate`, `lossy_to_lossless`, `all_lossy`, `opus_to_flac`. Ide
 |----------|--------|-------------|
 | `/api/jobs/?offset=&limit=&type=` | GET | Job history (type accepts comma-separated, e.g. `download,bulk_download`) |
 | `/api/jobs/active` | GET | Currently running jobs |
+| `/api/jobs/counts?type=` | GET | Server-side counts grouped by status — `{pending, running, completed, failed, all}`. Use this for badge counts that should not depend on pagination. |
+| `/api/jobs/dashboard` | GET | Job pipeline health metrics for the dashboard (24h status counts, 7d failure rate, type distribution, hourly timeline, avg duration). |
 | `/api/jobs/stream/recent?limit=` | GET | Recent job updates for live display |
 | `/api/jobs/{id}` | GET | Job details (result, log, tracks) |
 | `/api/jobs/{id}/retry` | POST | Retry failed download job |
+| `/api/jobs/{id}/cancel` | POST | Cancel a pending or running job |
+| `/api/jobs/clear` | DELETE | Clear completed/failed history |
 
 ### WebSocket
 
 | Endpoint | Description |
 |----------|-------------|
-| `ws:///api/ws` | Real-time job progress + transfer updates |
+| `ws:///api/ws` | Real-time job progress + transfer updates. No auth requirement. Emits `{type:"job_update", job:{id, type, status, progress, total, description}}` and `{type:"transfer_progress", transfers:[{job_id, username, filename, state, progress, received_bytes, total_bytes, speed, eta_seconds, save_path, error}]}`. Transfer payloads include `job_id` so clients can correlate a transfer to its originating job (v0.10.0+). On connect the server re-emits all pending/running jobs and current transfers. |
 
 WebSocket message types:
 
