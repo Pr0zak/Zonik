@@ -70,41 +70,20 @@ async def _batch_library_match(
         t["track_id"] = matched_id
 
 
-@router.get("/new-releases")
-async def new_releases(
-    country: str = Query("US", min_length=2, max_length=2),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return recent album drops from Spotify expanded into per-album top tracks.
-
-    Cached in-memory for 6h per-country to avoid hammering Spotify.
-    """
+async def _get_new_releases_raw(country: str) -> tuple[list[dict] | None, str | None, str | None]:
+    """Cache-aware Spotify new-releases fetch. Returns (tracks, fetched_at, error).
+    None tracks + error means "uncached AND fetch failed". Empty tracks + None error
+    is "uncached AND Spotify creds missing"."""
     country = country.upper()
     now = time.time()
     cached = _NEW_RELEASES_CACHE.get(country)
     if cached and cached["expires_at"] > now:
-        # Re-run library match against current DB on cache hit.
-        tracks = [dict(t) for t in cached["tracks"]]
-        await _batch_library_match(db, tracks, name_key="track")
-        return {
-            "tracks": tracks,
-            "total": len(tracks),
-            "in_library": sum(1 for t in tracks if t.get("in_library")),
-            "missing": sum(1 for t in tracks if not t.get("in_library")),
-            "fetched_at": cached["fetched_at"],
-            "cached": True,
-        }
+        return [dict(t) for t in cached["tracks"]], cached["fetched_at"], None
 
     from backend.services.playlist_import import _spotify_get_token
     token = await _spotify_get_token()
     if not token:
-        return {
-            "error": "Spotify not configured",
-            "tracks": [],
-            "total": 0,
-            "in_library": 0,
-            "missing": 0,
-        }
+        return [], None, "Spotify not configured"
 
     tracks: list[dict] = []
     try:
@@ -175,22 +154,37 @@ async def new_releases(
                     continue
                 tracks.extend(r)
     except httpx.HTTPError as e:
-        return {
-            "error": f"Spotify request failed: {e}",
-            "tracks": [],
-            "total": 0,
-            "in_library": 0,
-            "missing": 0,
-        }
+        return None, None, f"Spotify request failed: {e}"
 
     fetched_at = datetime.now(timezone.utc).isoformat()
-    # Cache the raw track list; library-match runs fresh per-request.
     _NEW_RELEASES_CACHE[country] = {
         "tracks": [dict(t) for t in tracks],
         "fetched_at": fetched_at,
         "expires_at": now + _NEW_RELEASES_TTL_SECONDS,
     }
+    return tracks, fetched_at, None
 
+
+@router.get("/new-releases")
+async def new_releases(
+    country: str = Query("US", min_length=2, max_length=2),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent album drops from Spotify expanded into per-album top tracks.
+
+    Cached in-memory for 6h per-country to avoid hammering Spotify.
+    """
+    country = country.upper()
+    cached_hit = country in _NEW_RELEASES_CACHE and _NEW_RELEASES_CACHE[country]["expires_at"] > time.time()
+    tracks, fetched_at, error = await _get_new_releases_raw(country)
+    if error:
+        return {
+            "error": error,
+            "tracks": [],
+            "total": 0,
+            "in_library": 0,
+            "missing": 0,
+        }
     await _batch_library_match(db, tracks, name_key="track")
 
     return {
@@ -199,7 +193,7 @@ async def new_releases(
         "in_library": sum(1 for t in tracks if t.get("in_library")),
         "missing": sum(1 for t in tracks if not t.get("in_library")),
         "fetched_at": fetched_at,
-        "cached": False,
+        "cached": cached_hit,
     }
 
 
@@ -285,24 +279,21 @@ async def weekly_radar(
         seen.add(key)
         pool.append(payload)
 
-    # Spotify new-releases — reuse the in-memory cache populated by /new-releases.
-    # We intentionally do not trigger a fresh Spotify pull here; if cold, we just
-    # fall back to Last.fm chart data.
-    for cached in _NEW_RELEASES_CACHE.values():
-        if cached.get("expires_at", 0) <= time.time():
-            continue
-        for raw in cached.get("tracks", []) or []:
-            t = raw.get("track") or ""
-            a = raw.get("artist") or ""
-            _add(t, a, {
-                "track": t,
-                "artist": a,
-                "album": raw.get("album"),
-                "year": raw.get("year"),
-                "cover_url": raw.get("cover_url"),
-                "source": "new_releases",
-                "preview_url": raw.get("preview_url"),
-            })
+    # Spotify new-releases — warm the cache on first General visit so the tab is
+    # useful even before the New Releases tab has been opened.
+    nr_tracks, _, _ = await _get_new_releases_raw("US")
+    for raw in nr_tracks or []:
+        t = raw.get("track") or ""
+        a = raw.get("artist") or ""
+        _add(t, a, {
+            "track": t,
+            "artist": a,
+            "album": raw.get("album"),
+            "year": raw.get("year"),
+            "cover_url": raw.get("cover_url"),
+            "source": "new_releases",
+            "preview_url": raw.get("preview_url"),
+        })
 
     # Last.fm global top tracks
     try:
