@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import random
 import time
 from datetime import datetime, timezone
 
@@ -18,7 +19,7 @@ from backend.database import get_db
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.favorite import Favorite
-from backend.models.playlist import Playlist, PlaylistTrack
+from backend.models.recommendation import Recommendation
 from backend.services import lastfm
 from backend.services.soulseek import normalize_text
 
@@ -202,69 +203,138 @@ async def new_releases(
     }
 
 
+_TAILORED_SOURCES = ("similar_track", "similar_artist", "tag")
+
+
 @router.get("/weekly-radar")
-async def weekly_radar(db: AsyncSession = Depends(get_db)):
-    """Return tracks from the auto-generated 'Weekly Discover' playlist.
+async def weekly_radar(
+    mode: str = Query("tailored", pattern="^(tailored|general)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return missing-tracks-to-grab for the Weekly Radar tab.
 
-    The scheduled task `playlist_weekly_discover` populates this playlist with
-    a random selection of in-library tracks. All tracks are in_library by
-    definition; the field is kept for response-shape consistency.
+    Tailored: taste-driven pending recommendations from the recommender pipeline.
+    General: broader discovery — Spotify new-releases + Last.fm chart.getTopTracks
+    filtered to tracks not yet in library.
     """
-    playlist = (await db.execute(
-        select(Playlist)
-        .options(
-            selectinload(Playlist.entries)
-            .selectinload(PlaylistTrack.track)
-            .selectinload(Track.artist),
-            selectinload(Playlist.entries)
-            .selectinload(PlaylistTrack.track)
-            .selectinload(Track.album),
-        )
-        .where(Playlist.name == "Weekly Discover")
-    )).scalar_one_or_none()
+    fetched_at = datetime.now(timezone.utc).isoformat()
 
-    if not playlist:
+    if mode == "tailored":
+        result = await db.execute(
+            select(Recommendation)
+            .where(
+                Recommendation.status == "pending",
+                Recommendation.source.in_(_TAILORED_SOURCES),
+            )
+            .order_by(Recommendation.score.desc(), Recommendation.created_at.desc())
+            .limit(50)
+        )
+        recs = result.scalars().all()
+
+        if not recs:
+            return {
+                "mode": "tailored",
+                "tracks": [],
+                "total": 0,
+                "in_library": 0,
+                "missing": 0,
+                "last_refreshed": None,
+                "fetched_at": fetched_at,
+                "message": "No taste-driven recommendations yet. Run the recommendation refresh on the Schedule page or click Regenerate.",
+            }
+
+        tracks: list[dict] = [
+            {
+                "id": r.id,
+                "track": r.track,
+                "artist": r.artist,
+                "album": None,
+                "year": None,
+                "cover_url": r.image_url,
+                "score": r.score,
+                "source": r.source,
+                "preview_url": r.preview_url,
+            }
+            for r in recs
+        ]
+        await _batch_library_match(db, tracks, name_key="track")
+
+        last_refreshed = max((r.created_at for r in recs if r.created_at), default=None)
+        last_refreshed_iso = last_refreshed.isoformat() if last_refreshed else None
+
         return {
-            "tracks": [],
-            "total": 0,
-            "in_library": 0,
-            "missing": 0,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
-            "last_refreshed": None,
-            "message": "Weekly Discover hasn't run yet — schedule it on the Schedule page",
+            "mode": "tailored",
+            "tracks": tracks,
+            "total": len(tracks),
+            "in_library": sum(1 for t in tracks if t.get("in_library")),
+            "missing": sum(1 for t in tracks if not t.get("in_library")),
+            "last_refreshed": last_refreshed_iso,
+            "fetched_at": fetched_at,
         }
 
-    tracks: list[dict] = []
-    for entry in playlist.entries:
-        t = entry.track
-        if not t:
+    # general mode — Spotify new-releases (cached) + Last.fm chart
+    pool: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(track_name: str, artist_name: str, payload: dict) -> None:
+        if not track_name or not artist_name:
+            return
+        key = (artist_name.lower(), track_name.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        pool.append(payload)
+
+    # Spotify new-releases — reuse the in-memory cache populated by /new-releases.
+    # We intentionally do not trigger a fresh Spotify pull here; if cold, we just
+    # fall back to Last.fm chart data.
+    for cached in _NEW_RELEASES_CACHE.values():
+        if cached.get("expires_at", 0) <= time.time():
             continue
-        artist_name = t.artist.name if t.artist else ""
-        album_name = t.album.title if t.album else ""
-        tracks.append({
-            "track": t.title,
-            "name": t.title,
-            "artist": artist_name,
-            "album": album_name,
-            "year": t.year,
-            "cover_art": t.album_id or t.id,
-            "track_id": t.id,
-            "in_library": True,
-            "duration_seconds": t.duration_seconds,
+        for raw in cached.get("tracks", []) or []:
+            t = raw.get("track") or ""
+            a = raw.get("artist") or ""
+            _add(t, a, {
+                "track": t,
+                "artist": a,
+                "album": raw.get("album"),
+                "year": raw.get("year"),
+                "cover_url": raw.get("cover_url"),
+                "source": "new_releases",
+                "preview_url": raw.get("preview_url"),
+            })
+
+    # Last.fm global top tracks
+    try:
+        chart = await lastfm.get_top_tracks(limit=100, page=1)
+    except Exception:
+        chart = []
+    for c in chart:
+        t = c.get("name") or ""
+        a = c.get("artist") or ""
+        _add(t, a, {
+            "track": t,
+            "artist": a,
+            "album": None,
+            "year": None,
+            "cover_url": None,
+            "source": "trending",
         })
 
-    last_refreshed = getattr(playlist, "updated_at", None) or getattr(playlist, "created_at", None)
-    last_refreshed_iso = last_refreshed.isoformat() if last_refreshed else None
+    # Annotate library presence so we can drop anything already in library.
+    await _batch_library_match(db, pool, name_key="track")
+    missing = [t for t in pool if not t.get("in_library")]
+    random.shuffle(missing)
+    missing = missing[:50]
 
     return {
-        "tracks": tracks,
-        "total": len(tracks),
-        "in_library": len(tracks),
-        "missing": 0,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "last_refreshed": last_refreshed_iso,
-        "playlist_id": playlist.id,
-        "playlist_name": playlist.name,
+        "mode": "general",
+        "tracks": missing,
+        "total": len(missing),
+        "in_library": 0,
+        "missing": len(missing),
+        "last_refreshed": None,
+        "fetched_at": fetched_at,
     }
 
 
