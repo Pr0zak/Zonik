@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import random
+import re
 import time
 from datetime import datetime, timezone
 
@@ -31,6 +32,21 @@ _NEW_RELEASES_CACHE: dict[str, dict] = {}
 _NEW_RELEASES_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
 
+_PAREN_SUFFIX_RE = re.compile(r"\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$")
+_FEAT_RE = re.compile(r"\s+(feat\.?|featuring|ft\.?)\s+.+$", re.IGNORECASE)
+
+
+def _norm_title(s: str) -> str:
+    s = _PAREN_SUFFIX_RE.sub("", s).strip()
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _norm_artist(s: str) -> str:
+    primary = s.split(",", 1)[0]
+    primary = _FEAT_RE.sub("", primary).strip()
+    return re.sub(r"[^a-z0-9]", "", primary.lower())
+
+
 async def _batch_library_match(
     db: AsyncSession,
     items: list[dict],
@@ -39,33 +55,35 @@ async def _batch_library_match(
 ) -> None:
     """Annotate a list of dicts with in_library/track_id via a single batched query.
 
-    Each item must have `name_key` (track name) and `artist_key` (artist name).
-    Adds `in_library: bool` and `track_id: str|None` in-place.
+    Match is permissive: title and artist are normalized to alphanumerics with
+    parenthetical suffixes ("(Remastered 2014)") and "feat./featuring" sections
+    stripped, and the comma-joined primary artist is used. This handles the
+    common cases where Spotify/Last.fm naming diverges from the local library.
     """
     if not items:
         return
-    conditions = [
-        and_(
-            sqfunc.lower(Track.title) == t[name_key].lower(),
-            sqfunc.lower(Artist.name) == t[artist_key].lower(),
-        )
-        for t in items
-        if t.get(name_key) and t.get(artist_key)
-    ]
-    if not conditions:
-        for t in items:
+
+    # Pull every (artist, title) pair once. Library is small (~5-10k tracks);
+    # full scan is cheaper than building OR-of-100-conditions and avoids the
+    # exact-match brittleness that previously caused dupes.
+    lib_result = await db.execute(
+        select(Track.id, Track.title, Artist.name)
+        .join(Artist, Track.artist_id == Artist.id)
+    )
+    lib_map: dict[tuple[str, str], str] = {}
+    for track_id, title, artist in lib_result.all():
+        if not title or not artist:
+            continue
+        lib_map.setdefault((_norm_artist(artist), _norm_title(title)), track_id)
+
+    for t in items:
+        name = t.get(name_key) or ""
+        artist = t.get(artist_key) or ""
+        if not name or not artist:
             t["in_library"] = False
             t["track_id"] = None
-        return
-    lib_result = await db.execute(
-        select(Track.id, sqfunc.lower(Track.title), sqfunc.lower(Artist.name))
-        .join(Artist, Track.artist_id == Artist.id)
-        .where(or_(*conditions))
-    )
-    lib_map = {(title, artist): track_id for track_id, title, artist in lib_result.all()}
-    for t in items:
-        key = (t[name_key].lower(), t[artist_key].lower())
-        matched_id = lib_map.get(key)
+            continue
+        matched_id = lib_map.get((_norm_artist(artist), _norm_title(name)))
         t["in_library"] = matched_id is not None
         t["track_id"] = matched_id
 
