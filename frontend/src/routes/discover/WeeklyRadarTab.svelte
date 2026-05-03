@@ -64,7 +64,7 @@
 	async function regenerate() {
 		runningRefresh = true;
 		try {
-			const res = await fetch('/api/schedule/playlist_weekly_discover/run', { method: 'POST' });
+			const res = await fetch('/api/schedule/recommendation_refresh/run', { method: 'POST' });
 			const data = await res.json();
 			if (data.error) {
 				addToast(data.error, 'error');
