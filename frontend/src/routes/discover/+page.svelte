@@ -1795,7 +1795,7 @@
 
 		{:else if activeTab === 'weeklyradar'}
 			{#if weeklyRadarLoaded}
-				<WeeklyRadarTab />
+				<WeeklyRadarTab bind:trackStatus />
 			{/if}
 
 		{:else if activeTab === 'playlists'}
