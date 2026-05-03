@@ -1,8 +1,13 @@
 """Discovery API routes - Last.fm top tracks, similar artists/tracks, auth."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import random
+import time
+from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select, or_, and_, func as sqfunc
@@ -14,10 +19,16 @@ from backend.database import get_db
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.favorite import Favorite
+from backend.models.recommendation import Recommendation
 from backend.services import lastfm
 from backend.services.soulseek import normalize_text
 
 router = APIRouter()
+
+# In-memory cache for Spotify new-releases. Keyed by country.
+# { country: { "data": <response dict>, "expires_at": <epoch seconds> } }
+_NEW_RELEASES_CACHE: dict[str, dict] = {}
+_NEW_RELEASES_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
 
 async def _batch_library_match(
@@ -57,6 +68,265 @@ async def _batch_library_match(
         matched_id = lib_map.get(key)
         t["in_library"] = matched_id is not None
         t["track_id"] = matched_id
+
+
+async def _get_new_releases_raw(country: str) -> tuple[list[dict] | None, str | None, str | None]:
+    """Cache-aware Spotify new-releases fetch. Returns (tracks, fetched_at, error).
+    None tracks + error means "uncached AND fetch failed". Empty tracks + None error
+    is "uncached AND Spotify creds missing"."""
+    country = country.upper()
+    now = time.time()
+    cached = _NEW_RELEASES_CACHE.get(country)
+    if cached and cached["expires_at"] > now:
+        return [dict(t) for t in cached["tracks"]], cached["fetched_at"], None
+
+    from backend.services.playlist_import import _spotify_get_token
+    token = await _spotify_get_token()
+    if not token:
+        return [], None, "Spotify not configured"
+
+    tracks: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            headers = {"Authorization": f"Bearer {token}"}
+            resp = await client.get(
+                "https://api.spotify.com/v1/browse/new-releases",
+                headers=headers,
+                params={"country": country, "limit": 20},
+            )
+            resp.raise_for_status()
+            albums = resp.json().get("albums", {}).get("items", []) or []
+
+            sem = asyncio.Semaphore(5)
+
+            async def fetch_album_tracks(album: dict) -> list[dict]:
+                album_id = album.get("id")
+                if not album_id:
+                    return []
+                async with sem:
+                    try:
+                        ar = await client.get(
+                            f"https://api.spotify.com/v1/albums/{album_id}/tracks",
+                            headers=headers,
+                            params={"limit": 10},
+                        )
+                        ar.raise_for_status()
+                        items = ar.json().get("items", []) or []
+                    except Exception:
+                        return []
+                primary_artist = ", ".join(
+                    a.get("name", "") for a in album.get("artists", []) if a.get("name")
+                )
+                images = album.get("images") or []
+                cover_url = images[0]["url"] if images else None
+                release_date = album.get("release_date") or ""
+                year = release_date[:4] if release_date else None
+                album_name = album.get("name", "")
+                album_id_out = album.get("id", "")
+                spotify_url = (album.get("external_urls") or {}).get("spotify")
+
+                out = []
+                for t in items:
+                    track_artists = ", ".join(
+                        a.get("name", "") for a in t.get("artists", []) if a.get("name")
+                    ) or primary_artist
+                    out.append({
+                        "track": t.get("name", ""),
+                        "artist": track_artists,
+                        "album": album_name,
+                        "album_id": album_id_out,
+                        "year": year,
+                        "release_date": release_date,
+                        "cover_url": cover_url,
+                        "spotify_id": t.get("id", ""),
+                        "spotify_url": (t.get("external_urls") or {}).get("spotify") or spotify_url,
+                        "preview_url": t.get("preview_url"),
+                        "duration_ms": t.get("duration_ms", 0),
+                        "track_number": t.get("track_number"),
+                    })
+                return out
+
+            results = await asyncio.gather(
+                *[fetch_album_tracks(a) for a in albums], return_exceptions=True
+            )
+            for r in results:
+                if isinstance(r, Exception):
+                    continue
+                tracks.extend(r)
+    except httpx.HTTPError as e:
+        return None, None, f"Spotify request failed: {e}"
+
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    _NEW_RELEASES_CACHE[country] = {
+        "tracks": [dict(t) for t in tracks],
+        "fetched_at": fetched_at,
+        "expires_at": now + _NEW_RELEASES_TTL_SECONDS,
+    }
+    return tracks, fetched_at, None
+
+
+@router.get("/new-releases")
+async def new_releases(
+    country: str = Query("US", min_length=2, max_length=2),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return recent album drops from Spotify expanded into per-album top tracks.
+
+    Cached in-memory for 6h per-country to avoid hammering Spotify.
+    """
+    country = country.upper()
+    cached_hit = country in _NEW_RELEASES_CACHE and _NEW_RELEASES_CACHE[country]["expires_at"] > time.time()
+    tracks, fetched_at, error = await _get_new_releases_raw(country)
+    if error:
+        return {
+            "error": error,
+            "tracks": [],
+            "total": 0,
+            "in_library": 0,
+            "missing": 0,
+        }
+    await _batch_library_match(db, tracks, name_key="track")
+
+    return {
+        "tracks": tracks,
+        "total": len(tracks),
+        "in_library": sum(1 for t in tracks if t.get("in_library")),
+        "missing": sum(1 for t in tracks if not t.get("in_library")),
+        "fetched_at": fetched_at,
+        "cached": cached_hit,
+    }
+
+
+_TAILORED_SOURCES = ("similar_track", "similar_artist", "tag")
+
+
+@router.get("/weekly-radar")
+async def weekly_radar(
+    mode: str = Query("tailored", pattern="^(tailored|general)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return missing-tracks-to-grab for the Weekly Radar tab.
+
+    Tailored: taste-driven pending recommendations from the recommender pipeline.
+    General: broader discovery — Spotify new-releases + Last.fm chart.getTopTracks
+    filtered to tracks not yet in library.
+    """
+    fetched_at = datetime.now(timezone.utc).isoformat()
+
+    if mode == "tailored":
+        result = await db.execute(
+            select(Recommendation)
+            .where(
+                Recommendation.status == "pending",
+                Recommendation.source.in_(_TAILORED_SOURCES),
+            )
+            .order_by(Recommendation.score.desc(), Recommendation.created_at.desc())
+            .limit(50)
+        )
+        recs = result.scalars().all()
+
+        if not recs:
+            return {
+                "mode": "tailored",
+                "tracks": [],
+                "total": 0,
+                "in_library": 0,
+                "missing": 0,
+                "last_refreshed": None,
+                "fetched_at": fetched_at,
+                "message": "No taste-driven recommendations yet. Run the recommendation refresh on the Schedule page or click Regenerate.",
+            }
+
+        tracks: list[dict] = [
+            {
+                "id": r.id,
+                "track": r.track,
+                "artist": r.artist,
+                "album": None,
+                "year": None,
+                "cover_url": r.image_url,
+                "score": r.score,
+                "source": r.source,
+                "preview_url": r.preview_url,
+            }
+            for r in recs
+        ]
+        await _batch_library_match(db, tracks, name_key="track")
+
+        last_refreshed = max((r.created_at for r in recs if r.created_at), default=None)
+        last_refreshed_iso = last_refreshed.isoformat() if last_refreshed else None
+
+        return {
+            "mode": "tailored",
+            "tracks": tracks,
+            "total": len(tracks),
+            "in_library": sum(1 for t in tracks if t.get("in_library")),
+            "missing": sum(1 for t in tracks if not t.get("in_library")),
+            "last_refreshed": last_refreshed_iso,
+            "fetched_at": fetched_at,
+        }
+
+    # general mode — Spotify new-releases (cached) + Last.fm chart
+    pool: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(track_name: str, artist_name: str, payload: dict) -> None:
+        if not track_name or not artist_name:
+            return
+        key = (artist_name.lower(), track_name.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        pool.append(payload)
+
+    # Spotify new-releases — warm the cache on first General visit so the tab is
+    # useful even before the New Releases tab has been opened.
+    nr_tracks, _, _ = await _get_new_releases_raw("US")
+    for raw in nr_tracks or []:
+        t = raw.get("track") or ""
+        a = raw.get("artist") or ""
+        _add(t, a, {
+            "track": t,
+            "artist": a,
+            "album": raw.get("album"),
+            "year": raw.get("year"),
+            "cover_url": raw.get("cover_url"),
+            "source": "new_releases",
+            "preview_url": raw.get("preview_url"),
+        })
+
+    # Last.fm global top tracks
+    try:
+        chart = await lastfm.get_top_tracks(limit=100, page=1)
+    except Exception:
+        chart = []
+    for c in chart:
+        t = c.get("name") or ""
+        a = c.get("artist") or ""
+        _add(t, a, {
+            "track": t,
+            "artist": a,
+            "album": None,
+            "year": None,
+            "cover_url": None,
+            "source": "trending",
+        })
+
+    # Annotate library presence so we can drop anything already in library.
+    await _batch_library_match(db, pool, name_key="track")
+    missing = [t for t in pool if not t.get("in_library")]
+    random.shuffle(missing)
+    missing = missing[:50]
+
+    return {
+        "mode": "general",
+        "tracks": missing,
+        "total": len(missing),
+        "in_library": 0,
+        "missing": len(missing),
+        "last_refreshed": None,
+        "fetched_at": fetched_at,
+    }
 
 
 @router.get("/top-tracks")
