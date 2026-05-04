@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import FileResponse, Response, StreamingResponse
@@ -17,6 +18,19 @@ from backend.subsonic.responses import error_response
 
 router = APIRouter()
 log = logging.getLogger(__name__)
+
+
+def _content_disposition(filename: str, *, inline: bool = True) -> str:
+    """Build an RFC 6266 Content-Disposition header that survives non-ASCII filenames.
+
+    HTTP/1.1 headers must be latin-1 encodable; track filenames with em-dashes,
+    smart-quotes, etc. crash uvicorn's response encoder if put raw into the header.
+    Fix: pair an ASCII fallback (best-effort) with `filename*=UTF-8''<percent-encoded>`.
+    """
+    disp = "inline" if inline else "attachment"
+    ascii_fallback = filename.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    encoded = quote(filename, safe="")
+    return f"{disp}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}"
 
 # Formats that don't need transcoding
 PASSTHROUGH_FORMATS = {"mp3", "ogg", "opus", "aac", "m4a"}
@@ -211,7 +225,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                     "Cache-Control": "private, max-age=86400",
                     "Accept-Ranges": "none",
                     "Content-Length": str(file_size),
-                    "Content-Disposition": f'inline; filename="{filename}"',
+                    "Content-Disposition": _content_disposition(filename),
                 },
             )
 
@@ -251,7 +265,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                 "Cache-Control": "private, max-age=86400",
                 "Accept-Ranges": "none",
                 "Content-Length": str(file_size),
-                "Content-Disposition": f'inline; filename="{file_path.stem}.{target_format}"',
+                "Content-Disposition": _content_disposition(f"{file_path.stem}.{target_format}"),
             },
         )
 
@@ -355,8 +369,8 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
     cache_key = f"{track.id}_{target_format}_{effective_bitrate}"
     # .partial sits next to the final file so the rename is on the same fs (atomic).
     partial_path = cache_path.with_suffix(cache_path.suffix + ".partial")
-    response_headers["Content-Disposition"] = (
-        f'inline; filename="{file_path.stem}.{target_format}"'
+    response_headers["Content-Disposition"] = _content_disposition(
+        f"{file_path.stem}.{target_format}"
     )
 
     async def generate():
