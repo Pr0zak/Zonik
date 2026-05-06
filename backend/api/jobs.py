@@ -273,22 +273,28 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
     except (json.JSONDecodeError, TypeError):
         return {"error": "Job not retryable"}
 
-    failed_tracks = [t for t in tracks if t.get("status") == "failed"]
-    if not failed_tracks:
-        return {"error": "No failed tracks to retry"}
+    # Accept any non-terminal track status — for orphaned jobs cancelled mid-flight
+    # (e.g. service restart, peer drop with no signal) the per-track JSON never gets
+    # past "queued"/"downloading" even though the job itself is marked failed.
+    retryable_tracks = [
+        t for t in tracks
+        if t.get("status") in ("failed", "queued", "pending", "downloading", None)
+    ]
+    if not retryable_tracks:
+        return {"error": "No retryable tracks"}
 
     from backend.api.download import enqueue_download
 
     # Preserve original source from job card (e.g. "dl:upgrade" → "upgrade")
     source = job.card.split(":", 1)[1] if job.card and ":" in job.card else None
 
-    for t in failed_tracks:
+    for t in retryable_tracks:
         artist = t.get("artist", "")
         track = t.get("track", "")
         if artist and track:
             background_tasks.add_task(enqueue_download, artist, track, source=source)
 
-    return {"ok": True, "total": len(failed_tracks)}
+    return {"ok": True, "total": len(retryable_tracks)}
 
 
 @router.get("/{job_id}")
