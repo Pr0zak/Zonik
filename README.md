@@ -11,6 +11,21 @@
   Paired with <a href="https://github.com/Pr0zak/Zonik-mobile">Zonik-mobile</a> on Android via the OpenSubsonic protocol.
 </p>
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="48%">
+  <img src="docs/screenshots/discover.png" alt="Discover" width="48%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/library.png" alt="Library" width="48%">
+  <img src="docs/screenshots/map.png" alt="Music Map" width="48%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/downloads.png" alt="Downloads" width="48%">
+  <img src="docs/screenshots/stats.png" alt="Stats" width="48%">
+</p>
+
 ## Features
 
 - **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for Zonik-mobile and other Subsonic clients
