@@ -88,20 +88,13 @@ async def _batch_library_match(
         t["track_id"] = matched_id
 
 
-async def _get_new_releases_raw(country: str) -> tuple[list[dict] | None, str | None, str | None]:
-    """Cache-aware Spotify new-releases fetch. Returns (tracks, fetched_at, error).
-    None tracks + error means "uncached AND fetch failed". Empty tracks + None error
-    is "uncached AND Spotify creds missing"."""
-    country = country.upper()
-    now = time.time()
-    cached = _NEW_RELEASES_CACHE.get(country)
-    if cached and cached["expires_at"] > now:
-        return [dict(t) for t in cached["tracks"]], cached["fetched_at"], None
-
+async def _fetch_spotify_new_releases(country: str) -> list[dict]:
+    """Fetch Spotify new-releases expanded into per-album top tracks. Empty list
+    if creds are missing or any HTTP step fails."""
     from backend.services.playlist_import import _spotify_get_token
     token = await _spotify_get_token()
     if not token:
-        return [], None, "Spotify not configured"
+        return []
 
     tracks: list[dict] = []
     try:
@@ -142,13 +135,13 @@ async def _get_new_releases_raw(country: str) -> tuple[list[dict] | None, str | 
                 album_name = album.get("name", "")
                 album_id_out = album.get("id", "")
                 spotify_url = (album.get("external_urls") or {}).get("spotify")
-
                 out = []
                 for t in items:
                     track_artists = ", ".join(
                         a.get("name", "") for a in t.get("artists", []) if a.get("name")
                     ) or primary_artist
                     out.append({
+                        "source": "spotify",
                         "track": t.get("name", ""),
                         "artist": track_artists,
                         "album": album_name,
@@ -171,16 +164,121 @@ async def _get_new_releases_raw(country: str) -> tuple[list[dict] | None, str | 
                 if isinstance(r, Exception):
                     continue
                 tracks.extend(r)
-    except httpx.HTTPError as e:
-        return None, None, f"Spotify request failed: {e}"
+    except httpx.HTTPError:
+        return []
+    return tracks
+
+
+async def _fetch_deezer_new_releases() -> list[dict]:
+    """Fetch Deezer new-releases expanded into per-album tracks via the open
+    `editorial/0/releases` endpoint. No auth required."""
+    tracks: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.deezer.com/editorial/0/releases",
+                params={"limit": 20},
+            )
+            resp.raise_for_status()
+            albums = resp.json().get("data", []) or []
+
+            sem = asyncio.Semaphore(5)
+
+            async def fetch_album_tracks(album: dict) -> list[dict]:
+                album_id = album.get("id")
+                if not album_id:
+                    return []
+                async with sem:
+                    try:
+                        ar = await client.get(
+                            f"https://api.deezer.com/album/{album_id}/tracks",
+                            params={"limit": 10},
+                        )
+                        ar.raise_for_status()
+                        items = ar.json().get("data", []) or []
+                    except Exception:
+                        return []
+                primary_artist = (album.get("artist") or {}).get("name", "")
+                cover_url = (
+                    album.get("cover_xl") or album.get("cover_big")
+                    or album.get("cover_medium") or album.get("cover")
+                )
+                release_date = album.get("release_date") or ""
+                year = release_date[:4] if release_date else None
+                album_name = album.get("title", "")
+                album_id_out = str(album_id)
+                deezer_url = album.get("link")
+                out = []
+                for t in items:
+                    artist_name = (t.get("artist") or {}).get("name", "") or primary_artist
+                    out.append({
+                        "source": "deezer",
+                        "track": t.get("title", ""),
+                        "artist": artist_name,
+                        "album": album_name,
+                        "album_id": album_id_out,
+                        "year": year,
+                        "release_date": release_date,
+                        "cover_url": cover_url,
+                        "deezer_id": str(t.get("id", "")),
+                        "deezer_url": t.get("link") or deezer_url,
+                        "preview_url": t.get("preview"),
+                        "duration_ms": (t.get("duration") or 0) * 1000,
+                        "track_number": t.get("track_position"),
+                    })
+                return out
+
+            results = await asyncio.gather(
+                *[fetch_album_tracks(a) for a in albums], return_exceptions=True
+            )
+            for r in results:
+                if isinstance(r, Exception):
+                    continue
+                tracks.extend(r)
+    except httpx.HTTPError:
+        return []
+    return tracks
+
+
+async def _get_new_releases_raw(country: str) -> tuple[list[dict] | None, str | None, str | None]:
+    """Cache-aware new-releases fetch — Deezer primary (no auth), Spotify optional
+    secondary (if creds configured). Both run concurrently; results are merged
+    and deduped on normalized (artist, title). Returns (tracks, fetched_at, error).
+    Error is only set when BOTH sources return empty."""
+    country = country.upper()
+    now = time.time()
+    cached = _NEW_RELEASES_CACHE.get(country)
+    if cached and cached["expires_at"] > now:
+        return [dict(t) for t in cached["tracks"]], cached["fetched_at"], None
+
+    deezer_tracks, spotify_tracks = await asyncio.gather(
+        _fetch_deezer_new_releases(),
+        _fetch_spotify_new_releases(country),
+        return_exceptions=False,
+    )
+
+    if not deezer_tracks and not spotify_tracks:
+        return [], None, "No new releases — Deezer and Spotify both empty"
+
+    merged: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    # Deezer first so its data wins on dedupe (always available, consistent).
+    for t in list(deezer_tracks) + list(spotify_tracks):
+        key = (_norm_artist(t.get("artist", "")), _norm_title(t.get("track", "")))
+        if not key[0] and not key[1]:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(t)
 
     fetched_at = datetime.now(timezone.utc).isoformat()
     _NEW_RELEASES_CACHE[country] = {
-        "tracks": [dict(t) for t in tracks],
+        "tracks": [dict(t) for t in merged],
         "fetched_at": fetched_at,
         "expires_at": now + _NEW_RELEASES_TTL_SECONDS,
     }
-    return tracks, fetched_at, None
+    return merged, fetched_at, None
 
 
 @router.get("/new-releases")
