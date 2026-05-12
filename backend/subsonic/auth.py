@@ -10,6 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import async_session
 from backend.models.user import User
+from backend.subsonic.activity import record_activity
+
+
+def _client_ip(request: Request) -> str | None:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
 
 
 async def authenticate_subsonic(request: Request) -> User:
@@ -28,6 +36,7 @@ async def authenticate_subsonic(request: Request) -> User:
     password = params.get("p")
     token = params.get("t")
     salt = params.get("s")
+    client_name = params.get("c")
 
     # API key auth (OpenSubsonic apiKey param — no username needed)
     if api_key:
@@ -38,6 +47,12 @@ async def authenticate_subsonic(request: Request) -> User:
             user = result.scalar_one_or_none()
         if not user:
             raise HTTPException(401, "Invalid API key")
+        record_activity(
+            user.username,
+            client_name,
+            request.headers.get("user-agent"),
+            _client_ip(request),
+        )
         return user
 
     if not username:
@@ -70,6 +85,12 @@ async def authenticate_subsonic(request: Request) -> User:
     else:
         raise HTTPException(400, "Missing authentication")
 
+    record_activity(
+        user.username,
+        client_name,
+        request.headers.get("user-agent"),
+        _client_ip(request),
+    )
     return user
 
 
