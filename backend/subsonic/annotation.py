@@ -178,6 +178,7 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
         username = params.get("u", "admin")
         _now_playing[username] = {
             "track": track,
+            "track_id": song_id,
             "playerId": params.get("c", ""),
             "started_at": datetime.utcnow(),
         }
