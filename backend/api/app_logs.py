@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models.app_log import AppLog
-from backend.subsonic.auth import authenticate_subsonic
 
 router = APIRouter()
 
@@ -23,12 +22,17 @@ class LogUploadRequest(BaseModel):
     logs: str
 
 
-# --- Upload (Subsonic auth from query params) ---
+# --- Upload ---
+#
+# Permissive on purpose. Most /rest/* endpoints don't enforce Subsonic auth on
+# this single-user server, and requiring it here was the only thing surfacing
+# stale-api_key drift on the phone. Trust the network boundary (Tailscale-only
+# in practice); record the u= query param as a hint, not a credential.
 
 @router.post("")
 async def upload_log(body: LogUploadRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """Accept a log upload from Zonik-mobile. Auth via Subsonic query params."""
-    user = await authenticate_subsonic(request)
+    """Accept a log upload from Zonik-mobile."""
+    username = request.query_params.get("u") or ""
 
     log_id = str(uuid.uuid4())
     entry = AppLog(
@@ -37,7 +41,7 @@ async def upload_log(body: LogUploadRequest, request: Request, db: AsyncSession 
         app_version=body.app_version,
         timestamp=body.timestamp,
         logs=body.logs,
-        username=user.username,
+        username=username,
         created_at=datetime.utcnow(),
     )
     db.add(entry)
