@@ -236,7 +236,7 @@ async def stream(request: Request, db: AsyncSession = Depends(get_db)):
                 "Cache-Control": "private, max-age=86400",
                 "Accept-Ranges": "none",
                 "Content-Length": str(file_size),
-                "Content-Disposition": f'inline; filename="{filename}"',
+                "Content-Disposition": _content_disposition(filename),
             },
         )
 
