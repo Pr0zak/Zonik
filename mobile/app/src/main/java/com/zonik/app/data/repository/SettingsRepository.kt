@@ -1,0 +1,234 @@
+package com.zonik.app.data.repository
+
+import android.content.Context
+import androidx.datastore.preferences.core.*
+import androidx.datastore.preferences.preferencesDataStore
+import com.zonik.core.model.ServerConfig
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import javax.inject.Singleton
+
+private val Context.dataStore by preferencesDataStore(name = "settings")
+
+@Singleton
+class SettingsRepository @Inject constructor(
+    @ApplicationContext private val context: Context
+) {
+    private val dataStore = context.dataStore
+
+    val serverConfig: Flow<ServerConfig?> = dataStore.data.map { prefs ->
+        val url = prefs[SERVER_URL] ?: return@map null
+        val username = prefs[USERNAME] ?: return@map null
+        val apiKey = prefs[API_KEY] ?: return@map null
+        ServerConfig(url, username, apiKey)
+    }
+
+    val isLoggedIn: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[SERVER_URL] != null && prefs[USERNAME] != null && prefs[API_KEY] != null
+    }
+
+    val wifiBitrate: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[WIFI_BITRATE] ?: 0
+    }
+
+    val cellularBitrate: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[CELLULAR_BITRATE] ?: 192
+    }
+
+    val lastSyncTime: Flow<Long> = dataStore.data.map { prefs ->
+        prefs[LAST_SYNC] ?: 0L
+    }
+
+    val syncIntervalMinutes: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[SYNC_INTERVAL] ?: 60
+    }
+
+    val wifiOnly: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[WIFI_ONLY] ?: true
+    }
+
+    val scrobblingEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[SCROBBLING_ENABLED] ?: false
+    }
+
+    val lastFmSessionKey: Flow<String?> = dataStore.data.map { prefs ->
+        prefs[LASTFM_SESSION_KEY]
+    }
+
+    suspend fun saveServerConfig(config: ServerConfig) {
+        dataStore.edit { prefs ->
+            prefs[SERVER_URL] = config.url
+            prefs[USERNAME] = config.username
+            prefs[API_KEY] = config.apiKey
+        }
+    }
+
+    suspend fun updateLastSyncTime(time: Long) {
+        dataStore.edit { prefs -> prefs[LAST_SYNC] = time }
+    }
+
+    suspend fun setSyncInterval(minutes: Int) {
+        dataStore.edit { prefs -> prefs[SYNC_INTERVAL] = minutes }
+    }
+
+    suspend fun setWifiBitrate(bitrate: Int) {
+        dataStore.edit { prefs -> prefs[WIFI_BITRATE] = bitrate }
+    }
+
+    suspend fun setCellularBitrate(bitrate: Int) {
+        dataStore.edit { prefs -> prefs[CELLULAR_BITRATE] = bitrate }
+    }
+
+    suspend fun setWifiOnly(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[WIFI_ONLY] = enabled }
+    }
+
+    suspend fun setScrobblingEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[SCROBBLING_ENABLED] = enabled }
+    }
+
+    suspend fun setLastFmSessionKey(key: String?) {
+        dataStore.edit { prefs ->
+            if (key != null) prefs[LASTFM_SESSION_KEY] = key
+            else prefs.remove(LASTFM_SESSION_KEY)
+        }
+    }
+
+    val audioCacheSizeMb: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[AUDIO_CACHE_SIZE_MB] ?: 500
+    }
+
+    suspend fun setAudioCacheSizeMb(sizeMb: Int) {
+        dataStore.edit { prefs -> prefs[AUDIO_CACHE_SIZE_MB] = sizeMb }
+    }
+
+    val coverArtCacheSizeMb: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[COVER_ART_CACHE_SIZE_MB] ?: 250
+    }
+
+    suspend fun setCoverArtCacheSizeMb(sizeMb: Int) {
+        dataStore.edit { prefs -> prefs[COVER_ART_CACHE_SIZE_MB] = sizeMb }
+    }
+
+    val keepScreenOn: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEEP_SCREEN_ON] ?: false
+    }
+
+    suspend fun setKeepScreenOn(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[KEEP_SCREEN_ON] = enabled }
+    }
+
+    val adaptiveBitrate: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[ADAPTIVE_BITRATE] ?: true
+    }
+
+    suspend fun setAdaptiveBitrate(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[ADAPTIVE_BITRATE] = enabled }
+    }
+
+    val cacheReadAhead: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[CACHE_READ_AHEAD] ?: 5
+    }
+
+    suspend fun setCacheReadAhead(count: Int) {
+        dataStore.edit { prefs -> prefs[CACHE_READ_AHEAD] = count }
+    }
+
+    val autoTabOrder: Flow<List<String>> = dataStore.data.map { prefs ->
+        val raw = prefs[AUTO_TAB_ORDER]
+        if (raw != null) raw.split(",") else listOf("mix", "recent", "library", "playlists")
+    }
+
+    suspend fun setAutoTabOrder(order: List<String>) {
+        dataStore.edit { prefs -> prefs[AUTO_TAB_ORDER] = order.joinToString(",") }
+    }
+
+    suspend fun clearAll() {
+        dataStore.edit { it.clear() }
+    }
+
+    companion object {
+        private val SERVER_URL = stringPreferencesKey("server_url")
+        private val USERNAME = stringPreferencesKey("username")
+        private val API_KEY = stringPreferencesKey("api_key")
+        private val WIFI_BITRATE = intPreferencesKey("wifi_bitrate")
+        private val CELLULAR_BITRATE = intPreferencesKey("cellular_bitrate")
+        private val LAST_SYNC = longPreferencesKey("last_sync")
+        private val SYNC_INTERVAL = intPreferencesKey("sync_interval")
+        private val WIFI_ONLY = booleanPreferencesKey("wifi_only")
+        private val SCROBBLING_ENABLED = booleanPreferencesKey("scrobbling_enabled")
+        private val LASTFM_SESSION_KEY = stringPreferencesKey("lastfm_session_key")
+        private val KEEP_SCREEN_ON = booleanPreferencesKey("keep_screen_on")
+        private val ADAPTIVE_BITRATE = booleanPreferencesKey("adaptive_bitrate")
+        private val AUDIO_CACHE_SIZE_MB = intPreferencesKey("audio_cache_size_mb")
+        private val COVER_ART_CACHE_SIZE_MB = intPreferencesKey("cover_art_cache_size_mb")
+        private val CACHE_READ_AHEAD = intPreferencesKey("cache_read_ahead")
+        private val AUTO_TAB_ORDER = stringPreferencesKey("auto_tab_order")
+        private val VISUALIZER_ENABLED = booleanPreferencesKey("visualizer_enabled")
+        private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
+        private val EQ_PRESET = intPreferencesKey("eq_preset")
+        private val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")
+        private val OFFLINE_CACHE_ENABLED = booleanPreferencesKey("offline_cache_enabled")
+        private val AUTO_CACHE_QUEUE = booleanPreferencesKey("auto_cache_queue")
+        private val AUTO_CACHE_FAVORITES = booleanPreferencesKey("auto_cache_favorites")
+        private val OFFLINE_STORAGE_LIMIT_MB = intPreferencesKey("offline_storage_limit_mb")
+        private val LAST_QUEUE_TRACK_IDS = stringPreferencesKey("last_queue_track_ids")
+        private val LAST_QUEUE_INDEX = intPreferencesKey("last_queue_index")
+        private val LAST_QUEUE_POSITION_MS = longPreferencesKey("last_queue_position_ms")
+    }
+
+    // -- Playback resume state --
+
+    val lastQueueTrackIds: Flow<List<String>> = dataStore.data.map { prefs ->
+        val raw = prefs[LAST_QUEUE_TRACK_IDS]
+        if (raw.isNullOrEmpty()) emptyList() else raw.split(",")
+    }
+
+    val lastQueueIndex: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[LAST_QUEUE_INDEX] ?: 0
+    }
+
+    val lastQueuePositionMs: Flow<Long> = dataStore.data.map { prefs ->
+        prefs[LAST_QUEUE_POSITION_MS] ?: 0L
+    }
+
+    suspend fun savePlaybackState(trackIds: List<String>, index: Int, positionMs: Long) {
+        dataStore.edit { prefs ->
+            prefs[LAST_QUEUE_TRACK_IDS] = trackIds.joinToString(",")
+            prefs[LAST_QUEUE_INDEX] = index
+            prefs[LAST_QUEUE_POSITION_MS] = positionMs
+        }
+    }
+
+    val visualizerEnabled: Flow<Boolean> = dataStore.data.map { prefs -> prefs[VISUALIZER_ENABLED] ?: false }
+    suspend fun setVisualizerEnabled(enabled: Boolean) { dataStore.edit { it[VISUALIZER_ENABLED] = enabled } }
+
+    // Offline cache settings
+    val offlineCacheEnabled: Flow<Boolean> = dataStore.data.map { prefs -> prefs[OFFLINE_CACHE_ENABLED] ?: false }
+    suspend fun setOfflineCacheEnabled(enabled: Boolean) { dataStore.edit { it[OFFLINE_CACHE_ENABLED] = enabled } }
+
+    val autoCacheQueue: Flow<Boolean> = dataStore.data.map { prefs -> prefs[AUTO_CACHE_QUEUE] ?: true }
+    suspend fun setAutoCacheQueue(enabled: Boolean) { dataStore.edit { it[AUTO_CACHE_QUEUE] = enabled } }
+
+    val autoCacheFavorites: Flow<Boolean> = dataStore.data.map { prefs -> prefs[AUTO_CACHE_FAVORITES] ?: true }
+    suspend fun setAutoCacheFavorites(enabled: Boolean) { dataStore.edit { it[AUTO_CACHE_FAVORITES] = enabled } }
+
+    val offlineStorageLimitMb: Flow<Int> = dataStore.data.map { prefs -> prefs[OFFLINE_STORAGE_LIMIT_MB] ?: 2048 }
+    suspend fun setOfflineStorageLimitMb(sizeMb: Int) { dataStore.edit { it[OFFLINE_STORAGE_LIMIT_MB] = sizeMb } }
+
+    val eqEnabled: Flow<Boolean> = dataStore.data.map { prefs -> prefs[EQ_ENABLED] ?: false }
+    suspend fun setEqEnabled(enabled: Boolean) { dataStore.edit { it[EQ_ENABLED] = enabled } }
+
+    val eqPreset: Flow<Int> = dataStore.data.map { prefs -> prefs[EQ_PRESET] ?: 0 }
+    suspend fun setEqPreset(preset: Int) { dataStore.edit { it[EQ_PRESET] = preset } }
+
+    val eqBandLevels: Flow<String?> = dataStore.data.map { prefs -> prefs[EQ_BAND_LEVELS] }
+    suspend fun setEqBandLevels(levels: String?) {
+        dataStore.edit { prefs ->
+            if (levels != null) prefs[EQ_BAND_LEVELS] = levels
+            else prefs.remove(EQ_BAND_LEVELS)
+        }
+    }
+}
