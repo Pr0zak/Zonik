@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  Paired with <a href="https://github.com/Pr0zak/Zonik-mobile">Zonik-mobile</a> on Android via the OpenSubsonic protocol.
+  Includes a native Android phone app + Pixel Watch companion under <a href="mobile/"><code>mobile/</code></a>.
 </p>
 
 ## Screenshots
@@ -28,7 +28,7 @@
 
 ## Features
 
-- **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for Zonik-mobile and other Subsonic clients
+- **OpenSubsonic API** - Full Subsonic/OpenSubsonic implementation for the included mobile app and any Subsonic client
 - **Track-focused** - Download individual tracks, not full discographies
 - **Native Soulseek client** - Built-in P2P client with multi-strategy search and quality scoring
 - **Last.fm integration** - Discovery, scrobbling, loved track sync, similar artists/tracks
@@ -50,12 +50,13 @@ FastAPI (backend) ─── SQLite (WAL+FTS5) ─── ARQ + Redis (workers)
      │                                             │
 SvelteKit (frontend)                         Background tasks:
      │                                        - Soulseek downloads
-OpenSubsonic API ──── Zonik-mobile            - Audio analysis (Essentia)
-     │                                        - Vibe embeddings (CLAP)
-     ├── Native Soulseek P2P                 - AI recommendations
-     ├── Last.fm API                         - Discovery & enrichment
-     ├── Spotify / Deezer APIs               - Scheduled jobs
-     └── Claude API (AI features)
+OpenSubsonic API ──┬── mobile/app (Android phone, Auto, TV)
+     │             ├── mobile/wear (Pixel Watch — standalone)
+     │             └── any Subsonic client      - Audio analysis (Essentia)
+     ├── Native Soulseek P2P                    - Vibe embeddings (CLAP)
+     ├── Last.fm API                            - AI recommendations
+     ├── Spotify / Deezer APIs                  - Discovery & enrichment
+     └── Claude API (AI features)               - Scheduled jobs
 ```
 
 ## Quick Start
@@ -106,11 +107,36 @@ See [Configuration Reference](docs/configuration.md) for all options.
 
 ## Subsonic API
 
-Point Zonik-mobile (or any Subsonic client) at `http://<host>:3000/rest` with credentials `admin` / `admin`.
+Point the bundled mobile app (or any Subsonic client) at `http://<host>:3000/rest` with credentials `admin` / `admin`.
 
 Supported endpoints: ping, getLicense, getArtists, getArtist, getAlbum, getSong, getAlbumList2, search3, stream, download, getCoverArt, star, unstar, scrobble, getPlaylists, createPlaylist, getBookmarks, savePlayQueue, and more.
 
 See [API Reference](docs/api.md) for the full list.
+
+## Mobile (Android phone + Pixel Watch)
+
+The `mobile/` subdirectory is a Gradle multi-module Kotlin/Compose project:
+
+- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support
+- **`mobile/wear/`** — Pixel Watch standalone player (browses + streams direct from server)
+- **`mobile/core/`** — shared Subsonic API, models, and auth interceptor used by both
+
+### Installing
+
+Latest builds are attached to GitHub releases tagged **`app-vX.Y.Z`** — grab `zonik-vX.Y.Z-debug.apk` (phone) or `zonik-wear-vX.Y.Z-debug.apk` (watch). The phone app's pairing flow generates a 6-digit code that the server's `/pair` page consumes — no typing credentials on the watch. The phone can also push its `ServerConfig` to a paired watch over Bluetooth via the Wear Data Layer (**Settings → Wear OS → Send**).
+
+### Building
+
+```bash
+cd mobile
+export JAVA_HOME=$HOME/tools/jdk-17.0.12
+export ANDROID_HOME=$HOME/tools/android-sdk
+./gradlew assembleDebug
+```
+
+CI builds + publishes APKs automatically on every `app-v*` tag (`.github/workflows/mobile-release.yml`).
+
+See [mobile/README.md](mobile/README.md) for the full mobile docs — features, screenshots, install flows for phone / TV / watch, and tech stack.
 
 ## Tech Stack
 
@@ -127,6 +153,7 @@ See [API Reference](docs/api.md) for the full list.
 | AI | Claude API |
 | Metadata | Last.fm + Spotify + Deezer |
 | Downloads | Native Soulseek P2P client |
+| Mobile (phone + watch) | Kotlin · Jetpack Compose · Wear Compose Material 3 · Media3 ExoPlayer · Retrofit · Hilt |
 
 ## License
 
