@@ -1,17 +1,21 @@
-name: Release
+name: Mobile release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'app-v*'
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag name (e.g. v1.4.3) — must already exist on a commit'
+        description: 'Tag name (e.g. app-v1.8.1) — must already exist on a commit'
         required: true
 
 permissions:
   contents: write
+
+defaults:
+  run:
+    working-directory: mobile
 
 jobs:
   build:
@@ -19,6 +23,9 @@ jobs:
     steps:
       - name: Resolve tag ref
         id: ref
+        # GITHUB_OUTPUT is consumed outside the working-directory, no path
+        # concern here.
+        working-directory: ${{ github.workspace }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
@@ -34,9 +41,11 @@ jobs:
 
       - name: Extract version from tag
         id: version
+        working-directory: ${{ github.workspace }}
         run: |
           TAG="${{ steps.ref.outputs.tag }}"
-          VERSION="${TAG#v}"
+          # Strip the "app-v" prefix so the version is just X.Y.Z.
+          VERSION="${TAG#app-v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Set up JDK 17
@@ -63,9 +72,6 @@ jobs:
             echo "::error::Decoded keystore is suspiciously small ($ks_size bytes). Secret is probably corrupt."
             exit 1
           fi
-          # Verify the keystore actually loads with the expected alias — fail
-          # loudly here rather than silently shipping APKs signed with a Gradle
-          # auto-generated keystore (different per run → won't install over).
           keytool -list -keystore ci-debug.keystore -storetype PKCS12 -storepass android -alias androiddebugkey
 
       - name: Cache Gradle
@@ -74,8 +80,8 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: gradle-${{ runner.os }}-
+          key: gradle-${{ runner.os }}-mobile-${{ hashFiles('mobile/**/*.gradle*', 'mobile/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-mobile-
 
       - name: Build APKs
         run: ./gradlew assembleDebug --no-daemon
@@ -95,5 +101,5 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
-            release/zonik-v${{ steps.version.outputs.version }}-debug.apk
-            release/zonik-wear-v${{ steps.version.outputs.version }}-debug.apk
+            mobile/release/zonik-v${{ steps.version.outputs.version }}-debug.apk
+            mobile/release/zonik-wear-v${{ steps.version.outputs.version }}-debug.apk
