@@ -129,9 +129,9 @@ cd frontend && npm install && npm run build && cd ..
 systemctl restart zonik-web zonik-worker
 ```
 
-## Connecting Zonik-mobile
+## Connecting the mobile app
 
-1. Install [Zonik-mobile](https://github.com/Pr0zak/Zonik-mobile) on Android
+1. Install the [Zonik mobile app](https://github.com/Pr0zak/Zonik/releases) on Android
 2. Enter server URL: `http://<zonik-ip>:3000`
 3. Username: `admin`
 4. Password: `admin`
