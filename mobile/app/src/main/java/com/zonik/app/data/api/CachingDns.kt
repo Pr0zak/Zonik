@@ -21,22 +21,36 @@ import javax.inject.Singleton
 
 private val Context.dnsCacheDataStore by preferencesDataStore(name = "dns_cache")
 
+private const val DNS_CACHE_TTL_MS = 24L * 60 * 60 * 1000 // 24h
+
 @Singleton
 class CachingDns @Inject constructor(
     @ApplicationContext context: Context,
 ) : Dns {
     private val store = context.dnsCacheDataStore
-    private val mem = ConcurrentHashMap<String, List<InetAddress>>()
+    private val mem = ConcurrentHashMap<String, CacheEntry>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private data class CacheEntry(val addrs: List<InetAddress>, val expiresAt: Long)
 
     init {
         scope.launch {
             try {
+                val now = System.currentTimeMillis()
                 val prefs = store.data.first()
                 for ((k, v) in prefs.asMap()) {
                     if (k is Preferences.Key<*> && v is String && v.isNotBlank()) {
                         try {
-                            mem[k.name] = listOf(InetAddress.getByName(v))
+                            // Persisted as "ip,ip,...;expiresAt"
+                            val parts = v.split(";")
+                            val expiresAt = parts.getOrNull(1)?.toLongOrNull() ?: 0L
+                            if (expiresAt <= now) continue
+                            val addrs = parts[0].split(",")
+                                .filter { it.isNotBlank() }
+                                .map { InetAddress.getByName(it) }
+                            if (addrs.isNotEmpty()) {
+                                mem[k.name] = CacheEntry(addrs, expiresAt)
+                            }
                         } catch (_: Exception) { }
                     }
                 }
@@ -54,21 +68,29 @@ class CachingDns @Inject constructor(
             addrs
         } catch (e: UnknownHostException) {
             val cached = mem[hostname]
-            if (cached != null) {
-                DebugLog.w("CachingDns", "DNS failed for $hostname; using cached ${cached.first().hostAddress}")
-                cached
+            if (cached != null && cached.expiresAt > System.currentTimeMillis()) {
+                DebugLog.w("CachingDns", "DNS failed for $hostname; using cached ${cached.addrs.first().hostAddress}")
+                cached.addrs
             } else {
+                if (cached != null) {
+                    DebugLog.w("CachingDns", "DNS failed for $hostname; cached entry expired, failing fast")
+                    mem.remove(hostname)
+                }
                 throw e
             }
         }
     }
 
     private fun cache(hostname: String, addrs: List<InetAddress>) {
-        mem[hostname] = addrs
-        val ip = addrs.first().hostAddress ?: return
+        val expiresAt = System.currentTimeMillis() + DNS_CACHE_TTL_MS
+        mem[hostname] = CacheEntry(addrs, expiresAt)
+        val ips = addrs.mapNotNull { it.hostAddress }
+        if (ips.isEmpty()) return
         scope.launch {
             try {
-                store.edit { it[stringPreferencesKey(hostname)] = ip }
+                store.edit {
+                    it[stringPreferencesKey(hostname)] = "${ips.joinToString(",")};$expiresAt"
+                }
             } catch (_: Exception) { }
         }
     }

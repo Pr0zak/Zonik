@@ -11,11 +11,17 @@ import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.util.concurrent.TimeUnit
+import com.zonik.core.model.ServerConfig
 import com.zonik.core.util.md5
 
 /**
@@ -31,7 +37,6 @@ class CoverArtProvider : ContentProvider() {
     @InstallIn(SingletonComponent::class)
     interface CoverArtEntryPoint {
         fun settingsRepository(): SettingsRepository
-        fun okHttpClient(): OkHttpClient
     }
 
     companion object {
@@ -43,7 +48,34 @@ class CoverArtProvider : ContentProvider() {
         }
     }
 
-    override fun onCreate(): Boolean = true
+    // Background scope that keeps a fresh copy of the server config in memory so
+    // openFile() (a synchronous binder/MediaBrowser call) never has to runBlocking
+    // on DataStore on every request.
+    private val providerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile private var cachedConfig: ServerConfig? = null
+
+    // Dedicated client with short, bounded timeouts so a slow/timing-out server
+    // can never block the binder thread indefinitely (ANR risk for Android Auto).
+    private val coverArtClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
+            .build()
+    }
+
+    override fun onCreate(): Boolean {
+        val ctx = context?.applicationContext
+        if (ctx != null) {
+            val entryPoint = EntryPointAccessors.fromApplication(ctx, CoverArtEntryPoint::class.java)
+            val settingsRepository = entryPoint.settingsRepository()
+            providerScope.launch {
+                settingsRepository.serverConfig.collect { cachedConfig = it }
+            }
+        }
+        return true
+    }
 
     override fun getType(uri: Uri): String = "image/*"
 
@@ -54,14 +86,16 @@ class CoverArtProvider : ContentProvider() {
         val size = pathSegments.getOrNull(1)?.toIntOrNull() ?: 300
 
         val context = context ?: return null
-        val entryPoint = EntryPointAccessors.fromApplication(
-            context.applicationContext,
-            CoverArtEntryPoint::class.java
-        )
-        val settingsRepository = entryPoint.settingsRepository()
-        val okHttpClient = entryPoint.okHttpClient()
 
-        val config = runBlocking { settingsRepository.serverConfig.first() } ?: return null
+        // Use the in-memory cached config; only fall back to a short runBlocking on
+        // DataStore if the collector hasn't emitted yet (first call after onCreate).
+        val config = cachedConfig ?: run {
+            val entryPoint = EntryPointAccessors.fromApplication(
+                context.applicationContext,
+                CoverArtEntryPoint::class.java
+            )
+            runBlocking { entryPoint.settingsRepository().serverConfig.first() }
+        } ?: return null
         val serverUrl = config.url.trimEnd('/')
         val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
         val token = md5("${config.apiKey}$salt")
@@ -82,7 +116,7 @@ class CoverArtProvider : ContentProvider() {
 
         return try {
             val request = Request.Builder().url(url).build()
-            val response = okHttpClient.newCall(request).execute()
+            val response = coverArtClient.newCall(request).execute()
             if (!response.isSuccessful) return null
             val bytes = response.body?.bytes() ?: return null
             cacheFile.writeBytes(bytes)

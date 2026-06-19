@@ -42,6 +42,8 @@ import com.zonik.core.model.Playlist
 import com.zonik.core.model.Track
 import com.zonik.app.ui.components.CoverArt
 import com.zonik.app.ui.components.TrackDetailsSheet
+import com.zonik.app.ui.util.formatDuration
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -328,21 +330,25 @@ fun LibraryScreen(
     onTabConsumed: () -> Unit = {},
     viewModel: LibraryViewModel = hiltViewModel()
 ) {
-    val artists by viewModel.artists.collectAsState()
-    val albums by viewModel.albums.collectAsState()
-    val tracks by viewModel.tracks.collectAsState()
-    val favorites by viewModel.favorites.collectAsState()
-    val isLoadingFavorites by viewModel.isLoadingFavorites.collectAsState()
-    val genres by viewModel.genres.collectAsState()
-    val isLoadingGenres by viewModel.isLoadingGenres.collectAsState()
-    val playlists by viewModel.playlists.collectAsState()
-    val isLoadingPlaylists by viewModel.isLoadingPlaylists.collectAsState()
-    val tracksRecentFirst by viewModel.tracksRecentFirst.collectAsState()
-    val flaggedTracks by viewModel.flaggedTracks.collectAsState()
-    val offlineTracks by viewModel.offlineTracks.collectAsState()
-    val isDeleting by viewModel.isDeleting.collectAsState()
-    val deleteResult by viewModel.deleteResult.collectAsState()
-    val syncState by viewModel.syncState.collectAsState()
+    val artists by viewModel.artists.collectAsStateWithLifecycle()
+    val albums by viewModel.albums.collectAsStateWithLifecycle()
+    val tracks by viewModel.tracks.collectAsStateWithLifecycle()
+    val favorites by viewModel.favorites.collectAsStateWithLifecycle()
+    val isLoadingFavorites by viewModel.isLoadingFavorites.collectAsStateWithLifecycle()
+    val genres by viewModel.genres.collectAsStateWithLifecycle()
+    val isLoadingGenres by viewModel.isLoadingGenres.collectAsStateWithLifecycle()
+    val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    val isLoadingPlaylists by viewModel.isLoadingPlaylists.collectAsStateWithLifecycle()
+    val tracksRecentFirst by viewModel.tracksRecentFirst.collectAsStateWithLifecycle()
+    val flaggedTracks by viewModel.flaggedTracks.collectAsStateWithLifecycle()
+    val offlineTracks by viewModel.offlineTracks.collectAsStateWithLifecycle()
+    val isDeleting by viewModel.isDeleting.collectAsStateWithLifecycle()
+    val deleteResult by viewModel.deleteResult.collectAsStateWithLifecycle()
+    val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val trackSort by viewModel.trackSort.collectAsStateWithLifecycle()
+    val trackSortAsc by viewModel.trackSortAsc.collectAsStateWithLifecycle()
+    val albumSort by viewModel.albumSort.collectAsStateWithLifecycle()
+    val albumSortAsc by viewModel.albumSortAsc.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = LibraryTab.entries
@@ -398,12 +404,23 @@ fun LibraryScreen(
                     LibraryTab.ALBUMS -> AlbumsTab(
                         albums = albums,
                         onAlbumClick = onNavigateToAlbum,
-                        viewModel = viewModel
+                        albumSort = albumSort,
+                        albumSortAsc = albumSortAsc,
+                        onSetSort = viewModel::setAlbumSort
                     )
                     LibraryTab.TRACKS -> TracksTab(
                         tracks = tracks,
                         tracksRecentFirst = tracksRecentFirst,
-                        viewModel = viewModel
+                        trackSort = trackSort,
+                        trackSortAsc = trackSortAsc,
+                        onSetSort = viewModel::setTrackSort,
+                        onPlayAll = viewModel::playAllTracks,
+                        onShuffleAll = viewModel::shuffleAllTracks,
+                        onPlay = viewModel::playTrack,
+                        onPlayNext = viewModel::playNext,
+                        onAddToQueue = viewModel::addToQueue,
+                        onStartRadio = viewModel::startRadio,
+                        onToggleMarkForDeletion = viewModel::toggleMarkForDeletion
                     )
                     LibraryTab.FAVORITES -> FavoritesTab(
                         favorites = favorites,
@@ -482,11 +499,10 @@ private fun ArtistsTab(
 private fun AlbumsTab(
     albums: List<Album>,
     onAlbumClick: (String) -> Unit,
-    viewModel: LibraryViewModel
+    albumSort: AlbumSort,
+    albumSortAsc: Boolean,
+    onSetSort: (AlbumSort) -> Unit
 ) {
-    val albumSort by viewModel.albumSort.collectAsState()
-    val albumSortAsc by viewModel.albumSortAsc.collectAsState()
-
     if (albums.isEmpty()) {
         EmptyState(message = "No albums found")
         return
@@ -512,7 +528,7 @@ private fun AlbumsTab(
                 val selected = albumSort == sort
                 FilterChip(
                     selected = selected,
-                    onClick = { viewModel.setAlbumSort(sort) },
+                    onClick = { onSetSort(sort) },
                     label = { Text(sort.label, style = MaterialTheme.typography.labelSmall) },
                     shape = RoundedCornerShape(20.dp),
                     trailingIcon = if (selected) {
@@ -649,10 +665,17 @@ private fun GenresTab(
 private fun TracksTab(
     tracks: List<Track>,
     tracksRecentFirst: List<Track>,
-    viewModel: LibraryViewModel
+    trackSort: TrackSort,
+    trackSortAsc: Boolean,
+    onSetSort: (TrackSort) -> Unit,
+    onPlayAll: () -> Unit,
+    onShuffleAll: () -> Unit,
+    onPlay: (Track) -> Unit,
+    onPlayNext: (Track) -> Unit,
+    onAddToQueue: (Track) -> Unit,
+    onStartRadio: (Track) -> Unit,
+    onToggleMarkForDeletion: (Track) -> Unit
 ) {
-    val trackSort by viewModel.trackSort.collectAsState()
-    val trackSortAsc by viewModel.trackSortAsc.collectAsState()
     if (tracks.isEmpty()) {
         EmptyState(message = "No tracks found")
         return
@@ -693,6 +716,9 @@ private fun TracksTab(
     }
 
     val hasAlphaBar = letterIndex.isNotEmpty()
+    // Hoist the alternating row backgrounds so they're computed once, not per row.
+    val rowBgEven = Color.White.copy(alpha = 0.03f)
+    val rowBgOdd = Color.Transparent
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         state = listState,
@@ -708,7 +734,7 @@ private fun TracksTab(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Button(
-                    onClick = { viewModel.playAllTracks() },
+                    onClick = onPlayAll,
                     shape = ZonikShapes.buttonShape,
                     modifier = Modifier.weight(1f)
                 ) {
@@ -717,7 +743,7 @@ private fun TracksTab(
                     Text("Play All")
                 }
                 FilledTonalButton(
-                    onClick = { viewModel.shuffleAllTracks() },
+                    onClick = onShuffleAll,
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(Icons.Default.Shuffle, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -738,7 +764,7 @@ private fun TracksTab(
                     val selected = trackSort == sort
                     FilterChip(
                         selected = selected,
-                        onClick = { viewModel.setTrackSort(sort) },
+                        onClick = { onSetSort(sort) },
                         label = { Text(sort.label, style = MaterialTheme.typography.labelSmall) },
                         shape = RoundedCornerShape(20.dp),
                         trailingIcon = if (selected) {
@@ -768,7 +794,7 @@ private fun TracksTab(
         itemsIndexed(sortedTracks, key = { _, track -> track.id }) { index, track ->
             var showMenu by remember { mutableStateOf(false) }
             var showDetails by remember { mutableStateOf(false) }
-            val rowBg = if (index % 2 == 0) Color.White.copy(alpha = 0.03f) else Color.Transparent
+            val rowBg = if (index % 2 == 0) rowBgEven else rowBgOdd
 
             Box {
                 ListItem(
@@ -798,10 +824,9 @@ private fun TracksTab(
                     },
                     trailingContent = {
                         Column(horizontalAlignment = Alignment.End) {
-                            val min = track.duration / 60
-                            val sec = track.duration % 60
+                            val durationLabel = remember(track.duration) { formatDuration(track.duration) }
                             Text(
-                                text = "%d:%02d".format(min, sec),
+                                text = durationLabel,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -822,7 +847,7 @@ private fun TracksTab(
                         }
                     },
                     modifier = Modifier.combinedClickable(
-                        onClick = { viewModel.playTrack(track) },
+                        onClick = { onPlay(track) },
                         onLongClick = { showMenu = true }
                     )
                 )
@@ -833,22 +858,22 @@ private fun TracksTab(
                 ) {
                     DropdownMenuItem(
                         text = { Text("Play") },
-                        onClick = { showMenu = false; viewModel.playTrack(track) },
+                        onClick = { showMenu = false; onPlay(track) },
                         leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) }
                     )
                     DropdownMenuItem(
                         text = { Text("Play Next") },
-                        onClick = { showMenu = false; viewModel.playNext(track) },
+                        onClick = { showMenu = false; onPlayNext(track) },
                         leadingIcon = { Icon(Icons.Default.QueuePlayNext, contentDescription = null) }
                     )
                     DropdownMenuItem(
                         text = { Text("Add to Queue") },
-                        onClick = { showMenu = false; viewModel.addToQueue(track) },
+                        onClick = { showMenu = false; onAddToQueue(track) },
                         leadingIcon = { Icon(Icons.Default.AddToQueue, contentDescription = null) }
                     )
                     DropdownMenuItem(
                         text = { Text("Start Radio") },
-                        onClick = { showMenu = false; viewModel.startRadio(track) },
+                        onClick = { showMenu = false; onStartRadio(track) },
                         leadingIcon = { Icon(Icons.Default.Sensors, contentDescription = null) }
                     )
                     DropdownMenuItem(
@@ -863,7 +888,7 @@ private fun TracksTab(
                                 color = if (!track.markedForDeletion) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                             )
                         },
-                        onClick = { showMenu = false; viewModel.toggleMarkForDeletion(track) },
+                        onClick = { showMenu = false; onToggleMarkForDeletion(track) },
                         leadingIcon = {
                             Icon(
                                 if (track.markedForDeletion) Icons.Default.RestoreFromTrash else Icons.Default.DeleteOutline,
@@ -1033,6 +1058,8 @@ private fun FavoritesTab(
         return
     }
 
+    val rowBgEven = Color.White.copy(alpha = 0.03f)
+    val rowBgOdd = Color.Transparent
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 4.dp)
@@ -1074,7 +1101,7 @@ private fun FavoritesTab(
 
         itemsIndexed(favorites, key = { _, track -> track.id }) { index, track ->
             var showMenu by remember { mutableStateOf(false) }
-            val rowBg = if (index % 2 == 0) Color.White.copy(alpha = 0.03f) else Color.Transparent
+            val rowBg = if (index % 2 == 0) rowBgEven else rowBgOdd
 
             Box {
                 ListItem(
@@ -1287,6 +1314,8 @@ private fun FlaggedTab(
         )
     }
 
+    val rowBgEven = Color.White.copy(alpha = 0.03f)
+    val rowBgOdd = Color.Transparent
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(vertical = 4.dp)
@@ -1340,7 +1369,7 @@ private fun FlaggedTab(
         }
 
         itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
-            val rowBg = if (index % 2 == 0) Color.White.copy(alpha = 0.03f) else Color.Transparent
+            val rowBg = if (index % 2 == 0) rowBgEven else rowBgOdd
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = rowBg),
                 leadingContent = {

@@ -27,6 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.zonik.app.data.DebugLog
 import com.zonik.app.data.repository.LibraryRepository
@@ -40,6 +41,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.zonik.app.ui.util.formatDuration
 import com.zonik.app.ui.util.tvFocusHighlight
 import javax.inject.Inject
 
@@ -152,9 +154,9 @@ fun HomeScreen(
     onNavigateToAlbum: ((String) -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
-    val recentTracks by viewModel.recentTracks.collectAsState()
-    val recentlyPlayed by viewModel.recentlyPlayed.collectAsState()
-    val syncState by viewModel.syncState.collectAsState()
+    val recentTracks by viewModel.recentTracks.collectAsStateWithLifecycle()
+    val recentlyPlayed by viewModel.recentlyPlayed.collectAsStateWithLifecycle()
+    val syncState by viewModel.syncState.collectAsStateWithLifecycle()
 
     val featuredCoverArt = recentlyPlayed.firstOrNull()?.coverArt
         ?: recentTracks.firstOrNull()?.coverArt
@@ -605,10 +607,9 @@ private fun TrackListItemWithMenu(
                 )
             },
             trailingContent = {
-                val min = track.duration / 60
-                val sec = track.duration % 60
+                val durationText = remember(track.duration) { formatDuration(track.duration) }
                 Text(
-                    text = "%d:%02d".format(min, sec),
+                    text = durationText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

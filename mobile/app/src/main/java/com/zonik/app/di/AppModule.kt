@@ -49,9 +49,42 @@ object AppModule {
     @Provides
     @Singleton
     fun provideServerConfigProvider(
-        settingsRepository: SettingsRepository
+        serverConfigCache: ServerConfigCache
     ): ServerConfigProvider = ServerConfigProvider {
-        settingsRepository.serverConfig.first()
+        // Synchronous read from the cache — SubsonicAuthInterceptor calls this
+        // inside its own runBlocking, but the cache never touches DataStore so
+        // the OkHttp dispatcher thread isn't blocked on disk I/O per request.
+        serverConfigCache.current()
+    }
+
+    /**
+     * Rewrites every request's scheme/host/port to the current server URL.
+     * Reads from [ServerConfigCache] synchronously (no per-request DataStore
+     * blocking). Shared by both OkHttpClient providers.
+     */
+    private fun dynamicBaseUrlInterceptor(
+        serverConfigCache: ServerConfigCache
+    ): Interceptor = Interceptor { chain ->
+        val serverUrl = serverConfigCache.current()?.url
+
+        if (serverUrl == null) {
+            chain.proceed(chain.request())
+        } else {
+            val originalUrl = chain.request().url
+            val newBaseUrl = serverUrl.trimEnd('/').toHttpUrl()
+
+            val newUrl = originalUrl.newBuilder()
+                .scheme(newBaseUrl.scheme)
+                .host(newBaseUrl.host)
+                .port(newBaseUrl.port)
+                .build()
+
+            val newRequest = chain.request().newBuilder()
+                .url(newUrl)
+                .build()
+
+            chain.proceed(newRequest)
+        }
     }
 
     @Provides
@@ -65,40 +98,15 @@ object AppModule {
     fun provideOkHttpClient(
         @ApplicationContext context: Context,
         authInterceptor: SubsonicAuthInterceptor,
-        settingsRepository: SettingsRepository,
+        serverConfigCache: ServerConfigCache,
         cachingDns: com.zonik.app.data.api.CachingDns,
     ): OkHttpClient {
         val httpCache = okhttp3.Cache(File(context.cacheDir, "http_cache"), 50L * 1024 * 1024) // 50 MB
-        // Dynamic base URL interceptor — rewrites every request to the current server URL
-        val dynamicBaseUrlInterceptor = Interceptor { chain ->
-            val serverUrl = runBlocking {
-                settingsRepository.serverConfig.first()?.url
-            }
-
-            if (serverUrl == null) {
-                chain.proceed(chain.request())
-            } else {
-                val originalUrl = chain.request().url
-                val newBaseUrl = serverUrl.trimEnd('/').toHttpUrl()
-
-                val newUrl = originalUrl.newBuilder()
-                    .scheme(newBaseUrl.scheme)
-                    .host(newBaseUrl.host)
-                    .port(newBaseUrl.port)
-                    .build()
-
-                val newRequest = chain.request().newBuilder()
-                    .url(newUrl)
-                    .build()
-
-                chain.proceed(newRequest)
-            }
-        }
 
         return OkHttpClient.Builder()
             .cache(httpCache)
             .dns(cachingDns)
-            .addInterceptor(dynamicBaseUrlInterceptor)
+            .addInterceptor(dynamicBaseUrlInterceptor(serverConfigCache))
             .addInterceptor(authInterceptor)
             .addInterceptor(HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.BASIC
@@ -113,37 +121,12 @@ object AppModule {
     @ZonikApiClient
     fun provideZonikApiClient(
         authInterceptor: SubsonicAuthInterceptor,
-        settingsRepository: SettingsRepository,
+        serverConfigCache: ServerConfigCache,
         cachingDns: com.zonik.app.data.api.CachingDns,
     ): OkHttpClient {
-        val dynamicBaseUrlInterceptor = Interceptor { chain ->
-            val serverUrl = runBlocking {
-                settingsRepository.serverConfig.first()?.url
-            }
-
-            if (serverUrl == null) {
-                chain.proceed(chain.request())
-            } else {
-                val originalUrl = chain.request().url
-                val newBaseUrl = serverUrl.trimEnd('/').toHttpUrl()
-
-                val newUrl = originalUrl.newBuilder()
-                    .scheme(newBaseUrl.scheme)
-                    .host(newBaseUrl.host)
-                    .port(newBaseUrl.port)
-                    .build()
-
-                val newRequest = chain.request().newBuilder()
-                    .url(newUrl)
-                    .build()
-
-                chain.proceed(newRequest)
-            }
-        }
-
         return OkHttpClient.Builder()
             .dns(cachingDns)
-            .addInterceptor(dynamicBaseUrlInterceptor)
+            .addInterceptor(dynamicBaseUrlInterceptor(serverConfigCache))
             .addInterceptor(authInterceptor)
             .addInterceptor(HttpLoggingInterceptor().apply {
                 level = HttpLoggingInterceptor.Level.BASIC

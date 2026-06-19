@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -36,7 +37,7 @@ fun SettingsScreen(
     onNavigateToStats: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     com.zonik.app.ui.theme.WithNeutralScheme {
     Scaffold(
@@ -477,8 +478,8 @@ private fun ServerSection(viewModel: SettingsViewModel, uiState: SettingsUiState
             )
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             // Test connection button
-            val isTestingConnection by viewModel.isTestingConnection.collectAsState()
-            val connectionTestResult by viewModel.connectionTestResult.collectAsState()
+            val isTestingConnection by viewModel.isTestingConnection.collectAsStateWithLifecycle()
+            val connectionTestResult by viewModel.connectionTestResult.collectAsStateWithLifecycle()
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 headlineContent = {
@@ -587,9 +588,9 @@ private fun StatItem(label: String, value: String) {
 
 @Composable
 private fun UpdateSection(viewModel: SettingsViewModel) {
-    val availableUpdate by viewModel.availableUpdate.collectAsState()
-    val isChecking by viewModel.isCheckingUpdate.collectAsState()
-    val updateProgress by viewModel.updateProgress.collectAsState()
+    val availableUpdate by viewModel.availableUpdate.collectAsStateWithLifecycle()
+    val isChecking by viewModel.isCheckingUpdate.collectAsStateWithLifecycle()
+    val updateProgress by viewModel.updateProgress.collectAsStateWithLifecycle()
 
     Card(
         modifier = Modifier
@@ -680,7 +681,7 @@ private fun UpdateSection(viewModel: SettingsViewModel) {
 
 @Composable
 private fun WearPairSection(viewModel: SettingsViewModel) {
-    val status by viewModel.wearPairStatus.collectAsState()
+    val status by viewModel.wearPairStatus.collectAsStateWithLifecycle()
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -722,8 +723,8 @@ private fun WearPairSection(viewModel: SettingsViewModel) {
 private fun DebugLogsSection(viewModel: SettingsViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var copied by remember { mutableStateOf(false) }
-    val isUploadingToServer by viewModel.isUploadingLogsToServer.collectAsState()
-    val serverUploadResult by viewModel.serverUploadResult.collectAsState()
+    val isUploadingToServer by viewModel.isUploadingLogsToServer.collectAsStateWithLifecycle()
+    val serverUploadResult by viewModel.serverUploadResult.collectAsStateWithLifecycle()
 
     Card(
         modifier = Modifier
@@ -822,7 +823,7 @@ private fun DebugLogsSection(viewModel: SettingsViewModel) {
 
 @Composable
 private fun AutoTabOrderSection(viewModel: SettingsViewModel) {
-    val tabOrder by viewModel.autoTabOrder.collectAsState()
+    val tabOrder by viewModel.autoTabOrder.collectAsStateWithLifecycle()
     val tabLabels = mapOf(
         "mix" to "Mix",
         "recent" to "Recently Added",
@@ -1013,11 +1014,11 @@ private fun EqualizerSection(viewModel: SettingsViewModel, uiState: SettingsUiSt
 
 @Composable
 private fun OfflineCacheSection(viewModel: SettingsViewModel) {
-    val offlineCacheEnabled by viewModel.offlineCacheEnabled.collectAsState()
-    val autoCacheQueue by viewModel.autoCacheQueue.collectAsState()
-    val autoCacheFavorites by viewModel.autoCacheFavorites.collectAsState()
-    val offlineStorageLimitMb by viewModel.offlineStorageLimitMb.collectAsState()
-    val offlineStorageUsedBytes by viewModel.offlineStorageUsedBytes.collectAsState()
+    val offlineCacheEnabled by viewModel.offlineCacheEnabled.collectAsStateWithLifecycle()
+    val autoCacheQueue by viewModel.autoCacheQueue.collectAsStateWithLifecycle()
+    val autoCacheFavorites by viewModel.autoCacheFavorites.collectAsStateWithLifecycle()
+    val offlineStorageLimitMb by viewModel.offlineStorageLimitMb.collectAsStateWithLifecycle()
+    val offlineStorageUsedBytes by viewModel.offlineStorageUsedBytes.collectAsStateWithLifecycle()
 
     Card(
         modifier = Modifier

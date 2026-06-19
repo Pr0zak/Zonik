@@ -175,21 +175,27 @@ class LibraryRepository @Inject constructor(
     }
 
     suspend fun markForDeletion(id: String) {
-        database.trackDao().setMarkedForDeletion(id, true)
         try {
             api.setRating(id, 1)
         } catch (e: Exception) {
-            com.zonik.app.data.DebugLog.w("Library", "Failed to set rating=1 for $id: ${e.message}")
+            // Don't mutate local state on a failed server rating — it would silently
+            // diverge until the next full sync reverts it.
+            com.zonik.app.data.DebugLog.w("Library", "Failed to set rating=1 for $id, skipping local update: ${e.message}")
+            return
         }
+        database.trackDao().setMarkedForDeletion(id, true)
     }
 
     suspend fun unmarkForDeletion(id: String) {
-        database.trackDao().setMarkedForDeletion(id, false)
         try {
             api.setRating(id, 0)
         } catch (e: Exception) {
-            com.zonik.app.data.DebugLog.w("Library", "Failed to clear rating for $id: ${e.message}")
+            // Don't mutate local state on a failed server rating — it would silently
+            // diverge until the next full sync reverts it.
+            com.zonik.app.data.DebugLog.w("Library", "Failed to clear rating for $id, skipping local update: ${e.message}")
+            return
         }
+        database.trackDao().setMarkedForDeletion(id, false)
     }
 
     fun getTracksMarkedForDeletion(): Flow<List<Track>> =
@@ -241,7 +247,10 @@ class LibraryRepository @Inject constructor(
         try {
             api.star(id = id)
         } catch (e: Exception) {
-            com.zonik.app.data.DebugLog.w("Library", "Star API failed for $id: ${e.message}")
+            // Don't mutate local state on a failed server star — it would silently
+            // diverge until the next full sync reverts it.
+            com.zonik.app.data.DebugLog.w("Library", "Star API failed for $id, skipping local update: ${e.message}")
+            return
         }
         val track = database.trackDao().getById(id)
         if (track != null) {
@@ -259,7 +268,10 @@ class LibraryRepository @Inject constructor(
         try {
             api.unstar(id = id)
         } catch (e: Exception) {
-            com.zonik.app.data.DebugLog.w("Library", "Unstar API failed for $id: ${e.message}")
+            // Don't mutate local state on a failed server unstar — it would silently
+            // diverge until the next full sync reverts it.
+            com.zonik.app.data.DebugLog.w("Library", "Unstar API failed for $id, skipping local update: ${e.message}")
+            return
         }
         database.trackDao().getById(id)?.let {
             database.trackDao().upsertAll(listOf(it.copy(starred = false)))

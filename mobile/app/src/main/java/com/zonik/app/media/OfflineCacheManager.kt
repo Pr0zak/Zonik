@@ -54,8 +54,8 @@ class OfflineCacheManager @Inject constructor(
         return if (file.exists()) file else null
     }
 
-    fun getStorageUsedBytes(): Long {
-        return offlineDir.listFiles()?.sumOf { it.length() } ?: 0L
+    suspend fun getStorageUsedBytes(): Long = withContext(Dispatchers.IO) {
+        offlineDir.listFiles()?.sumOf { it.length() } ?: 0L
     }
 
     fun downloadTracks(trackIds: List<String>) {

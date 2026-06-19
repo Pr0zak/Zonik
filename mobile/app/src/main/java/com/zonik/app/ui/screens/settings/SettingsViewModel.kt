@@ -165,6 +165,22 @@ class SettingsViewModel @Inject constructor(
 
     private val _cacheSizeBytes = MutableStateFlow(0L)
 
+    // Backing state for offline storage usage; folded into uiState but also
+    // exposed standalone for SettingsScreen's direct collectors.
+    private val _offlineStorageUsedBytes = MutableStateFlow(0L)
+    val offlineStorageUsedBytes: StateFlow<Long> = _offlineStorageUsedBytes.asStateFlow()
+
+    // Offline cache settings — single source of truth is uiState, but these
+    // standalone projections back existing SettingsScreen collectors.
+    val offlineCacheEnabled = settingsRepository.offlineCacheEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val autoCacheQueue = settingsRepository.autoCacheQueue
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val autoCacheFavorites = settingsRepository.autoCacheFavorites
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+    val offlineStorageLimitMb = settingsRepository.offlineStorageLimitMb
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 2048)
+
     init {
         checkForUpdate()
         fetchServerInfo()
@@ -172,7 +188,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     private fun refreshCacheSize() {
-        _cacheSizeBytes.value = simpleCache.cacheSpace
+        viewModelScope.launch(Dispatchers.IO) {
+            _cacheSizeBytes.value = simpleCache.cacheSpace
+        }
     }
 
     private fun fetchServerInfo() {
@@ -224,71 +242,150 @@ class SettingsViewModel @Inject constructor(
         )
     }
 
-    val uiState: StateFlow<SettingsUiState> = combine(
+    // --- Type-safe intermediate groups, each combined from a handful of sources ---
+
+    private data class ServerGroup(
+        val serverConfig: com.zonik.core.model.ServerConfig?,
+        val isLoggedIn: Boolean,
+        val serverVersion: String,
+        val serverType: String?,
+        val libraryStats: LibraryStats
+    )
+
+    private val serverGroup: Flow<ServerGroup> = combine(
         settingsRepository.serverConfig,
         settingsRepository.isLoggedIn,
-        settingsRepository.syncIntervalMinutes,
-        settingsRepository.wifiOnly,
-        settingsRepository.lastSyncTime,
-        settingsRepository.wifiBitrate,
-        settingsRepository.cellularBitrate,
-        libraryStats,
         _serverVersion,
         _serverType,
-        _cacheSizeBytes,
-        settingsRepository.audioCacheSizeMb,
-        settingsRepository.coverArtCacheSizeMb,
+        libraryStats
+    ) { config, loggedIn, version, type, stats ->
+        ServerGroup(
+            serverConfig = config,
+            isLoggedIn = loggedIn,
+            serverVersion = version,
+            serverType = type,
+            libraryStats = stats
+        )
+    }
+
+    private data class PlaybackGroup(
+        val syncIntervalMinutes: Int,
+        val wifiOnly: Boolean,
+        val lastSyncTime: Long,
+        val wifiBitrate: Int,
+        val cellularBitrate: Int,
+        val cacheReadAhead: Int,
+        val keepScreenOn: Boolean,
+        val adaptiveBitrate: Boolean,
+        val eqEnabled: Boolean,
+        val eqPreset: Int,
+        val eqBandLevels: String?,
+        val visualizerEnabled: Boolean
+    )
+
+    private val playbackGroup: Flow<PlaybackGroup> = combine(
+        combine(
+            settingsRepository.syncIntervalMinutes,
+            settingsRepository.wifiOnly,
+            settingsRepository.lastSyncTime,
+            settingsRepository.wifiBitrate,
+            settingsRepository.cellularBitrate
+        ) { syncInterval, wifiOnly, lastSync, wifiBr, cellBr ->
+            arrayOf<Any?>(syncInterval, wifiOnly, lastSync, wifiBr, cellBr)
+        },
         settingsRepository.cacheReadAhead,
         settingsRepository.keepScreenOn,
         settingsRepository.adaptiveBitrate,
-        settingsRepository.eqEnabled,
-        settingsRepository.eqPreset,
-        settingsRepository.eqBandLevels,
-        settingsRepository.visualizerEnabled
-    ) { values ->
-        val serverConfig = values[0] as com.zonik.core.model.ServerConfig?
-        val isLoggedIn = values[1] as Boolean
-        val syncInterval = values[2] as Int
-        val wifiOnly = values[3] as Boolean
-        val lastSync = values[4] as Long
-        val wifiBr = values[5] as Int
-        val cellBr = values[6] as Int
-        val stats = values[7] as LibraryStats
-        val serverVer = values[8] as String
-        val serverTp = values[9] as String?
-        val cacheBytes = values[10] as Long
-        val maxCache = values[11] as Int
-        val coverArtCache = values[12] as Int
-        val readAhead = values[13] as Int
-        val screenOn = values[14] as Boolean
-        val adaptive = values[15] as Boolean
-        val eqOn = values[16] as Boolean
-        val eqPr = values[17] as Int
-        val eqBands = values[18] as String?
-        val vizOn = values[19] as Boolean
-
-        SettingsUiState(
-            serverUrl = serverConfig?.url ?: "",
-            username = serverConfig?.username ?: "",
-            isLoggedIn = isLoggedIn,
-            syncIntervalMinutes = syncInterval,
-            wifiOnly = wifiOnly,
-            lastSyncTime = lastSync,
-            wifiBitrate = wifiBr,
-            cellularBitrate = cellBr,
-            libraryStats = stats,
-            serverVersion = serverVer,
-            serverType = serverTp,
-            cacheSizeBytes = cacheBytes,
-            maxCacheSizeMb = maxCache,
-            coverArtCacheSizeMb = coverArtCache,
+        combine(
+            settingsRepository.eqEnabled,
+            settingsRepository.eqPreset,
+            settingsRepository.eqBandLevels,
+            settingsRepository.visualizerEnabled
+        ) { eqOn, eqPreset, eqBands, vizOn ->
+            arrayOf<Any?>(eqOn, eqPreset, eqBands, vizOn)
+        }
+    ) { sync, readAhead, screenOn, adaptive, eq ->
+        PlaybackGroup(
+            syncIntervalMinutes = sync[0] as Int,
+            wifiOnly = sync[1] as Boolean,
+            lastSyncTime = sync[2] as Long,
+            wifiBitrate = sync[3] as Int,
+            cellularBitrate = sync[4] as Int,
             cacheReadAhead = readAhead,
             keepScreenOn = screenOn,
             adaptiveBitrate = adaptive,
-            eqEnabled = eqOn,
-            eqPreset = eqPr,
-            eqBandLevels = eqBands,
-            visualizerEnabled = vizOn
+            eqEnabled = eq[0] as Boolean,
+            eqPreset = eq[1] as Int,
+            eqBandLevels = eq[2] as String?,
+            visualizerEnabled = eq[3] as Boolean
+        )
+    }
+
+    private data class CacheGroup(
+        val cacheSizeBytes: Long,
+        val maxCacheSizeMb: Int,
+        val coverArtCacheSizeMb: Int,
+        val offlineCacheEnabled: Boolean,
+        val autoCacheQueue: Boolean,
+        val autoCacheFavorites: Boolean,
+        val offlineStorageLimitMb: Int,
+        val offlineStorageUsedBytes: Long
+    )
+
+    private val cacheGroup: Flow<CacheGroup> = combine(
+        _cacheSizeBytes,
+        settingsRepository.audioCacheSizeMb,
+        settingsRepository.coverArtCacheSizeMb,
+        settingsRepository.offlineCacheEnabled,
+        settingsRepository.autoCacheQueue,
+        settingsRepository.autoCacheFavorites,
+        settingsRepository.offlineStorageLimitMb,
+        _offlineStorageUsedBytes
+    ) { values ->
+        CacheGroup(
+            cacheSizeBytes = values[0] as Long,
+            maxCacheSizeMb = values[1] as Int,
+            coverArtCacheSizeMb = values[2] as Int,
+            offlineCacheEnabled = values[3] as Boolean,
+            autoCacheQueue = values[4] as Boolean,
+            autoCacheFavorites = values[5] as Boolean,
+            offlineStorageLimitMb = values[6] as Int,
+            offlineStorageUsedBytes = values[7] as Long
+        )
+    }
+
+    val uiState: StateFlow<SettingsUiState> = combine(
+        serverGroup,
+        playbackGroup,
+        cacheGroup
+    ) { server, playback, cache ->
+        SettingsUiState(
+            serverUrl = server.serverConfig?.url ?: "",
+            username = server.serverConfig?.username ?: "",
+            isLoggedIn = server.isLoggedIn,
+            syncIntervalMinutes = playback.syncIntervalMinutes,
+            wifiOnly = playback.wifiOnly,
+            lastSyncTime = playback.lastSyncTime,
+            wifiBitrate = playback.wifiBitrate,
+            cellularBitrate = playback.cellularBitrate,
+            cacheSizeBytes = cache.cacheSizeBytes,
+            maxCacheSizeMb = cache.maxCacheSizeMb,
+            coverArtCacheSizeMb = cache.coverArtCacheSizeMb,
+            cacheReadAhead = playback.cacheReadAhead,
+            keepScreenOn = playback.keepScreenOn,
+            adaptiveBitrate = playback.adaptiveBitrate,
+            libraryStats = server.libraryStats,
+            serverVersion = server.serverVersion,
+            serverType = server.serverType,
+            eqEnabled = playback.eqEnabled,
+            eqPreset = playback.eqPreset,
+            eqBandLevels = playback.eqBandLevels,
+            visualizerEnabled = playback.visualizerEnabled,
+            offlineCacheEnabled = cache.offlineCacheEnabled,
+            autoCacheQueue = cache.autoCacheQueue,
+            autoCacheFavorites = cache.autoCacheFavorites,
+            offlineStorageLimitMb = cache.offlineStorageLimitMb,
+            offlineStorageUsedBytes = cache.offlineStorageUsedBytes
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
@@ -450,23 +547,10 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    // Offline cache settings
-    val offlineCacheEnabled = settingsRepository.offlineCacheEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
-    val autoCacheQueue = settingsRepository.autoCacheQueue
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
-    val autoCacheFavorites = settingsRepository.autoCacheFavorites
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
-    val offlineStorageLimitMb = settingsRepository.offlineStorageLimitMb
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 2048)
-
-    private val _offlineStorageUsedBytes = MutableStateFlow(0L)
-    val offlineStorageUsedBytes: StateFlow<Long> = _offlineStorageUsedBytes.asStateFlow()
-
     init {
         refreshOfflineStorageSize()
         // Auto-refresh storage size when offline track set changes
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             offlineCacheManager.offlineTrackIds.collect {
                 _offlineStorageUsedBytes.value = offlineCacheManager.getStorageUsedBytes()
             }
@@ -474,7 +558,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun refreshOfflineStorageSize() {
-        _offlineStorageUsedBytes.value = offlineCacheManager.getStorageUsedBytes()
+        viewModelScope.launch(Dispatchers.IO) {
+            _offlineStorageUsedBytes.value = offlineCacheManager.getStorageUsedBytes()
+        }
     }
 
     fun setOfflineCacheEnabled(enabled: Boolean) {
@@ -495,6 +581,8 @@ class SettingsViewModel @Inject constructor(
 
     fun clearOfflineCache() {
         offlineCacheManager.clearAll()
-        refreshOfflineStorageSize()
+        viewModelScope.launch(Dispatchers.IO) {
+            _offlineStorageUsedBytes.value = offlineCacheManager.getStorageUsedBytes()
+        }
     }
 }

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.palette.graphics.Palette
 import coil.compose.AsyncImage
@@ -58,6 +59,7 @@ import com.zonik.app.ui.util.formatDuration
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -245,22 +247,22 @@ fun NowPlayingScreen(
     onBack: () -> Unit,
     viewModel: NowPlayingViewModel = hiltViewModel()
 ) {
-    val currentTrack by viewModel.currentTrack.collectAsState()
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val queue by viewModel.queue.collectAsState()
-    val shuffleEnabled by viewModel.shuffleEnabled.collectAsState()
-    val repeatState by viewModel.repeatState.collectAsState()
-    val isStarred by viewModel.isStarred.collectAsState()
-    val isMarkedForDeletion by viewModel.isMarkedForDeletion.collectAsState()
-    val playbackSpeed by viewModel.playbackSpeed.collectAsState()
-    val isCasting by viewModel.isCasting.collectAsState()
-    val castDeviceName by viewModel.castDeviceName.collectAsState()
-    val keepScreenOn by viewModel.keepScreenOn.collectAsState()
-    val isBuffering by viewModel.isBuffering.collectAsState()
-    val playbackError by viewModel.playbackError.collectAsState()
-    val isLoadingRadio by viewModel.isLoadingRadio.collectAsState()
-    val waveform by viewModel.waveform.collectAsState()
-    val waveformEnabled by viewModel.waveformEnabled.collectAsState()
+    val currentTrack by viewModel.currentTrack.collectAsStateWithLifecycle()
+    val isPlaying by viewModel.isPlaying.collectAsStateWithLifecycle()
+    val queue by viewModel.queue.collectAsStateWithLifecycle()
+    val shuffleEnabled by viewModel.shuffleEnabled.collectAsStateWithLifecycle()
+    val repeatState by viewModel.repeatState.collectAsStateWithLifecycle()
+    val isStarred by viewModel.isStarred.collectAsStateWithLifecycle()
+    val isMarkedForDeletion by viewModel.isMarkedForDeletion.collectAsStateWithLifecycle()
+    val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
+    val isCasting by viewModel.isCasting.collectAsStateWithLifecycle()
+    val castDeviceName by viewModel.castDeviceName.collectAsStateWithLifecycle()
+    val keepScreenOn by viewModel.keepScreenOn.collectAsStateWithLifecycle()
+    val isBuffering by viewModel.isBuffering.collectAsStateWithLifecycle()
+    val playbackError by viewModel.playbackError.collectAsStateWithLifecycle()
+    val isLoadingRadio by viewModel.isLoadingRadio.collectAsStateWithLifecycle()
+    val waveform by viewModel.waveform.collectAsStateWithLifecycle()
+    val waveformEnabled by viewModel.waveformEnabled.collectAsStateWithLifecycle()
 
     // Keep screen on while Now Playing is visible (if enabled in settings)
     val activity = LocalContext.current as? android.app.Activity
@@ -314,14 +316,24 @@ fun NowPlayingScreen(
         } catch (_: Exception) {}
     }
 
-    // Position polling — 100ms for smooth seek bar
+    // Position polling — 100ms for smooth seek bar.
+    // Only poll while playing; the effect re-keys on isPlaying so it
+    // restarts on resume and suspends entirely (no 10Hz CPU wakeups) when paused.
     LaunchedEffect(isPlaying, currentTrack) {
-        while (true) {
+        if (isPlaying) {
+            while (isActive) {
+                if (!isSeeking) {
+                    positionMs = viewModel.getCurrentPosition()
+                    durationMs = viewModel.getDuration()
+                }
+                delay(100L)
+            }
+        } else {
+            // Capture a final snapshot so the bar reflects the paused position.
             if (!isSeeking) {
                 positionMs = viewModel.getCurrentPosition()
                 durationMs = viewModel.getDuration()
             }
-            delay(100L)
         }
     }
 
@@ -884,8 +896,8 @@ fun NowPlayingScreen(
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    val offlineIds by viewModel.offlineTrackIds.collectAsState()
-                    val downloadStates by viewModel.downloadStates.collectAsState()
+                    val offlineIds by viewModel.offlineTrackIds.collectAsStateWithLifecycle()
+                    val downloadStates by viewModel.downloadStates.collectAsStateWithLifecycle()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()

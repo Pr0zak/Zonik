@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,9 +31,19 @@ class SyncManager @Inject constructor(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     suspend fun fullSync() {
-        if (_syncState.value.isSyncing) return
+        // Atomically claim the sync slot: only the caller that flips isSyncing
+        // false -> true proceeds; concurrent callers see it already running and bail.
+        var claimed = false
+        _syncState.update { current ->
+            if (current.isSyncing) {
+                current
+            } else {
+                claimed = true
+                SyncState(isSyncing = true, phase = "Syncing artists...")
+            }
+        }
+        if (!claimed) return
 
-        _syncState.value = SyncState(isSyncing = true, phase = "Syncing artists...")
         DebugLog.d("Sync", "Starting full sync (search3 method)")
 
         try {

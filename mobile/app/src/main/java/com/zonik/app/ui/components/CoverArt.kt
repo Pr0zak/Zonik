@@ -8,6 +8,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,13 +42,19 @@ fun CoverArt(
     } else {
         // The URL will be rewritten by the dynamic base URL interceptor
         // and auth params added by the auth interceptor since we use the same OkHttpClient
-        val imageUrl = "http://localhost/rest/getCoverArt.view?id=$coverArtId&size=$size"
-
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
+        val context = LocalContext.current
+        val imageUrl = remember(coverArtId, size) {
+            "http://localhost/rest/getCoverArt.view?id=$coverArtId&size=$size"
+        }
+        val request = remember(coverArtId, size) {
+            ImageRequest.Builder(context)
                 .data(imageUrl)
                 .crossfade(true)
-                .build(),
+                .build()
+        }
+
+        AsyncImage(
+            model = request,
             contentDescription = contentDescription,
             modifier = modifier.clip(MaterialTheme.shapes.small),
             contentScale = ContentScale.Crop
