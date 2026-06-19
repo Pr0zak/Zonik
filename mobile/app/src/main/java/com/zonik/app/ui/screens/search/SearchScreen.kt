@@ -286,6 +286,11 @@ class SearchViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(activeTransfers = statusResponse.transfers, activeJobs = activeJobs)
                 }
+                // Drive the WS connect loop off real server state — it only
+                // connects while there's active work to watch.
+                progressClient.setServerReportsActive(
+                    statusResponse.transfers.isNotEmpty() || activeJobs.isNotEmpty()
+                )
             } catch (_: Exception) {}
         }
     }
@@ -384,7 +389,14 @@ class SearchViewModel @Inject constructor(
                 delay(8_000)
                 val state = _uiState.value
                 val hasActive = state.activeTransfers.isNotEmpty() || state.activeJobs.isNotEmpty()
-                if (hasActive) refreshStatus()
+                if (hasActive) {
+                    refreshStatus()
+                } else {
+                    // Nothing active in our last view — make sure the WS connect
+                    // loop's server-side hint is cleared so it idles instead of
+                    // reconnecting forever.
+                    progressClient.setServerReportsActive(false)
+                }
             }
         }
     }

@@ -64,7 +64,7 @@ class ZonikMediaService : MediaLibraryService() {
     private var lastEqEnabled: Boolean? = null
     private var lastEqPreset: Int? = null
     private var lastEqBandLevels: String? = null
-    private val preCacheScope = CoroutineScope(Dispatchers.IO)
+    private val preCacheScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var preCacheJob: Job? = null
     private var cacheDataSourceFactory: CacheDataSource.Factory? = null
     private val preCachingInProgress = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -155,7 +155,7 @@ class ZonikMediaService : MediaLibraryService() {
                 val request = chain.request()
                 val url = request.url.toString()
                 val rangeHeader = request.header("Range") ?: "none"
-                com.zonik.app.data.DebugLog.d("MediaService", "ExoPlayer fetching: ${url.take(100)}... Range=$rangeHeader")
+                com.zonik.app.data.DebugLog.d("MediaService", "ExoPlayer fetching: ${com.zonik.app.data.DebugLog.sanitizeUrl(url)} Range=$rangeHeader")
                 val response = chain.proceed(request)
                 val acceptRanges = response.header("Accept-Ranges") ?: "unknown"
                 val contentRange = response.header("Content-Range")
@@ -472,6 +472,7 @@ class ZonikMediaService : MediaLibraryService() {
         }
         networkCallback = null
         preCacheJob?.cancel()
+        preCacheScope.cancel()
         equalizer?.release()
         equalizer = null
         mediaLibrarySession?.run {
@@ -967,7 +968,7 @@ class ZonikMediaService : MediaLibraryService() {
                     }
                 }
             }.toMutableList()
-            com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: ${resolved.size} items, first URI: ${resolved.firstOrNull()?.localConfiguration?.uri}")
+            com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: ${resolved.size} items, first URI: ${com.zonik.app.data.DebugLog.sanitizeUrl(resolved.firstOrNull()?.localConfiguration?.uri?.toString())}")
             return Futures.immediateFuture(resolved)
         }
 

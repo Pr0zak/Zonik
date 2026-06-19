@@ -54,8 +54,14 @@ class MiniPlayerViewModel @Inject constructor(
     }
 }
 
+/**
+ * The now-playing row embedded in the unified bottom dock (see MainScreen). It
+ * renders nothing when no track is loaded, so the dock collapses to just the
+ * nav bar. It deliberately has no Surface/shadow/margins of its own — the dock
+ * provides the single shared surface.
+ */
 @Composable
-fun MiniPlayer(
+fun MiniPlayerRow(
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: MiniPlayerViewModel = hiltViewModel()
@@ -65,32 +71,39 @@ fun MiniPlayer(
 
     val track = currentTrack ?: return
 
-    // Poll playback position while playing
-    var position by remember { mutableStateOf(0L) }
-    var duration by remember { mutableStateOf(0L) }
+    // Poll playback position ONLY while playing; refresh once on (re)entry or
+    // track change. Gating on isPlaying stops the loop from waking the CPU while
+    // paused (the LaunchedEffect re-keys on isPlaying, so it resumes on play).
+    var position by remember { mutableLongStateOf(0L) }
+    var duration by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(isPlaying, track) {
-        while (isActive) {
-            position = viewModel.getCurrentPosition()
-            duration = viewModel.getDuration()
-            delay(200)
+        position = viewModel.getCurrentPosition()
+        duration = viewModel.getDuration()
+        if (isPlaying) {
+            while (isActive) {
+                delay(500)
+                position = viewModel.getCurrentPosition()
+                duration = viewModel.getDuration()
+            }
         }
     }
 
-    val progress = if (duration > 0) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    // Deferred read: only the progress bar observes position/duration, so the
+    // row itself stays skippable instead of recomposing on every poll tick.
+    val progress by remember {
+        derivedStateOf {
+            if (duration > 0) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+        }
+    }
 
-    Surface(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .tvFocusHighlight(shape = ZonikShapes.miniPlayerShape)
-            .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = ZonikShapes.miniPlayerShape,
-        tonalElevation = 0.dp,
-        shadowElevation = 8.dp
+            .tvFocusHighlight(shape = ZonikShapes.cardShape)
+            .clickable(onClick = onClick)
     ) {
-        Column {
-            Row(
+        Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(62.dp)
@@ -178,7 +191,6 @@ fun MiniPlayer(
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f),
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
         }
-    }
 }

@@ -71,6 +71,16 @@ object DebugLog {
         }
     }
 
+    // Redacts secret query-param values (auth token, salt, user, password, apiKey)
+    // from any string containing a URL. UNCONDITIONAL — tokens must never reach
+    // the log file or logcat, even in debug-variant builds that get uploaded via /api/logs.
+    private val secretParamRegex = Regex("(?i)([?&](?:t|s|u|p|salt|token|apiKey)=)[^&\\s]*")
+
+    fun sanitizeUrl(s: String?): String {
+        if (s == null) return ""
+        return secretParamRegex.replace(s) { "${it.groupValues[1]}***" }
+    }
+
     fun d(tag: String, message: String) {
         add("D", tag, message)
         android.util.Log.d(tag, message)

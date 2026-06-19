@@ -7,6 +7,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -30,7 +34,9 @@ import androidx.navigation.navArgument
 import com.zonik.app.data.repository.SettingsRepository
 import com.zonik.app.data.repository.SyncManager
 import com.zonik.app.media.PlaybackManager
-import com.zonik.app.ui.components.MiniPlayer
+import com.zonik.app.ui.components.MiniPlayerRow
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import com.zonik.app.ui.navigation.MainTab
 import com.zonik.app.ui.navigation.Screen
 import com.zonik.app.ui.screens.home.HomeScreen
@@ -273,6 +279,154 @@ private val tabs = listOf(
     TabItem(MainTab.Settings, Icons.Filled.Settings, MainTab.Settings.label)
 )
 
+/**
+ * Compact bottom navigation row used on phone/tablet inside the unified dock.
+ * ~58dp tall (vs. Material NavigationBar's 80dp): three primary tabs plus a
+ * circular profile avatar that opens Settings (Option B graft).
+ */
+@Composable
+private fun CompactNavRow(
+    primaryTabs: List<TabItem>,
+    selectedIndex: Int,
+    settingsSelected: Boolean,
+    onSelectTab: (Int) -> Unit,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(58.dp)
+            .focusGroup(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        primaryTabs.forEachIndexed { index, tab ->
+            CompactNavItem(
+                icon = tab.icon,
+                label = tab.label,
+                selected = index == selectedIndex,
+                onClick = { onSelectTab(index) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        ProfileNavItem(
+            selected = settingsSelected,
+            onClick = onOpenSettings,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun CompactNavItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val tint = if (selected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .widthIn(min = 44.dp)
+                .height(26.dp)
+                .clip(RoundedCornerShape(percent = 50))
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    else Color.Transparent
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun ProfileNavItem(
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val labelColor = if (selected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Box(
+            modifier = Modifier.height(26.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = if (selected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Filled.Person,
+                        contentDescription = null,
+                        tint = if (selected) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+            // Tiny gear badge signalling this opens Settings.
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                modifier = Modifier
+                    .size(13.dp)
+                    .align(Alignment.BottomEnd)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = null,
+                    tint = labelColor,
+                    modifier = Modifier.padding(2.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "Settings",
+            style = MaterialTheme.typography.labelMedium,
+            color = labelColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 @Composable
 fun MainScreen(
     rootNavController: NavHostController,
@@ -282,10 +436,12 @@ fun MainScreen(
     val coroutineScope = rememberCoroutineScope()
     val isTv = isTv()
 
-    // Measure nav bar + mini player height for bottom padding
-    val navBarHeight = 80.dp
-    val miniPlayerHeight = 72.dp
-    val miniPlayerBottomPadding = 8.dp
+    // The unified bottom dock measures its own height (onSizeChanged) so content
+    // padding adapts to mini-player visibility, font scale, and gesture insets —
+    // no hardcoded magic numbers that desync from the real bars.
+    val density = LocalDensity.current
+    var dockHeightPx by remember { mutableIntStateOf(0) }
+    val dockHeight = with(density) { dockHeightPx.toDp() }
 
     // TV uses simple tab index, phone uses pager
     var tvSelectedTab by remember { mutableIntStateOf(0) }
@@ -342,81 +498,96 @@ fun MainScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        val contentModifier = Modifier
+            .fillMaxSize()
+            .padding(bottom = dockHeight)
+
         // Content area
         if (isTv) {
             // TV: direct rendering, no pager animation
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = navBarHeight + miniPlayerHeight + miniPlayerBottomPadding)
-            ) {
+            Box(modifier = contentModifier) {
                 TabContent(tvSelectedTab)
             }
         } else {
             // Phone: swipeable HorizontalPager
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = navBarHeight + miniPlayerHeight + miniPlayerBottomPadding),
+                modifier = contentModifier,
                 beyondViewportPageCount = 1
             ) { page ->
                 TabContent(page)
             }
         }
 
-        // Floating MiniPlayer + Glass Nav Bar at bottom
-        Column(
-            modifier = Modifier.align(Alignment.BottomCenter)
+        // Unified Now-Playing Dock: the mini-player and the nav tabs share ONE
+        // glass surface (rounded top, single elevation, no gap). The dock owns
+        // the navigation-bar / IME insets; content padding is measured from it.
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = ZonikShapes.navBarShape,
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .imePadding()
+                .onSizeChanged { dockHeightPx = it.height }
         ) {
-            // Floating MiniPlayer
-            MiniPlayer(
-                onClick = onExpandNowPlaying,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = miniPlayerBottomPadding)
-            )
+            Column(modifier = Modifier.navigationBarsPadding()) {
+                // Now-playing row — renders nothing when no track is loaded, so
+                // the dock collapses to just the nav bar (no reserved dead space).
+                MiniPlayerRow(onClick = onExpandNowPlaying)
 
-            // Bottom navigation surface
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = ZonikShapes.navBarShape,
-                tonalElevation = 0.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                NavigationBar(
-                    containerColor = Color.Transparent,
-                    tonalElevation = 0.dp,
-                    modifier = Modifier.focusGroup()
-                ) {
-                    tabs.forEachIndexed { index, tabItem ->
-                        NavigationBarItem(
-                            icon = {
-                                Icon(
-                                    imageVector = tabItem.icon,
-                                    contentDescription = tabItem.label
+                if (isTv) {
+                    // TV keeps the full focusable Material nav bar (all four tabs).
+                    NavigationBar(
+                        containerColor = Color.Transparent,
+                        tonalElevation = 0.dp,
+                        windowInsets = WindowInsets(0, 0, 0, 0),
+                        modifier = Modifier.focusGroup()
+                    ) {
+                        tabs.forEachIndexed { index, tabItem ->
+                            NavigationBarItem(
+                                icon = {
+                                    Icon(
+                                        imageVector = tabItem.icon,
+                                        contentDescription = null
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = tabItem.label,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                },
+                                selected = currentPage == index,
+                                onClick = { tvSelectedTab = index },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    selectedTextColor = MaterialTheme.colorScheme.primary,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                                 )
-                            },
-                            label = {
-                                Text(
-                                    text = tabItem.label,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelSmall
-                                )
-                            },
-                            selected = currentPage == index,
-                            onClick = {
-                                if (isTv) tvSelectedTab = index
-                                else coroutineScope.launch { pagerState.animateScrollToPage(index) }
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = MaterialTheme.colorScheme.primary,
-                                selectedTextColor = MaterialTheme.colorScheme.primary,
-                                unselectedIconColor = Color.White.copy(alpha = 0.4f),
-                                unselectedTextColor = Color.White.copy(alpha = 0.4f),
-                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                             )
-                        )
+                        }
                     }
+                } else {
+                    // Phone: compact ~58dp nav row — 3 primary tabs + Settings as a
+                    // profile avatar (Option B graft), shrinking the dock toward ~118dp.
+                    CompactNavRow(
+                        primaryTabs = tabs.take(3),
+                        selectedIndex = currentPage,
+                        settingsSelected = currentPage == 3,
+                        onSelectTab = { index ->
+                            coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                        },
+                        onOpenSettings = {
+                            coroutineScope.launch { pagerState.animateScrollToPage(3) }
+                        }
+                    )
                 }
             }
         }

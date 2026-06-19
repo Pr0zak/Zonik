@@ -56,14 +56,23 @@ class UpdateChecker @Inject constructor(
             if (!response.isSuccessful) return@withContext null
 
             val body = response.body?.string() ?: return@withContext null
-            val release = json.decodeFromString<GitHubRelease>(body)
+            // Releases live on Pr0zak/Zonik and are tagged `app-vX.Y.Z` for the
+            // mobile app. The same repo also carries `server-v*` and legacy bare
+            // `v*` tags, so fetch the releases LIST and pick the newest `app-v*`
+            // entry (GitHub returns the list newest-first).
+            val releases = json.decodeFromString<List<GitHubRelease>>(body)
+            val release = releases.firstOrNull { it.tagName.startsWith(TAG_PREFIX) }
+                ?: return@withContext null
 
             val currentVersion = getCurrentVersion()
-            val remoteVersion = release.tagName.removePrefix("v")
+            val remoteVersion = release.tagName.removePrefix(TAG_PREFIX)
 
             if (isNewerVersion(remoteVersion, currentVersion)) {
-                val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
-                    ?: return@withContext null
+                // Phone APK is `zonik-vX.Y.Z-debug.apk`; exclude the watch APK
+                // (`zonik-wear-*.apk`) attached to the same release.
+                val apkAsset = release.assets.firstOrNull {
+                    it.name.endsWith(".apk") && !it.name.contains("wear")
+                } ?: return@withContext null
 
                 AppUpdate(
                     version = remoteVersion,
@@ -150,7 +159,12 @@ class UpdateChecker @Inject constructor(
     }
 
     companion object {
+        // Mobile releases live on Pr0zak/Zonik (the old Pr0zak/Zonik-mobile repo
+        // was archived 2026-05-15). Mobile tags are `app-v*`; the releases list
+        // is fetched so non-mobile tags (`server-v*`, legacy bare `v*`) can be
+        // filtered out — `/releases/latest` would return whichever is newest.
         private const val RELEASES_URL =
-            "https://api.github.com/repos/Pr0zak/Zonik-mobile/releases/latest"
+            "https://api.github.com/repos/Pr0zak/Zonik/releases"
+        private const val TAG_PREFIX = "app-v"
     }
 }

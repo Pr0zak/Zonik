@@ -29,3 +29,6 @@ plans/
 *:Zone.Identifier
 zonik-design-brief.md
 docs/backend-streaming-improvements.md
+
+# Local UI mockups + internal review (not for the repo)
+.stitch-mockups/
