@@ -66,6 +66,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import com.zonik.app.data.api.UpdateChecker
+import com.zonik.app.data.api.AppUpdate
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -73,7 +78,8 @@ import javax.inject.Inject
 class MainViewModel @Inject constructor(
     settingsRepository: SettingsRepository,
     private val playbackManager: PlaybackManager,
-    private val syncManager: SyncManager
+    private val syncManager: SyncManager,
+    private val updateChecker: UpdateChecker
 ) : ViewModel() {
 
     val isLoggedIn = settingsRepository.isLoggedIn
@@ -84,6 +90,14 @@ class MainViewModel @Inject constructor(
     // Emits when playTracks is called (for auto-showing Now Playing immediately)
     val playbackStarted: Flow<Unit> = playbackManager.playbackRequested
 
+    private val _availableUpdate = MutableStateFlow<AppUpdate?>(null)
+    val availableUpdate: StateFlow<AppUpdate?> = _availableUpdate.asStateFlow()
+
+    private val _updateProgress = MutableStateFlow<Float?>(null)
+    val updateProgress: StateFlow<Float?> = _updateProgress.asStateFlow()
+
+    @Volatile private var updateChecked = false
+
     init {
         viewModelScope.launch {
             playbackManager.connect()
@@ -93,6 +107,28 @@ class MainViewModel @Inject constructor(
 
     fun syncNow() {
         viewModelScope.launch { syncManager.fullSync() }
+    }
+
+    /** Checks GitHub for a newer release exactly once per process (on phone launch). */
+    fun checkForUpdateOnce() {
+        if (updateChecked) return
+        updateChecked = true
+        viewModelScope.launch {
+            _availableUpdate.value = updateChecker.checkForUpdate()
+        }
+    }
+
+    fun downloadUpdate() {
+        val update = _availableUpdate.value ?: return
+        viewModelScope.launch {
+            _updateProgress.value = 0f
+            val ok = updateChecker.downloadAndInstall(update) { _updateProgress.value = it }
+            if (!ok) _updateProgress.value = null
+        }
+    }
+
+    fun dismissUpdate() {
+        _availableUpdate.value = null
     }
 }
 
@@ -184,6 +220,11 @@ fun ZonikApp(
         }
     }
 
+    // Check GitHub for an app update once on launch (phone only — TV self-checks).
+    LaunchedEffect(isLoggedIn, isTvDevice) {
+        if (isLoggedIn == true && !isTvDevice) viewModel.checkForUpdateOnce()
+    }
+
     val startDestination = if (isLoggedIn == true) Screen.Main.route else Screen.Login.route
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -263,7 +304,65 @@ fun ZonikApp(
                 NowPlayingScreen(onBack = { showNowPlaying = false })
             }
         }
+
+        // Launch-time update prompt (phone only; TV self-checks in TvMainScreen).
+        UpdatePrompt(viewModel = viewModel, isTv = isTvDevice)
     }
+}
+
+/** One-shot "Update available" dialog shown on phone launch when a newer release exists. */
+@Composable
+private fun UpdatePrompt(viewModel: MainViewModel, isTv: Boolean) {
+    if (isTv) return
+    val update by viewModel.availableUpdate.collectAsState()
+    val progress by viewModel.updateProgress.collectAsState()
+    val current = update ?: return
+
+    AlertDialog(
+        onDismissRequest = { if (progress == null) viewModel.dismissUpdate() },
+        icon = {
+            Icon(
+                imageVector = Icons.Filled.NewReleases,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        },
+        title = { Text("Update available: v${current.version}") },
+        text = {
+            Column {
+                if (current.releaseNotes.isNotBlank()) {
+                    Text(
+                        text = current.releaseNotes,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 8,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                val p = progress
+                if (p != null) {
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { p },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "${(p * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (progress == null) {
+                TextButton(onClick = { viewModel.downloadUpdate() }) { Text("Update now") }
+            }
+        },
+        dismissButton = {
+            if (progress == null) {
+                TextButton(onClick = { viewModel.dismissUpdate() }) { Text("Later") }
+            }
+        }
+    )
 }
 
 private data class TabItem(

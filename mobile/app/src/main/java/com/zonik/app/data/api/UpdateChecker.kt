@@ -61,7 +61,19 @@ class UpdateChecker @Inject constructor(
             // `v*` tags, so fetch the releases LIST and pick the newest `app-v*`
             // entry (GitHub returns the list newest-first).
             val releases = json.decodeFromString<List<GitHubRelease>>(body)
-            val release = releases.firstOrNull { it.tagName.startsWith(TAG_PREFIX) }
+            // GitHub's /releases order is NOT version-sorted (it can list app-v1.9.0
+            // before app-v1.10.0), so pick the HIGHEST-version app-v* release rather
+            // than the first one in the list — otherwise a client can get stuck being
+            // offered an older release and never reach the newest.
+            val release = releases
+                .filter { it.tagName.startsWith(TAG_PREFIX) }
+                .reduceOrNull { best, r ->
+                    if (isNewerVersion(
+                            r.tagName.removePrefix(TAG_PREFIX),
+                            best.tagName.removePrefix(TAG_PREFIX)
+                        )
+                    ) r else best
+                }
                 ?: return@withContext null
 
             val currentVersion = getCurrentVersion()

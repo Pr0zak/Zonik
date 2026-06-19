@@ -378,7 +378,7 @@ fun SettingsScreen(
                         Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     },
                     modifier = Modifier.clickable {
-                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Pr0zak/Zonik-mobile"))
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://github.com/Pr0zak/Zonik"))
                         context.startActivity(intent)
                     }
                 )
