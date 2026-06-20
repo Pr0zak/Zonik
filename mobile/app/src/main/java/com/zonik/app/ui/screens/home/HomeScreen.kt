@@ -186,17 +186,6 @@ fun HomeScreen(
                     onToggleMarkForDeletion = viewModel::toggleMarkForDeletion,
                     onStartRadio = viewModel::startRadio
                 )
-
-                ExtendedFloatingActionButton(
-                    onClick = viewModel::shuffleMix,
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = Color.White,
-                    icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
-                    text = { Text("Play", style = MaterialTheme.typography.labelLarge) },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 16.dp, bottom = 158.dp)
-                )
             }
         }
     }
