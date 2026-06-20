@@ -81,6 +81,8 @@ class ServiceConfig(BaseModel):
     # Shuffle Mix recency weighting (subsonic getRandomSongs)
     shuffle_recency_weight: bool = True
     shuffle_recency_days: int = 30
+    shuffle_new_arrival_percent: int = 0
+    shuffle_new_arrival_days: int = 30
     # Soulseek (native only)
     slsk_username: str = ""
     slsk_password: str = ""
@@ -128,6 +130,8 @@ async def get_service_config():
         "naming_scheme": settings.library.naming_scheme,
         "shuffle_recency_weight": settings.subsonic.shuffle_recency_weight,
         "shuffle_recency_days": settings.subsonic.shuffle_recency_days,
+        "shuffle_new_arrival_percent": settings.subsonic.shuffle_new_arrival_percent,
+        "shuffle_new_arrival_days": settings.subsonic.shuffle_new_arrival_days,
         "slsk_username": settings.soulseek.username,
         "slsk_password": settings.soulseek.password,
         "slsk_listen_port": settings.soulseek.listen_port,
@@ -241,6 +245,9 @@ async def update_service_config(req: ServiceConfig):
     subsonic["shuffle_recency_weight"] = req.shuffle_recency_weight
     # 0 = all-time (no day cap); otherwise a recency window in days.
     subsonic["shuffle_recency_days"] = max(0, min(req.shuffle_recency_days, 3650))
+    # New-arrivals quota: 0 = off, capped at 50% so the mix never becomes all-new.
+    subsonic["shuffle_new_arrival_percent"] = max(0, min(req.shuffle_new_arrival_percent, 50))
+    subsonic["shuffle_new_arrival_days"] = max(1, min(req.shuffle_new_arrival_days, 3650))
     raw["subsonic"] = {**settings.subsonic.model_dump(), **subsonic}
 
     # Preserve other sections

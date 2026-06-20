@@ -100,6 +100,12 @@ class SubsonicConfig(BaseModel):
     # tracks so consecutive mixes feel fresher (vs a pure uniform ORDER BY RANDOM()).
     shuffle_recency_weight: bool = True
     shuffle_recency_days: int = 30
+    # New-arrivals quota: guarantee this % of each Shuffle Mix is drawn from
+    # recently-ADDED tracks (by created_at), independent of the play-recency
+    # weighting above. 0 = off. shuffle_new_arrival_days defines how recent
+    # "new" means.
+    shuffle_new_arrival_percent: int = 0
+    shuffle_new_arrival_days: int = 30
 
 
 class AssistantConfig(BaseModel):

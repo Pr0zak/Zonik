@@ -20,6 +20,8 @@
 		naming_scheme: '{artist}/{album}/{track_number} - {title}',
 		shuffle_recency_weight: true,
 		shuffle_recency_days: 30,
+		shuffle_new_arrival_percent: 0,
+		shuffle_new_arrival_days: 30,
 		slsk_username: '',
 		slsk_password: '',
 		slsk_listen_port: 2234,
@@ -475,6 +477,19 @@
 					<label class="text-sm text-[var(--text-secondary)]">Recency window (days · 0 = all-time)</label>
 					<p class="text-xs text-[var(--text-disabled)]">How far back counts as "recently played". Higher = stronger bias. Set to 0 for all-time — favor never/least-played across your whole history.</p>
 					<input type="number" min="0" max="3650" bind:value={services.shuffle_recency_days} oninput={markDirty} class={inputClass} />
+				</div>
+			{/if}
+
+			<div class="mt-4">
+				<label class="text-sm text-[var(--text-secondary)]">New arrivals in Shuffle Mix (%)</label>
+				<p class="text-xs text-[var(--text-disabled)]">Always mix in this share of recently-ADDED tracks, regardless of play history, so fresh downloads surface. 0 = off, max 50%.</p>
+				<input type="number" min="0" max="50" bind:value={services.shuffle_new_arrival_percent} oninput={markDirty} class={inputClass} />
+			</div>
+			{#if services.shuffle_new_arrival_percent > 0}
+				<div class="mt-3">
+					<label class="text-sm text-[var(--text-secondary)]">"New" = added in the last (days)</label>
+					<p class="text-xs text-[var(--text-disabled)]">How recently a track must have been added to count as a new arrival.</p>
+					<input type="number" min="1" max="3650" bind:value={services.shuffle_new_arrival_days} oninput={markDirty} class={inputClass} />
 				</div>
 			{/if}
 		</Card>

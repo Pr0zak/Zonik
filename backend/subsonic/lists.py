@@ -1,6 +1,8 @@
 """Subsonic list endpoints: getAlbumList2, getRandomSongs, getStarred2, etc."""
 from __future__ import annotations
 
+import random as _random
+
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,7 +118,12 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
         query = query.where(Track.year <= int(to_year))
 
     cfg = get_settings().subsonic
-    if cfg.shuffle_recency_weight:
+
+    def _apply_weighting(q):
+        """Apply the recency-weighted random order (or plain random) used for the
+        bulk of the mix."""
+        if not cfg.shuffle_recency_weight:
+            return q.order_by(func.random())
         # Weighted shuffle: bias toward less-recently-played so consecutive Shuffle
         # Mixes feel fresher. Each track gets key = abs(random()) / boost and we take
         # the `size` smallest keys; a larger boost yields a smaller expected key, so
@@ -144,11 +151,35 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
                 (Track.last_played_at.is_(None), 36500.0),
                 else_=days_since,
             )
-        query = query.order_by((func.abs(func.random()) / boost).asc()).limit(size)
-    else:
-        query = query.order_by(func.random()).limit(size)
-    result = await db.execute(query)
-    tracks = result.scalars().all()
+        return q.order_by((func.abs(func.random()) / boost).asc())
+
+    # New-arrivals quota: pull a guaranteed slice of the mix from tracks ADDED in the
+    # last N days (by created_at), independent of the play-recency weighting, so fresh
+    # downloads always surface. The rest of the mix uses the weighting above, with the
+    # new arrivals excluded to avoid dupes. Both lists are merged and shuffled so the
+    # new tracks aren't clumped at the top.
+    new_tracks: list = []
+    new_pct = cfg.shuffle_new_arrival_percent or 0
+    if new_pct > 0:
+        new_count = min(size, round(size * new_pct / 100.0))
+        if new_count > 0:
+            ndays = max(1, cfg.shuffle_new_arrival_days or 1)
+            nq = (
+                query.where(Track.created_at >= func.datetime("now", f"-{ndays} days"))
+                .order_by(func.random())
+                .limit(new_count)
+            )
+            new_tracks = list((await db.execute(nq)).scalars().all())
+
+    remaining = max(0, size - len(new_tracks))
+    main_q = query
+    if new_tracks:
+        main_q = main_q.where(Track.id.notin_([t.id for t in new_tracks]))
+    main_q = _apply_weighting(main_q).limit(remaining)
+    main_tracks = list((await db.execute(main_q)).scalars().all())
+
+    tracks = new_tracks + main_tracks
+    _random.shuffle(tracks)
 
     return subsonic_response({
         "randomSongs": {
