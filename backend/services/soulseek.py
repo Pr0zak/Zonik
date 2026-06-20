@@ -19,8 +19,19 @@ MIN_FILE_SIZE = 3 * 1024 * 1024  # 3MB
 
 # --- Text matching utilities (ported from web-ui.py) ---
 
+# Letters NFKD can't decompose to ASCII (stroke / ligature / eth / thorn). Fold
+# them explicitly so an accented title still matches an uploader's ASCII filename
+# (e.g. "Tøyen" vs "Toyen", "Mötley Crüe" works via NFKD but "Mø" needs this).
+_TRANSLIT = str.maketrans({
+    "ø": "o", "Ø": "o", "ł": "l", "Ł": "l", "đ": "d", "Đ": "d",
+    "þ": "th", "Þ": "th", "ð": "d", "Ð": "d", "æ": "ae", "Æ": "ae",
+    "œ": "oe", "Œ": "oe", "ß": "ss",
+})
+
+
 def normalize_text(text: str) -> str:
     """Normalize text for matching - strip accents, replace separators, lowercase."""
+    text = text.translate(_TRANSLIT)
     nfkd = unicodedata.normalize("NFKD", text)
     ascii_text = "".join(c for c in nfkd if not unicodedata.combining(c))
     normalized = re.sub(r"[._\-\(\)\[\]]", " ", ascii_text)
@@ -68,6 +79,45 @@ def clean_artist_name(artist: str) -> str:
     return artist
 
 
+# Stopwords + noise tokens dropped before requiring a title match. Keeping these
+# would let a different song match just by sharing "the" / "remix" / etc.
+TITLE_STOPWORDS = {
+    "the", "a", "an", "of", "and", "or", "to", "in", "on", "for", "with",
+    "feat", "ft", "prod", "remix", "edit", "version", "remaster", "remastered",
+    "mix", "radio", "original", "official", "explicit", "clean", "bonus", "track",
+    "single", "ep", "lp",
+}
+
+
+def title_matches(track_title: str, filename: str) -> bool:
+    """Hard gate: does this candidate file actually look like the target title?
+
+    Word-boundary match (NOT substring — so "faith" won't match "faithless") on
+    the significant, non-stopword, non-numeric words of the title against the
+    candidate's *basename*. Titles of 1-2 significant words must match in full;
+    longer titles need >= ~80%. This stops the downloader picking a high-quality
+    file of a completely different song that merely outscores the correct file on
+    format / peer-quality points. Recall is intentionally traded for precision —
+    on this single-user box a missed upgrade is far cheaper than a wrong one.
+    """
+    base = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    base = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", base)  # drop extension
+    hay = set(normalize_text(base).split())
+    if not hay:
+        return False
+    title_words = normalize_text(strip_track_extras(track_title)).split()
+    sig = [w for w in title_words if w not in TITLE_STOPWORDS and not w.isdigit()]
+    if not sig:
+        # Title was all stopwords / numbers — fall back so we don't reject everything.
+        sig = [w for w in title_words if not w.isdigit()] or title_words
+    if not sig:
+        return False
+    matched = sum(1 for w in sig if w in hay)
+    if len(sig) <= 2:
+        return matched == len(sig)
+    return matched >= max(2, round(len(sig) * 0.8))
+
+
 # --- Quality scoring ---
 
 def pick_best_results(results: list[dict], artist: str, track: str) -> list[dict]:
@@ -93,15 +143,19 @@ def pick_best_results(results: list[dict], artist: str, track: str) -> list[dict
         if not ext:
             continue
 
+        # HARD GATE: the candidate filename must actually contain the target title.
+        if not title_matches(track, filename):
+            continue
+
         score = 0
         # Fuzzy artist match (check full path)
         if words_match(artist, full_path):
-            score += 10
-        # Fuzzy track match (check filename)
+            score += 12
+        # Track match strength (gate already passed; grade full vs extras-stripped)
         if words_match(track, filename):
+            score += 15
+        else:
             score += 10
-        elif words_match(strip_track_extras(track), filename):
-            score += 8
 
         # Format scoring
         if ext == ".flac":

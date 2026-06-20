@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from backend.config import get_settings
 from backend.services.soulseek import (
     normalize_text, words_match, strip_track_extras, clean_track_name,
-    clean_artist_name, PREFERRED_EXTENSIONS,
+    clean_artist_name, title_matches, PREFERRED_EXTENSIONS,
 )
 
 if TYPE_CHECKING:
@@ -27,6 +27,7 @@ async def pick_best_results_native(
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
     scored = []
+    rejected_title = 0
     for search_result in results:
         for file_info in search_result.files:
             filename = file_info.filename
@@ -43,15 +44,22 @@ async def pick_best_results_native(
             if not ext:
                 continue
 
+            # HARD GATE: the candidate filename must actually contain the target
+            # track title, else skip it — a pristine FLAC of a *different* song must
+            # never win on format/peer points alone (was grabbing wrong songs).
+            if not title_matches(track, filename):
+                rejected_title += 1
+                continue
+
             score = 0
-            # Fuzzy artist match
-            if words_match(artist, filename):
-                score += 10
-            # Fuzzy track match
+            # Artist match — strong signal, not required (often only in the path).
+            if words_match(clean_artist_name(artist), filename) or words_match(artist, filename):
+                score += 12
+            # Track match strength (gate already passed; grade full vs extras-stripped)
             if words_match(track, filename):
+                score += 15
+            else:
                 score += 10
-            elif words_match(strip_track_extras(track), filename):
-                score += 8
 
             # Format scoring
             if ext == ".flac":
@@ -112,6 +120,9 @@ async def pick_best_results_native(
                     "slots_free": search_result.slots_free,
                     "avg_speed": search_result.avg_speed,
                 }))
+
+    if rejected_title:
+        log.info(f"[native] title gate skipped {rejected_title} file(s) not matching '{track}'")
 
     if not scored:
         return []
