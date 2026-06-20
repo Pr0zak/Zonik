@@ -349,15 +349,19 @@ async def _auto_download_missing(missing: list[dict], source: str):
 
         upgrade_id = t.get("upgrade_id") if source == "upgrade_scan" else None
         job_id = str(_uuid.uuid4())
+        target_track_id = None
 
         # Enforce max_attempts so a permanently-unavailable track isn't retried
-        # forever on every scan.
+        # forever on every scan. Also capture the target track_id so the importer
+        # replaces the exact original instead of fuzzy-matching the download's tags.
         if upgrade_id:
             try:
                 async with async_session() as att_db:
                     row = (await att_db.execute(
                         select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
                     )).scalar_one_or_none()
+                    if row:
+                        target_track_id = row.track_id
                     if row and row.status == "pending" and row.attempts >= (row.max_attempts or 3):
                         await att_db.execute(
                             _update(TrackUpgrade)
@@ -391,7 +395,7 @@ async def _auto_download_missing(missing: list[dict], source: str):
 
         async with sem:
             try:
-                returned_job_id = await enqueue_download(artist, track, job_id=job_id, source=dl_source)
+                returned_job_id = await enqueue_download(artist, track, job_id=job_id, source=dl_source, target_track_id=target_track_id)
             except Exception as e:
                 log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
                 returned_job_id = job_id

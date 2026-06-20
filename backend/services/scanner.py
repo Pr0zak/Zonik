@@ -476,6 +476,27 @@ def _quality_rank(fmt: str, file_size: int) -> tuple[int, int]:
     return (FORMAT_QUALITY.get(fmt, 0), file_size)
 
 
+def _same_song(dl_title: str, target_title: str, dl_artist: str = "", target_artist: str = "") -> bool:
+    """Heuristic: is the downloaded file the same song as the upgrade target? Strips
+    artist words (some libraries embed the artist into the title) and stopwords, then
+    requires strong symmetric word overlap. Accepts 'Vicious' for a target titled
+    'Artist - Vicious'; rejects 'Genesis x Phantom' for 'Genesis'."""
+    stop = {"feat", "ft", "the", "a", "x", "and", "vs", "with"}
+    artist_words = (set(_normalize_title(dl_artist or "").split())
+                    | set(_normalize_title(target_artist or "").split()))
+
+    def words(t: str) -> set[str]:
+        return set(_normalize_title(t or "").split()) - artist_words - stop
+
+    wa, wb = words(dl_title), words(target_title)
+    if not wa or not wb:
+        # One title is all artist/stopwords — fall back to a loose normalized compare.
+        na, nb = _normalize_title(dl_title or ""), _normalize_title(target_title or "")
+        return bool(na) and bool(nb) and (na in nb or nb in na)
+    inter = wa & wb
+    return len(inter) / max(len(wa), len(wb)) >= 0.6
+
+
 async def _find_existing_track(db: AsyncSession, title: str, artist_name: str) -> Track | None:
     """Find an existing library track with the same normalized title and artist.
 
@@ -531,6 +552,7 @@ async def import_downloaded_file(
     db: AsyncSession,
     save_path: str,
     artist_hint: str = "",
+    target_track_id: str | None = None,
 ) -> str | None:
     """Move a downloaded file into the music library and index it.
 
@@ -564,8 +586,28 @@ async def import_downloaded_file(
     new_fmt = parsed["format"] or ""
     new_size = parsed["file_size"] or src.stat().st_size
 
-    # --- Check for existing track (upgrade detection) ---
-    existing = await _find_existing_track(db, parsed["title"], parsed["artist_name"] or artist_hint)
+    # --- Resolve the track to match/replace ---
+    if target_track_id:
+        # This download fulfils a SPECIFIC upgrade. Use the exact target track
+        # instead of fuzzy-matching the download's tags (which fails when the
+        # original title is messy, e.g. the artist is embedded into the title).
+        existing = (await db.execute(
+            select(Track).options(selectinload(Track.artist)).where(Track.id == target_track_id)
+        )).scalar_one_or_none()
+        if existing is not None:
+            target_artist = existing.artist.name if existing.artist else ""
+            if not _same_song(parsed["title"], existing.title, parsed["artist_name"] or artist_hint, target_artist):
+                log.warning(f"[import] Upgrade download '{parsed['title']}' != target '{existing.title}' — discarding")
+                await _mark_upgrade_failed(db, existing.id, f"Downloaded '{parsed['title']}' is not the same track")
+                src.unlink(missing_ok=True)
+                return None
+            if _quality_rank(new_fmt, new_size) <= _quality_rank(existing.format or "", existing.file_size or 0):
+                log.info(f"[import] Upgrade for '{existing.title}' not higher quality — keeping original")
+                await _mark_upgrade_failed(db, existing.id, "Downloaded file not higher quality")
+                src.unlink(missing_ok=True)
+                return None
+    else:
+        existing = await _find_existing_track(db, parsed["title"], parsed["artist_name"] or artist_hint)
     if existing:
         old_quality = _quality_rank(existing.format or "", existing.file_size or 0)
         new_quality = _quality_rank(new_fmt, new_size)

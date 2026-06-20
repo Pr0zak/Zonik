@@ -215,10 +215,12 @@ async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):
                     u.job_id = job_id
                     u.status = "downloading"
                     u.updated_at = datetime.utcnow()
+                    target_track_id = u.track_id
                     await db.commit()
 
-                # Download (blocks until complete)
-                await enqueue_download(artist, track, job_id=job_id, source="upgrade")
+                # Download (blocks until complete) — pass the target track so the
+                # importer replaces this exact track instead of fuzzy-matching tags.
+                await enqueue_download(artist, track, job_id=job_id, source="upgrade", target_track_id=target_track_id)
 
                 # Update upgrade status based on job result
                 async with async_session() as db:

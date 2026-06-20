@@ -110,6 +110,7 @@ class DownloadRequest(BaseModel):
     username: str | None = None
     filename: str | None = None
     source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
+    target_track_id: str | None = None  # the existing track this download should upgrade/replace
 
 
 class BulkDownloadRequest(BaseModel):
@@ -460,7 +461,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                     fsize = _file_size(save_path)
                     async with async_session() as import_sess:
-                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist)
+                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist, target_track_id=req.target_track_id)
                     job.status = "completed"
                     job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
@@ -510,7 +511,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                     fsize = _file_size(best_path)
                     async with async_session() as import_sess:
-                        track_id = await import_downloaded_file(import_sess, best_path, artist_hint=req.artist)
+                        track_id = await import_downloaded_file(import_sess, best_path, artist_hint=req.artist, target_track_id=req.target_track_id)
                     job.status = "completed"
                     job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
@@ -561,7 +562,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     await native_client.reputation.record_success(dl_username)
                     fsize = _file_size(save_path)
                     async with async_session() as import_sess:
-                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist)
+                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist, target_track_id=req.target_track_id)
                     job.status = "completed"
                     job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
@@ -606,7 +607,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Cleanup skipped: {e}")
 
-async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None) -> str:
+async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None) -> str:
     """Delegate a download to the web process, which owns the native Soulseek
     client, and wait for it to finish. The arq worker has no native client of its
     own (it can only bind the listen port in one process), so any download it
@@ -626,7 +627,8 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
         timeout = httpx.Timeout(connect=10.0, read=1800.0, write=30.0, pool=None)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                url, json={"artist": artist, "track": track, "job_id": job_id, "source": source}
+                url, json={"artist": artist, "track": track, "job_id": job_id,
+                           "source": source, "target_track_id": target_track_id}
             )
             if resp.status_code == 200:
                 return resp.json().get("job_id", job_id)
@@ -666,7 +668,7 @@ async def _record_delegation_failure(job_id: str, artist: str, track: str, sourc
         log.debug(f"[download] Could not record delegation failure: {e}")
 
 
-async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None) -> str:
+async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None) -> str:
     """Create an individual download job with semaphore queuing. Returns job_id."""
     # Dedup: skip if same artist+track already pending/running
     async with async_session() as check_sess:
@@ -679,11 +681,11 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     # If this process can't download natively, delegate to the web and wait for it.
     from backend.soulseek import get_client
     if get_client() is None:
-        return await _delegate_download_to_web(artist, track, job_id, source)
+        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id)
 
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
-    dl_req = DownloadRequest(artist=artist, track=track, source=source)
+    dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id)
     sem = _get_semaphore()
 
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
@@ -718,6 +720,7 @@ class InternalDownloadRequest(BaseModel):
     track: str
     job_id: str | None = None
     source: str | None = None
+    target_track_id: str | None = None
 
 
 @router.post("/internal-run")
@@ -725,7 +728,8 @@ async def internal_run_download(req: InternalDownloadRequest):
     """Internal: run a full download to completion IN THIS process, which owns the
     native Soulseek client. Called by the arq worker (via _delegate_download_to_web)
     to perform downloads it cannot run itself. Localhost-only by deployment."""
-    jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source)
+    jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
+                                 target_track_id=req.target_track_id)
     return {"job_id": jid}
 
 
