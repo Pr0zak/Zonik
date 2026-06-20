@@ -10,8 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.config import get_settings
+import re
+
 from backend.models.track import Track
 from backend.models.artist import Artist
+from backend.models.album import Album
 from backend.models.analysis import TrackAnalysis
 from backend.models.playlist import Playlist, PlaylistTrack
 from backend.services.ai.client import call_claude
@@ -102,7 +105,9 @@ Return JSON with selection criteria:
     conditions = []
 
     if criteria.get("genres"):
-        genre_conditions = [func.lower(Track.genre) == g.lower() for g in criteria["genres"]]
+        # Substring match so multi-genre tags (e.g. "Pop;Christmas;Holiday") and
+        # near-misses are caught — exact equality missed most of them.
+        genre_conditions = [Track.genre.ilike(f"%{g}%") for g in criteria["genres"]]
         conditions.append(or_(*genre_conditions))
 
     if criteria.get("artists"):
@@ -142,14 +147,56 @@ Return JSON with selection criteria:
     query = query.limit(min(limit, 200))
 
     track_result = await db.execute(query)
-    tracks = track_result.scalars().all()
+    tracks = list(track_result.scalars().all())
+
+    target = min(limit, 200)
+    if 0 < len(tracks) < target:
+        # Broaden a thin match with an on-theme keyword search across artist,
+        # ALBUM, title and genre — so niche/franchise requests still fill out
+        # (e.g. "Demon Hunters" lives as the album "KPop Demon Hunters" whose
+        # tracks are tagged HUNTR/X etc., which the artist filter alone missed).
+        stop = {
+            "play", "songs", "song", "music", "me", "a", "an", "the", "some", "from",
+            "for", "of", "and", "or", "to", "with", "by", "mix", "playlist", "make",
+            "give", "tracks", "track", "my", "please", "stuff", "want", "listen", "put",
+        }
+        words: set[str] = set()
+        sources = [prompt, criteria.get("name") or ""]
+        for key in ("genres", "artists", "mood_keywords"):
+            sources.extend(str(x) for x in (criteria.get(key) or []))
+        for src in sources:
+            for w in re.findall(r"[A-Za-z0-9']+", src.lower()):
+                if len(w) >= 3 and w not in stop:
+                    words.add(w)
+        if words:
+            have = {t.id for t in tracks}
+            kw_conds = []
+            for w in words:
+                like = f"%{w}%"
+                kw_conds += [Track.title.ilike(like), Track.genre.ilike(like),
+                             Artist.name.ilike(like), Album.title.ilike(like)]
+            broad_q = (
+                select(Track)
+                .options(selectinload(Track.artist), selectinload(Track.album))
+                .join(Artist, Track.artist_id == Artist.id, isouter=True)
+                .outerjoin(Album, Track.album_id == Album.id)
+                .where(or_(*kw_conds))
+                .order_by(func.random())
+                .limit(target)
+            )
+            for t in (await db.execute(broad_q)).scalars().all():
+                if t.id not in have:
+                    tracks.append(t)
+                    have.add(t.id)
+                    if len(tracks) >= target:
+                        break
 
     if not tracks:
-        # Fallback: just pick random tracks
+        # Last resort (zero matches at all): random tracks so we never return empty.
         fallback = await db.execute(
             select(Track).order_by(func.random()).limit(limit)
         )
-        tracks = fallback.scalars().all()
+        tracks = list(fallback.scalars().all())
 
     if not tracks:
         return {"error": "No tracks found matching the criteria"}
