@@ -69,7 +69,29 @@ interface ZonikApi {
 
     @GET("api/pair/{code}")
     suspend fun checkPairingCode(@Path("code") code: String): PairingConfigResponse
+
+    // --- AI Voice Playlist ---
+
+    @POST("api/assistant/voice-playlist")
+    suspend fun voicePlaylist(@Body request: VoicePlaylistRequest): VoicePlaylistResponse
 }
+
+@Serializable
+data class VoicePlaylistRequest(
+    val prompt: String,
+    val size: Int = 50,
+    val save: Boolean = false
+)
+
+@Serializable
+data class VoicePlaylistResponse(
+    val id: String? = null,
+    val name: String = "",
+    val description: String = "",
+    @SerialName("track_count") val trackCount: Int = 0,
+    @SerialName("track_ids") val trackIds: List<String> = emptyList(),
+    val error: String? = null
+)
 
 @Serializable
 data class BulkDeleteTracksRequest(

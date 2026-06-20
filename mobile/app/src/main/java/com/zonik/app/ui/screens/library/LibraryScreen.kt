@@ -368,17 +368,19 @@ fun LibraryScreen(
             .statusBarsPadding()
     ) {
         // M3 small top app bar
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(64.dp)
-                .padding(horizontal = 16.dp),
-            contentAlignment = Alignment.CenterStart
+                .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "Your library",
                 style = MaterialTheme.typography.titleLarge
             )
+            Spacer(modifier = Modifier.weight(1f))
+            com.zonik.app.voice.VoiceMicButton()
         }
 
             ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 0.dp) {

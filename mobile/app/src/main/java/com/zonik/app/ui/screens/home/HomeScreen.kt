@@ -245,6 +245,7 @@ private fun HomeContent(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
             }
+            com.zonik.app.voice.VoiceMicButton()
             IconButton(
                 onClick = onSyncNow,
                 enabled = !syncState.isSyncing

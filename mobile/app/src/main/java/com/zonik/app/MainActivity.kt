@@ -307,6 +307,11 @@ fun ZonikApp(
 
         // Launch-time update prompt (phone only; TV self-checks in TvMainScreen).
         UpdatePrompt(viewModel = viewModel, isTv = isTvDevice)
+
+        // AI voice-playlist overlay (Listening → Curating → Picked / Failed).
+        if (!isTvDevice) {
+            com.zonik.app.voice.VoiceOverlay()
+        }
     }
 }
 
