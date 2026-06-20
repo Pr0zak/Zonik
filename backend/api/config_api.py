@@ -239,7 +239,8 @@ async def update_service_config(req: ServiceConfig):
     # Subsonic / Shuffle Mix
     subsonic = raw.get("subsonic", {})
     subsonic["shuffle_recency_weight"] = req.shuffle_recency_weight
-    subsonic["shuffle_recency_days"] = max(1, min(req.shuffle_recency_days, 365))
+    # 0 = all-time (no day cap); otherwise a recency window in days.
+    subsonic["shuffle_recency_days"] = max(0, min(req.shuffle_recency_days, 3650))
     raw["subsonic"] = {**settings.subsonic.model_dump(), **subsonic}
 
     # Preserve other sections

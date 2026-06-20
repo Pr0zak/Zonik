@@ -124,13 +124,26 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
         # tracks and tracks last played >= N days ago get the max boost; a track
         # played just now gets ~1x (≈ uniform). Still a genuine random sample — just
         # tilted away from what you heard recently.
-        days = float(max(1, cfg.shuffle_recency_days))
         days_since = func.julianday("now") - func.julianday(Track.last_played_at)
-        boost = 1.0 + case(
-            (Track.last_played_at.is_(None), days),
-            (days_since >= days, days),
-            else_=days_since,
-        )
+        if cfg.shuffle_recency_days and cfg.shuffle_recency_days > 0:
+            # Windowed: only the last N days are suppressed. Tracks played >= N days
+            # ago and never-played tracks are all equally "fresh" (max boost).
+            days = float(cfg.shuffle_recency_days)
+            boost = 1.0 + case(
+                (Track.last_played_at.is_(None), days),
+                (days_since >= days, days),
+                else_=days_since,
+            )
+        else:
+            # All-time (days <= 0): boost grows with the FULL days-since-played,
+            # uncapped — the longer ago you heard a track the more likely it is, and
+            # never-played tracks are the freshest of all. Still a weighted random
+            # sample, just graduated over your whole history. (With a mostly-unplayed
+            # library this naturally surfaces lots of never-heard tracks.)
+            boost = 1.0 + case(
+                (Track.last_played_at.is_(None), 36500.0),
+                else_=days_since,
+            )
         query = query.order_by((func.abs(func.random()) / boost).asc()).limit(size)
     else:
         query = query.order_by(func.random()).limit(size)

@@ -472,9 +472,9 @@
 			</div>
 			{#if services.shuffle_recency_weight}
 				<div class="mt-3">
-					<label class="text-sm text-[var(--text-secondary)]">Recency window (days)</label>
-					<p class="text-xs text-[var(--text-disabled)]">How far back counts as "recently played" — higher = stronger bias away from recent tracks</p>
-					<input type="number" min="1" max="365" bind:value={services.shuffle_recency_days} oninput={markDirty} class={inputClass} />
+					<label class="text-sm text-[var(--text-secondary)]">Recency window (days · 0 = all-time)</label>
+					<p class="text-xs text-[var(--text-disabled)]">How far back counts as "recently played". Higher = stronger bias. Set to 0 for all-time — favor never/least-played across your whole history.</p>
+					<input type="number" min="0" max="3650" bind:value={services.shuffle_recency_days} oninput={markDirty} class={inputClass} />
 				</div>
 			{/if}
 		</Card>
