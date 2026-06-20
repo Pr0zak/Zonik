@@ -612,20 +612,46 @@ async def import_downloaded_file(
         old_quality = _quality_rank(existing.format or "", existing.file_size or 0)
         new_quality = _quality_rank(new_fmt, new_size)
         if new_quality > old_quality:
-            # Upgrade — replace the old file
+            # --- Upgrade: replace the old file. Ordering is safety-critical. Pick a
+            # destination free on disk AND not already owned by another track row,
+            # move the new file in, do the DB swap + COMMIT, and only THEN delete the
+            # old file. If the swap fails we roll back and remove the just-moved new
+            # file; the old file + track row stay intact. Deleting the old file before
+            # the insert is exactly how tracks got orphaned — once via an FK violation,
+            # once via a UNIQUE file_path collision with a stale/duplicate row.
+            from backend.database import update_fts_index
             old_path = music_dir / existing.file_path if existing.file_path else None
+            existing_id = existing.id
+            new_title = existing.title
             folder_name = parsed["artist_name"] or artist_hint or "Unknown Artist"
             folder_name = "".join(c for c in folder_name if c not in '<>:"/\\|?*').strip() or "Unknown Artist"
             dest_dir = music_dir / folder_name
             dest_dir.mkdir(parents=True, exist_ok=True)
-            dest = dest_dir / src.name
 
-            if dest.exists() and dest != src:
-                stem, ext = dest.stem, dest.suffix
-                for i in range(1, 100):
-                    dest = dest_dir / f"{stem} ({i}){ext}"
-                    if not dest.exists():
-                        break
+            async def _db_owner(rel: str):
+                row = (await db.execute(select(Track.id).where(Track.file_path == rel))).first()
+                return row[0] if row else None
+
+            # Find a dest path that's free on disk AND not owned by a *different* track
+            # row — otherwise the insert below UNIQUE-violates on tracks.file_path.
+            base = dest_dir / src.name
+            dest = base
+            idx = 0
+            while True:
+                rel_path = str(dest.relative_to(music_dir))
+                disk_clash = dest.exists() and dest != src
+                owner = await _db_owner(rel_path)
+                db_clash = owner is not None and owner != existing_id
+                if not disk_clash and not db_clash:
+                    break
+                idx += 1
+                if idx >= 100:
+                    log.warning(f"[import] No free destination for {base.name}; aborting upgrade")
+                    src.unlink(missing_ok=True)
+                    if target_track_id:
+                        await _mark_upgrade_failed(db, existing_id, "No free destination slot for upgrade")
+                    return None
+                dest = dest_dir / f"{base.stem} ({idx}){base.suffix}"
 
             try:
                 shutil.move(str(src), str(dest))
@@ -633,113 +659,103 @@ async def import_downloaded_file(
                 log.warning(f"[import] Failed to move {src} → {dest}: {e}")
                 return None
 
-            # Delete old file
-            if old_path and old_path.exists():
-                try:
-                    old_path.unlink()
-                    log.info(f"[import] Upgrade: removed old {old_path.name} ({existing.format}, {existing.file_size or 0} bytes)")
-                except Exception as e:
-                    log.warning(f"[import] Could not delete old file {old_path}: {e}")
-
-            # Re-parse from new location and update existing track
+            # Re-parse from the new location.
             parsed = parse_audio_file(dest, music_dir)
             if not parsed:
                 return None
-
             rel_path = parsed["file_path"]
             new_track_id = _stable_id(rel_path)
 
-            # Update the existing track record with new file info
-            existing.file_path = rel_path
-            existing.file_size = parsed["file_size"]
-            existing.format = parsed["format"]
-            existing.bitrate = parsed["bitrate"]
-            existing.sample_rate = parsed["sample_rate"]
-            existing.bit_depth = parsed["bit_depth"]
-            existing.mime_type = parsed["mime_type"]
-            existing.duration_seconds = parsed["duration_seconds"]
-
-            # If the track ID changed (different file path), we need to update it
-            if new_track_id != existing.id:
-                # Delete old FTS entry
-                from backend.database import update_fts_index
-                try:
-                    await db.execute(
-                        select(Track).where(Track.id == existing.id)
+            try:
+                if new_track_id != existing_id:
+                    # New file path → new id. Copy relationships onto a fresh row.
+                    new_track = Track(
+                        id=new_track_id,
+                        title=existing.title,
+                        artist_id=existing.artist_id,
+                        album_id=existing.album_id,
+                        track_number=existing.track_number,
+                        disc_number=existing.disc_number,
+                        duration_seconds=parsed["duration_seconds"],
+                        file_path=rel_path,
+                        file_size=parsed["file_size"],
+                        format=parsed["format"],
+                        bitrate=parsed["bitrate"],
+                        sample_rate=parsed["sample_rate"],
+                        bit_depth=parsed["bit_depth"],
+                        mime_type=parsed["mime_type"],
+                        genre=existing.genre,
+                        year=existing.year,
+                        musicbrainz_id=existing.musicbrainz_id,
+                        cover_art_path=existing.cover_art_path,
+                        replay_gain_track=parsed["replay_gain_track"],
+                        replay_gain_album=parsed["replay_gain_album"],
+                        play_count=existing.play_count,
                     )
+                    new_track.rating = existing.rating
+                    # FK-safe order: INSERT new first, repoint FK refs, THEN delete the
+                    # old row. (PRAGMA foreign_keys=OFF is a no-op inside a transaction.)
+                    # Detach `existing` so stale edits aren't flushed onto the doomed row.
+                    db.expunge(existing)
+                    db.add(new_track)
+                    await db.flush()  # new_track_id now exists in `tracks`
+
+                    for tbl in ("favorites", "play_history", "track_upgrades", "playlist_tracks", "bookmarks"):
+                        await db.execute(
+                            text(f"UPDATE {tbl} SET track_id = :new WHERE track_id = :old"),
+                            {"new": new_track_id, "old": existing_id},
+                        )
+                    for tbl in ("track_analysis", "track_embeddings"):
+                        await db.execute(
+                            text(f"DELETE FROM {tbl} WHERE track_id = :old"),
+                            {"old": existing_id},
+                        )
+                    await db.execute(
+                        text("UPDATE play_queue SET current_track_id = :new WHERE current_track_id = :old"),
+                        {"new": new_track_id, "old": existing_id},
+                    )
+                    await db.execute(text("DELETE FROM tracks WHERE id = :old"), {"old": existing_id})
+                    await db.flush()
+                    await update_fts_index(db, new_track_id, new_title, parsed["artist_name"], parsed["album_title"])
+                    await db.commit()
+                    final_id = new_track_id
+                else:
+                    # Same path (e.g. recovering an orphaned row) — update in place.
+                    existing.file_path = rel_path
+                    existing.file_size = parsed["file_size"]
+                    existing.format = parsed["format"]
+                    existing.bitrate = parsed["bitrate"]
+                    existing.sample_rate = parsed["sample_rate"]
+                    existing.bit_depth = parsed["bit_depth"]
+                    existing.mime_type = parsed["mime_type"]
+                    existing.duration_seconds = parsed["duration_seconds"]
+                    await update_fts_index(db, existing_id, existing.title, parsed["artist_name"], parsed["album_title"])
+                    await db.commit()
+                    final_id = existing_id
+            except Exception as e:
+                # DB swap failed — roll back and remove the just-moved new file. The
+                # old file + track row are untouched, so nothing is orphaned.
+                await db.rollback()
+                log.warning(f"[import] DB replace failed for '{parsed.get('title')}' → keeping original: {e}")
+                try:
+                    dest.unlink(missing_ok=True)
                 except Exception:
                     pass
-                # Create new track with new ID, copy relationships
-                new_track = Track(
-                    id=new_track_id,
-                    title=existing.title,
-                    artist_id=existing.artist_id,
-                    album_id=existing.album_id,
-                    track_number=existing.track_number,
-                    disc_number=existing.disc_number,
-                    duration_seconds=parsed["duration_seconds"],
-                    file_path=rel_path,
-                    file_size=parsed["file_size"],
-                    format=parsed["format"],
-                    bitrate=parsed["bitrate"],
-                    sample_rate=parsed["sample_rate"],
-                    bit_depth=parsed["bit_depth"],
-                    mime_type=parsed["mime_type"],
-                    genre=existing.genre,
-                    year=existing.year,
-                    musicbrainz_id=existing.musicbrainz_id,
-                    cover_art_path=existing.cover_art_path,
-                    replay_gain_track=parsed["replay_gain_track"],
-                    replay_gain_album=parsed["replay_gain_album"],
-                    play_count=existing.play_count,
-                )
-                # Carry over rating
-                new_track.rating = existing.rating
-                old_track_id = existing.id
+                if target_track_id:
+                    await _mark_upgrade_failed(db, existing_id, f"Import replace failed: {str(e)[:200]}")
+                return None
 
-                # FK-safe order: INSERT the new track first, THEN repoint FK refs at
-                # it, THEN delete the old row. (PRAGMA foreign_keys=OFF is a no-op
-                # inside a transaction, so the old migrate-then-insert order
-                # FK-violated for any track that had favorites/playlist/history rows
-                # — deleting the old file but failing the DB replace.)
-                # Detach the modified `existing` so its now-stale field edits aren't
-                # flushed onto the about-to-be-deleted old row.
-                db.expunge(existing)
-                db.add(new_track)
-                await db.flush()  # new_track_id now exists in `tracks`
+            # DB swap committed — now it's safe to delete the old physical file.
+            if old_path and old_path.exists() and old_path != dest:
+                try:
+                    old_path.unlink()
+                    log.info(f"[import] Upgrade: removed old {old_path.name}")
+                except Exception as e:
+                    log.warning(f"[import] Could not delete old file {old_path}: {e}")
 
-                # Repoint FK references from old → new (new now exists, so no violation)
-                for tbl in ("favorites", "play_history", "track_upgrades", "playlist_tracks", "bookmarks"):
-                    await db.execute(
-                        text(f"UPDATE {tbl} SET track_id = :new WHERE track_id = :old"),
-                        {"new": new_track_id, "old": old_track_id},
-                    )
-                # analysis/embedding PK = track_id; drop the stale rows for the old id
-                for tbl in ("track_analysis", "track_embeddings"):
-                    await db.execute(
-                        text(f"DELETE FROM {tbl} WHERE track_id = :old"),
-                        {"old": old_track_id},
-                    )
-                await db.execute(
-                    text("UPDATE play_queue SET current_track_id = :new WHERE current_track_id = :old"),
-                    {"new": new_track_id, "old": old_track_id},
-                )
-                # Nothing references the old track now — safe to delete with FK on.
-                await db.execute(text("DELETE FROM tracks WHERE id = :old"), {"old": old_track_id})
-                await db.flush()
-
-                await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
-                await db.commit()
-                log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} → {new_fmt}")
-                await _mark_upgrade_completed(db, new_track_id, new_fmt, parsed["bitrate"], parsed["file_size"])
-                return new_track_id
-            else:
-                from backend.database import update_fts_index
-                await update_fts_index(db, existing.id, existing.title, parsed["artist_name"], parsed["album_title"])
-                await db.commit()
-                log.info(f"[import] Upgraded in-place: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
-                await _mark_upgrade_completed(db, existing.id, new_fmt, parsed["bitrate"], parsed["file_size"])
-                return existing.id
+            log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} → {new_fmt}")
+            await _mark_upgrade_completed(db, final_id, new_fmt, parsed["bitrate"], parsed["file_size"])
+            return final_id
         else:
             # Not an upgrade — check if it's a different version (remix etc)
             # by comparing normalized titles more strictly (with parentheticals)
