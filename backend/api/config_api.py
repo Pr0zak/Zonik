@@ -78,6 +78,9 @@ class ServiceConfig(BaseModel):
     download_dir: str = ""
     cover_cache_dir: str = ""
     naming_scheme: str = "{artist}/{album}/{track_number} - {title}"
+    # Shuffle Mix recency weighting (subsonic getRandomSongs)
+    shuffle_recency_weight: bool = True
+    shuffle_recency_days: int = 30
     # Soulseek (native only)
     slsk_username: str = ""
     slsk_password: str = ""
@@ -123,6 +126,8 @@ async def get_service_config():
         "download_dir": settings.soulseek.download_dir,
         "cover_cache_dir": settings.library.cover_cache_dir,
         "naming_scheme": settings.library.naming_scheme,
+        "shuffle_recency_weight": settings.subsonic.shuffle_recency_weight,
+        "shuffle_recency_days": settings.subsonic.shuffle_recency_days,
         "slsk_username": settings.soulseek.username,
         "slsk_password": settings.soulseek.password,
         "slsk_listen_port": settings.soulseek.listen_port,
@@ -230,6 +235,12 @@ async def update_service_config(req: ServiceConfig):
                     "ai_duplicate_resolver", "ai_download_advisor", "ai_playlist_curator"]:
         assistant[toggle] = getattr(req, toggle)
     raw["assistant"] = {**settings.assistant.model_dump(), **assistant}
+
+    # Subsonic / Shuffle Mix
+    subsonic = raw.get("subsonic", {})
+    subsonic["shuffle_recency_weight"] = req.shuffle_recency_weight
+    subsonic["shuffle_recency_days"] = max(1, min(req.shuffle_recency_days, 365))
+    raw["subsonic"] = {**settings.subsonic.model_dump(), **subsonic}
 
     # Preserve other sections
     for section in ["server", "database", "redis", "analysis", "subsonic"]:

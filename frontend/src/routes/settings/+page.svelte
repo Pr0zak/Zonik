@@ -18,6 +18,8 @@
 		download_dir: '',
 		cover_cache_dir: '',
 		naming_scheme: '{artist}/{album}/{track_number} - {title}',
+		shuffle_recency_weight: true,
+		shuffle_recency_days: 30,
 		slsk_username: '',
 		slsk_password: '',
 		slsk_listen_port: 2234,
@@ -456,6 +458,25 @@
 					color="#10b981"
 				/>
 			</div>
+
+			<div class="mt-4 flex items-center justify-between">
+				<div>
+					<span class="text-sm text-[var(--text-secondary)]">Fresher Shuffle Mix</span>
+					<p class="text-xs text-[var(--text-disabled)]">Bias Shuffle Mix away from recently-played tracks so it feels fresher (vs pure random)</p>
+				</div>
+				<Toggle
+					checked={services.shuffle_recency_weight}
+					onchange={(v) => { services.shuffle_recency_weight = v; markDirty(); }}
+					color="#10b981"
+				/>
+			</div>
+			{#if services.shuffle_recency_weight}
+				<div class="mt-3">
+					<label class="text-sm text-[var(--text-secondary)]">Recency window (days)</label>
+					<p class="text-xs text-[var(--text-disabled)]">How far back counts as "recently played" — higher = stronger bias away from recent tracks</p>
+					<input type="number" min="1" max="365" bind:value={services.shuffle_recency_days} oninput={markDirty} class={inputClass} />
+				</div>
+			{/if}
 		</Card>
 
 		<!-- 2. Soulseek -->
