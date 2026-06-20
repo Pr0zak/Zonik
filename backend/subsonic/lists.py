@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
+from backend.config import get_settings
 from backend.models.track import Track
 from backend.models.album import Album
 from backend.models.artist import Artist
@@ -114,7 +115,25 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
     if to_year:
         query = query.where(Track.year <= int(to_year))
 
-    query = query.order_by(func.random()).limit(size)
+    cfg = get_settings().subsonic
+    if cfg.shuffle_recency_weight:
+        # Weighted shuffle: bias toward less-recently-played so consecutive Shuffle
+        # Mixes feel fresher. Each track gets key = abs(random()) / boost and we take
+        # the `size` smallest keys; a larger boost yields a smaller expected key, so
+        # tracks not played in a while are more likely to be picked. Never-played
+        # tracks and tracks last played >= N days ago get the max boost; a track
+        # played just now gets ~1x (≈ uniform). Still a genuine random sample — just
+        # tilted away from what you heard recently.
+        days = float(max(1, cfg.shuffle_recency_days))
+        days_since = func.julianday("now") - func.julianday(Track.last_played_at)
+        boost = 1.0 + case(
+            (Track.last_played_at.is_(None), days),
+            (days_since >= days, days),
+            else_=days_since,
+        )
+        query = query.order_by((func.abs(func.random()) / boost).asc()).limit(size)
+    else:
+        query = query.order_by(func.random()).limit(size)
     result = await db.execute(query)
     tracks = result.scalars().all()
 
