@@ -24,15 +24,21 @@ async def generate_playlist(
     prompt: str,
     name: str | None = None,
     limit: int = 30,
+    save: bool = True,
 ) -> dict:
     """Generate a playlist from a natural language prompt.
 
     1. Claude interprets the prompt into track selection criteria
     2. We query the library for matching tracks
     3. Optionally Claude re-orders them for flow
-    4. Save as a new playlist
+    4. Save as a new playlist (only when ``save`` is True)
 
-    Returns {"id": ..., "name": ..., "track_count": ...} or {"error": ...}
+    When ``save`` is False the tracks are still selected and returned (ordered
+    ``track_ids``) but no Playlist/PlaylistTrack rows are persisted — used by the
+    voice "play only" path so spoken mixes don't clutter the library.
+
+    Returns {"id", "name", "track_count", "description", "track_ids"} or
+    {"error": ...}. ``id`` is None when ``save`` is False.
     """
     settings = get_settings()
     if not settings.assistant.ai_playlist_gen:
@@ -68,6 +74,8 @@ Library info:
 - {total_tracks} total tracks
 - Top genres: {json.dumps(genres[:15])}
 - Top artists: {', '.join(top_artists[:20])}
+
+Pick criteria broad enough to fill roughly {limit} tracks for this request.
 
 Return JSON with selection criteria:
 {{
@@ -146,32 +154,34 @@ Return JSON with selection criteria:
     if not tracks:
         return {"error": "No tracks found matching the criteria"}
 
-    # Step 4: Create playlist
+    # Step 4: assemble result. track_ids are always returned (ordered) so a voice
+    # client can play immediately; the Playlist is only persisted when save=True.
+    track_ids = [t.id for t in tracks]
     playlist_name = name or criteria.get("name", f"AI: {prompt[:40]}")
     description = criteria.get("description", f"Generated from: {prompt}")
 
-    playlist = Playlist(
-        id=str(uuid.uuid4()),
-        name=playlist_name,
-        comment=description,
-    )
-    db.add(playlist)
-
-    # Add tracks via PlaylistTrack model
-    for i, track in enumerate(tracks):
-        entry = PlaylistTrack(
+    playlist_id = None
+    if save:
+        playlist = Playlist(
             id=str(uuid.uuid4()),
-            playlist_id=playlist.id,
-            track_id=track.id,
-            position=i,
+            name=playlist_name,
+            comment=description,
         )
-        db.add(entry)
-
-    await db.commit()
+        db.add(playlist)
+        for i, track in enumerate(tracks):
+            db.add(PlaylistTrack(
+                id=str(uuid.uuid4()),
+                playlist_id=playlist.id,
+                track_id=track.id,
+                position=i,
+            ))
+        await db.commit()
+        playlist_id = playlist.id
 
     return {
-        "id": playlist.id,
+        "id": playlist_id,
         "name": playlist_name,
         "track_count": len(tracks),
         "description": description,
+        "track_ids": track_ids,
     }
