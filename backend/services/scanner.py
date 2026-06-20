@@ -697,46 +697,40 @@ async def import_downloaded_file(
                 new_track.rating = existing.rating
                 old_track_id = existing.id
 
-                # All operations via raw SQL to avoid ORM cascade/autoflush issues
-                # ORM db.delete() triggers relationship rules (e.g. blanking TrackAnalysis PK)
-                await db.execute(text("PRAGMA foreign_keys=OFF"))
+                # FK-safe order: INSERT the new track first, THEN repoint FK refs at
+                # it, THEN delete the old row. (PRAGMA foreign_keys=OFF is a no-op
+                # inside a transaction, so the old migrate-then-insert order
+                # FK-violated for any track that had favorites/playlist/history rows
+                # — deleting the old file but failing the DB replace.)
+                # Detach the modified `existing` so its now-stale field edits aren't
+                # flushed onto the about-to-be-deleted old row.
+                db.expunge(existing)
+                db.add(new_track)
+                await db.flush()  # new_track_id now exists in `tracks`
 
-                # Migrate all FK references to new track ID
+                # Repoint FK references from old → new (new now exists, so no violation)
                 for tbl in ("favorites", "play_history", "track_upgrades", "playlist_tracks", "bookmarks"):
                     await db.execute(
                         text(f"UPDATE {tbl} SET track_id = :new WHERE track_id = :old"),
                         {"new": new_track_id, "old": old_track_id},
                     )
-                # Migrate or delete analysis/embedding (PK = track_id, can't just update)
+                # analysis/embedding PK = track_id; drop the stale rows for the old id
                 for tbl in ("track_analysis", "track_embeddings"):
                     await db.execute(
                         text(f"DELETE FROM {tbl} WHERE track_id = :old"),
                         {"old": old_track_id},
                     )
-                # Update play_queue references
                 await db.execute(
                     text("UPDATE play_queue SET current_track_id = :new WHERE current_track_id = :old"),
                     {"new": new_track_id, "old": old_track_id},
                 )
-
-                # Delete old track via raw SQL (avoids ORM relationship cascade)
-                await db.execute(
-                    text("DELETE FROM tracks WHERE id = :old"),
-                    {"old": old_track_id},
-                )
-                # Expunge the ORM object so it doesn't try to flush the deleted row
+                # Nothing references the old track now — safe to delete with FK on.
+                await db.execute(text("DELETE FROM tracks WHERE id = :old"), {"old": old_track_id})
                 await db.flush()
-                db.expunge(existing)
-
-                # Add new track
-                db.add(new_track)
-                await db.flush()
-
-                await db.execute(text("PRAGMA foreign_keys=ON"))
 
                 await update_fts_index(db, new_track_id, new_track.title, parsed["artist_name"], parsed["album_title"])
                 await db.commit()
-                log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} ({existing.format}→{new_fmt})")
+                log.info(f"[import] Upgraded: {parsed['artist_name']} — {parsed['title']} → {new_fmt}")
                 await _mark_upgrade_completed(db, new_track_id, new_fmt, parsed["bitrate"], parsed["file_size"])
                 return new_track_id
             else:
