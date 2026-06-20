@@ -286,6 +286,31 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     await db.commit()
 
 
+async def _download_backend_ready() -> bool:
+    """True if the native Soulseek client (in the web process) is logged in. Checks
+    the in-process client first (when called from the web), else asks the web's
+    /api/download/status endpoint (when called from the worker)."""
+    try:
+        from backend.soulseek import get_client
+        c = get_client()
+        if c is not None:
+            return bool(c.logged_in)
+    except Exception:
+        pass
+    try:
+        import httpx
+        from backend.config import get_settings
+        try:
+            port = get_settings().server.port
+        except Exception:
+            port = 3000
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"http://127.0.0.1:{port}/api/download/status")
+            return bool(r.json().get("logged_in"))
+    except Exception:
+        return False
+
+
 async def _auto_download_missing(missing: list[dict], source: str):
     """Trigger individual download jobs for each missing track via enqueue_download.
     Uses enqueue_download which has short-lived DB sessions to avoid pool exhaustion.
@@ -304,6 +329,13 @@ async def _auto_download_missing(missing: list[dict], source: str):
     total = len(missing)
     log.info(f"Auto-downloading {total} missing tracks from {source}")
 
+    # Circuit-breaker: if the Soulseek download backend is down, skip the whole
+    # batch instead of spawning N instantly-failing jobs (which used to pile up
+    # hundreds of identical 'connection failed' rows). Leave the queue for next run.
+    if not await _download_backend_ready():
+        log.warning(f"[auto-download] Soulseek backend not ready — skipping {total} downloads from {source}")
+        return
+
     # Map scheduler source to download source label
     dl_source = {"lastfm_top_tracks": "discovery", "discover_similar": "similar", "remix_discovery": "remix", "recommendation_refresh": "recommendation", "upgrade_scan": "upgrade"}.get(source, "discovery")
 
@@ -317,6 +349,27 @@ async def _auto_download_missing(missing: list[dict], source: str):
 
         upgrade_id = t.get("upgrade_id") if source == "upgrade_scan" else None
         job_id = str(_uuid.uuid4())
+
+        # Enforce max_attempts so a permanently-unavailable track isn't retried
+        # forever on every scan.
+        if upgrade_id:
+            try:
+                async with async_session() as att_db:
+                    row = (await att_db.execute(
+                        select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
+                    )).scalar_one_or_none()
+                    if row and row.status == "pending" and row.attempts >= (row.max_attempts or 3):
+                        await att_db.execute(
+                            _update(TrackUpgrade)
+                            .where(TrackUpgrade.id == upgrade_id)
+                            .values(status="failed", error_message="Max attempts exhausted",
+                                    updated_at=datetime.utcnow())
+                        )
+                        await att_db.commit()
+                        log.info(f"[auto-download] Upgrade {upgrade_id} exhausted max_attempts — skipping")
+                        return
+            except Exception as e:
+                log.debug(f"[auto-download] max_attempts check failed for {upgrade_id}: {e}")
 
         # Pre-link upgrade row to this job + bump attempts so the pipeline is observable.
         if upgrade_id:

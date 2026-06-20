@@ -83,7 +83,50 @@ async def _collect_soulseek_stats_loop():
             return
 
 
+async def _native_keepalive_loop():
+    """Monitor the native Soulseek client and recover if it gets stuck logged out.
+    ServerConnection already auto-reconnects with exponential backoff, so this only
+    intervenes as a last resort: it logs while the client is down (observability)
+    and, only after a sustained outage (built-in reconnect clearly stuck), does a
+    full stop/start."""
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    if not get_settings().soulseek.username:
+        return
+    down_checks = 0
+    while True:
+        await asyncio.sleep(120)
+        try:
+            from backend.soulseek import get_client, start_client, stop_client
+            c = get_client()
+            if c is not None and c.logged_in:
+                down_checks = 0
+                continue
+            down_checks += 1
+            _log.warning(
+                f"[soulseek] Native client not logged in ({down_checks} check(s)) — "
+                f"built-in reconnect should be retrying"
+            )
+            # Last resort after ~16 min still down: the built-in backoff is stuck.
+            if down_checks >= 8:
+                _log.warning("[soulseek] Sustained outage — forcing client restart")
+                try:
+                    await stop_client()
+                except Exception:
+                    pass
+                await start_client()
+                c2 = get_client()
+                _log.info(f"[soulseek] Forced restart complete — logged_in={bool(c2 and c2.logged_in)}")
+                down_checks = 0
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            _log.warning(f"[soulseek] keepalive error: {e}")
+
+
 @asynccontextmanager
+
+
 async def lifespan(app: FastAPI):
     await init_db()
     # Ensure default admin user exists
@@ -134,14 +177,18 @@ async def lifespan(app: FastAPI):
 
     # Start Soulseek stats collector (every 5 minutes)
     stats_task = asyncio.create_task(_collect_soulseek_stats_loop())
+    # Keep the native Soulseek client logged in (reconnect on drop).
+    keepalive_task = asyncio.create_task(_native_keepalive_loop())
 
     yield
 
     stats_task.cancel()
-    try:
-        await stats_task
-    except asyncio.CancelledError:
-        pass
+    keepalive_task.cancel()
+    for _t in (stats_task, keepalive_task):
+        try:
+            await _t
+        except asyncio.CancelledError:
+            pass
 
     # Stop native Soulseek client
     try:

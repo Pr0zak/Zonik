@@ -13,12 +13,49 @@ from backend.database import async_session
 log = logging.getLogger(__name__)
 
 
+async def reap_stuck_jobs() -> None:
+    """Mark jobs that have been running/pending far longer than any real job should
+    (> 2h, vs the 1h arq job_timeout) as failed, and reset stuck upgrade rows. The
+    web does this once on boot, but long-lived processes accumulate orphans — e.g.
+    a task killed by arq's job_timeout never updates its Job row, so it sits
+    'running' forever."""
+    from sqlalchemy import update as _update
+    from datetime import timedelta
+    from backend.models.job import Job
+    from backend.models.upgrade import TrackUpgrade
+    cutoff = datetime.utcnow() - timedelta(hours=2)
+    try:
+        async with async_session() as db:
+            r = await db.execute(
+                _update(Job)
+                .where(Job.status.in_(["running", "pending"]), Job.started_at < cutoff)
+                .values(status="failed", finished_at=datetime.utcnow())
+            )
+            if r.rowcount:
+                await db.commit()
+                log.info(f"[reaper] Marked {r.rowcount} stuck jobs as failed")
+        async with async_session() as db:
+            r = await db.execute(
+                _update(TrackUpgrade)
+                .where(TrackUpgrade.status.in_(["queued", "downloading"]), TrackUpgrade.updated_at < cutoff)
+                .values(status="pending", attempts=0, updated_at=datetime.utcnow())
+            )
+            if r.rowcount:
+                await db.commit()
+                log.info(f"[reaper] Reset {r.rowcount} stuck upgrades to pending")
+    except Exception as e:
+        log.warning(f"[reaper] Failed: {e}")
+
+
 async def run_scheduled_tasks(ctx: dict):
     """Check schedule_tasks table and run any that are due."""
     from sqlalchemy import select
     from backend.models.schedule import ScheduleTask
     from backend.models.job import Job
     from backend.workers.scheduler import run_task
+
+    # Sweep up orphaned jobs/upgrades before scheduling new work.
+    await reap_stuck_jobs()
 
     # Use a short-lived session to read the schedule — do NOT hold it open during tasks
     async with async_session() as db:
@@ -68,9 +105,11 @@ async def run_scheduled_tasks(ctx: dict):
 
 
 async def download_track(ctx: dict, artist: str, track: str):
-    """Background download task."""
-    from backend.services.soulseek import search_and_download
-    return await search_and_download(artist, track)
+    """Background download task. Routes through enqueue_download so the worker
+    delegates to the web process (which owns the native Soulseek client) instead
+    of running a client-less download itself."""
+    from backend.api.download import enqueue_download
+    return await enqueue_download(artist, track)
 
 
 async def analyze_track(ctx: dict, track_id: str, file_path: str):
@@ -121,7 +160,7 @@ async def generate_embedding(ctx: dict, track_id: str, file_path: str):
 
 
 async def startup(ctx: dict):
-    log.info("Zonik worker started")
+    log.info("Zonik worker started — downloads delegate to the web's native Soulseek client")
 
 
 async def shutdown(ctx: dict):

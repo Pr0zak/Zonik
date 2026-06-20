@@ -325,29 +325,17 @@ async def search_and_download(artist: str, track: str) -> dict:
         from backend.soulseek.search import search_and_download_native
         return await search_and_download_native(get_client(), artist, track)
 
-    # Legacy slskd path
-    candidates = await search_multi_strategy(artist, track)
-    if not candidates:
-        return {"status": "not_found", "message": f"No results for {artist} - {track}"}
-
-    client = get_slskd_client()
-    last_error = "Download failed"
-
-    for i, candidate in enumerate(candidates):
-        username = candidate.get("username", "")
-        filename = candidate.get("filename", "")
-
-        log.info(f"Download attempt {i+1}/{len(candidates)}: {username} - {filename}")
-        result = await client.download(username, filename)
-        if result.get("ok"):
-            return {
-                "status": "downloading",
-                "username": username,
-                "filename": filename,
-                "size": candidate.get("size", 0),
-                "attempt": i + 1,
-            }
-        last_error = result.get("error", "Download failed")
-        log.warning(f"Download attempt {i+1} failed ({username}): {last_error}")
-
-    return {"status": "failed", "message": f"All {len(candidates)} candidates failed: {last_error}"}
+    # Native client is unavailable in this process (not logged in, or this is the
+    # worker which runs no client). The legacy slskd fallback is DECOMMISSIONED, so
+    # fail clearly instead of hammering a dead slskd host with an opaque
+    # "All connection attempts failed". Downloads should be delegated to the web
+    # process (see backend.api.download.enqueue_download), which owns the client.
+    log.warning(
+        f"[download] No native Soulseek client for '{artist} - {track}' "
+        f"(logged_in=False); slskd fallback is decommissioned"
+    )
+    return {
+        "status": "error",
+        "message": "Soulseek native client not available (not logged in); "
+                   "slskd fallback is decommissioned",
+    }

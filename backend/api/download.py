@@ -606,6 +606,66 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Cleanup skipped: {e}")
 
+async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None) -> str:
+    """Delegate a download to the web process, which owns the native Soulseek
+    client, and wait for it to finish. The arq worker has no native client of its
+    own (it can only bind the listen port in one process), so any download it
+    initiates must run where the client lives. Keeps enqueue_download synchronous."""
+    import httpx
+    from backend.config import get_settings
+    job_id = job_id or str(uuid.uuid4())
+    try:
+        port = get_settings().server.port
+    except Exception:
+        port = 3000
+    url = f"http://127.0.0.1:{port}/api/download/internal-run"
+    try:
+        # Read timeout must exceed the worst-case download in the web: up to ~5
+        # candidates × 300s poll timeout + search + semaphore wait. 30 min covers
+        # it so a slow-but-successful download isn't force-failed here.
+        timeout = httpx.Timeout(connect=10.0, read=1800.0, write=30.0, pool=None)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url, json={"artist": artist, "track": track, "job_id": job_id, "source": source}
+            )
+            if resp.status_code == 200:
+                return resp.json().get("job_id", job_id)
+            raise RuntimeError(f"web returned {resp.status_code}: {resp.text[:200]}")
+    except Exception as e:
+        log.error(f"[download] Worker→web delegation failed for {artist} — {track}: {e}")
+        await _record_delegation_failure(job_id, artist, track, source, str(e))
+        return job_id
+
+
+async def _record_delegation_failure(job_id: str, artist: str, track: str, source: str | None, err: str) -> None:
+    """Persist a clear failed job so a delegation failure isn't silent/opaque."""
+    try:
+        card = f"dl:{source}" if source else "dl"
+        msg = f"Soulseek download backend unreachable: {err}"
+        async with async_session() as sess:
+            row = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+            # Don't clobber a job the web already owns — a read-timeout can fire
+            # while the web is still actively downloading that same job_id.
+            if row is not None and row.status not in ("pending",):
+                return
+            tracks = json.dumps([{"artist": artist, "track": track, "status": "failed"}])
+            result = json.dumps({"error": msg, "last_error": msg})
+            if row:
+                row.status = "failed"
+                row.finished_at = datetime.utcnow()
+                row.result = result
+                row.tracks = tracks
+            else:
+                sess.add(Job(
+                    id=job_id, type="download", card=card, status="failed",
+                    started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+                    result=result, tracks=tracks,
+                ))
+            await sess.commit()
+    except Exception as e:
+        log.debug(f"[download] Could not record delegation failure: {e}")
+
+
 async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None) -> str:
     """Create an individual download job with semaphore queuing. Returns job_id."""
     # Dedup: skip if same artist+track already pending/running
@@ -614,6 +674,12 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
         if existing:
             log.info(f"[download] Dedup: {artist} — {track} already in job {existing}")
             return existing
+
+    # The native Soulseek client lives in the web process; the arq worker has none.
+    # If this process can't download natively, delegate to the web and wait for it.
+    from backend.soulseek import get_client
+    if get_client() is None:
+        return await _delegate_download_to_web(artist, track, job_id, source)
 
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
@@ -645,6 +711,22 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
         # job is now detached — _do_download_inner uses its own short-lived sessions
         await _do_download_inner(None, job, job_id, desc, dl_req)
     return job_id
+
+
+class InternalDownloadRequest(BaseModel):
+    artist: str
+    track: str
+    job_id: str | None = None
+    source: str | None = None
+
+
+@router.post("/internal-run")
+async def internal_run_download(req: InternalDownloadRequest):
+    """Internal: run a full download to completion IN THIS process, which owns the
+    native Soulseek client. Called by the arq worker (via _delegate_download_to_web)
+    to perform downloads it cannot run itself. Localhost-only by deployment."""
+    jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source)
+    return {"job_id": jid}
 
 
 @router.post("/bulk")
