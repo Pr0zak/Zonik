@@ -6,9 +6,13 @@
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Button from '../../components/ui/Button.svelte';
 	import { Map as MapIcon, Search, RefreshCw, Play, X } from 'lucide-svelte';
+	import CamelotWheel from '../../components/map/CamelotWheel.svelte';
+	import TempoPunch from '../../components/map/TempoPunch.svelte';
+	import StreakCalendar from '../../components/map/StreakCalendar.svelte';
+	import SonicAdventure from '../../components/map/SonicAdventure.svelte';
 
 	// --- view + reactive UI state ---
-	let view = $state('atlas'); // atlas | clock | gems
+	let view = $state('wheel'); // wheel | tempo | calendar | adventure | atlas | clock | gems
 	let atlasMode = $state('territories'); // dots | territories | hexbins
 	let loading = $state(true);
 	let computing = $state(false);
@@ -336,10 +340,10 @@
 		subtitle={info.count ? `${info.count} of ${info.total} tracks mapped by sound` : 'A map of your library by sound'} />
 
 	<!-- view tabs -->
-	<div class="flex gap-1 mt-4 border-b border-[var(--border-subtle)]">
-		{#each [['atlas', 'Sound Atlas'], ['clock', 'Listening Clock'], ['gems', 'Neglected Gems']] as [v, label]}
-			<button onclick={() => v === 'clock' ? openClock() : v === 'gems' ? openGems() : (view = 'atlas')}
-				class="px-3 py-2 text-sm border-b-2 -mb-px transition-colors {view === v ? 'border-[#22d3ee] text-[var(--text-primary)] font-medium' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">{label}</button>
+	<div class="flex gap-1 mt-4 border-b border-[var(--border-subtle)] overflow-x-auto">
+		{#each [['wheel', 'Camelot Wheel'], ['tempo', 'Tempo × Punch'], ['calendar', 'Streak Calendar'], ['adventure', 'Sonic Adventure'], ['gems', 'Neglected Gems'], ['clock', 'Listening Clock'], ['atlas', 'Sound Atlas']] as [v, label]}
+			<button onclick={() => v === 'clock' ? openClock() : v === 'gems' ? openGems() : (view = v)}
+				class="px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors {view === v ? 'border-[#22d3ee] text-[var(--text-primary)] font-medium' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">{label}</button>
 		{/each}
 	</div>
 
@@ -453,6 +457,11 @@
 				{/if}
 			</div>
 		{/if}
+
+			{#if view === 'wheel'}<div class="absolute inset-0 bg-[var(--surface-base)]"><CamelotWheel /></div>{/if}
+			{#if view === 'tempo'}<div class="absolute inset-0 bg-[var(--surface-base)]"><TempoPunch /></div>{/if}
+			{#if view === 'calendar'}<div class="absolute inset-0 overflow-auto bg-[var(--surface-base)]"><StreakCalendar /></div>{/if}
+			{#if view === 'adventure'}<div class="absolute inset-0 overflow-auto bg-[var(--surface-base)]"><SonicAdventure /></div>{/if}
 	</div>
 
 	<!-- atlas search results -->
