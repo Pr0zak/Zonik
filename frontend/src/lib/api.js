@@ -118,6 +118,9 @@ export const api = {
 
 	// Music Map
 	getMapGraph: (params = {}) => request(buildUrl('/map/graph', params)),
+	getSoundscape: () => request('/map/soundscape'),
+	recomputeSoundscape: () => request('/map/soundscape/recompute', { method: 'POST' }),
+	locateSoundscape: (query, k = 12) => request('/map/soundscape/locate', { method: 'POST', body: JSON.stringify({ query, k }) }),
 
 	// Config
 	getServices: () => request('/config/services'),
