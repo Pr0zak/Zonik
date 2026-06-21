@@ -91,3 +91,34 @@ async def neglected_gems(db: AsyncSession, limit: int = 40) -> dict:
     } for sim, r in scored[:limit]]
 
     return {"gems": gems, "has_centroid": centroid is not None, "pool": len(rows)}
+
+
+async def audio_features(db: AsyncSession) -> dict:
+    """Per-track Essentia features (parallel arrays) — powers the Camelot wheel
+    (key/scale/bpm) and the Tempo×Punch grid (bpm/loudness)."""
+    rows = (await db.execute(text(
+        "SELECT t.id, t.title, ar.name, t.album_id, a.key, a.scale, a.bpm, "
+        "       a.loudness, a.danceability, a.energy "
+        "FROM tracks t JOIN track_analysis a ON a.track_id = t.id "
+        "LEFT JOIN artists ar ON ar.id = t.artist_id "
+        "WHERE a.bpm IS NOT NULL AND a.key IS NOT NULL"
+    ))).all()
+    cols = list(zip(*rows)) if rows else [[]] * 10
+    return {
+        "count": len(rows),
+        "ids": list(cols[0]), "title": list(cols[1]), "artist": list(cols[2]), "album_id": list(cols[3]),
+        "key": list(cols[4]), "scale": list(cols[5]), "bpm": list(cols[6]),
+        "loudness": list(cols[7]), "danceability": list(cols[8]), "energy": list(cols[9]),
+    }
+
+
+async def streak_calendar(db: AsyncSession, days: int = 371) -> dict:
+    """Daily play counts for a GitHub-style contribution heatmap (server-local dates)."""
+    rows = (await db.execute(text(
+        "SELECT date(played_at, 'localtime') d, COUNT(*) c "
+        "FROM play_history WHERE played_at IS NOT NULL "
+        "AND played_at >= datetime('now', :since) GROUP BY d"
+    ), {"since": f"-{days} days"})).all()
+    by_day = {r[0]: r[1] for r in rows if r[0]}
+    mx = max(by_day.values()) if by_day else 0
+    return {"days": by_day, "max": mx, "total": sum(by_day.values())}

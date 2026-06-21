@@ -15,7 +15,10 @@ import numpy as np
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm import selectinload
+
 from backend.models.embedding import TrackEmbedding
+from backend.models.track import Track
 
 log = logging.getLogger(__name__)
 
@@ -169,3 +172,45 @@ async def locate_text(db: AsyncSession, query: str, k: int = 12) -> dict:
     px = sum(p[1] for p in pos) / len(pos)
     py = sum(p[2] for p in pos) / len(pos)
     return {"x": px, "y": py, "query": q, "tracks": sims, "track_ids": [p[0] for p in pos]}
+
+
+async def sonic_path(db: AsyncSession, start_id: str, end_id: str, steps: int = 12) -> dict:
+    """Build a queue that morphs from one track's sound to another's: walk a straight
+    line through CLAP space and pick the nearest unused track at each step."""
+    rows = (await db.execute(select(TrackEmbedding.track_id, TrackEmbedding.embedding))).all()
+    if not rows:
+        return {"error": "No embeddings available"}
+    ids = [r[0] for r in rows]
+    pos = {tid: k for k, tid in enumerate(ids)}
+    if start_id not in pos or end_id not in pos:
+        return {"error": "Start or destination track isn't analyzed yet (no embedding)"}
+
+    mat = np.stack([np.frombuffer(r[1], dtype=np.float32).astype(np.float32) for r in rows])
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    matn = mat / np.where(norms == 0, 1.0, norms)
+    a, b = matn[pos[start_id]], matn[pos[end_id]]
+
+    used: set[str] = set()
+    ordered: list[str] = []
+    for s in range(steps + 1):
+        t = s / steps
+        interp = a * (1 - t) + b * t
+        sims = matn @ interp
+        for j in np.argsort(-sims):
+            tid = ids[int(j)]
+            if tid not in used:
+                used.add(tid)
+                ordered.append(tid)
+                break
+
+    tracks = (await db.execute(
+        select(Track).options(selectinload(Track.artist)).where(Track.id.in_(ordered))
+    )).scalars().all()
+    tmap = {t.id: t for t in tracks}
+    path = [{
+        "track_id": tid,
+        "title": tmap[tid].title if tid in tmap else None,
+        "artist": (tmap[tid].artist.name if tmap[tid].artist else None) if tid in tmap else None,
+        "album_id": tmap[tid].album_id if tid in tmap else None,
+    } for tid in ordered]
+    return {"path": path}

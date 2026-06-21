@@ -40,6 +40,12 @@ class LocateRequest(BaseModel):
     k: int = 12
 
 
+class PathRequest(BaseModel):
+    start_id: str
+    end_id: str
+    steps: int = 12
+
+
 @router.get("/soundscape")
 async def soundscape(db: AsyncSession = Depends(get_db)):
     """Cached 2D sound projection + per-point metadata (parallel arrays)."""
@@ -82,3 +88,24 @@ async def neglected_gems(limit: int = Query(40, ge=1, le=120), db: AsyncSession 
     """Owned-but-never-played tracks ranked by closeness to your taste centroid."""
     from backend.services.insights import neglected_gems as _gems
     return await _gems(db, limit=limit)
+
+
+@router.get("/audio-features")
+async def audio_features(db: AsyncSession = Depends(get_db)):
+    """Per-track Essentia features for the Camelot wheel + Tempo×Punch grid."""
+    from backend.services.insights import audio_features as _af
+    return await _af(db)
+
+
+@router.get("/streak-calendar")
+async def streak_calendar(db: AsyncSession = Depends(get_db)):
+    """Daily play counts for a GitHub-style listening-streak heatmap."""
+    from backend.services.insights import streak_calendar as _sc
+    return await _sc(db)
+
+
+@router.post("/sonic-path")
+async def sonic_path(req: PathRequest, db: AsyncSession = Depends(get_db)):
+    """A queue that morphs from one track's sound to another's through CLAP space."""
+    from backend.services.soundscape import sonic_path as _sp
+    return await _sp(db, req.start_id, req.end_id, steps=max(3, min(req.steps, 30)))
