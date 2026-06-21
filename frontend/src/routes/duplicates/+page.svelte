@@ -113,6 +113,7 @@
 			const removeIds = new Set(aiRecommendations.flatMap(r => r.remove_ids || []));
 			selected = removeIds;
 			addToast(`AI suggests removing ${removeIds.size} tracks`, 'success');
+			if (data.note) addToast(data.note + ' Use Auto-Resolve for the rest.', 'info');
 		} catch (e) { addToast('AI resolve failed: ' + e.message, 'error'); }
 		finally { aiResolveLoading = false; }
 	}

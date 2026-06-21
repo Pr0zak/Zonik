@@ -10,12 +10,14 @@ from backend.services.ai.client import call_claude
 
 log = logging.getLogger(__name__)
 
-# Groups per Claude call. Output is ~1 small JSON object per group, so this stays
-# well under max_tokens (the old code sent 20 groups at max_tokens=2048 and the
-# response truncated → unparseable → "Failed to parse AI response").
-_CHUNK = 30
-# Safety cap on total groups resolved in one request (~ _MAX_GROUPS / _CHUNK calls).
-_MAX_GROUPS = 600
+# Groups per Claude call — small so each call is fast and never hits the 60s
+# client timeout (30-group chunks at max_tokens=8192 timed out). Output is ~1
+# small JSON object per group, comfortably under max_tokens.
+_CHUNK = 15
+# Cap total groups per request so the whole thing finishes in ~30s with a spinner.
+# Libraries can have hundreds of duplicate groups; the AI handles the highest-value
+# ones (most reclaimable space) and Auto-Resolve covers the rest deterministically.
+_MAX_GROUPS = 90
 
 
 def _format_group(g: dict) -> dict:
@@ -59,7 +61,7 @@ Return ONLY a JSON array (no prose, no markdown):
     result = await call_claude(
         prompt,
         system="You are a music library curator. Respond with ONLY a valid JSON array — no prose, no markdown code fences.",
-        max_tokens=8192,
+        max_tokens=4096,
         temperature=0.2,
     )
     if "error" in result:
@@ -91,7 +93,13 @@ async def resolve_duplicates(groups: list[dict]) -> dict:
     if not groups:
         return {"recommendations": []}
 
-    work = groups[:_MAX_GROUPS]
+    # Tackle the highest-value groups first (most reclaimable space = sum of the
+    # non-best copies' sizes) so the capped set is the most worthwhile.
+    def _reclaimable(g: dict) -> int:
+        return sum((t.get("file_size") or 0) for t in g.get("tracks", []) if not t.get("is_best"))
+
+    ordered = sorted(groups, key=_reclaimable, reverse=True)
+    work = ordered[:_MAX_GROUPS]
     chunks = [work[i:i + _CHUNK] for i in range(0, len(work), _CHUNK)]
 
     chunk_results = await asyncio.gather(*[_resolve_chunk(c) for c in chunks])
