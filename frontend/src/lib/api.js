@@ -121,6 +121,8 @@ export const api = {
 	getSoundscape: () => request('/map/soundscape'),
 	recomputeSoundscape: () => request('/map/soundscape/recompute', { method: 'POST' }),
 	locateSoundscape: (query, k = 12) => request('/map/soundscape/locate', { method: 'POST', body: JSON.stringify({ query, k }) }),
+	getListeningClock: () => request('/map/listening-clock'),
+	getNeglectedGems: (limit = 40) => request(`/map/neglected-gems?limit=${limit}`),
 
 	// Config
 	getServices: () => request('/config/services'),

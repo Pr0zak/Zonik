@@ -68,3 +68,17 @@ async def soundscape_locate(req: LocateRequest, db: AsyncSession = Depends(get_d
     """Locate a text vibe ('rainy lo-fi jazz') on the map + return nearest tracks."""
     from backend.services.soundscape import locate_text
     return await locate_text(db, req.query, k=max(1, min(req.k, 50)))
+
+
+@router.get("/listening-clock")
+async def listening_clock(db: AsyncSession = Depends(get_db)):
+    """7×24 weekday×hour heatmap of when you listen (+ dominant genre per cell)."""
+    from backend.services.insights import listening_clock as _clock
+    return await _clock(db)
+
+
+@router.get("/neglected-gems")
+async def neglected_gems(limit: int = Query(40, ge=1, le=120), db: AsyncSession = Depends(get_db)):
+    """Owned-but-never-played tracks ranked by closeness to your taste centroid."""
+    from backend.services.insights import neglected_gems as _gems
+    return await _gems(db, limit=limit)
