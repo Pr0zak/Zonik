@@ -115,14 +115,32 @@
 			// Correlate each recommendation back to its group's tracks (with real titles)
 			const byTrack = new Map();
 			for (const g of (data?.groups || [])) for (const t of g.tracks) byTrack.set(t.id, t);
-			const norm = (s) => (s || '').toLowerCase().trim();
+			// "Possible different version" detection — precise, so it doesn't flag benign
+			// dupes (apostrophe curls, "(2)" collision suffixes, feat. credits). Flag only
+			// when the base song differs, or a removed copy carries a version keyword the
+			// kept copy lacks (remix/live/acoustic/…).
+			const VERSION_RE = /\b(remix|live|acoustic|instrumental|edit|version|mix|remaster|remastered|demo|extended|radio|unplugged|reprise|cover|karaoke|slowed|sped)\b/g;
+			const baseTitle = (s) => (s || '').toLowerCase()
+				.replace(/[’']/g, "'")
+				.replace(/\s*\(\d+\)\s*$/, '')
+				.replace(/\s*(feat\.?|ft\.?|featuring)\b.*$/, '')
+				.replace(/[\[(].*?[\])]/g, ' ')
+				.replace(/[^a-z0-9\s]/g, '')
+				.replace(/\s+/g, ' ').trim();
+			const versionTokens = (s) => new Set((s || '').toLowerCase().match(VERSION_RE) || []);
+			const isVersionDiff = (keep, t) => {
+				if (!keep) return true;
+				if (baseTitle(t.title) !== baseTitle(keep.title)) return true;
+				const kt = versionTokens(keep.title), rt = versionTokens(t.title);
+				for (const tok of rt) if (!kt.has(tok)) return true;
+				return false;
+			};
 			const items = [];
 			for (const r of recs) {
 				const removeTracks = (r.remove_ids || []).map((id) => byTrack.get(id)).filter(Boolean);
 				if (!removeTracks.length) continue;
 				const keepTrack = byTrack.get(r.keep_id) || null;
-				// Flag groups whose copies have DIFFERENT titles — likely remix/live/version
-				const versionMismatch = !keepTrack || removeTracks.some((t) => norm(t.title) !== norm(keepTrack.title));
+				const versionMismatch = removeTracks.some((t) => isVersionDiff(keepTrack, t));
 				items.push({ reason: r.reason || '', keepTrack, removeTracks, versionMismatch });
 			}
 			if (!items.length) { addToast('AI found no safe duplicates to remove', 'info'); return; }
