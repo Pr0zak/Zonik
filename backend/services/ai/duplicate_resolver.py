@@ -14,10 +14,11 @@ log = logging.getLogger(__name__)
 # client timeout (30-group chunks at max_tokens=8192 timed out). Output is ~1
 # small JSON object per group, comfortably under max_tokens.
 _CHUNK = 15
-# Cap total groups per request so the whole thing finishes in ~30s with a spinner.
-# Libraries can have hundreds of duplicate groups; the AI handles the highest-value
-# ones (most reclaimable space) and Auto-Resolve covers the rest deterministically.
-_MAX_GROUPS = 90
+# Cap total groups per request so the whole thing finishes in ~25-30s with a
+# spinner (4 chunks run concurrently under the semaphore = ~1 round). Libraries
+# can have hundreds of duplicate groups; the AI handles the highest-value ones
+# (most reclaimable space) and Auto-Resolve covers the rest deterministically.
+_MAX_GROUPS = 60
 
 
 def _format_group(g: dict) -> dict:

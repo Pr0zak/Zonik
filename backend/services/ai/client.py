@@ -14,8 +14,10 @@ log = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
-# Concurrency limiter — max 2 simultaneous Claude requests
-_semaphore = asyncio.Semaphore(2)
+# Concurrency limiter — simultaneous Claude requests. 4 is comfortable for Haiku
+# on a single-user box and keeps batch ops (duplicate resolve, recommendations)
+# from serializing into multi-minute waits.
+_semaphore = asyncio.Semaphore(4)
 
 # Persistent HTTP client for connection reuse
 _http_client: httpx.AsyncClient | None = None
