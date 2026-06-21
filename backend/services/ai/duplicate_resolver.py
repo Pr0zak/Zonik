@@ -26,6 +26,7 @@ def _format_group(g: dict) -> dict:
     for t in g.get("tracks", []):
         tracks_info.append({
             "id": t.get("id"),
+            "title": t.get("title"),  # real per-track title so versions are distinguishable
             "format": t.get("format"),
             "bitrate": t.get("bitrate"),
             "file_size": t.get("file_size"),
@@ -47,16 +48,24 @@ async def _resolve_chunk(groups: list[dict]) -> list[dict]:
     """Resolve one chunk of duplicate groups. Returns [] on any failure so a
     single bad chunk never sinks the whole request."""
     formatted = [_format_group(g) for g in groups]
-    prompt = f"""For each duplicate group, recommend which track to keep and which to remove.
+    prompt = f"""For each group, recommend which single copy to KEEP and which to REMOVE.
 
-Consider audio quality (format, bitrate), file size, play count, rating, favorites.
+CRITICAL — only remove TRUE duplicates: the SAME recording in a lower-quality
+format/bitrate. Tracks in a group may actually be DIFFERENT VERSIONS that share a
+base title — remix, live, acoustic, instrumental, radio edit, extended, demo,
+re-recording ("Taylor's Version"), cover, etc. Inspect each track's "title": if a
+copy is a distinct version, DO NOT put it in remove_ids — keep it. Only when every
+copy is the same recording, keep the highest quality and remove the rest. When in
+doubt, do not remove (leave remove_ids empty).
+
 Quality order: FLAC > WAV > ALAC > AIFF > M4A > OGG/OPUS > MP3 > AAC > WMA.
 Prefer keeping a favorited or frequently-played copy when quality is comparable.
 
-Duplicate groups:
+Groups (each track shows its real title):
 {json.dumps(formatted)}
 
-Return ONLY a JSON array (no prose, no markdown):
+Return ONLY a JSON array (no prose, no markdown). reason should note if versions
+were protected:
 [{{"artist":"...","title":"...","keep_id":"id","remove_ids":["id"],"reason":"brief"}}]"""
 
     result = await call_claude(

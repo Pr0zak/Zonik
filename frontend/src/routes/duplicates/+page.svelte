@@ -100,22 +100,57 @@
 	}
 
 	let aiResolveLoading = $state(false);
-	let aiRecommendations = $state(null);
+	let aiReviewOpen = $state(false);
+	let aiReviewItems = $state([]);
+	let aiAccepted = $state(new Set());
+	let aiReviewNote = $state('');
 
 	async function aiResolve() {
 		aiResolveLoading = true;
 		try {
-			const data = await api.aiResolveDuplicates();
-			if (data.error) { addToast(data.error, 'error'); return; }
-			aiRecommendations = data.recommendations || [];
-			if (!aiRecommendations.length) { addToast('No AI recommendations', 'info'); return; }
-			// Auto-select AI-recommended removals
-			const removeIds = new Set(aiRecommendations.flatMap(r => r.remove_ids || []));
-			selected = removeIds;
-			addToast(`AI suggests removing ${removeIds.size} tracks`, 'success');
-			if (data.note) addToast(data.note + ' Use Auto-Resolve for the rest.', 'info');
+			const res = await api.aiResolveDuplicates();
+			if (res.error) { addToast(res.error, 'error'); return; }
+			const recs = res.recommendations || [];
+			if (!recs.length) { addToast('No AI recommendations', 'info'); return; }
+			// Correlate each recommendation back to its group's tracks (with real titles)
+			const byTrack = new Map();
+			for (const g of (data?.groups || [])) for (const t of g.tracks) byTrack.set(t.id, t);
+			const norm = (s) => (s || '').toLowerCase().trim();
+			const items = [];
+			for (const r of recs) {
+				const removeTracks = (r.remove_ids || []).map((id) => byTrack.get(id)).filter(Boolean);
+				if (!removeTracks.length) continue;
+				const keepTrack = byTrack.get(r.keep_id) || null;
+				// Flag groups whose copies have DIFFERENT titles — likely remix/live/version
+				const versionMismatch = !keepTrack || removeTracks.some((t) => norm(t.title) !== norm(keepTrack.title));
+				items.push({ reason: r.reason || '', keepTrack, removeTracks, versionMismatch });
+			}
+			if (!items.length) { addToast('AI found no safe duplicates to remove', 'info'); return; }
+			aiReviewItems = items;
+			// Default: accept clean same-title groups; leave possible-versions unchecked (opt-in)
+			aiAccepted = new Set(items.map((it, i) => (it.versionMismatch ? -1 : i)).filter((i) => i >= 0));
+			aiReviewNote = res.note || '';
+			aiReviewOpen = true;
 		} catch (e) { addToast('AI resolve failed: ' + e.message, 'error'); }
 		finally { aiResolveLoading = false; }
+	}
+
+	function toggleAiItem(i) {
+		const s = new Set(aiAccepted);
+		s.has(i) ? s.delete(i) : s.add(i);
+		aiAccepted = s;
+	}
+
+	let aiReviewRemoveCount = $derived(
+		aiReviewItems.reduce((n, it, i) => n + (aiAccepted.has(i) ? it.removeTracks.length : 0), 0)
+	);
+
+	function applyAiReview() {
+		const ids = new Set();
+		aiReviewItems.forEach((it, i) => { if (aiAccepted.has(i)) it.removeTracks.forEach((t) => ids.add(t.id)); });
+		selected = ids;
+		aiReviewOpen = false;
+		addToast(`Selected ${ids.size} track${ids.size !== 1 ? 's' : ''} — review, then Remove or Delete Files`, 'success');
 	}
 
 	function findUpgrade(track) {
@@ -570,6 +605,66 @@
 						{confirmModal === 'files' ? 'Delete Files' : 'Remove from DB'}
 					</Button>
 				{/if}
+			</div>
+		</div>
+	</Modal>
+{/if}
+
+<!-- AI Suggestions Review -->
+{#if aiReviewOpen}
+	<Modal title="Review AI Suggestions" onclose={() => aiReviewOpen = false}>
+		<div class="space-y-3">
+			<p class="text-xs text-[var(--text-muted)]">
+				Lower-quality copies the AI suggests removing. Groups whose copies have
+				<span class="text-amber-400">different titles</span> (possible remix / live / version) are
+				<span class="text-amber-400">unchecked by default</span> — tick only true duplicates.
+				{#if aiReviewNote}<span class="block mt-1 text-[var(--text-disabled)]">{aiReviewNote} Use Auto-Resolve for the rest.</span>{/if}
+			</p>
+			<div class="max-h-[55vh] overflow-y-auto space-y-2 pr-1">
+				{#each aiReviewItems as it, i}
+					<div class="rounded-lg border p-2.5 transition-colors {aiAccepted.has(i) ? 'border-[var(--color-primary)]/40 bg-[var(--surface-container)]' : 'border-[var(--border-subtle)] opacity-60'}">
+						<label class="flex items-start gap-2 cursor-pointer">
+							<input type="checkbox" checked={aiAccepted.has(i)} onchange={() => toggleAiItem(i)}
+								class="mt-1 w-4 h-4 rounded accent-[var(--color-primary)] flex-shrink-0 cursor-pointer" />
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-2 flex-wrap">
+									<span class="text-sm font-medium text-[var(--text-primary)] truncate">{it.keepTrack?.artist || it.removeTracks[0]?.artist}</span>
+									{#if it.versionMismatch}
+										<span class="text-[10px] font-bold text-amber-400 bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 rounded uppercase tracking-wide flex items-center gap-1 flex-shrink-0">
+											<AlertTriangle class="w-3 h-3" /> Possible different versions
+										</span>
+									{/if}
+								</div>
+								{#if it.keepTrack}
+									<div class="flex items-center gap-2 mt-1 text-xs">
+										<span class="text-emerald-400 font-bold w-14 flex-shrink-0">KEEP</span>
+										<span class="text-[var(--text-primary)] truncate flex-1">{it.keepTrack.title}</span>
+										<span class="font-mono text-[var(--text-muted)] flex-shrink-0">{(it.keepTrack.format || '').toUpperCase()}{#if it.keepTrack.bitrate} {Math.round(it.keepTrack.bitrate / 1000)}k{/if} · {formatSize(it.keepTrack.file_size)}</span>
+									</div>
+								{/if}
+								{#each it.removeTracks as rt}
+									<div class="flex items-center gap-2 mt-0.5 text-xs">
+										<span class="text-red-400 font-bold w-14 flex-shrink-0">REMOVE</span>
+										<span class="text-[var(--text-secondary)] truncate flex-1">{rt.title}</span>
+										<span class="font-mono text-[var(--text-muted)] flex-shrink-0">{(rt.format || '').toUpperCase()}{#if rt.bitrate} {Math.round(rt.bitrate / 1000)}k{/if} · {formatSize(rt.file_size)}</span>
+									</div>
+								{/each}
+								{#if it.reason}
+									<p class="text-xs text-[var(--text-disabled)] italic mt-1 truncate">{it.reason}</p>
+								{/if}
+							</div>
+						</label>
+					</div>
+				{/each}
+			</div>
+			<div class="flex items-center justify-between pt-1 gap-2">
+				<span class="text-xs text-[var(--text-muted)]">{aiReviewRemoveCount} track{aiReviewRemoveCount !== 1 ? 's' : ''} · {aiAccepted.size}/{aiReviewItems.length} groups</span>
+				<div class="flex gap-2">
+					<Button variant="secondary" size="sm" onclick={() => aiReviewOpen = false}>Cancel</Button>
+					<Button variant="primary" size="sm" disabled={aiReviewRemoveCount === 0} onclick={applyAiReview}>
+						Select {aiReviewRemoveCount} for removal
+					</Button>
+				</div>
 			</div>
 		</div>
 	</Modal>
