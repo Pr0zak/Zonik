@@ -119,6 +119,19 @@
 		if (ua.includes('safari')) return 'Safari';
 		return userAgent.split(' ')[0] || 'Client';
 	}
+
+	// Friendly label for a play's originating client (play_history.source / c= param).
+	function clientLabel(src) {
+		if (!src) return '';
+		const s = src.toLowerCase();
+		if (s.includes('wear')) return 'Watch';
+		if (s.includes('zonikapp') || s.includes('zonik-mobile') || s.includes('android')) return 'Phone';
+		if (s === 'web' || s.includes('web')) return 'Web';
+		if (s.includes('symfonium')) return 'Symfonium';
+		if (s.includes('dsub') || s.includes('ultrasonic')) return 'Subsonic';
+		if (s === 'subsonic') return 'Subsonic';
+		return src;
+	}
 </script>
 
 <div class="max-w-6xl">
@@ -281,13 +294,13 @@
 								<p class="text-xs text-[var(--text-muted)] truncate">
 									{h.artist || 'Unknown'}{#if h.album} &middot; {h.album}{/if}
 								</p>
+								<p class="text-xs text-[var(--text-disabled)] truncate">
+									{#if clientLabel(h.source)}{clientLabel(h.source)} &middot; {/if}{formatRelativeTime(h.played_at)}
+								</p>
 							</div>
 							{#if h.duration}
 								<span class="text-xs text-[var(--text-muted)] font-mono hidden sm:block">{formatDuration(h.duration)}</span>
 							{/if}
-							<span class="text-xs text-[var(--text-disabled)] font-mono hidden md:block w-20 text-right">
-								{formatRelativeTime(h.played_at)}
-							</span>
 							<button onclick={() => toggleStar(h)}
 								class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors flex-shrink-0
 									{h.starred ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-red-300'}"

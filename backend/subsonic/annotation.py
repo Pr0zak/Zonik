@@ -171,7 +171,10 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
         track.play_count = (track.play_count or 0) + 1
         track.last_played_at = played_at
         from backend.models.play_history import PlayHistory
-        db.add(PlayHistory(track_id=song_id, played_at=played_at, source="subsonic"))
+        # Record the originating client (c= param: ZonikApp/ZonikWear/DSub/…) as the
+        # source so "Recently Played" can show which device the play came from.
+        client = (params.get("c") or "").strip()
+        db.add(PlayHistory(track_id=song_id, played_at=played_at, source=client or "subsonic"))
         await db.commit()
     else:
         # Now-playing notification
