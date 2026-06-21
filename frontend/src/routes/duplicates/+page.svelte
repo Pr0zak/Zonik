@@ -51,7 +51,9 @@
 			selected = new Set(
 				(data.groups || []).flatMap(g => g.tracks.filter(t => !t.is_best).map(t => t.id))
 			);
-			expandedGroups = new Set((data.groups || []).map((_, i) => i));
+			// Collapsed by default — large libraries have hundreds of groups; the
+			// user expands individual groups or uses "Expand" in the toolbar.
+			expandedGroups = new Set();
 		} catch (e) {
 			addToast('Failed to load duplicates', 'error');
 		} finally {
