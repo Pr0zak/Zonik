@@ -108,6 +108,7 @@ class ZonikMediaService : MediaLibraryService() {
         private const val NEWLY_ADDED_ID = "newly_added"
         private const val FAVORITES_ID = "favorites"
         private const val NON_FAVORITES_ID = "non_favorites"
+        private const val NEGLECTED_GEMS_ID = "neglected_gems"
 
         // Custom session commands
         private const val ACTION_TOGGLE_STAR = "com.zonik.app.TOGGLE_STAR"
@@ -1545,6 +1546,7 @@ class ZonikMediaService : MediaLibraryService() {
     private fun mixChildren(): List<MediaItem> {
         return listOf(
             buildPlayableItem(id = SHUFFLE_MIX_ID, title = "Shuffle", subtitle = "Random songs"),
+            buildPlayableItem(id = NEGLECTED_GEMS_ID, title = "Neglected Gems", subtitle = "Loved-but-never-played"),
             buildPlayableItem(id = NEWLY_ADDED_ID, title = "Newly Added", subtitle = "Recently added tracks"),
             buildPlayableItem(id = FAVORITES_ID, title = "Favorites", subtitle = "Starred tracks"),
             buildPlayableItem(id = NON_FAVORITES_ID, title = "Non-Favorites", subtitle = "Unstarred tracks")
@@ -1556,6 +1558,7 @@ class ZonikMediaService : MediaLibraryService() {
         return runBlocking {
             when (id) {
                 SHUFFLE_MIX_ID -> libraryRepository.getRandomSongs(count = 100)
+                NEGLECTED_GEMS_ID -> libraryRepository.getNeglectedGems(count = 100)
                 NEWLY_ADDED_ID -> {
                     libraryRepository.getRecentTracks(limit = 100).first()
                 }
@@ -1621,6 +1624,7 @@ class ZonikMediaService : MediaLibraryService() {
             mediaId == ALBUMS_ID -> buildBrowsableItem(id = ALBUMS_ID, title = "Albums")
             mediaId == GENRES_ID -> buildBrowsableItem(id = GENRES_ID, title = "Genres")
             mediaId == SHUFFLE_MIX_ID -> buildPlayableItem(id = SHUFFLE_MIX_ID, title = "Shuffle")
+            mediaId == NEGLECTED_GEMS_ID -> buildPlayableItem(id = NEGLECTED_GEMS_ID, title = "Neglected Gems")
             mediaId == NEWLY_ADDED_ID -> buildPlayableItem(id = NEWLY_ADDED_ID, title = "Newly Added")
             mediaId == FAVORITES_ID -> buildPlayableItem(id = FAVORITES_ID, title = "Favorites")
             mediaId == NON_FAVORITES_ID -> buildPlayableItem(id = NON_FAVORITES_ID, title = "Non-Favorites")
