@@ -81,6 +81,24 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun neglectedGems() {
+        viewModelScope.launch {
+            try {
+                DebugLog.d("HomeViewModel", "Starting neglected gems")
+                val tracks = libraryRepository.getNeglectedGems(count = 100)
+                if (tracks.isNotEmpty()) {
+                    playbackManager.setShuffleEnabled(false)
+                    playbackManager.playTracks(tracks)
+                    DebugLog.d("HomeViewModel", "Neglected gems started with ${tracks.size} tracks")
+                } else {
+                    DebugLog.w("HomeViewModel", "Neglected gems: no tracks returned")
+                }
+            } catch (e: Exception) {
+                DebugLog.e("HomeViewModel", "Neglected gems failed", e)
+            }
+        }
+    }
+
     fun shuffleRecentlyAdded() {
         viewModelScope.launch {
             try {
@@ -175,6 +193,7 @@ fun HomeScreen(
                     recentTracks = recentTracks,
                     recentlyPlayed = recentlyPlayed,
                     onShuffleMix = viewModel::shuffleMix,
+                    onNeglectedGems = viewModel::neglectedGems,
                     onShuffleRecentlyAdded = viewModel::shuffleRecentlyAdded,
                     onShuffleNewestByYear = viewModel::shuffleNewestByYear,
                     onSyncNow = viewModel::syncNow,
@@ -197,6 +216,7 @@ private fun HomeContent(
     recentTracks: List<Track>,
     recentlyPlayed: List<Track>,
     onShuffleMix: () -> Unit,
+    onNeglectedGems: () -> Unit,
     onShuffleRecentlyAdded: () -> Unit,
     onShuffleNewestByYear: () -> Unit,
     onSyncNow: () -> Unit,
@@ -298,6 +318,22 @@ private fun HomeContent(
                 icon = Icons.Default.CalendarMonth,
                 tonal = true,
                 onClick = onShuffleNewestByYear,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ShuffleTile(
+                title = "Neglected Gems",
+                sub = "Loved-but-never-played",
+                icon = Icons.Default.AutoAwesome,
+                tonal = false,
+                onClick = onNeglectedGems,
                 modifier = Modifier.weight(1f)
             )
         }

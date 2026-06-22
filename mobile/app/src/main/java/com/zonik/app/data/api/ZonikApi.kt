@@ -74,7 +74,22 @@ interface ZonikApi {
 
     @POST("api/assistant/voice-playlist")
     suspend fun voicePlaylist(@Body request: VoicePlaylistRequest): VoicePlaylistResponse
+
+    // --- Neglected Gems (owned-but-never-played, ranked by taste) ---
+
+    @GET("api/map/neglected-gems")
+    suspend fun getNeglectedGems(@Query("limit") limit: Int = 100): NeglectedGemsResponse
 }
+
+@Serializable
+data class NeglectedGemsResponse(
+    val gems: List<NeglectedGem> = emptyList()
+)
+
+@Serializable
+data class NeglectedGem(
+    val track_id: String = ""
+)
 
 @Serializable
 data class VoicePlaylistRequest(

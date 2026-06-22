@@ -70,6 +70,16 @@ class LibraryRepository @Inject constructor(
         return ids.mapNotNull { id -> entityMap[id]?.toDomain() }
     }
 
+    /** Owned-but-never-played tracks ranked by closeness to your taste centroid
+     *  (server-computed). Resolved to local Tracks, ranking order preserved. */
+    suspend fun getNeglectedGems(count: Int = 100): List<Track> = try {
+        val ids = zonikApi.getNeglectedGems(limit = count).gems.map { it.track_id }.filter { it.isNotEmpty() }
+        getTracksByIds(ids)
+    } catch (e: Exception) {
+        com.zonik.app.data.DebugLog.w("LibraryRepo", "getNeglectedGems failed: ${e.message}")
+        emptyList()
+    }
+
     suspend fun getStarredTracks(): List<Track> =
         database.trackDao().getStarred().map { it.toDomain() }
 
