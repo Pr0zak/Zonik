@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import random
 
 import numpy as np
 from sqlalchemy import select, text
@@ -84,11 +85,18 @@ async def neglected_gems(db: AsyncSession, limit: int = 40) -> dict:
     else:
         scored = [(0.0, r) for r in rows]
 
+    # Draw a fresh, varied set from the best-matching pool so the mix isn't
+    # identical every time (was the deterministic top-N). Pool = the strongest
+    # matches; random-sample `limit` from it, then show them best-first.
+    pool = scored[:min(len(scored), max(limit * 3, 200))]
+    chosen = random.sample(pool, min(limit, len(pool)))
+    chosen.sort(key=lambda x: x[0], reverse=True)
+
     gems = [{
         "track_id": r[0], "title": r[1], "artist": r[2],
         "format": r[3], "bitrate": r[4], "album_id": r[5],
         "match": round(sim, 4),
-    } for sim, r in scored[:limit]]
+    } for sim, r in chosen]
 
     return {"gems": gems, "has_centroid": centroid is not None, "pool": len(rows)}
 
