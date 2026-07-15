@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -12,7 +14,7 @@ import androidx.room.RoomDatabase
         TrackEntity::class,
         PendingScrobbleEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class ZonikDatabase : RoomDatabase() {
@@ -23,12 +25,27 @@ abstract class ZonikDatabase : RoomDatabase() {
     abstract fun scrobbleDao(): PendingScrobbleDao
 
     companion object {
+        /**
+         * Adds the server's date-added to tracks/albums. Migrate rather than fall
+         * back to a destructive rebuild: offlineCached and markedForDeletion are
+         * local-only and can't be recovered from the server. `created` backfills
+         * on the next sync; until then the ordering falls back to rowid.
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tracks ADD COLUMN created TEXT")
+                db.execSQL("ALTER TABLE albums ADD COLUMN created TEXT")
+            }
+        }
+
         fun create(context: Context): ZonikDatabase {
             return Room.databaseBuilder(
                 context,
                 ZonikDatabase::class.java,
                 "zonik.db"
-            ).fallbackToDestructiveMigration().build()
+            ).addMigrations(MIGRATION_3_4)
+                .fallbackToDestructiveMigration()
+                .build()
         }
     }
 }

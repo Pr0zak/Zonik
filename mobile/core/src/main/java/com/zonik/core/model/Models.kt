@@ -22,7 +22,9 @@ data class Album(
     val songCount: Int = 0,
     val duration: Int = 0,
     val genre: String? = null,
-    val starred: Boolean = false
+    val starred: Boolean = false,
+    /** Server-side date added (ISO-8601 UTC). Sorts correctly lexicographically. */
+    val created: String? = null
 )
 
 @Serializable
@@ -49,7 +51,9 @@ data class Track(
     val markedForDeletion: Boolean = false,
     val offlineCached: Boolean = false,
     val playCount: Int = 0,
-    val played: String? = null
+    val played: String? = null,
+    /** Server-side date added (ISO-8601 UTC). Sorts correctly lexicographically. */
+    val created: String? = null
 )
 
 @Serializable

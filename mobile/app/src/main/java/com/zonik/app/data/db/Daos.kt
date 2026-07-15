@@ -44,7 +44,10 @@ interface AlbumDao {
     @Query("SELECT * FROM albums WHERE id = :id")
     suspend fun getById(id: String): AlbumEntity?
 
-    @Query("SELECT * FROM albums ORDER BY rowid DESC LIMIT :limit")
+    // created = server-side date added. rowid is only a tiebreak for rows the
+    // server never gave a created for — on its own it means "sync insert order",
+    // which for an empty-query search3 is alphabetical, not recent.
+    @Query("SELECT * FROM albums ORDER BY created DESC, rowid DESC LIMIT :limit")
     fun getRecent(limit: Int = 20): Flow<List<AlbumEntity>>
 
     @Upsert
@@ -74,7 +77,8 @@ interface TrackDao {
     @Query("SELECT * FROM tracks ORDER BY title COLLATE NOCASE")
     fun getAll(): Flow<List<TrackEntity>>
 
-    @Query("SELECT * FROM tracks ORDER BY rowid DESC")
+    // See AlbumDao.getRecent — order by the server's date added, not insert order.
+    @Query("SELECT * FROM tracks ORDER BY created DESC, rowid DESC")
     fun getAllRecentFirst(): Flow<List<TrackEntity>>
 
     @Query("SELECT * FROM tracks WHERE albumId = :albumId ORDER BY track")
@@ -86,10 +90,10 @@ interface TrackDao {
     @Query("SELECT * FROM tracks WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<TrackEntity>
 
-    @Query("SELECT * FROM tracks ORDER BY rowid DESC LIMIT :limit")
+    @Query("SELECT * FROM tracks ORDER BY created DESC, rowid DESC LIMIT :limit")
     fun getRecent(limit: Int = 20): Flow<List<TrackEntity>>
 
-    @Query("SELECT * FROM tracks ORDER BY rowid DESC LIMIT :limit")
+    @Query("SELECT * FROM tracks ORDER BY created DESC, rowid DESC LIMIT :limit")
     suspend fun getRecentList(limit: Int): List<TrackEntity>
 
     @Query("SELECT * FROM tracks WHERE year IS NOT NULL ORDER BY year DESC, rowid DESC LIMIT :limit")

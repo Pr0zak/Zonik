@@ -38,9 +38,10 @@ data class AlbumEntity(
     val songCount: Int = 0,
     val duration: Int = 0,
     val genre: String? = null,
-    val starred: Boolean = false
+    val starred: Boolean = false,
+    val created: String? = null
 ) {
-    fun toDomain() = Album(id, name, artist, artistId, coverArt, year, songCount, duration, genre, starred)
+    fun toDomain() = Album(id, name, artist, artistId, coverArt, year, songCount, duration, genre, starred, created)
 
     companion object {
         fun fromDomain(album: Album) = AlbumEntity(
@@ -53,7 +54,8 @@ data class AlbumEntity(
             songCount = album.songCount,
             duration = album.duration,
             genre = album.genre,
-            starred = album.starred
+            starred = album.starred,
+            created = album.created
         )
     }
 }
@@ -78,9 +80,10 @@ data class TrackEntity(
     val path: String? = null,
     val starred: Boolean = false,
     val markedForDeletion: Boolean = false,
-    val offlineCached: Boolean = false
+    val offlineCached: Boolean = false,
+    val created: String? = null
 ) {
-    fun toDomain() = Track(id, title, artist, artistId, album, albumId, coverArt, duration, track, year, genre, bitRate, size, suffix, contentType, transcodedSuffix = null, transcodedContentType = null, path = path, starred = starred, markedForDeletion = markedForDeletion, offlineCached = offlineCached)
+    fun toDomain() = Track(id, title, artist, artistId, album, albumId, coverArt, duration, track, year, genre, bitRate, size, suffix, contentType, transcodedSuffix = null, transcodedContentType = null, path = path, starred = starred, markedForDeletion = markedForDeletion, offlineCached = offlineCached, created = created)
 
     companion object {
         fun fromDomain(track: Track) = TrackEntity(
@@ -102,7 +105,8 @@ data class TrackEntity(
             path = track.path,
             starred = track.starred,
             markedForDeletion = track.markedForDeletion,
-            offlineCached = track.offlineCached
+            offlineCached = track.offlineCached,
+            created = track.created
         )
     }
 }

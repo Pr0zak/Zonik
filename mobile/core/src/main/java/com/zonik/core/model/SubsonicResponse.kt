@@ -125,7 +125,8 @@ data class SubsonicAlbum(
     val songCount: Int = 0,
     val duration: Int = 0,
     val genre: String? = null,
-    val starred: String? = null
+    val starred: String? = null,
+    val created: String? = null
 ) {
     fun toDomain() = Album(
         id = id,
@@ -137,7 +138,8 @@ data class SubsonicAlbum(
         songCount = songCount,
         duration = duration,
         genre = genre,
-        starred = starred != null
+        starred = starred != null,
+        created = created
     )
 }
 
@@ -191,7 +193,8 @@ data class SubsonicTrack(
     val starred: String? = null,
     val userRating: Int? = null,
     val playCount: Int = 0,
-    val played: String? = null
+    val played: String? = null,
+    val created: String? = null
 ) {
     fun toDomain() = Track(
         id = id,
@@ -215,7 +218,8 @@ data class SubsonicTrack(
         starred = starred != null,
         markedForDeletion = userRating == 1,
         playCount = playCount,
-        played = played
+        played = played,
+        created = created
     )
 }
 
