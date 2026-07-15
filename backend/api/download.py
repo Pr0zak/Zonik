@@ -289,6 +289,22 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         except Exception:
             return 0
 
+    async def _import_or_fail(path):
+        """Import a finished transfer. Returns (track_id, file_size, error).
+
+        A peer can report a transfer COMPLETED while delivering an empty or
+        truncated file. The importer rejects those and returns no track, so
+        treat a missing track_id as a failed download — never a success.
+        """
+        fsize = _file_size(path)
+        async with async_session() as import_sess:
+            track_id = await import_downloaded_file(
+                import_sess, path, artist_hint=req.artist, target_track_id=req.target_track_id
+            )
+        if not track_id:
+            return None, fsize, f"Import rejected the file ({fsize} bytes) — empty, truncated, or unreadable"
+        return track_id, fsize, None
+
     async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
         """Poll transfer until terminal state. Returns (status, save_path, error)."""
         import time
@@ -459,9 +475,14 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 if winner:
                     cand, save_path = winner
                     short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                    fsize = _file_size(save_path)
-                    async with async_session() as import_sess:
-                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist, target_track_id=req.target_track_id)
+                    track_id, fsize, import_err = await _import_or_fail(save_path)
+                    if import_err:
+                        log.warning(f"[download] {cand['username']} / {short}: {import_err}")
+                        await native_client.reputation.record_failure(cand["username"])
+                        job.status = "failed"
+                        job.result = json.dumps({"message": import_err, "username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first"})
+                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": import_err}])
+                        return
                     job.status = "completed"
                     job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
@@ -487,6 +508,9 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     else:
                         source_errors.append({"user": cand["username"], "error": error or status})
 
+                best_cand = best_path = None
+                track_id, fsize = None, 0
+
                 if completed:
                     def _quality_score(item):
                         cand, path = item
@@ -498,20 +522,34 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                         return score
 
                     completed.sort(key=_quality_score, reverse=True)
-                    best_cand, best_path = completed[0]
 
-                    # Delete the losers
-                    for cand, path in completed[1:]:
+                    # Import in quality order and keep the first file that
+                    # survives import. _quality_score ranks on the peer's
+                    # *advertised* size, so a peer that over-states its file
+                    # and then delivers 0 bytes sorts first — fall through to
+                    # the next-best source instead of trusting the winner.
+                    for cand, path in completed:
+                        track_id, fsize, import_err = await _import_or_fail(path)
+                        if not import_err:
+                            best_cand, best_path = cand, path
+                            break
+                        log.warning(f"[download] {cand['username']}: {import_err}")
+                        await native_client.reputation.record_failure(cand["username"])
+                        source_errors.append({"user": cand["username"], "error": import_err})
+
+                    # Delete everything we didn't import (the winner has
+                    # already been moved into the library by the importer)
+                    for cand, path in completed:
+                        if path == best_path:
+                            continue
                         try:
                             from pathlib import Path
                             Path(path).unlink(missing_ok=True)
                         except Exception:
                             pass
 
+                if best_cand:
                     short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                    fsize = _file_size(best_path)
-                    async with async_session() as import_sess:
-                        track_id = await import_downloaded_file(import_sess, best_path, artist_hint=req.artist, target_track_id=req.target_track_id)
                     job.status = "completed"
                     job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
@@ -559,10 +597,16 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
+                    track_id, fsize, import_err = await _import_or_fail(save_path)
+                    if import_err:
+                        # The transfer "succeeded" but produced nothing usable —
+                        # blame this peer and fall through to the next source.
+                        log.warning(f"[download] {dl_username} / {short_name}: {import_err}")
+                        await native_client.reputation.record_failure(dl_username)
+                        last_error = import_err
+                        source_errors.append({"user": dl_username, "error": import_err})
+                        continue
                     await native_client.reputation.record_success(dl_username)
-                    fsize = _file_size(save_path)
-                    async with async_session() as import_sess:
-                        track_id = await import_downloaded_file(import_sess, save_path, artist_hint=req.artist, target_track_id=req.target_track_id)
                     job.status = "completed"
                     job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
