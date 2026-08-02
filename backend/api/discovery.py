@@ -50,8 +50,8 @@ _DEEZER_GENRE_CHARTS = (
     464,  # Metal
     85,   # Alternative
 )
-_DEEZER_CHART_LIMIT = 25          # per genre chart
-_DEEZER_DETAIL_CONCURRENCY = 10
+_DEEZER_CHART_LIMIT = 15          # per genre chart
+_DEEZER_RATE_LIMIT_PER_SEC = 8.0
 _DEEZER_MAX_TRACKS_PER_ALBUM = 5  # cap so no single album floods the tab
 _NEW_RELEASE_MAX_AGE_DAYS = 56    # 8 weeks
 _NEW_RELEASE_MAX_ALBUMS = 40      # bounds response size after the date filter
@@ -205,6 +205,68 @@ def _parse_release_date(value: str | None) -> datetime | None:
         return None
 
 
+class _RateLimiter:
+    """Spaces outbound requests to stay under a per-second ceiling.
+
+    Deezer allows roughly 50 requests / 5s per IP and signals a breach with
+    HTTP 200 plus an `{"error": {...}}` body — so overrunning it fails *silently*
+    rather than raising, and the caller sees a dict with no `release_date`.
+    Measured against the deployed CT: 12 req/s draws quota errors on ~11% of
+    calls, 9 req/s draws none. 8 leaves margin.
+    """
+
+    def __init__(self, rate_per_sec: float):
+        self._interval = 1.0 / rate_per_sec
+        self._next_at = 0.0
+        self._lock: asyncio.Lock | None = None
+
+    async def acquire(self) -> None:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            start = max(time.monotonic(), self._next_at)
+            self._next_at = start + self._interval
+        delay = start - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+
+# Album metadata is immutable, so details are cached for the life of the process
+# rather than on the 6h new-releases TTL. Only the first fetch pays the full
+# rate-limited walk; later refreshes fetch just the albums new to the charts.
+_DEEZER_ALBUM_CACHE: dict[int, dict] = {}
+_DEEZER_ALBUM_CACHE_MAX = 2000
+
+
+async def _fetch_deezer_album(
+    client: httpx.AsyncClient, album_id: int, limiter: _RateLimiter
+) -> dict | None:
+    """Fetch one album's detail, honouring the rate limit and the process cache."""
+    cached = _DEEZER_ALBUM_CACHE.get(album_id)
+    if cached is not None:
+        return cached
+
+    for attempt in range(2):
+        await limiter.acquire()
+        try:
+            resp = await client.get(f"https://api.deezer.com/album/{album_id}")
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            return None
+        # Quota breaches arrive as HTTP 200 + error body; back off and retry once.
+        if not isinstance(data, dict) or data.get("error"):
+            if attempt == 0:
+                await asyncio.sleep(2.0)
+                continue
+            return None
+        if len(_DEEZER_ALBUM_CACHE) >= _DEEZER_ALBUM_CACHE_MAX:
+            _DEEZER_ALBUM_CACHE.clear()
+        _DEEZER_ALBUM_CACHE[album_id] = data
+        return data
+    return None
+
+
 async def _fetch_deezer_new_releases() -> list[dict]:
     """Fetch recent album drops from Deezer's album charts. No auth required.
 
@@ -220,26 +282,33 @@ async def _fetch_deezer_new_releases() -> list[dict]:
 
     The chart payload carries no release date, so each deduped candidate needs
     one `album/{id}` detail call — which returns `release_date` *and* the
-    embedded track list, so album expansion stays a single request.
+    embedded track list, so album expansion stays a single request. Those calls
+    are paced by `_RateLimiter` and memoised in `_DEEZER_ALBUM_CACHE`, so only
+    the first walk is slow; later refreshes fetch just the new chart entries.
 
     Caveat: charts are popularity-ranked, so this surfaces recent albums that
     are *charting* rather than every new release. If nothing falls inside the
     window (stale charts), the newest `_NEW_RELEASE_FALLBACK_ALBUMS` are used
     so the tab degrades to "most recent" instead of going empty.
     """
+    limiter = _RateLimiter(_DEEZER_RATE_LIMIT_PER_SEC)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
 
             async def fetch_chart(genre_id: int) -> list[dict]:
+                await limiter.acquire()
                 try:
                     cr = await client.get(
                         f"https://api.deezer.com/chart/{genre_id}/albums",
                         params={"limit": _DEEZER_CHART_LIMIT},
                     )
                     cr.raise_for_status()
-                    return cr.json().get("data", []) or []
+                    data = cr.json()
                 except Exception:
                     return []
+                if not isinstance(data, dict) or data.get("error"):
+                    return []
+                return data.get("data", []) or []
 
             charts = await asyncio.gather(
                 *[fetch_chart(g) for g in _DEEZER_GENRE_CHARTS],
@@ -248,31 +317,23 @@ async def _fetch_deezer_new_releases() -> list[dict]:
 
             # Dedupe by album id — genre charts overlap at the edges, and the
             # same album must not cost two detail calls.
-            candidates: dict[int, dict] = {}
+            candidate_ids: list[int] = []
+            seen_ids: set[int] = set()
             for chart in charts:
                 if isinstance(chart, Exception):
                     continue
                 for entry in chart:
                     album_id = entry.get("id")
-                    if album_id and album_id not in candidates:
-                        candidates[album_id] = entry
+                    if album_id and album_id not in seen_ids:
+                        seen_ids.add(album_id)
+                        candidate_ids.append(album_id)
 
-            if not candidates:
+            if not candidate_ids:
                 return []
 
-            sem = asyncio.Semaphore(_DEEZER_DETAIL_CONCURRENCY)
-
-            async def fetch_album(album_id: int) -> dict | None:
-                async with sem:
-                    try:
-                        ar = await client.get(f"https://api.deezer.com/album/{album_id}")
-                        ar.raise_for_status()
-                        return ar.json()
-                    except Exception:
-                        return None
-
             fetched = await asyncio.gather(
-                *[fetch_album(aid) for aid in candidates], return_exceptions=True
+                *[_fetch_deezer_album(client, aid, limiter) for aid in candidate_ids],
+                return_exceptions=True,
             )
     except httpx.HTTPError:
         return []
