@@ -83,6 +83,55 @@ async def _collect_soulseek_stats_loop():
             return
 
 
+async def _warm_new_releases_loop():
+    """Keep the Discover -> New Releases cache warm so no request pays for it.
+
+    The cold walk is deliberately paced to stay inside Deezer's rate limit (~50
+    requests / 5s per IP, breaches returned as HTTP 200 with an error body), so
+    it takes 15-20s. Warming on startup and re-warming shortly before the TTL
+    lapses moves that cost off the request path entirely.
+
+    Album details are memoised for the life of the process, so only the first
+    pass is slow — later ones fetch just the chart entries not seen before.
+    """
+    import logging as _logging
+    from backend.api.discovery import (
+        _NEW_RELEASES_TTL_SECONDS,
+        _get_new_releases_raw,
+    )
+
+    _log = _logging.getLogger(__name__)
+    # Re-warm shy of the TTL so the cache never lapses between passes.
+    interval = max(300, _NEW_RELEASES_TTL_SECONDS - 900)
+    retry_interval = 600
+
+    try:
+        # Let startup work (DB init, Soulseek login) settle before hitting the net.
+        await asyncio.sleep(20)
+    except asyncio.CancelledError:
+        return
+
+    while True:
+        delay = interval
+        try:
+            tracks, _fetched_at, error = await _get_new_releases_raw("US")
+            if error:
+                _log.warning(f"[new-releases] warm failed: {error}")
+                delay = retry_interval
+            else:
+                _log.info(f"[new-releases] cache warmed — {len(tracks)} tracks")
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            _log.warning(f"[new-releases] warm error: {e}")
+            delay = retry_interval
+
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+
+
 async def _native_keepalive_loop():
     """Monitor the native Soulseek client and recover if it gets stuck logged out.
     ServerConnection already auto-reconnects with exponential backoff, so this only
@@ -179,12 +228,15 @@ async def lifespan(app: FastAPI):
     stats_task = asyncio.create_task(_collect_soulseek_stats_loop())
     # Keep the native Soulseek client logged in (reconnect on drop).
     keepalive_task = asyncio.create_task(_native_keepalive_loop())
+    # Pre-warm Discover -> New Releases so no request pays the cold Deezer walk.
+    warm_task = asyncio.create_task(_warm_new_releases_loop())
 
     yield
 
     stats_task.cancel()
     keepalive_task.cancel()
-    for _t in (stats_task, keepalive_task):
+    warm_task.cancel()
+    for _t in (stats_task, keepalive_task, warm_task):
         try:
             await _t
         except asyncio.CancelledError:
