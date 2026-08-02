@@ -31,11 +31,30 @@ router = APIRouter()
 _NEW_RELEASES_CACHE: dict[str, dict] = {}
 _NEW_RELEASES_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
-# Deezer sourcing knobs. See _fetch_deezer_new_releases for why the chart is
+# Deezer sourcing knobs. See _fetch_deezer_new_releases for why the charts are
 # used instead of the (retired) editorial releases feed.
-_DEEZER_CHART_LIMIT = 50
-_DEEZER_MAX_TRACKS_PER_ALBUM = 10
-_NEW_RELEASE_MAX_AGE_DAYS = 56  # 8 weeks
+#
+# The global chart (0) is dominated by mainstream pop, and its albums crowd out
+# everything else. Fanning out across genre charts pulls in near-disjoint artist
+# sets — rock/rap/jazz/R&B charts share almost no entries with chart 0 — which is
+# what keeps the tab from becoming one artist's discography.
+_DEEZER_GENRE_CHARTS = (
+    0,    # All
+    132,  # Pop
+    116,  # Rap / Hip Hop
+    152,  # Rock
+    113,  # Dance / Electro
+    165,  # R&B
+    129,  # Jazz
+    98,   # Classical
+    464,  # Metal
+    85,   # Alternative
+)
+_DEEZER_CHART_LIMIT = 25          # per genre chart
+_DEEZER_DETAIL_CONCURRENCY = 10
+_DEEZER_MAX_TRACKS_PER_ALBUM = 5  # cap so no single album floods the tab
+_NEW_RELEASE_MAX_AGE_DAYS = 56    # 8 weeks
+_NEW_RELEASE_MAX_ALBUMS = 40      # bounds response size after the date filter
 _NEW_RELEASE_FALLBACK_ALBUMS = 12
 
 
@@ -187,36 +206,63 @@ def _parse_release_date(value: str | None) -> datetime | None:
 
 
 async def _fetch_deezer_new_releases() -> list[dict]:
-    """Fetch recent album drops from Deezer's album chart. No auth required.
+    """Fetch recent album drops from Deezer's album charts. No auth required.
 
     Deezer retired the `editorial/*/releases` feed it used to serve — it now
     answers HTTP 200 with an empty payload for every genre id, including 0 — so
-    recent drops are sourced from `chart/0/albums` and filtered down to releases
-    inside `_NEW_RELEASE_MAX_AGE_DAYS`. The chart payload itself carries no
-    release date, but the per-album detail call returns both `release_date` and
-    the embedded track list, so this costs the same number of requests the old
-    two-step (feed + per-album tracks) path did.
+    recent drops are sourced from the album charts instead and filtered down to
+    releases inside `_NEW_RELEASE_MAX_AGE_DAYS`.
 
-    Caveat: the chart is popularity-ranked, so this surfaces recent albums that
+    Candidates are gathered across `_DEEZER_GENRE_CHARTS` rather than the global
+    chart alone: chart 0 skews hard to mainstream pop, and a single artist's
+    album can otherwise account for most of the tab. The genre charts return
+    near-disjoint artist sets, so the union is far more varied.
+
+    The chart payload carries no release date, so each deduped candidate needs
+    one `album/{id}` detail call — which returns `release_date` *and* the
+    embedded track list, so album expansion stays a single request.
+
+    Caveat: charts are popularity-ranked, so this surfaces recent albums that
     are *charting* rather than every new release. If nothing falls inside the
-    window (a stale chart), the newest `_NEW_RELEASE_FALLBACK_ALBUMS` are used
+    window (stale charts), the newest `_NEW_RELEASE_FALLBACK_ALBUMS` are used
     so the tab degrades to "most recent" instead of going empty.
     """
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                "https://api.deezer.com/chart/0/albums",
-                params={"limit": _DEEZER_CHART_LIMIT},
+        async with httpx.AsyncClient(timeout=20) as client:
+
+            async def fetch_chart(genre_id: int) -> list[dict]:
+                try:
+                    cr = await client.get(
+                        f"https://api.deezer.com/chart/{genre_id}/albums",
+                        params={"limit": _DEEZER_CHART_LIMIT},
+                    )
+                    cr.raise_for_status()
+                    return cr.json().get("data", []) or []
+                except Exception:
+                    return []
+
+            charts = await asyncio.gather(
+                *[fetch_chart(g) for g in _DEEZER_GENRE_CHARTS],
+                return_exceptions=True,
             )
-            resp.raise_for_status()
-            chart = resp.json().get("data", []) or []
 
-            sem = asyncio.Semaphore(5)
+            # Dedupe by album id — genre charts overlap at the edges, and the
+            # same album must not cost two detail calls.
+            candidates: dict[int, dict] = {}
+            for chart in charts:
+                if isinstance(chart, Exception):
+                    continue
+                for entry in chart:
+                    album_id = entry.get("id")
+                    if album_id and album_id not in candidates:
+                        candidates[album_id] = entry
 
-            async def fetch_album(entry: dict) -> dict | None:
-                album_id = entry.get("id")
-                if not album_id:
-                    return None
+            if not candidates:
+                return []
+
+            sem = asyncio.Semaphore(_DEEZER_DETAIL_CONCURRENCY)
+
+            async def fetch_album(album_id: int) -> dict | None:
                 async with sem:
                     try:
                         ar = await client.get(f"https://api.deezer.com/album/{album_id}")
@@ -226,7 +272,7 @@ async def _fetch_deezer_new_releases() -> list[dict]:
                         return None
 
             fetched = await asyncio.gather(
-                *[fetch_album(a) for a in chart], return_exceptions=True
+                *[fetch_album(aid) for aid in candidates], return_exceptions=True
             )
     except httpx.HTTPError:
         return []
@@ -246,6 +292,7 @@ async def _fetch_deezer_new_releases() -> list[dict]:
     dated.sort(key=lambda pair: pair[0], reverse=True)
     cutoff = datetime.now(timezone.utc) - timedelta(days=_NEW_RELEASE_MAX_AGE_DAYS)
     recent = [pair for pair in dated if pair[0] >= cutoff] or dated[:_NEW_RELEASE_FALLBACK_ALBUMS]
+    recent = recent[:_NEW_RELEASE_MAX_ALBUMS]
 
     tracks: list[dict] = []
     for _released, album in recent:
