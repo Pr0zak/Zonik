@@ -18,11 +18,12 @@
     <circle cx="120" cy="120" r="38" fill="#08060e"/>
     <circle cx="120" cy="120" r="38" fill="none" stroke="#534AB7" stroke-width="2"/>
 
-    <!-- scattered notes, behind the Z -->
+    <!-- Notes sit in the Z's counters rather than scattered around it, so the mark
+         matches the Android launcher icon. There only the inner 72dp of the 108dp
+         layer renders, which leaves no usable room outside the Z. -->
     <g fill="#8F86E8">
-      <use href="#note" opacity=".34" transform="rotate(-14 56 62)  translate(56,62)   scale(.33) translate(-66,-70)"/>
-      <use href="#note" opacity=".28" transform="rotate(12 196 100) translate(196,100) scale(.30) translate(-66,-70)"/>
-      <use href="#note" opacity=".32" transform="rotate(-8 186 188) translate(186,188) scale(.30) translate(-66,-70)"/>
+      <use href="#note" opacity=".52" transform="rotate(-12 78 118)  translate(78,118)  scale(.34) translate(-66,-70)"/>
+      <use href="#note" opacity=".46" transform="rotate(10 161 122)  translate(161,122) scale(.30) translate(-66,-70)"/>
     </g>
 
     <path d="M 78,78 L 162,78 L 78,162 L 162,162"
