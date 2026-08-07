@@ -1,6 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
   <defs>
     <clipPath id="c1"><rect width="240" height="240" rx="44"/></clipPath>
+    <!-- eighth note: stem+flag merged into one closed path so overlaps don't
+         double-darken under opacity. Anchor point is (66,70).
+         Kept in sync with mobile/{app,wear}/src/main/res/drawable/ic_launcher_background.xml -->
+    <g id="note">
+      <path d="M62,104 L62,6 L75,6 C104,18 114,42 104,66 C110,42 96,28 75,32 L75,104 Z"/>
+      <ellipse cx="44" cy="114" rx="26" ry="20" transform="rotate(-20 44 114)"/>
+    </g>
   </defs>
   <rect width="240" height="240" rx="44" fill="#07060f"/>
   <g clip-path="url(#c1)">
@@ -10,6 +17,14 @@
     <circle cx="120" cy="120" r="56"  fill="none" stroke="#1c1836" stroke-width="4"/>
     <circle cx="120" cy="120" r="38" fill="#08060e"/>
     <circle cx="120" cy="120" r="38" fill="none" stroke="#534AB7" stroke-width="2"/>
+
+    <!-- scattered notes, behind the Z -->
+    <g fill="#8F86E8">
+      <use href="#note" opacity=".34" transform="rotate(-14 56 62)  translate(56,62)   scale(.33) translate(-66,-70)"/>
+      <use href="#note" opacity=".28" transform="rotate(12 196 100) translate(196,100) scale(.30) translate(-66,-70)"/>
+      <use href="#note" opacity=".32" transform="rotate(-8 186 188) translate(186,188) scale(.30) translate(-66,-70)"/>
+    </g>
+
     <path d="M 78,78 L 162,78 L 78,162 L 162,162"
           fill="none" stroke="#AFA9EC" stroke-width="22"
           stroke-linecap="square" stroke-linejoin="miter"/>
