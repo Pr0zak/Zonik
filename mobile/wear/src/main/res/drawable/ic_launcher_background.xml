@@ -4,6 +4,12 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!--
+      Plain vinyl disc. The music notes that briefly lived here are gone: the Z
+      itself now carries the musical idea via its clef curl (see
+      ic_launcher_foreground.xml), and keeping both made the mark cluttered at
+      launcher sizes.
+    -->
     <path android:fillColor="#07060f" android:pathData="M0,0h108v108h-108z"/>
     <path android:fillColor="#0d0b18"
         android:pathData="M54,54m-48.6,0a48.6,48.6 0,1,1 97.2,0a48.6,48.6 0,1,1 -97.2,0"/>
@@ -17,58 +23,4 @@
         android:pathData="M54,54m-17.1,0a17.1,17.1 0,1,1 34.2,0a17.1,17.1 0,1,1 -34.2,0"/>
     <path android:fillColor="#00000000" android:strokeColor="#534AB7" android:strokeWidth="1.1"
         android:pathData="M54,54m-17.1,0a17.1,17.1 0,1,1 34.2,0a17.1,17.1 0,1,1 -34.2,0"/>
-
-    <!--
-      Two eighth notes tucked into the Z's counters — the triangular voids either
-      side of its diagonal.
-
-      They live on the BACKGROUND layer because they must render behind the
-      foreground Z. But note the hard constraint that dictates their position:
-      only the inner 72dp of the 108dp layer is ever visible (66dp is the
-      guaranteed-safe circle); the outer 18dp margin is reserved for masking and
-      parallax. Android Auto and the Pixel launcher both use the circular mask.
-
-      An earlier revision scattered the notes AROUND the Z at radius 78-95 in the
-      240-unit space. The visible circle is radius 80 — so every note was cropped
-      away entirely on a circular mask, which is why they never appeared in AA.
-      There is no room outside the Z within the mask (only a ~5-unit sliver at the
-      diagonals), so the notes now sit in the Z's negative space instead, well
-      inside the 66dp safe circle.
-
-      Geometry is authored in the 240-unit space shared with frontend/static/favicon.svg,
-      so this outer group scales 240 -> 108 (0.45). Each note is placed by a group whose
-      pivot is the note's anchor point (66,70); translate = desiredPos - anchor.
-      Keep the two files in sync if either is edited.
-    -->
-    <group android:scaleX="0.45" android:scaleY="0.45">
-
-        <!-- upper-left counter, pos (78,118) scale 0.34 rot -12 -->
-        <group
-            android:pivotX="66" android:pivotY="70"
-            android:scaleX="0.34" android:scaleY="0.34"
-            android:rotation="-12"
-            android:translateX="12" android:translateY="48">
-            <path android:fillColor="#8F86E8" android:fillAlpha="0.52"
-                android:pathData="M62,104 L62,6 L75,6 C104,18 114,42 104,66 C110,42 96,28 75,32 L75,104 Z"/>
-            <group android:pivotX="44" android:pivotY="114" android:rotation="-20">
-                <path android:fillColor="#8F86E8" android:fillAlpha="0.52"
-                    android:pathData="M18,114 a26,20 0 1,1 52,0 a26,20 0 1,1 -52,0 Z"/>
-            </group>
-        </group>
-
-        <!-- lower-right counter, pos (161,122) scale 0.30 rot 10 -->
-        <group
-            android:pivotX="66" android:pivotY="70"
-            android:scaleX="0.30" android:scaleY="0.30"
-            android:rotation="10"
-            android:translateX="95" android:translateY="52">
-            <path android:fillColor="#8F86E8" android:fillAlpha="0.46"
-                android:pathData="M62,104 L62,6 L75,6 C104,18 114,42 104,66 C110,42 96,28 75,32 L75,104 Z"/>
-            <group android:pivotX="44" android:pivotY="114" android:rotation="-20">
-                <path android:fillColor="#8F86E8" android:fillAlpha="0.46"
-                    android:pathData="M18,114 a26,20 0 1,1 52,0 a26,20 0 1,1 -52,0 Z"/>
-            </group>
-        </group>
-
-    </group>
 </vector>

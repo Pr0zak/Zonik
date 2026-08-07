@@ -1,13 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
   <defs>
     <clipPath id="c1"><rect width="240" height="240" rx="44"/></clipPath>
-    <!-- eighth note: stem+flag merged into one closed path so overlaps don't
-         double-darken under opacity. Anchor point is (66,70).
-         Kept in sync with mobile/{app,wear}/src/main/res/drawable/ic_launcher_background.xml -->
-    <g id="note">
-      <path d="M62,104 L62,6 L75,6 C104,18 114,42 104,66 C110,42 96,28 75,32 L75,104 Z"/>
-      <ellipse cx="44" cy="114" rx="26" ry="20" transform="rotate(-20 44 114)"/>
-    </g>
   </defs>
   <rect width="240" height="240" rx="44" fill="#07060f"/>
   <g clip-path="url(#c1)">
@@ -18,16 +11,19 @@
     <circle cx="120" cy="120" r="38" fill="#08060e"/>
     <circle cx="120" cy="120" r="38" fill="none" stroke="#534AB7" stroke-width="2"/>
 
-    <!-- Notes sit in the Z's counters rather than scattered around it, so the mark
-         matches the Android launcher icon. There only the inner 72dp of the 108dp
-         layer renders, which leaves no usable room outside the Z. -->
-    <g fill="#8F86E8">
-      <use href="#note" opacity=".52" transform="rotate(-12 78 118)  translate(78,118)  scale(.34) translate(-66,-70)"/>
-      <use href="#note" opacity=".46" transform="rotate(10 161 122)  translate(161,122) scale(.30) translate(-66,-70)"/>
-    </g>
-
-    <path d="M 78,78 L 162,78 L 78,162 L 162,162"
-          fill="none" stroke="#AFA9EC" stroke-width="22"
+    <!-- Z with both terminals running on into clef curls with ball terminals.
+         Identical geometry to mobile/{app,wear}/src/main/res/drawable/ic_launcher_foreground.xml
+         — both authored in this 240-unit space. Keep them in sync. -->
+    <path d="M93.4,87.7 L152.3,87.7 L87.7,152.3 L148.5,152.3"
+          fill="none" stroke="#AFA9EC" stroke-width="16.7"
           stroke-linecap="square" stroke-linejoin="miter"/>
+
+    <path d="M148.5,152.3 C176.05,152.3 187.45,136.15 180.8,123.8 C175.1,113.35 160.85,115.25 159.9,126.65"
+          fill="none" stroke="#AFA9EC" stroke-width="16.7" stroke-linecap="round"/>
+    <circle cx="159.9" cy="128.55" r="11.9" fill="#AFA9EC"/>
+
+    <path d="M93.4,87.7 C65.85,87.7 54.45,103.85 61.1,116.2 C66.8,126.65 81.05,124.75 82,113.35"
+          fill="none" stroke="#AFA9EC" stroke-width="16.7" stroke-linecap="round"/>
+    <circle cx="82" cy="110.45" r="11.9" fill="#AFA9EC"/>
   </g>
 </svg>

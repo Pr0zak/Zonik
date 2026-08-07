@@ -4,12 +4,54 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Z letterform with padding for adaptive icon safe zone -->
-    <path
-        android:fillColor="#00000000"
-        android:strokeColor="#AFA9EC"
-        android:strokeWidth="8.1"
-        android:strokeLineCap="square"
-        android:strokeLineJoin="miter"
-        android:pathData="M37.8,37.8 L70.2,37.8 L37.8,70.2 L70.2,70.2"/>
+    <!--
+      Z letterform whose two open terminals both run on into clef-like curls,
+      each landing on a ball terminal. The curls replace the bar ends rather than
+      being appended alongside, so the Z remains the whole mark.
+
+      Authored in the 240-unit space shared with frontend/static/favicon.svg
+      (outer group scales 240 -> 108). The drawn shape is the option-5 geometry
+      scaled 0.95 about the centre: unscaled, the right curl reached radius 76.7,
+      outside the 66dp guarantee. At 0.95 the furthest points are the right curl
+      at radius 72.9 and the left at 70.5, both inside 73.3.
+
+      Only the inner 72dp of the 108dp layer renders at all, and 66dp (radius
+      73.3 here) is the guaranteed-safe circle. Anything added here must be
+      checked against that or it silently disappears under the launcher mask —
+      that is exactly how an earlier revision shipped invisible notes.
+    -->
+    <group android:scaleX="0.45" android:scaleY="0.45">
+
+        <!-- Z: top bar, diagonal, bottom bar — both bars stop short for their curls -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#AFA9EC"
+            android:strokeWidth="16.7"
+            android:strokeLineCap="square"
+            android:strokeLineJoin="miter"
+            android:pathData="M93.4,87.7 L152.3,87.7 L87.7,152.3 L148.5,152.3"/>
+
+        <!-- lower-right curl + ball -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#AFA9EC"
+            android:strokeWidth="16.7"
+            android:strokeLineCap="round"
+            android:pathData="M148.5,152.3 C176.05,152.3 187.45,136.15 180.8,123.8 C175.1,113.35 160.85,115.25 159.9,126.65"/>
+        <path
+            android:fillColor="#AFA9EC"
+            android:pathData="M148,128.55 a11.9,11.9 0 1,1 23.8,0 a11.9,11.9 0 1,1 -23.8,0 Z"/>
+
+        <!-- upper-left curl + ball -->
+        <path
+            android:fillColor="#00000000"
+            android:strokeColor="#AFA9EC"
+            android:strokeWidth="16.7"
+            android:strokeLineCap="round"
+            android:pathData="M93.4,87.7 C65.85,87.7 54.45,103.85 61.1,116.2 C66.8,126.65 81.05,124.75 82,113.35"/>
+        <path
+            android:fillColor="#AFA9EC"
+            android:pathData="M70.1,110.45 a11.9,11.9 0 1,1 23.8,0 a11.9,11.9 0 1,1 -23.8,0 Z"/>
+
+    </group>
 </vector>
