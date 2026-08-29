@@ -3,6 +3,7 @@ package com.zonik.app.data.repository
 import android.content.Context
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.zonik.app.ui.util.isTvDevice
 import com.zonik.core.model.ServerConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
@@ -17,6 +18,9 @@ class SettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
     private val dataStore = context.dataStore
+
+    // hasSystemFeature is a binder round-trip — resolve it once, not on every flow emission.
+    private val isTv: Boolean by lazy { context.isTvDevice() }
 
     val serverConfig: Flow<ServerConfig?> = dataStore.data.map { prefs ->
         val url = prefs[SERVER_URL] ?: return@map null
@@ -129,7 +133,9 @@ class SettingsRepository @Inject constructor(
     }
 
     val cacheReadAhead: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[CACHE_READ_AHEAD] ?: 5
+        // TV has no offline story, and a deep read-ahead floods the pipe with whole-file
+        // downloads that compete with the track the user just picked.
+        prefs[CACHE_READ_AHEAD] ?: if (isTv) 1 else 5
     }
 
     suspend fun setCacheReadAhead(count: Int) {

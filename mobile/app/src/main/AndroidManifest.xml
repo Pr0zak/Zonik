@@ -25,6 +25,9 @@
     <!-- Google TV / Leanback support (optional — app works on both phone + TV) -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <!-- RECORD_AUDIO (the voice-playlist mic button) implies a required microphone, which
+         would filter the app off every TV panel that has no mic of its own. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <application
         android:name=".ZonikApplication"

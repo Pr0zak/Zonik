@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -29,6 +30,7 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.SettableFuture
 import com.google.common.util.concurrent.ListenableFuture
 import com.zonik.app.R
 import com.zonik.app.data.db.ZonikDatabase
@@ -43,6 +45,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import com.zonik.core.util.md5
 import javax.inject.Inject
@@ -66,6 +69,11 @@ class ZonikMediaService : MediaLibraryService() {
     private var lastEqBandLevels: String? = null
     private val preCacheScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var preCacheJob: Job? = null
+    // Last-command-wins for PLAY_TRACKS. Resolving a queue is asynchronous now, so two play
+    // requests a D-pad press apart would otherwise land on the player in whatever order their
+    // DB lookups happened to finish — a 3-track Favorites mix can easily overtake a 100-track
+    // Shuffle Mix and then be overwritten by it.
+    private var playTracksJob: Job? = null
     private var cacheDataSourceFactory: CacheDataSource.Factory? = null
     private val preCachingInProgress = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var isPlayerBuffering = false
@@ -79,6 +87,14 @@ class ZonikMediaService : MediaLibraryService() {
     @Volatile private var scrobblePlayer: androidx.media3.exoplayer.ExoPlayer? = null
     private val scrobbleMainScope = CoroutineScope(Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
     private val scrobbleIoScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+    // Settings mirrored off DataStore. buildStreamUrlForTrack runs once per track, and a
+    // blocking flow read per track is most of what makes building a 100-track queue slow.
+    // Null means "not collected yet" — the first caller then falls back to a blocking read,
+    // exactly as before.
+    private val settingsScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+    @Volatile private var cachedServerConfig: com.zonik.core.model.ServerConfig? = null
+    @Volatile private var cachedWifiBitrate: Int? = null
+    @Volatile private var cachedCellularBitrate: Int? = null
     @Volatile private var scrobbledTrackId: String? = null
     @Volatile private var nowPlayingPostedFor: String? = null
     private var scrobblePollJob: Job? = null
@@ -92,9 +108,6 @@ class ZonikMediaService : MediaLibraryService() {
     private val startRadioCommand = SessionCommand(ACTION_START_RADIO, Bundle.EMPTY)
 
     companion object {
-        // Shared audio session ID (same process, no IPC needed)
-        @Volatile var sharedAudioSessionId: Int = 0
-
         // Browse tree node IDs
         private const val ROOT_ID = "root"
         private const val RECENT_ID = "recent"
@@ -146,6 +159,11 @@ class ZonikMediaService : MediaLibraryService() {
         super.onCreate()
 
         com.zonik.app.data.DebugLog.d("MediaService", "onCreate — setting up ExoPlayer with OkHttpDataSource (clean client)")
+
+        settingsScope.launch { settingsRepository.serverConfig.collect { cachedServerConfig = it } }
+        settingsScope.launch { settingsRepository.wifiBitrate.collect { cachedWifiBitrate = it } }
+        settingsScope.launch { settingsRepository.cellularBitrate.collect { cachedCellularBitrate = it } }
+
         // Use a clean OkHttpClient without auth interceptor — auth is baked into URLs
         val streamClient = okhttp3.OkHttpClient.Builder()
             .connectionPool(okhttp3.ConnectionPool(5, 30, java.util.concurrent.TimeUnit.SECONDS))
@@ -285,8 +303,6 @@ class ZonikMediaService : MediaLibraryService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
-        // Share audio session ID for Visualizer (same process)
-        sharedAudioSessionId = player.audioSessionId
         com.zonik.app.data.DebugLog.d("MediaService", "Audio session ID: ${player.audioSessionId}")
 
         // Make the player visible to the scrobble helpers — needs main-thread reads.
@@ -452,10 +468,20 @@ class ZonikMediaService : MediaLibraryService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = mediaLibrarySession?.player
         savePlaybackState(player)
-        // On TV, always stop when app exits (no background playback)
-        val isTv = packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
-            || packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TELEVISION)
-        if (isTv || player == null || !player.playWhenReady || player.mediaItemCount == 0) {
+        // Swiping the task away is not a stop command, and TV is no different from the phone:
+        // a mediaPlayback foreground service is exactly the component meant to outlive its
+        // activity. Only an idle session gets torn down.
+        //
+        // playWhenReady alone is not "still playing" — ExoPlayer leaves it true when the queue
+        // runs out, so a finished album would look active and keep the service alive forever.
+        // isPlaying is the opposite mistake: it goes false during a mid-track rebuffer, which
+        // would kill the music on a network hiccup.
+        val stillPlaying = player != null
+            && player.playWhenReady
+            && player.mediaItemCount > 0
+            && player.playbackState != androidx.media3.common.Player.STATE_ENDED
+            && player.playbackState != androidx.media3.common.Player.STATE_IDLE
+        if (!stillPlaying) {
             player?.stop()
             stopSelf()
         }
@@ -464,6 +490,7 @@ class ZonikMediaService : MediaLibraryService() {
     override fun onDestroy() {
         savePlaybackState(mediaLibrarySession?.player)
         stopScrobblePoll()
+        settingsScope.cancel()
         scrobbleMainScope.cancel()
         scrobbleIoScope.cancel()
         scrobblePlayer = null
@@ -587,17 +614,17 @@ class ZonikMediaService : MediaLibraryService() {
     }
 
     private fun buildStreamUrlForTrack(trackId: String): String {
-        val config = runBlocking { settingsRepository.serverConfig.first() }
+        val config = cachedServerConfig ?: runBlocking { settingsRepository.serverConfig.first() }
             ?: return "http://localhost/rest/stream.view?id=$trackId"
         val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
         val token = md5("${config.apiKey}$salt")
-        // Apply smart bitrate based on network type
-        val connectivityManager = getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
-        val isWifi = capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
-        val bitrate = runBlocking {
-            if (isWifi) settingsRepository.wifiBitrate.first()
-            else settingsRepository.cellularBitrate.first()
+        // Apply smart bitrate based on network type. isUnmeteredNetwork() counts Ethernet and
+        // anything the system marks unmetered — a wired Google TV reports no WIFI transport and
+        // used to get the cellular bitrate on a gigabit link.
+        val bitrate = if (isUnmeteredNetwork()) {
+            cachedWifiBitrate ?: runBlocking { settingsRepository.wifiBitrate.first() }
+        } else {
+            cachedCellularBitrate ?: runBlocking { settingsRepository.cellularBitrate.first() }
         }
         val bitrateParam = if (bitrate > 0) "&maxBitRate=$bitrate" else ""
         return "${config.url.trimEnd('/')}/rest/stream.view?id=$trackId${bitrateParam}&estimateContentLength=true&u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp"
@@ -778,6 +805,32 @@ class ZonikMediaService : MediaLibraryService() {
             .build()
     }
 
+    /**
+     * Positional stand-in for a track ID with no local row. Sync is manual, so the DB lags the
+     * server; dropping the item instead would slide every later index — and the requested start
+     * index with it. It still plays: the stream URL only needs the ID, and the controller's own
+     * queue holds the full Track for display.
+     */
+    private fun buildFallbackMediaItem(trackId: String): MediaItem {
+        val streamUrl = buildStreamUrlForTrack(trackId)
+        return MediaItem.Builder()
+            .setMediaId(trackId)
+            .setUri(streamUrl)
+            .setRequestMetadata(
+                MediaItem.RequestMetadata.Builder()
+                    .setMediaUri(Uri.parse(streamUrl))
+                    .build()
+            )
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setIsBrowsable(false)
+                    .setIsPlayable(true)
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                    .build()
+            )
+            .build()
+    }
+
     private fun albumToMediaItem(album: Album): MediaItem =
         buildBrowsableItem(
             id = "$ALBUM_PREFIX${album.id}",
@@ -840,12 +893,9 @@ class ZonikMediaService : MediaLibraryService() {
                 val savedPosition = runBlocking { settingsRepository.lastQueuePositionMs.first() }
 
                 if (savedTrackIds.isNotEmpty()) {
-                    // Batch lookup, then reorder to match saved queue order
-                    val tracks = runBlocking {
-                        val entities = database.trackDao().getByIds(savedTrackIds)
-                        val entityMap = entities.associateBy { it.id }
-                        savedTrackIds.mapNotNull { id -> entityMap[id]?.toDomain() }
-                    }
+                    // Batch lookup; getTracksByIds does the reorder back to saved queue order
+                    // and chunks the IN() so a long queue can't blow SQLite's variable limit.
+                    val tracks = runBlocking { libraryRepository.getTracksByIds(savedTrackIds) }
                     if (tracks.isNotEmpty()) {
                         val startIndex = savedIndex.coerceIn(0, tracks.size - 1)
                         com.zonik.app.data.DebugLog.d("MediaService", "Resuming: ${tracks.size} tracks, index=$startIndex, position=${savedPosition}ms")
@@ -1271,64 +1321,90 @@ class ZonikMediaService : MediaLibraryService() {
                 if (trackIds.isNullOrEmpty()) {
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE))
                 }
+                val startPaused = args.getBoolean("start_paused", false)
                 com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: ${trackIds.size} tracks, startIndex=$startIndex")
-                try {
-                    val tracks = runBlocking {
-                        trackIds.mapNotNull { id -> database.trackDao().getById(id)?.toDomain() }
-                    }
-                    if (tracks.isEmpty()) {
-                        return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE))
-                    }
-                    val mediaItems = tracks.map { buildFullMediaItem(it) }
-                    val startPaused = args.getBoolean("start_paused", false)
-                    val player = session.player
-                    if (startPaused) player.playWhenReady = false
-                    player.setMediaItems(mediaItems, startIndex, 0)
-                    player.prepare()
-                    if (!startPaused) player.play()
-                    com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: set ${mediaItems.size} items, playing from $startIndex${if (startPaused) " (paused)" else ""}")
 
-                    // Pre-cache upcoming tracks in background after playback starts
-                    val factory = cacheDataSourceFactory
-                    if (factory != null && networkAvailable) {
-                        preCacheJob?.cancel()
-                        preCachingInProgress.clear()
-                        preCacheJob = preCacheScope.launch {
-                            val readAhead = settingsRepository.cacheReadAhead.first()
-                            if (readAhead <= 0) return@launch
-                            // Cache from startIndex+1 onward (current track streams via CacheDataSource which auto-caches)
-                            val preCacheCount = minOf(readAhead, tracks.size - startIndex - 1)
-                            for (i in 1..preCacheCount) {
-                                if (isPlayerBuffering) break // Yield to active playback
-                                if (!networkAvailable) break // Don't burn retries during outage
-                                val idx = startIndex + i
-                                if (idx >= tracks.size) break
-                                val track = tracks[idx]
-                                val streamUrl = buildStreamUrlForTrack(track.id)
-                                val streamUri = android.net.Uri.parse(streamUrl)
-                                val cacheKey = cacheKeyForUri(streamUri) ?: track.id
-                                if (simpleCache.getCachedBytes(cacheKey, 0, Long.MAX_VALUE) > 0) continue
-                                if (!preCachingInProgress.add(cacheKey)) continue
-                                try {
-                                    com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: pre-caching track $i/$preCacheCount ($cacheKey)")
-                                    val dataSpec = DataSpec(streamUri)
-                                    val dataSource = factory.createDataSource()
-                                    CacheWriter(dataSource, dataSpec, null, null).cache()
-                                    com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: cached $cacheKey")
-                                    preCachingInProgress.remove(cacheKey)
-                                } catch (e: Exception) {
-                                    preCachingInProgress.remove(cacheKey)
-                                    if (e is kotlinx.coroutines.CancellationException) throw e
-                                    com.zonik.app.data.DebugLog.w("MediaService", "PLAY_TRACKS: pre-cache failed: ${e.message}")
+                // onCustomCommand arrives on the player's application thread — the main thread —
+                // and the player is confined to it. Resolving the queue here meant one blocking
+                // Room query plus two blocking DataStore reads per track, so pressing play on a
+                // 100-track mix froze the UI for a second or more. Resolve on IO, return a
+                // pending future, and touch the player only after coming back to main.
+                val future = SettableFuture.create<SessionResult>()
+                // Supersede any resolve still in flight: the newest play request is the one the
+                // user is waiting on, and abandoning the older one also drops its remaining DB
+                // and URL-signing work instead of racing it onto the player.
+                playTracksJob?.cancel()
+                playTracksJob = scrobbleMainScope.launch {
+                    try {
+                        val mediaItems = withContext(Dispatchers.IO) {
+                            val byId = libraryRepository.getTracksByIds(trackIds).associateBy { it.id }
+                            // One item per requested ID. Silently dropping IDs with no local row
+                            // used to slide every later index — and startIndex with it — so on an
+                            // album with one unscanned track, tapping track 6 started track 7.
+                            trackIds.map { id ->
+                                byId[id]?.let { buildFullMediaItem(it) } ?: buildFallbackMediaItem(id)
+                            }
+                        }
+                        // withContext returning is not itself a cancellation check for what
+                        // follows, so this is what actually keeps a superseded resolve off the
+                        // player.
+                        ensureActive()
+                        val safeStart = startIndex.coerceIn(0, mediaItems.size - 1)
+                        val player = session.player
+                        if (startPaused) player.playWhenReady = false
+                        player.setMediaItems(mediaItems, safeStart, 0)
+                        player.prepare()
+                        if (!startPaused) player.play()
+                        com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: set ${mediaItems.size} items, playing from $safeStart${if (startPaused) " (paused)" else ""}")
+
+                        // Pre-cache upcoming tracks in background after playback starts
+                        val factory = cacheDataSourceFactory
+                        if (factory != null && networkAvailable) {
+                            preCacheJob?.cancel()
+                            preCachingInProgress.clear()
+                            preCacheJob = preCacheScope.launch {
+                                val readAhead = settingsRepository.cacheReadAhead.first()
+                                if (readAhead <= 0) return@launch
+                                // Cache from safeStart+1 onward (current track streams via CacheDataSource which auto-caches)
+                                val preCacheCount = minOf(readAhead, trackIds.size - safeStart - 1)
+                                for (i in 1..preCacheCount) {
+                                    if (isPlayerBuffering) break // Yield to active playback
+                                    if (!networkAvailable) break // Don't burn retries during outage
+                                    val idx = safeStart + i
+                                    if (idx >= trackIds.size) break
+                                    val id = trackIds[idx]
+                                    val streamUrl = buildStreamUrlForTrack(id)
+                                    val streamUri = android.net.Uri.parse(streamUrl)
+                                    val cacheKey = cacheKeyForUri(streamUri) ?: id
+                                    if (simpleCache.getCachedBytes(cacheKey, 0, Long.MAX_VALUE) > 0) continue
+                                    if (!preCachingInProgress.add(cacheKey)) continue
+                                    try {
+                                        com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: pre-caching track $i/$preCacheCount ($cacheKey)")
+                                        val dataSpec = DataSpec(streamUri)
+                                        val dataSource = factory.createDataSource()
+                                        CacheWriter(dataSource, dataSpec, null, null).cache()
+                                        com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: cached $cacheKey")
+                                        preCachingInProgress.remove(cacheKey)
+                                    } catch (e: Exception) {
+                                        preCachingInProgress.remove(cacheKey)
+                                        if (e is kotlinx.coroutines.CancellationException) throw e
+                                        com.zonik.app.data.DebugLog.w("MediaService", "PLAY_TRACKS: pre-cache failed: ${e.message}")
+                                    }
                                 }
                             }
                         }
+                        future.set(SessionResult(SessionResult.RESULT_SUCCESS))
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Superseded by a newer request — report a skip rather than handing the
+                        // controller a cancelled future.
+                        future.set(SessionResult(SessionResult.RESULT_INFO_SKIPPED))
+                        throw e
+                    } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.e("MediaService", "PLAY_TRACKS failed", e)
+                        future.set(SessionResult(SessionResult.RESULT_ERROR_IO))
                     }
-                } catch (e: Exception) {
-                    com.zonik.app.data.DebugLog.e("MediaService", "PLAY_TRACKS failed", e)
-                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_IO))
                 }
-                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                return future
             }
 
             val trackId = resolveCurrentTrackId(session) ?: return Futures.immediateFuture(

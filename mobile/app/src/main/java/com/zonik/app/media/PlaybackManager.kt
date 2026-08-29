@@ -663,16 +663,23 @@ class PlaybackManager @Inject constructor(
         if (mediaIds.isEmpty()) return
         val currentIndex = ctrl.currentMediaItemIndex
         scope.launch {
-            val tracks = libraryRepository.getTracksByIds(mediaIds)
-            if (tracks.isNotEmpty()) {
-                _queue.value = tracks
-                // setCurrentTrack calls persistPlaybackState which accesses controller (main thread only)
-                withContext(Dispatchers.Main) {
-                    if (currentIndex in tracks.indices) {
-                        setCurrentTrack(tracks[currentIndex])
+            // `scope` has no SupervisorJob, so an uncaught throw here would cancel every other
+            // collector this manager owns (bitrate, server config, adaptive settings) for the
+            // rest of the process.
+            try {
+                val tracks = libraryRepository.getTracksByIds(mediaIds)
+                if (tracks.isNotEmpty()) {
+                    _queue.value = tracks
+                    // setCurrentTrack calls persistPlaybackState which accesses controller (main thread only)
+                    withContext(Dispatchers.Main) {
+                        if (currentIndex in tracks.indices) {
+                            setCurrentTrack(tracks[currentIndex])
+                        }
                     }
+                    DebugLog.d("Playback", "Synced queue from player: ${tracks.size} tracks, index=$currentIndex")
                 }
-                DebugLog.d("Playback", "Synced queue from player: ${tracks.size} tracks, index=$currentIndex")
+            } catch (e: Exception) {
+                DebugLog.w("Playback", "Queue sync from player failed: ${e.message}")
             }
         }
     }
@@ -681,17 +688,15 @@ class PlaybackManager @Inject constructor(
         return cachedServerConfig
     }
 
+    /**
+     * Bitrate for URLs built *here* — Cast, playNext and addToQueue. The queue the service
+     * actually plays is built by [ZonikMediaService.buildStreamUrlForTrack], which resolves
+     * the same way via [isUnmeteredNetwork].
+     */
     private fun getMaxBitRate(): Int {
         // Use degraded bitrate if connection is poor
         bitrateOverride?.let { return it }
-
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork
-        val capabilities = connectivityManager.getNetworkCapabilities(network)
-
-        val isWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-
-        return if (isWifi) cachedWifiBitrate else cachedCellularBitrate
+        return if (context.isUnmeteredNetwork()) cachedWifiBitrate else cachedCellularBitrate
     }
 
     private fun degradeBitrate() {
@@ -711,10 +716,6 @@ class PlaybackManager @Inject constructor(
             DebugLog.d("Playback", "Degraded bitrate to ${newBitrate}kbps due to slow connection")
             _playbackError.value = "Slow connection — reduced to ${newBitrate}kbps"
         }
-    }
-
-    fun getAudioSessionId(): Int {
-        return ZonikMediaService.sharedAudioSessionId
     }
 
     fun applyEqualizerSettings(enabled: Boolean, preset: Int, bandLevels: String?) {

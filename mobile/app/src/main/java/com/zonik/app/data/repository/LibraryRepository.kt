@@ -64,9 +64,22 @@ class LibraryRepository @Inject constructor(
     suspend fun getTrackById(id: String): Track? =
         database.trackDao().getById(id)?.toDomain()
 
+    /**
+     * Batch lookup that preserves the caller's ID order — the DAO's `IN (:ids)` returns rows in
+     * table order, not argument order, so the remap below is load-bearing for anything that
+     * plays a queue. IDs with no local row are dropped.
+     *
+     * Chunked because Room binds one host variable per id and SQLite caps that at 999 on the
+     * older API levels this app still supports.
+     */
     suspend fun getTracksByIds(ids: List<String>): List<Track> {
-        val entities = database.trackDao().getByIds(ids)
-        val entityMap = entities.associateBy { it.id }
+        if (ids.isEmpty()) return emptyList()
+        val entityMap = HashMap<String, TrackEntity>(ids.size)
+        // distinct() because a queue may legitimately hold the same track twice; the final
+        // mapNotNull still emits it at every position it was asked for.
+        ids.distinct().chunked(900).forEach { chunk ->
+            database.trackDao().getByIds(chunk).forEach { entityMap[it.id] = it }
+        }
         return ids.mapNotNull { id -> entityMap[id]?.toDomain() }
     }
 

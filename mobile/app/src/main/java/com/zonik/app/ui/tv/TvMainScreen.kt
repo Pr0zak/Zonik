@@ -3,21 +3,13 @@ package com.zonik.app.ui.tv
 import android.graphics.drawable.BitmapDrawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -27,11 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,8 +28,6 @@ import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LibraryMusic
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PlayArrow
@@ -56,19 +41,15 @@ import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,11 +57,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.palette.graphics.Palette
@@ -92,12 +74,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zonik.app.data.repository.LibraryRepository
 import com.zonik.app.media.PlaybackManager
-import com.zonik.core.model.Album
 import com.zonik.core.model.Track
 import com.zonik.app.ui.components.CoverArt
 import com.zonik.app.ui.theme.ZonikColors
 import com.zonik.app.ui.theme.ZonikShapes
-import com.zonik.app.ui.util.formatDuration
 import com.zonik.app.ui.util.formatDurationMs
 import com.zonik.app.ui.util.tvFocusHighlight
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -108,7 +88,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -128,26 +107,12 @@ class TvViewModel @Inject constructor(
     // Playback state (delegated from PlaybackManager)
     val currentTrack: StateFlow<Track?> = playbackManager.currentTrack
     val isPlaying: StateFlow<Boolean> = playbackManager.isPlaying
-    val queue: StateFlow<List<Track>> = playbackManager.queue
 
-    // Library data
-    val albums: StateFlow<List<Album>> = libraryRepository.getAlbums()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
+    // Library data. Only what the Home screen actually reads — the album/track/recent
+    // feeds went with the browse tabs that were never wired up, and the recent-albums
+    // collector was querying the DB on every TV launch to fill a list nothing rendered.
     val tracks: StateFlow<List<Track>> = libraryRepository.getAllTracks()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val recentTracks: StateFlow<List<Track>> = libraryRepository.getRecentTracks(30)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    private val _recentAlbums = MutableStateFlow<List<Album>>(emptyList())
-    val recentAlbums: StateFlow<List<Album>> = _recentAlbums.asStateFlow()
-
-    init {
-        viewModelScope.launch {
-            libraryRepository.getRecentAlbums(20).collect { _recentAlbums.value = it }
-        }
-    }
 
     fun shuffleMix() {
         viewModelScope.launch {
@@ -242,82 +207,6 @@ class TvViewModel @Inject constructor(
         _isStarred.value = track.starred
     }
 
-    // Beat detection via Visualizer
-    private val _bassLevel = MutableStateFlow(0f)
-    val bassLevel: StateFlow<Float> = _bassLevel.asStateFlow()
-    private val _fftMagnitudes = MutableStateFlow(FloatArray(32))
-    val fftMagnitudes: StateFlow<FloatArray> = _fftMagnitudes.asStateFlow()
-    private var visualizer: android.media.audiofx.Visualizer? = null
-
-    private var beatJob: kotlinx.coroutines.Job? = null
-
-    fun startVisualizer() {
-        if (visualizer != null || beatJob?.isActive == true) return
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                kotlinx.coroutines.delay(2000)
-                val sessionId = playbackManager.getAudioSessionId()
-                com.zonik.app.data.DebugLog.d("TvVM", "Got audio session ID: $sessionId")
-                if (sessionId != 0) {
-                    val viz = android.media.audiofx.Visualizer(sessionId)
-                    viz.captureSize = 128
-                    viz.setDataCaptureListener(object : android.media.audiofx.Visualizer.OnDataCaptureListener {
-                        override fun onWaveFormDataCapture(v: android.media.audiofx.Visualizer?, waveform: ByteArray?, rate: Int) {}
-                        override fun onFftDataCapture(v: android.media.audiofx.Visualizer?, fft: ByteArray?, rate: Int) {
-                            fft ?: return
-                            val n = fft.size / 2
-                            // Bass (bins 1-4) + Highs (bins 20-30), skip mids
-                            var bass = 0f
-                            for (i in 1..4) {
-                                val re = fft[2 * i].toFloat()
-                                val im = if (2 * i + 1 < fft.size) fft[2 * i + 1].toFloat() else 0f
-                                bass += kotlin.math.sqrt(re * re + im * im)
-                            }
-                            var highs = 0f
-                            for (i in (n * 2 / 3)..(n - 1).coerceAtLeast(1)) {
-                                val re = fft[2 * i].toFloat()
-                                val im = if (2 * i + 1 < fft.size) fft[2 * i + 1].toFloat() else 0f
-                                highs += kotlin.math.sqrt(re * re + im * im)
-                            }
-                            val combined = (bass / 400f + highs / 600f).coerceIn(0f, 1f)
-                            _bassLevel.value = combined
-                            // Extract 32 frequency magnitudes for spectrum
-                            val mags = FloatArray(32)
-                            for (bin in 0 until 32) {
-                                val idx = 1 + bin * (n - 1) / 32
-                                val re = fft[2 * idx].toFloat()
-                                val im = if (2 * idx + 1 < fft.size) fft[2 * idx + 1].toFloat() else 0f
-                                mags[bin] = (kotlin.math.sqrt(re * re + im * im) / 128f).coerceIn(0f, 1f)
-                            }
-                            _fftMagnitudes.value = mags
-                        }
-                    }, android.media.audiofx.Visualizer.getMaxCaptureRate() / 2, false, true)
-                    viz.enabled = true
-                    visualizer = viz
-                    com.zonik.app.data.DebugLog.d("TvVM", "Visualizer started (session=$sessionId)")
-                    return@launch
-                }
-            } catch (e: Exception) {
-                com.zonik.app.data.DebugLog.w("TvVM", "Visualizer failed: ${e.message}")
-            }
-            // Visualizer unavailable — particles drift without beat reactivity
-            com.zonik.app.data.DebugLog.d("TvVM", "Visualizer unavailable, no beat reactivity")
-        }
-    }
-
-    fun stopVisualizer() {
-        visualizer?.release()
-        visualizer = null
-        beatJob?.cancel()
-        beatJob = null
-        _bassLevel.value = 0f
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        stopVisualizer()
-    }
-
     fun toggleStar() {
         val track = currentTrack.value ?: return
         viewModelScope.launch {
@@ -386,12 +275,6 @@ private enum class TvTab(val label: String) {
     SETTINGS("Settings")
 }
 
-private enum class LibrarySubTab(val label: String) {
-    ALBUMS("Albums"),
-    TRACKS("Tracks"),
-    FAVORITES("Favorites")
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Colors
 // ──────────────────────────────────────────────────────────────────────────────
@@ -413,314 +296,102 @@ fun TvMainScreen(
     val isPlaying by viewModel.isPlaying.collectAsState()
 
     var selectedTab by remember { mutableStateOf(TvTab.HOME) }
-    var isScreensaver by remember { mutableStateOf(false) }
-    var lastInteraction by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    // Screensaver timer: activate after 30s idle when playing
-    LaunchedEffect(lastInteraction, isPlaying, selectedTab) {
-        if (isPlaying && selectedTab == TvTab.HOME && !isScreensaver) {
-            delay(10_000)
-            isScreensaver = true
-        }
+    BackHandler(enabled = selectedTab != TvTab.HOME) {
+        selectedTab = TvTab.HOME
     }
 
-    BackHandler(enabled = isScreensaver || selectedTab != TvTab.HOME) {
-        if (isScreensaver) {
-            isScreensaver = false
-            lastInteraction = System.currentTimeMillis()
-        } else {
-            selectedTab = TvTab.HOME
-        }
-    }
-
-    // Ambient colors from album art palette
+    // Ambient background tint pulled from the current album art.
     var ambientDominant by remember { mutableStateOf(TvBackground) }
-    var ambientAccent by remember { mutableStateOf(Color(0xFF7C4DFF)) }
-    var ambientMuted by remember { mutableStateOf(Color(0xFF534AB7)) }
     val animatedBg by animateColorAsState(ambientDominant, tween(1200), label = "bg")
-    val animatedAccent by animateColorAsState(ambientAccent, tween(1200), label = "bgAcc")
-    val animatedMuted by animateColorAsState(ambientMuted, tween(1200), label = "bgMut")
     val paletteCtx = LocalContext.current
     LaunchedEffect(currentTrack?.coverArt) {
         val coverArtId = currentTrack?.coverArt ?: return@LaunchedEffect
-        try {
-            val request = ImageRequest.Builder(paletteCtx)
-                .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=300")
-                .allowHardware(false)
-                .build()
-            val result = paletteCtx.imageLoader.execute(request)
-            if (result is SuccessResult) {
-                val bitmap = (result.drawable as? BitmapDrawable)?.bitmap ?: return@LaunchedEffect
-                val palette = Palette.from(bitmap).generate()
-                ambientDominant = Color(palette.getDarkMutedColor(0xFF151320.toInt()))
-                ambientAccent = Color(palette.getVibrantColor(0xFF7C4DFF.toInt()))
-                ambientMuted = Color(palette.getLightMutedColor(palette.getMutedColor(0xFF534AB7.toInt())))
+        // Palette quantizes the whole bitmap synchronously, and a LaunchedEffect body runs on
+        // the composition's dispatcher — i.e. the main thread, which on a TV box is also the
+        // thread the media session dispatches commands on. Pressing play sets the current track
+        // first, so this used to fire and stall the very frame the user was waiting for.
+        val tint = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                val request = ImageRequest.Builder(paletteCtx)
+                    .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=300")
+                    .allowHardware(false)
+                    .build()
+                val result = paletteCtx.imageLoader.execute(request)
+                val bitmap = ((result as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap
+                    ?: return@withContext null
+                Color(Palette.from(bitmap).generate().getDarkMutedColor(0xFF151320.toInt()))
+            } catch (_: Exception) {
+                null
             }
-        } catch (_: Exception) {}
+        }
+        if (tint != null) ambientDominant = tint
+    }
+
+    // Hoisted out of the modifier chain: an inline Brush would be a fresh instance
+    // (and a cold shader cache) on every recomposition, and D-pad key repeat
+    // recomposes this screen ~25 times a second.
+    val background = remember(animatedBg, currentTrack != null) {
+        if (currentTrack != null) Brush.radialGradient(listOf(animatedBg.copy(alpha = 0.6f), TvBackground))
+        else Brush.verticalGradient(listOf(TvBackground, TvBackground))
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                if (currentTrack != null)
-                    Brush.radialGradient(listOf(animatedBg.copy(alpha = 0.6f), TvBackground))
-                else TvBackground.let { Brush.verticalGradient(listOf(it, it)) }
-            )
+            .background(background)
             .onPreviewKeyEvent { keyEvent ->
-                // Consume all key events in screensaver (both DOWN and UP)
-                if (isScreensaver && keyEvent.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
-                    if (keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
-                        isScreensaver = false
-                        lastInteraction = System.currentTimeMillis()
-                    }
-                    return@onPreviewKeyEvent true // consume both DOWN and UP
-                }
-                if (keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_DOWN) {
-                    if (isScreensaver) {
-                        com.zonik.app.data.DebugLog.d("TV-Key", "Screensaver key: code=${keyEvent.nativeKeyEvent.keyCode} name=${android.view.KeyEvent.keyCodeToString(keyEvent.nativeKeyEvent.keyCode)}")
-                        when (keyEvent.nativeKeyEvent.keyCode) {
-                            android.view.KeyEvent.KEYCODE_DPAD_LEFT,
-                            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                                viewModel.skipPrevious()
-                                return@onPreviewKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT,
-                            android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> {
-                                viewModel.skipNext()
-                                return@onPreviewKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                            android.view.KeyEvent.KEYCODE_ENTER,
-                            android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
-                            android.view.KeyEvent.KEYCODE_BUTTON_SELECT,
-                            android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                                viewModel.togglePlayPause()
-                                return@onPreviewKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_DPAD_UP,
-                            android.view.KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                // Ignore up/down in screensaver
-                                return@onPreviewKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
-                                if (!isPlaying) viewModel.togglePlayPause()
-                                return@onPreviewKeyEvent true
-                            }
-                            android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                                if (isPlaying) viewModel.togglePlayPause()
-                                return@onPreviewKeyEvent true
-                            }
-                            else -> return@onPreviewKeyEvent true // consume all other keys in screensaver
-                        }
-                    }
-                    lastInteraction = System.currentTimeMillis()
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { viewModel.togglePlayPause(); true }
-                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> { if (!isPlaying) viewModel.togglePlayPause(); true }
-                        android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> { if (isPlaying) viewModel.togglePlayPause(); true }
-                        android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> { viewModel.skipNext(); true }
-                        android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { viewModel.skipPrevious(); true }
+                // Transport keys only. Every D-pad key must fall through to Compose's
+                // focus system, and a held key must act once rather than ~25 times.
+                if (keyEvent.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                if (keyEvent.nativeKeyEvent.repeatCount != 0) {
+                    return@onPreviewKeyEvent when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
+                        android.view.KeyEvent.KEYCODE_MEDIA_NEXT,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> true
                         else -> false
                     }
-                } else false
+                }
+                when (keyEvent.nativeKeyEvent.keyCode) {
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { viewModel.togglePlayPause(); true }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> { if (!isPlaying) viewModel.togglePlayPause(); true }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> { if (isPlaying) viewModel.togglePlayPause(); true }
+                    android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> { viewModel.skipNext(); true }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { viewModel.skipPrevious(); true }
+                    else -> false
+                }
             }
     ) {
-        if (!isScreensaver) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            // Left sidebar navigation
+        // 48dp/27dp is the 5% overscan margin every TV panel is allowed to eat.
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 48.dp, vertical = 27.dp)
+        ) {
             TvSidebar(
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it }
             )
 
-            // Content + playback bar column
-            Column(modifier = Modifier.weight(1f)) {
-                // Content area
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 48.dp, top = 27.dp)
-                ) {
-                    when (selectedTab) {
-                        TvTab.HOME -> TvHomeContent(
-                            viewModel = viewModel,
-                            onAlbumClick = onNavigateToAlbum,
-                            ambientColor = animatedBg
-                        )
-                        TvTab.SETTINGS -> TvSettingsContent(
-                            viewModel = viewModel,
-                            onDisconnected = onDisconnected
-                        )
-                    }
-                }
-
-                // (Playback bar removed — Now Playing card has controls + progress)
-            }
-        }
-        } // end if (!isScreensaver)
-
-        // Screensaver — replaces all content (prevents input leaking to buttons behind)
-        if (isScreensaver && currentTrack != null) {
-            // Request RECORD_AUDIO permission for Visualizer
-            val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-                contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-            ) { granted ->
-                if (granted) viewModel.startVisualizer()
-            }
-            LaunchedEffect(Unit) {
-                val ctx = paletteCtx
-                val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
-                    ctx, android.Manifest.permission.RECORD_AUDIO
-                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                if (hasPermission) {
-                    viewModel.startVisualizer()
-                } else {
-                    permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                }
-            }
-            androidx.compose.runtime.DisposableEffect(Unit) {
-                onDispose { viewModel.stopVisualizer() }
-            }
-            val bassLevel by viewModel.bassLevel.collectAsState()
-            val fftMagnitudes by viewModel.fftMagnitudes.collectAsState()
-            TvScreensaver(
-                track = currentTrack!!,
-                isPlaying = isPlaying,
-                viewModel = viewModel,
-                dominantColor = animatedBg,
-                accentColor = animatedAccent,
-                mutedColor = animatedMuted,
-                bassLevel = bassLevel,
-                fftMagnitudes = fftMagnitudes
-            )
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Screensaver
-// ──────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TvScreensaver(
-    track: Track,
-    isPlaying: Boolean,
-    viewModel: TvViewModel,
-    dominantColor: Color,
-    accentColor: Color,
-    mutedColor: Color = Color(0xFF534AB7),
-    bassLevel: Float = 0f,
-    fftMagnitudes: FloatArray = FloatArray(32)
-) {
-    val particleColors = listOf(accentColor, mutedColor, dominantColor)
-
-    // Slow album art scale animation
-    val infiniteTransition = rememberInfiniteTransition(label = "ssAnim")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "ssScale"
-    )
-
-    // Position polling
-    var positionMs by remember { mutableLongStateOf(0L) }
-    var durationMs by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(isPlaying, track) {
-        while (true) {
-            positionMs = viewModel.getCurrentPosition()
-            durationMs = viewModel.getDuration()
-            delay(1000L)
-        }
-    }
-
-    // (Particle system composable handles all particle logic)
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .focusable()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        dominantColor.copy(alpha = 0.9f),
-                        Color(0xFF0A0910)
-                    )
-                )
-            )
-    ) {
-        // Advanced particle system with beat reactivity + visual effects
-        ParticleSystem(
-            bassLevel = bassLevel,
-            fftMagnitudes = fftMagnitudes,
-            colors = particleColors,
-            modifier = Modifier.fillMaxSize(),
-            centerX = 0.5f,
-            centerY = 0.35f
-        )
-
-        // Centered content
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 48.dp, vertical = 27.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            // Album art with slow breathing scale
-            CoverArt(
-                coverArtId = track.coverArt,
-                contentDescription = track.title,
+            Box(
                 modifier = Modifier
-                    .size(300.dp)
-                    .graphicsLayer(scaleX = scale, scaleY = scale)
-                    .clip(ZonikShapes.coverArtLargeShape),
-                size = 600
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            // Track info
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.headlineLarge,
-                color = Color.White,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = track.artist,
-                style = MaterialTheme.typography.titleLarge,
-                color = Color.White.copy(alpha = 0.7f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            // Progress bar
-            Spacer(modifier = Modifier.height(24.dp))
-            val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs) else 0f
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth(0.5f)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp)),
-                color = accentColor,
-                trackColor = Color.White.copy(alpha = 0.1f)
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(0.5f),
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(start = 24.dp)
             ) {
-                Text(formatDurationMs(positionMs), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.5f))
-                Text(formatDurationMs(durationMs), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.5f))
+                when (selectedTab) {
+                    TvTab.HOME -> TvHomeContent(
+                        viewModel = viewModel,
+                        onAlbumClick = onNavigateToAlbum,
+                        ambientColor = animatedBg
+                    )
+                    TvTab.SETTINGS -> TvSettingsContent(
+                        viewModel = viewModel,
+                        onDisconnected = onDisconnected
+                    )
+                }
             }
         }
     }
@@ -772,8 +443,7 @@ private fun TvSidebar(
                         else Color.Transparent
                     )
                     .tvFocusHighlight(RoundedCornerShape(12.dp))
-                    .clickable { onTabSelected(tab) }
-                    .focusable(),
+                    .clickable { onTabSelected(tab) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -806,9 +476,12 @@ private fun TvHomeContent(
 ) {
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
-    val recentTracks by viewModel.recentTracks.collectAsState()
-    val recentAlbums by viewModel.recentAlbums.collectAsState()
     val scrollState = rememberScrollState()
+
+    // Nothing was focused at launch, so the first press of the remote was always
+    // spent blindly acquiring focus instead of doing something.
+    val firstTile = remember { FocusRequester() }
+    LaunchedEffect(Unit) { firstTile.requestFocus() }
 
     Column(
         modifier = Modifier
@@ -834,8 +507,8 @@ private fun TvHomeContent(
                         ZonikShapes.buttonShape
                     )
                     .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleMix() }
-                    .focusable(),
+                    .focusRequester(firstTile)
+                    .clickable { viewModel.shuffleMix() },
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -857,8 +530,7 @@ private fun TvHomeContent(
                     .background(TvCardBackground, ZonikShapes.buttonShape)
                     .border(1.dp, ZonikColors.gold.copy(alpha = 0.3f), ZonikShapes.buttonShape)
                     .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleFavorites() }
-                    .focusable(),
+                    .clickable { viewModel.shuffleFavorites() },
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -887,8 +559,7 @@ private fun TvHomeContent(
                     .background(TvCardBackground, ZonikShapes.buttonShape)
                     .border(1.dp, ZonikColors.gold.copy(alpha = 0.3f), ZonikShapes.buttonShape)
                     .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleRecentlyAdded() }
-                    .focusable(),
+                    .clickable { viewModel.shuffleRecentlyAdded() },
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -909,8 +580,7 @@ private fun TvHomeContent(
                     .background(TvCardBackground, ZonikShapes.buttonShape)
                     .border(1.dp, ZonikColors.gold.copy(alpha = 0.3f), ZonikShapes.buttonShape)
                     .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleNewestByYear() }
-                    .focusable(),
+                    .clickable { viewModel.shuffleNewestByYear() },
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -1046,10 +716,22 @@ private fun TvHomeContent(
                     var positionMs by remember { mutableLongStateOf(0L) }
                     var durationMs by remember { mutableLongStateOf(0L) }
                     LaunchedEffect(isPlaying, currentTrack) {
-                        while (true) {
+                        positionMs = viewModel.getCurrentPosition()
+                        durationMs = viewModel.getDuration()
+                        // A just-transitioned item reports no duration until its source is
+                        // prepared. While paused nothing else re-reads, so a single sample
+                        // would leave the bar empty and the label at a garbage value forever.
+                        var settle = 0
+                        while (durationMs <= 0 && settle < 20) {
+                            delay(250L)
+                            settle++
                             positionMs = viewModel.getCurrentPosition()
                             durationMs = viewModel.getDuration()
+                        }
+                        while (isPlaying) {
                             delay(500L)
+                            positionMs = viewModel.getCurrentPosition()
+                            durationMs = viewModel.getDuration()
                         }
                     }
                     val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs) else 0f
@@ -1073,7 +755,9 @@ private fun TvHomeContent(
                             color = Color.White.copy(alpha = 0.5f)
                         )
                         Text(
-                            text = formatDurationMs(durationMs),
+                            // An unprepared item reports C.TIME_UNSET, which formats as a
+                            // seven-digit minute count.
+                            text = if (durationMs > 0) formatDurationMs(durationMs) else "--:--",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.5f)
                         )
@@ -1084,141 +768,6 @@ private fun TvHomeContent(
 
         // Bottom spacing for playback bar clearance
         Spacer(modifier = Modifier.height(80.dp))
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Library Tab
-// ──────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TvLibraryContent(
-    viewModel: TvViewModel,
-    onAlbumClick: (String) -> Unit
-) {
-    val albums by viewModel.albums.collectAsState()
-    val tracks by viewModel.tracks.collectAsState()
-    var subTab by remember { mutableStateOf(LibrarySubTab.ALBUMS) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(vertical = 16.dp)
-    ) {
-        // Sub-tab filter chips
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            LibrarySubTab.entries.forEach { tab ->
-                val isSelected = tab == subTab
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { subTab = tab },
-                    label = {
-                        Text(
-                            text = tab.label,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = ZonikColors.gradientStart,
-                        selectedLabelColor = Color.White,
-                        containerColor = TvCardBackground,
-                        labelColor = Color.White.copy(alpha = 0.7f)
-                    ),
-                    modifier = Modifier
-                        .tvFocusHighlight(ZonikShapes.buttonShape)
-                        .focusable()
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Grid content based on sub-tab
-        when (subTab) {
-            LibrarySubTab.ALBUMS -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(5),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(albums, key = { it.id }) { album ->
-                        TvAlbumGridCard(
-                            album = album,
-                            onClick = { onAlbumClick(album.id) }
-                        )
-                    }
-                }
-            }
-            LibrarySubTab.TRACKS -> {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(5),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(tracks, key = { it.id }) { track ->
-                        TvTrackGridCard(
-                            track = track,
-                            onClick = { viewModel.playTrack(track) }
-                        )
-                    }
-                }
-            }
-            LibrarySubTab.FAVORITES -> {
-                val favorites = tracks.filter { it.starred }
-                if (favorites.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "No favorites yet",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = Color.White.copy(alpha = 0.5f)
-                        )
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(5),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        contentPadding = PaddingValues(bottom = 80.dp),
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        items(favorites, key = { it.id }) { track ->
-                            TvTrackGridCard(
-                                track = track,
-                                onClick = { viewModel.playTrack(track) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Placeholder tabs
-// ──────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TvSearchPlaceholder() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = "Search coming soon",
-            style = MaterialTheme.typography.headlineMedium,
-            color = Color.White.copy(alpha = 0.5f)
-        )
     }
 }
 
@@ -1255,8 +804,9 @@ private fun TvSettingsContent(
                 syncState.lastSyncResult != null -> syncState.lastSyncResult!!
                 else -> "Sync tracks, albums, and artists from server"
             },
+            // No `enabled` guard: SyncManager.fullSync() already claims the sync slot atomically
+            // and returns early for a second caller, so a repeat press is a no-op anyway.
             onClick = { viewModel.syncNow() },
-            enabled = !syncState.isSyncing,
             isLoading = syncState.isSyncing
         )
 
@@ -1300,7 +850,6 @@ private fun TvSettingsButton(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    enabled: Boolean = true,
     isLoading: Boolean = false,
     tint: Color = Color.White
 ) {
@@ -1309,7 +858,12 @@ private fun TvSettingsButton(
             .fillMaxWidth()
             .background(TvCardBackground, ZonikShapes.cardShape)
             .tvFocusHighlight(ZonikShapes.cardShape)
-            .clickable(enabled = enabled, onClick = onClick)
+            // Never gate this with `clickable(enabled = …)`. Compose undelegates the clickable's
+            // focus target when enabled flips false, and detaching the *focused* node clears
+            // focus all the way to the root — so a row that disables itself on click takes the
+            // remote with it: highlight gone, D-pad position lost, and the root key handler
+            // silenced (key events only travel the active node's own ancestor chain).
+            .clickable(onClick = onClick)
             .padding(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1330,343 +884,3 @@ private fun TvSettingsButton(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Playback Bar
-// ──────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TvPlaybackBar(
-    track: Track,
-    isPlaying: Boolean,
-    viewModel: TvViewModel,
-    modifier: Modifier = Modifier
-) {
-    var positionMs by remember { mutableLongStateOf(0L) }
-    var durationMs by remember { mutableLongStateOf(0L) }
-
-    // Poll playback position
-    LaunchedEffect(isPlaying) {
-        while (true) {
-            positionMs = viewModel.getCurrentPosition()
-            durationMs = viewModel.getDuration()
-            delay(200L)
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(ZonikColors.glassBg)
-            .padding(bottom = 8.dp)
-    ) {
-        // Thin progress bar at top of playback bar
-        val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs) else 0f
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(Color.White.copy(alpha = 0.1f))
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(progress)
-                    .height(2.dp)
-                    .background(ZonikColors.gold)
-            )
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 48.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Cover art
-            CoverArt(
-                coverArtId = track.coverArt,
-                contentDescription = track.title,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(ZonikShapes.coverArtShape),
-                size = 100
-            )
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Track info
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = track.artist,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.6f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(modifier = Modifier.width(24.dp))
-
-            // Transport controls
-            IconButton(
-                onClick = { viewModel.skipPrevious() },
-                modifier = Modifier
-                    .size(40.dp)
-                    .tvFocusHighlight(CircleShape)
-                    .focusable()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SkipPrevious,
-                    contentDescription = "Previous",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            IconButton(
-                onClick = { viewModel.togglePlayPause() },
-                modifier = Modifier
-                    .size(48.dp)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(ZonikColors.gradientStart, ZonikColors.gradientEnd)
-                        ),
-                        CircleShape
-                    )
-                    .tvFocusHighlight(CircleShape)
-                    .focusable()
-            ) {
-                Icon(
-                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            IconButton(
-                onClick = { viewModel.skipNext() },
-                modifier = Modifier
-                    .size(40.dp)
-                    .tvFocusHighlight(CircleShape)
-                    .focusable()
-            ) {
-                Icon(
-                    imageVector = Icons.Default.SkipNext,
-                    contentDescription = "Next",
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(24.dp))
-
-            // Position / Duration
-            Text(
-                text = "${formatDurationMs(positionMs)} / ${formatDurationMs(durationMs)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.6f)
-            )
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Card Components
-// ──────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TvAlbumCard(
-    album: Album,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .clip(ZonikShapes.cardShape)
-            .background(TvCardBackground, ZonikShapes.cardShape)
-            .tvFocusHighlight(ZonikShapes.cardShape)
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(8.dp)
-    ) {
-        CoverArt(
-            coverArtId = album.coverArt,
-            contentDescription = album.name,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(144.dp)
-                .clip(ZonikShapes.coverArtShape),
-            size = 300
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = album.name,
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = album.artist,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.6f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun TvTrackCard(
-    track: Track,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .clip(ZonikShapes.cardShape)
-            .background(TvCardBackground, ZonikShapes.cardShape)
-            .tvFocusHighlight(ZonikShapes.cardShape)
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(8.dp)
-    ) {
-        CoverArt(
-            coverArtId = track.coverArt,
-            contentDescription = track.title,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(144.dp)
-                .clip(ZonikShapes.coverArtShape),
-            size = 300
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = track.title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = track.artist,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.6f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-@Composable
-private fun TvAlbumGridCard(
-    album: Album,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .clip(ZonikShapes.cardShape)
-            .background(TvCardBackground, ZonikShapes.cardShape)
-            .tvFocusHighlight(ZonikShapes.cardShape)
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(8.dp)
-    ) {
-        CoverArt(
-            coverArtId = album.coverArt,
-            contentDescription = album.name,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .clip(ZonikShapes.coverArtShape),
-            size = 300
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = album.name,
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = album.artist,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.6f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (album.year != null) {
-            Text(
-                text = album.year.toString(),
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.4f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun TvTrackGridCard(
-    track: Track,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .clip(ZonikShapes.cardShape)
-            .background(TvCardBackground, ZonikShapes.cardShape)
-            .tvFocusHighlight(ZonikShapes.cardShape)
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(8.dp)
-    ) {
-        CoverArt(
-            coverArtId = track.coverArt,
-            contentDescription = track.title,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(150.dp)
-                .clip(ZonikShapes.coverArtShape),
-            size = 300
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = track.title,
-            style = MaterialTheme.typography.bodyLarge,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Row(
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = track.artist,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            if (track.duration > 0) {
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = formatDuration(track.duration),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.4f)
-                )
-            }
-        }
-    }
-}

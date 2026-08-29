@@ -1,7 +1,6 @@
 package com.zonik.app
 
 import android.content.Intent
-import com.zonik.app.ui.util.isTvDevice
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.compose.setContent
@@ -163,23 +162,17 @@ class MainActivity : AppCompatActivity() {
         handleNowPlayingIntent(intent)
     }
 
-    @javax.inject.Inject lateinit var playbackManager: com.zonik.app.media.PlaybackManager
-
     override fun onStop() {
         super.onStop()
-        // On TV, stop playback when app goes to background (no background music on TV)
-        if (isTvDevice() && !isChangingConfigurations) {
-            if (playbackManager.isPlaying.value) {
-                playbackManager.togglePlayPause()
-            }
-        }
+        // Backgrounding leaves playback alone on TV, same as on the phone. A media-session
+        // foreground service is exactly the component meant to outlive the activity, so pressing
+        // HOME, summoning the Assistant, or letting the screensaver kick in keeps the music going.
     }
 
     override fun onDestroy() {
-        // On TV, fully stop service
-        if (isTvDevice()) {
-            stopService(android.content.Intent(this, com.zonik.app.media.ZonikMediaService::class.java))
-        }
+        // The media service is left running on TV as well. Tearing it down here cut the track off
+        // every time the launcher reclaimed the activity; the service's own onTaskRemoved stops it
+        // when the user actually dismisses the app and nothing is playing.
         super.onDestroy()
     }
 
