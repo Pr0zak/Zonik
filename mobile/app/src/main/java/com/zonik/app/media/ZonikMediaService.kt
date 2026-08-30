@@ -142,7 +142,7 @@ class ZonikMediaService : MediaLibraryService() {
         private const val ALBUM_PREFIX = "album:"
         private const val GENRE_PREFIX = "genre:"
         private const val PLAYLIST_PREFIX = "playlist:"
-        private const val TRACK_PREFIX = "track:"
+        private const val TRACK_PREFIX = TRACK_ID_PREFIX
 
         // Content style extras keys (Media3 / Android Auto)
         private const val CONTENT_STYLE_BROWSABLE_HINT =
@@ -808,10 +808,20 @@ class ZonikMediaService : MediaLibraryService() {
     /**
      * Positional stand-in for a track ID with no local row. Sync is manual, so the DB lags the
      * server; dropping the item instead would slide every later index — and the requested start
-     * index with it. It still plays: the stream URL only needs the ID, and the controller's own
-     * queue holds the full Track for display.
+     * index with it. It still plays: the stream URL only needs the ID.
+     *
+     * The display fields come from the caller when it has them (PLAY_TRACKS ships them beside
+     * the ids). Everything outside this process — notification, lock screen, Android Auto, Wear,
+     * the TV system transport — renders the session's metadata, so leaving them empty would show
+     * a nameless entry rather than merely a locally-unknown one.
      */
-    private fun buildFallbackMediaItem(trackId: String): MediaItem {
+    private fun buildFallbackMediaItem(
+        trackId: String,
+        title: String? = null,
+        artist: String? = null,
+        album: String? = null,
+        coverArt: String? = null,
+    ): MediaItem {
         val streamUrl = buildStreamUrlForTrack(trackId)
         return MediaItem.Builder()
             .setMediaId(trackId)
@@ -823,6 +833,10 @@ class ZonikMediaService : MediaLibraryService() {
             )
             .setMediaMetadata(
                 MediaMetadata.Builder()
+                    .setTitle(title?.takeIf { it.isNotBlank() } ?: "Unknown track")
+                    .setArtist(artist?.takeIf { it.isNotBlank() })
+                    .setAlbumTitle(album?.takeIf { it.isNotBlank() })
+                    .setArtworkUri(coverArt?.takeIf { it.isNotBlank() }?.let { coverArtUri(it) })
                     .setIsBrowsable(false)
                     .setIsPlayable(true)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
@@ -893,13 +907,16 @@ class ZonikMediaService : MediaLibraryService() {
                 val savedPosition = runBlocking { settingsRepository.lastQueuePositionMs.first() }
 
                 if (savedTrackIds.isNotEmpty()) {
-                    // Batch lookup; getTracksByIds does the reorder back to saved queue order
-                    // and chunks the IN() so a long queue can't blow SQLite's variable limit.
-                    val tracks = runBlocking { libraryRepository.getTracksByIds(savedTrackIds) }
-                    if (tracks.isNotEmpty()) {
-                        val startIndex = savedIndex.coerceIn(0, tracks.size - 1)
-                        com.zonik.app.data.DebugLog.d("MediaService", "Resuming: ${tracks.size} tracks, index=$startIndex, position=${savedPosition}ms")
-                        val mediaItems = tracks.map { buildFullMediaItem(it) }
+                    // Padded so the resumed timeline keeps one slot per saved id — the saved
+                    // index was recorded against that list, and dropping a track the DB no
+                    // longer has would resume on the wrong song.
+                    val resolved = runBlocking { libraryRepository.getTracksByIdsPadded(savedTrackIds) }
+                    if (resolved.any { it != null }) {
+                        val startIndex = savedIndex.coerceIn(0, resolved.size - 1)
+                        com.zonik.app.data.DebugLog.d("MediaService", "Resuming: ${resolved.size} tracks, index=$startIndex, position=${savedPosition}ms")
+                        val mediaItems = resolved.mapIndexed { i, track ->
+                            track?.let { buildFullMediaItem(it) } ?: buildFallbackMediaItem(savedTrackIds[i])
+                        }
                         return Futures.immediateFuture(
                             MediaSession.MediaItemsWithStartPosition(mediaItems, startIndex, savedPosition)
                         )
@@ -970,7 +987,15 @@ class ZonikMediaService : MediaLibraryService() {
                     if (track != null) {
                         buildFullMediaItem(track)
                     } else {
-                        item.buildUpon().setUri(buildStreamUrlForTrack(trackId)).build()
+                        // Rebuild rather than buildUpon: a browse-tree item's mediaId is
+                        // "track:<id>", and that prefix must not reach the timeline — the queue
+                        // mirror and the persisted queue both read mediaIds back as track ids.
+                        buildFallbackMediaItem(
+                            trackId,
+                            title = item.mediaMetadata.title?.toString(),
+                            artist = item.mediaMetadata.artist?.toString(),
+                            album = item.mediaMetadata.albumTitle?.toString(),
+                        )
                     }
                 }
             }
@@ -1013,9 +1038,15 @@ class ZonikMediaService : MediaLibraryService() {
                         com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: resolved track '${track.title}' from DB")
                         buildFullMediaItem(track)
                     } else {
-                        val streamUrl = buildStreamUrlForTrack(trackId)
                         com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: built stream URL for $trackId (no DB match)")
-                        item.buildUpon().setUri(streamUrl).build()
+                        // Same reason as onSetMediaItems: strip the browse prefix off the id
+                        // that lands on the timeline, keeping the browse item's own metadata.
+                        buildFallbackMediaItem(
+                            trackId,
+                            title = item.mediaMetadata.title?.toString(),
+                            artist = item.mediaMetadata.artist?.toString(),
+                            album = item.mediaMetadata.albumTitle?.toString(),
+                        )
                     }
                 }
             }.toMutableList()
@@ -1322,6 +1353,12 @@ class ZonikMediaService : MediaLibraryService() {
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE))
                 }
                 val startPaused = args.getBoolean("start_paused", false)
+                // Optional display fields, one per id. Absent for older controllers, so every
+                // read below is index-checked rather than assumed parallel.
+                val titles = args.getStringArrayList("track_titles")
+                val artists = args.getStringArrayList("track_artists")
+                val albums = args.getStringArrayList("track_albums")
+                val coverArts = args.getStringArrayList("track_cover_art")
                 com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: ${trackIds.size} tracks, startIndex=$startIndex")
 
                 // onCustomCommand arrives on the player's application thread — the main thread —
@@ -1341,8 +1378,14 @@ class ZonikMediaService : MediaLibraryService() {
                             // One item per requested ID. Silently dropping IDs with no local row
                             // used to slide every later index — and startIndex with it — so on an
                             // album with one unscanned track, tapping track 6 started track 7.
-                            trackIds.map { id ->
-                                byId[id]?.let { buildFullMediaItem(it) } ?: buildFallbackMediaItem(id)
+                            trackIds.mapIndexed { i, id ->
+                                byId[id]?.let { buildFullMediaItem(it) } ?: buildFallbackMediaItem(
+                                    trackId = id,
+                                    title = titles?.getOrNull(i),
+                                    artist = artists?.getOrNull(i),
+                                    album = albums?.getOrNull(i),
+                                    coverArt = coverArts?.getOrNull(i),
+                                )
                             }
                         }
                         // withContext returning is not itself a cancellation check for what
@@ -1403,6 +1446,13 @@ class ZonikMediaService : MediaLibraryService() {
                         com.zonik.app.data.DebugLog.e("MediaService", "PLAY_TRACKS failed", e)
                         future.set(SessionResult(SessionResult.RESULT_ERROR_IO))
                     }
+                }
+                // Dispatchers.Main is not .immediate, so the body above always waits for the
+                // next main-loop message. If the service is destroyed in that window the scope
+                // is cancelled before the body — and its catch — ever runs, leaving the
+                // controller holding a future that never completes.
+                playTracksJob?.invokeOnCompletion {
+                    if (!future.isDone) future.set(SessionResult(SessionResult.RESULT_INFO_SKIPPED))
                 }
                 return future
             }

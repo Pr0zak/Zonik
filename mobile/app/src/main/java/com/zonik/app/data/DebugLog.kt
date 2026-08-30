@@ -17,6 +17,7 @@ object DebugLog {
     private val entries = ConcurrentLinkedDeque<String>()
     private const val MAX_ENTRIES = 500
     private const val MAX_FILE_SIZE = 512 * 1024L // 512 KB
+    private const val MAX_STAGED = 5000
     private const val LOG_FILE = "debug_log.txt"
     private const val PREV_LOG_FILE = "debug_log_prev.txt"
     private val timeFormat = ThreadLocal.withInitial { SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
@@ -32,6 +33,13 @@ object DebugLog {
     // before init() simply waits in the queue until the consumer starts.
     private val fileQueue = Channel<String>(Channel.UNLIMITED)
     private var writerScope: CoroutineScope? = null
+    // Serializes the two threads that ever touch the file: the writer coroutine and the
+    // crashing thread.
+    private val fileLock = Any()
+    // Lines live here from the moment they leave the channel until the moment they are on
+    // disk. Publishing only the finished batch left a window where a line was in neither
+    // place, and those are precisely the lines a crash report needs.
+    private val staged = java.util.concurrent.ConcurrentLinkedQueue<String>()
 
     /**
      * Initialize file-based logging and install crash handler.
@@ -184,15 +192,22 @@ object DebugLog {
         writerScope = scope
         scope.launch {
             for (first in fileQueue) {
-                val batch = StringBuilder().append(first).append('\n')
+                // Staged before anything else can observe the dequeue.
+                staged.add(first)
                 // Whatever piled up while the last write was in flight goes out
                 // in the same open/write/close instead of one per line.
-                while (true) {
-                    val next = fileQueue.tryReceive().getOrNull() ?: break
-                    batch.append(next).append('\n')
-                }
-                writeBatch(batch.toString())
+                drainQueueToStaged()
+                flushStaged(null)
             }
+        }
+    }
+
+    private fun drainQueueToStaged() {
+        while (true) {
+            val next = fileQueue.tryReceive().getOrNull() ?: break
+            staged.add(next)
+            // A write that keeps failing (no log file yet) must not grow without bound.
+            if (staged.size > MAX_STAGED) staged.poll()
         }
     }
 
@@ -203,25 +218,44 @@ object DebugLog {
      */
     private fun flushBlocking(line: String) {
         try {
-            val batch = StringBuilder()
-            while (true) {
-                val next = fileQueue.tryReceive().getOrNull() ?: break
-                batch.append(next).append('\n')
-            }
-            batch.append(line).append('\n')
-            writeBatch(batch.toString())
+            drainQueueToStaged()
+            flushStaged(line)
         } catch (_: Exception) {
             // Best effort
         }
     }
 
-    private fun writeBatch(text: String) {
-        val file = logFile ?: return
-        try {
-            FileOutputStream(file, true).bufferedWriter().use { it.write(text) }
-            rotateIfNeeded()
-        } catch (_: Exception) {
-            // Best effort
+    /**
+     * The file has exactly one writer at a time. Without the lock the crashing thread and the
+     * writer coroutine can interleave inside the same append stream, or one can rotate the file
+     * out from under the other's open handle — landing a batch in the log that
+     * [rotateIfNeeded] is about to overwrite as the previous session.
+     */
+    /**
+     * Writes everything staged, plus [extra], and only then drops those lines from the staging
+     * queue — so a line is always either in the channel, in [staged], or on disk, and a crash
+     * mid-write loses nothing. The lock gives the file a single writer: without it the crashing
+     * thread and the writer coroutine can interleave inside the same append stream, or one can
+     * rotate the file out from under the other's open handle.
+     */
+    private fun flushStaged(extra: String?) {
+        synchronized(fileLock) {
+            val file = logFile ?: return
+            val lines = staged.toList()
+            if (lines.isEmpty() && extra == null) return
+            val text = buildString {
+                lines.forEach { append(it).append('\n') }
+                if (extra != null) append(extra).append('\n')
+            }
+            try {
+                FileOutputStream(file, true).bufferedWriter().use { it.write(text) }
+                // Only what we actually wrote. Nothing else removes from `staged`, and both
+                // removers hold this lock, so the poll count lines up with the snapshot.
+                repeat(lines.size) { staged.poll() }
+                rotateIfNeeded()
+            } catch (_: Exception) {
+                // Best effort — the lines stay staged for the next attempt
+            }
         }
     }
 

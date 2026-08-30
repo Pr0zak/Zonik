@@ -148,8 +148,14 @@ class PlaybackManager @Inject constructor(
                     val savedIndex = settingsRepository.lastQueueIndex.first()
                     val savedPosition = settingsRepository.lastQueuePositionMs.first()
                     if (savedTrackIds.isNotEmpty()) {
-                        val tracks = libraryRepository.getTracksByIds(savedTrackIds)
-                        if (tracks.isNotEmpty()) {
+                        // Padded: savedIndex was recorded against the full saved list, so
+                        // dropping a track the DB no longer has would resume on the wrong song.
+                        // A placeholder still streams — the URL only needs the id.
+                        val resolved = libraryRepository.getTracksByIdsPadded(savedTrackIds)
+                        if (resolved.any { it != null }) {
+                            val tracks = resolved.mapIndexed { i, track ->
+                                track ?: Track(id = savedTrackIds[i], title = savedTrackIds[i])
+                            }
                             val startIndex = savedIndex.coerceIn(0, tracks.size - 1)
                             DebugLog.d("Playback", "Restoring saved queue: ${tracks.size} tracks, index=$startIndex, pos=${savedPosition}ms")
                             withContext(Dispatchers.Main) {
@@ -240,8 +246,12 @@ class PlaybackManager @Inject constructor(
                 // PLAYLIST_CHANGED fires when the service sets items on the player directly
                 // Skip duplicate transitions for the same track (prevents UI flicker and extra scrobbles)
                 val current = _currentTrack.value
+                val transitionId = mediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { bareTrackId(it) }
                 if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
                     && current != null && metaTitle == current.title
+                    // Titles alone would call two adjacent placeholder items the same track
+                    // and swallow the transition between them.
+                    && (transitionId == null || transitionId == current.id)
                     && (metaArtist == null || metaArtist == current.artist)) {
                     DebugLog.d("Playback", "Skipping duplicate PLAYLIST_CHANGED for '${current.title}'")
                     return
@@ -250,7 +260,17 @@ class PlaybackManager @Inject constructor(
                 // Any real track change clears the post-seek ignore flag
                 _ignoreNextAutoTransition = false
 
-                // Match by metadata first (more reliable than index after shuffle/IPC)
+                // Media id first: it is exact, whereas titles collide — most sharply among
+                // tracks the local DB doesn't have, which share whatever placeholder name the
+                // fallback gave them.
+                if (transitionId != null) {
+                    val match = _queue.value.find { it.id == transitionId }
+                    if (match != null) {
+                        setCurrentTrack(match)
+                        return
+                    }
+                }
+                // Then metadata (still more reliable than index after shuffle/IPC)
                 if (metaTitle != null) {
                     val match = findTrackByMetadata(metaTitle, metaArtist)
                     if (match != null) {
@@ -359,7 +379,15 @@ class PlaybackManager @Inject constructor(
         // Send track IDs via custom command to avoid Media3 per-item IPC reordering.
         // The service sets items directly on the player, preserving order.
         val args = android.os.Bundle().apply {
-            putStringArrayList("track_ids", ArrayList(tracks.map { it.id }))
+            putStringArrayList("track_ids", ArrayList(cappedTracks.map { it.id }))
+            // Display fields travel with the ids so a track the local scan hasn't picked up yet
+            // still shows a title on the notification, lock screen, Android Auto and Wear — all
+            // of which read the session's metadata, not our in-process queue. Cheap: a few tens
+            // of KB at the 500-track cap, well inside the Binder budget the cap exists for.
+            putStringArrayList("track_titles", ArrayList(cappedTracks.map { it.title }))
+            putStringArrayList("track_artists", ArrayList(cappedTracks.map { it.artist }))
+            putStringArrayList("track_albums", ArrayList(cappedTracks.map { it.album }))
+            putStringArrayList("track_cover_art", ArrayList(cappedTracks.map { it.coverArt ?: "" }))
             putInt("start_index", startIndex)
             if (startPaused) putBoolean("start_paused", true)
         }
@@ -612,6 +640,30 @@ class PlaybackManager @Inject constructor(
         return queue.find { it.title == title && (artist == null || it.artist == artist) }
     }
 
+    /**
+     * One player timeline slot, snapshotted on the main thread. Carries the metadata the
+     * service published so a track the local DB has never seen still has a name, an album and
+     * artwork inside the app — the same fields the notification already shows for it.
+     */
+    private data class QueueSlot(
+        val id: String,
+        val title: String,
+        val artist: String,
+        val album: String,
+        val coverArt: String?,
+    ) {
+        fun toPlaceholderTrack(): Track = Track(
+            id = id,
+            // Falling back to the id rather than a constant keeps placeholders distinct:
+            // findTrackByMetadata matches on title, so two identically-named slots would
+            // otherwise both resolve to the first one.
+            title = title.ifEmpty { id },
+            artist = artist,
+            album = album,
+            coverArt = coverArt,
+        )
+    }
+
     private fun setCurrentTrack(track: Track) {
         DebugLog.d("Playback", "Now playing: ${track.title} by ${track.artist}")
         _currentTrack.value = track
@@ -657,27 +709,46 @@ class PlaybackManager @Inject constructor(
         val ctrl = controller ?: return
         val count = ctrl.mediaItemCount
         if (count == 0) return
-        val mediaIds = (0 until count).mapNotNull { i ->
-            ctrl.getMediaItemAt(i).mediaId.takeIf { it.isNotBlank() }
+        // Snapshot the timeline on the main thread — ids AND the metadata the service published,
+        // because a track the local DB hasn't scanned yet still has to occupy its own slot here.
+        // The player holds one item per queued track, so the mirror must too: a list that
+        // dropped the DB misses would point at the wrong track from the first hole onward, and
+        // that list is what the UI, skipToIndex and the persisted queue all read.
+        val slots = (0 until count).mapNotNull { i ->
+            val item = ctrl.getMediaItemAt(i)
+            val raw = item.mediaId.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val md = item.mediaMetadata
+            QueueSlot(
+                // Browse-tree items arrive as "track:<id>"; a placeholder built from the raw
+                // string would put that prefix into Track.id and then into the persisted queue.
+                id = bareTrackId(raw),
+                title = md.title?.toString().orEmpty(),
+                artist = md.artist?.toString().orEmpty(),
+                album = md.albumTitle?.toString().orEmpty(),
+                // The provider URI is content://<authority>/<coverArtId>/<size>, so the id we
+                // need to store on the Track is the first path segment.
+                coverArt = md.artworkUri?.pathSegments?.firstOrNull(),
+            )
         }
-        if (mediaIds.isEmpty()) return
+        if (slots.isEmpty()) return
         val currentIndex = ctrl.currentMediaItemIndex
         scope.launch {
             // `scope` has no SupervisorJob, so an uncaught throw here would cancel every other
             // collector this manager owns (bitrate, server config, adaptive settings) for the
             // rest of the process.
             try {
-                val tracks = libraryRepository.getTracksByIds(mediaIds)
-                if (tracks.isNotEmpty()) {
-                    _queue.value = tracks
-                    // setCurrentTrack calls persistPlaybackState which accesses controller (main thread only)
-                    withContext(Dispatchers.Main) {
-                        if (currentIndex in tracks.indices) {
-                            setCurrentTrack(tracks[currentIndex])
-                        }
-                    }
-                    DebugLog.d("Playback", "Synced queue from player: ${tracks.size} tracks, index=$currentIndex")
+                val resolved = libraryRepository.getTracksByIdsPadded(slots.map { it.id })
+                val tracks = resolved.mapIndexed { i, track ->
+                    track ?: slots[i].toPlaceholderTrack()
                 }
+                _queue.value = tracks
+                // setCurrentTrack calls persistPlaybackState which accesses controller (main thread only)
+                withContext(Dispatchers.Main) {
+                    if (currentIndex in tracks.indices) {
+                        setCurrentTrack(tracks[currentIndex])
+                    }
+                }
+                DebugLog.d("Playback", "Synced queue from player: ${tracks.size} tracks, index=$currentIndex")
             } catch (e: Exception) {
                 DebugLog.w("Playback", "Queue sync from player failed: ${e.message}")
             }

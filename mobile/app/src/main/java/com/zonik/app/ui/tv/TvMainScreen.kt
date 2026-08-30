@@ -296,6 +296,10 @@ fun TvMainScreen(
     val isPlaying by viewModel.isPlaying.collectAsState()
 
     var selectedTab by remember { mutableStateOf(TvTab.HOME) }
+    // One-shot, hoisted above the tab swap: `when (selectedTab)` tears TvHomeContent down and
+    // rebuilds it, so an effect living inside it re-fires on every return to Home and yanks
+    // focus off the sidebar item the user just pressed.
+    var homeFocusClaimed by remember { mutableStateOf(false) }
 
     BackHandler(enabled = selectedTab != TvTab.HOME) {
         selectedTab = TvTab.HOME
@@ -385,7 +389,9 @@ fun TvMainScreen(
                     TvTab.HOME -> TvHomeContent(
                         viewModel = viewModel,
                         onAlbumClick = onNavigateToAlbum,
-                        ambientColor = animatedBg
+                        ambientColor = animatedBg,
+                        claimInitialFocus = !homeFocusClaimed,
+                        onInitialFocusClaimed = { homeFocusClaimed = true }
                     )
                     TvTab.SETTINGS -> TvSettingsContent(
                         viewModel = viewModel,
@@ -472,16 +478,27 @@ private fun TvSidebar(
 private fun TvHomeContent(
     viewModel: TvViewModel,
     onAlbumClick: (String) -> Unit,
-    ambientColor: Color = TvCardBackground
+    ambientColor: Color = TvCardBackground,
+    claimInitialFocus: Boolean = true,
+    onInitialFocusClaimed: () -> Unit = {}
 ) {
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val scrollState = rememberScrollState()
 
     // Nothing was focused at launch, so the first press of the remote was always
-    // spent blindly acquiring focus instead of doing something.
+    // spent blindly acquiring focus instead of doing something. Only on the first composition
+    // of the session, though — see homeFocusClaimed.
     val firstTile = remember { FocusRequester() }
-    LaunchedEffect(Unit) { firstTile.requestFocus() }
+    LaunchedEffect(claimInitialFocus) {
+        if (!claimInitialFocus) return@LaunchedEffect
+        try {
+            firstTile.requestFocus()
+        } catch (_: IllegalStateException) {
+            // Node not attached yet; the remote's first press will acquire focus normally.
+        }
+        onInitialFocusClaimed()
+    }
 
     Column(
         modifier = Modifier

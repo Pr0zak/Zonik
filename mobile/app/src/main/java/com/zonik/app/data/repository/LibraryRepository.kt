@@ -65,23 +65,32 @@ class LibraryRepository @Inject constructor(
         database.trackDao().getById(id)?.toDomain()
 
     /**
-     * Batch lookup that preserves the caller's ID order — the DAO's `IN (:ids)` returns rows in
-     * table order, not argument order, so the remap below is load-bearing for anything that
-     * plays a queue. IDs with no local row are dropped.
+     * Batch lookup returning one slot per requested ID, in the caller's order, with null where
+     * the local DB has no row. The order remap is load-bearing: the DAO's `IN (:ids)` returns
+     * rows in table order, not argument order.
+     *
+     * Anything that has to line up with a player timeline wants this rather than
+     * [getTracksByIds] — the service puts one media item in the player per requested ID, so a
+     * mirror built from a list that silently dropped the misses points at the wrong track from
+     * the first hole onward.
      *
      * Chunked because Room binds one host variable per id and SQLite caps that at 999 on the
      * older API levels this app still supports.
      */
-    suspend fun getTracksByIds(ids: List<String>): List<Track> {
+    suspend fun getTracksByIdsPadded(ids: List<String>): List<Track?> {
         if (ids.isEmpty()) return emptyList()
         val entityMap = HashMap<String, TrackEntity>(ids.size)
         // distinct() because a queue may legitimately hold the same track twice; the final
-        // mapNotNull still emits it at every position it was asked for.
+        // map still emits it at every position it was asked for.
         ids.distinct().chunked(900).forEach { chunk ->
             database.trackDao().getByIds(chunk).forEach { entityMap[it.id] = it }
         }
-        return ids.mapNotNull { id -> entityMap[id]?.toDomain() }
+        return ids.map { id -> entityMap[id]?.toDomain() }
     }
+
+    /** [getTracksByIdsPadded] with the misses dropped. Order preserved. */
+    suspend fun getTracksByIds(ids: List<String>): List<Track> =
+        getTracksByIdsPadded(ids).filterNotNull()
 
     /** Owned-but-never-played tracks ranked by closeness to your taste centroid
      *  (server-computed). Resolved to local Tracks, ranking order preserved. */
