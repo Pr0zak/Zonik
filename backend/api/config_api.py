@@ -122,7 +122,15 @@ class ServiceConfig(BaseModel):
 
 @router.get("/services")
 async def get_service_config():
-    """Get current service connection settings."""
+    """
+    Current service connection settings.
+
+    Secrets are returned as empty strings plus a has_* flag rather than in the clear. This
+    endpoint carries no authentication, so its response used to hand out the Claude API key,
+    the Last.fm write secret, the Spotify client secret and the Soulseek password to anyone
+    who could reach the host. The PUT handler treats an empty secret as "leave unchanged",
+    so the settings form still round-trips correctly without ever holding the real value.
+    """
     settings = get_settings()
     return {
         "download_dir": settings.soulseek.download_dir,
@@ -133,7 +141,8 @@ async def get_service_config():
         "shuffle_new_arrival_percent": settings.subsonic.shuffle_new_arrival_percent,
         "shuffle_new_arrival_days": settings.subsonic.shuffle_new_arrival_days,
         "slsk_username": settings.soulseek.username,
-        "slsk_password": settings.soulseek.password,
+        "slsk_password": "",
+        "has_slsk_password": bool(settings.soulseek.password),
         "slsk_listen_port": settings.soulseek.listen_port,
         "slsk_max_concurrent_downloads": settings.soulseek.max_concurrent_downloads,
         "slsk_parallel_sources": settings.soulseek.parallel_sources,
@@ -141,16 +150,24 @@ async def get_service_config():
         "slsk_share_library": settings.soulseek.share_library,
         "lidarr_enabled": settings.lidarr.enabled,
         "lidarr_url": settings.lidarr.url,
-        "lidarr_api_key": settings.lidarr.api_key,
-        "lastfm_api_key": settings.lastfm.api_key,
-        "lastfm_write_api_key": settings.lastfm.write_api_key,
-        "lastfm_write_api_secret": settings.lastfm.write_api_secret,
-        "lastfm_session_key": settings.lastfm.session_key,
+        "lidarr_api_key": "",
+        "has_lidarr_api_key": bool(settings.lidarr.api_key),
+        "lastfm_api_key": "",
+        "has_lastfm_api_key": bool(settings.lastfm.api_key),
+        "lastfm_write_api_key": "",
+        "has_lastfm_write_api_key": bool(settings.lastfm.write_api_key),
+        "lastfm_write_api_secret": "",
+        "has_lastfm_write_api_secret": bool(settings.lastfm.write_api_secret),
+        "lastfm_session_key": "",
+        "has_lastfm_session_key": bool(settings.lastfm.session_key),
         "lastfm_username": settings.lastfm.username,
         "spotify_client_id": settings.spotify.client_id,
-        "spotify_client_secret": settings.spotify.client_secret,
-        "apple_music_developer_token": settings.apple_music.developer_token,
-        "claude_api_key": settings.assistant.claude_api_key,
+        "spotify_client_secret": "",
+        "has_spotify_client_secret": bool(settings.spotify.client_secret),
+        "apple_music_developer_token": "",
+        "has_apple_music_developer_token": bool(settings.apple_music.developer_token),
+        "claude_api_key": "",
+        "has_claude_api_key": bool(settings.assistant.claude_api_key),
         "claude_model": settings.assistant.claude_model,
         "ai_reranking": settings.assistant.ai_reranking,
         "ai_search": settings.assistant.ai_search,

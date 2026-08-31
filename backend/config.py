@@ -14,7 +14,13 @@ class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 3000
     secret_key: str = "change-me"
-    cors_origins: list[str] = ["*"]
+    # Empty by default: the web UI is served from this same app, and the phone, TV and watch
+    # clients are native and ignore CORS entirely, so nothing legitimate needs a cross-origin
+    # grant. The old "*" default was worse than it looked — Starlette echoes the requesting
+    # origin when allow_credentials is on, so any page in any browser that could reach this
+    # host could read every /api response, including the unauthenticated config endpoint that
+    # returns third-party API keys. Add specific origins here if you front the API elsewhere.
+    cors_origins: list[str] = []
     rate_limit_rps: float = 10.0
     rate_limit_burst: int = 30
 

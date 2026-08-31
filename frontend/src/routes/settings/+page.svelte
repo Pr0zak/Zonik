@@ -12,6 +12,11 @@
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
 	import Toggle from '../../components/ui/Toggle.svelte';
 
+	// The API never sends a stored secret back — it returns an empty value plus a has_* flag —
+	// so the field shows this instead of looking unconfigured. Submitting it blank keeps
+	// whatever the server already has.
+	const SECRET_SET = 'Saved — leave blank to keep';
+
 	let stats = $state(null);
 	let testResults = $state({});
 	let services = $state({
@@ -521,7 +526,7 @@
 					<label class="block text-xs text-[var(--text-muted)] mb-1">Password</label>
 					<div class="relative">
 						<input type={showField.slsk_pass ? 'text' : 'password'} bind:value={services.slsk_password} oninput={markDirty}
-							placeholder="Soulseek password" class="{inputClass} pr-8" />
+							placeholder={services.has_slsk_password ? SECRET_SET : 'Soulseek password'} class="{inputClass} pr-8" />
 						<button type="button" onclick={() => toggleField('slsk_pass')}
 							class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 							{#if showField.slsk_pass}
@@ -601,7 +606,7 @@
 						<label class="block text-xs text-[var(--text-muted)] mb-1">{field.label}</label>
 						<div class="relative">
 							<input type={showField[field.key] ? 'text' : 'password'} bind:value={services[field.bind]} oninput={markDirty}
-								placeholder={field.placeholder} class="{inputClass} pr-8" />
+								placeholder={services['has_' + field.bind] ? SECRET_SET : field.placeholder} class="{inputClass} pr-8" />
 							<button type="button" onclick={() => toggleField(field.key)}
 								class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 								{#if showField[field.key]}
@@ -685,7 +690,7 @@
 						<label class="block text-xs text-[var(--text-muted)] mb-1">API Key</label>
 						<div class="relative">
 							<input type={showField.lidarr ? 'text' : 'password'} bind:value={services.lidarr_api_key} oninput={markDirty}
-								placeholder="Lidarr API key" class="{inputClass} pr-8" />
+								placeholder={services.has_lidarr_api_key ? SECRET_SET : 'Lidarr API key'} class="{inputClass} pr-8" />
 							<button type="button" onclick={() => toggleField('lidarr')}
 								class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 								{#if showField.lidarr}
@@ -719,7 +724,7 @@
 				<div>
 					<label class="block text-xs text-[var(--text-muted)] mb-1.5">Client Secret</label>
 					<div class="relative">
-						<input type={showField.spotify ? 'text' : 'password'} bind:value={services.spotify_client_secret} oninput={markDirty} placeholder="Spotify Client Secret" class="{inputClass} pr-8" />
+						<input type={showField.spotify ? 'text' : 'password'} bind:value={services.spotify_client_secret} oninput={markDirty} placeholder={services.has_spotify_client_secret ? SECRET_SET : 'Spotify Client Secret'} class="{inputClass} pr-8" />
 						<button type="button" onclick={() => toggleField('spotify')}
 							class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
 							{#if showField.spotify}<EyeOff class="w-4 h-4" />{:else}<Eye class="w-4 h-4" />{/if}
@@ -892,7 +897,7 @@
 						<div class="relative">
 							<input type={showField.claude_api_key ? 'text' : 'password'} bind:value={services.claude_api_key}
 								oninput={() => dirty = true}
-								placeholder="sk-ant-..."
+								placeholder={services.has_claude_api_key ? SECRET_SET : 'sk-ant-...'}
 								class="{inputClass} pr-8" />
 							<button onclick={() => showField.claude_api_key = !showField.claude_api_key}
 								class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors">
