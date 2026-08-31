@@ -304,26 +304,49 @@ app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 # Subsonic API
 app.include_router(subsonic_router, prefix="/rest")
 
-# /app — redirect to latest Zonik-mobile APK (fetches asset URL from GitHub API)
+# /app — redirect to the newest phone/TV APK.
+#
+# This pointed at Pr0zak/Zonik-mobile, which was archived when the repos merged in May 2026
+# and whose last release is v1.8.0. Anything following this link — including a TV box being
+# sideloaded because its own in-app updater chases that same archived repo — was handed a
+# months-old build with no way forward.
+#
+# Releases now live on Pr0zak/Zonik, which also carries server-v* and legacy bare v* tags, so
+# /releases/latest is the wrong call: it returns whichever release is newest overall and that
+# is often a server one with no APK attached. Fetch the list and pick the highest app-v*.
+# GitHub does not return the list in version order, so compare numerically rather than taking
+# the first match.
 @app.get("/app")
 async def app_download():
     import httpx
     from fastapi.responses import RedirectResponse
 
+    def _version_key(tag: str) -> tuple:
+        parts = tag.removeprefix("app-v").split(".")
+        return tuple(int(p) if p.isdigit() else 0 for p in (parts + ["0", "0", "0"])[:3])
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://api.github.com/repos/Pr0zak/Zonik-mobile/releases/latest",
+                "https://api.github.com/repos/Pr0zak/Zonik/releases",
                 headers={"Accept": "application/vnd.github+json"},
+                params={"per_page": 30},
                 timeout=10,
             )
-            assets = resp.json().get("assets", [])
-            apk = next((a for a in assets if a["name"].startswith("zonik-v") and "wear" not in a["name"]), None)
-            if apk:
-                return RedirectResponse(apk["browser_download_url"], status_code=302)
+            releases = [r for r in resp.json() if str(r.get("tag_name", "")).startswith("app-v")]
+            for release in sorted(releases, key=lambda r: _version_key(r["tag_name"]), reverse=True):
+                # The watch APK rides on the same release and shares the applicationId, so a
+                # loose ".apk" match can hand a TV the Wear build.
+                apk = next(
+                    (a for a in release.get("assets", [])
+                     if a["name"].endswith(".apk") and "wear" not in a["name"]),
+                    None,
+                )
+                if apk:
+                    return RedirectResponse(apk["browser_download_url"], status_code=302)
     except Exception:
-        pass
-    return RedirectResponse("https://github.com/Pr0zak/Zonik-mobile/releases/latest", status_code=302)
+        logging.getLogger(__name__).exception("/app: could not resolve the latest APK from GitHub")
+    return RedirectResponse("https://github.com/Pr0zak/Zonik/releases", status_code=302)
 
 
 # Serve frontend build in production
