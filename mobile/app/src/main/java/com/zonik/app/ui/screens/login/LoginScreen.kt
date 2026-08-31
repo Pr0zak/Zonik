@@ -2,6 +2,7 @@ package com.zonik.app.ui.screens.login
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
@@ -10,6 +11,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -261,6 +266,8 @@ fun LoginScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var apiKeyVisible by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val isTv = com.zonik.app.ui.util.isTv()
 
     LaunchedEffect(uiState.isSuccess) {
@@ -350,6 +357,10 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
 
+        // Every field advances with the IME's own Next/Done action. Without this, a TV remote
+        // has no way out of a text field at all: the leanback IME is fullscreen and swallows
+        // D-pad DOWN, so what feels like "move to the next box" just walks the on-screen
+        // keyboard and the next thing typed lands in the field you were trying to leave.
         OutlinedTextField(
             value = uiState.serverUrl,
             onValueChange = viewModel::updateServerUrl,
@@ -357,7 +368,13 @@ fun LoginScreen(
             placeholder = { Text("https://zonik.example.com") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Uri,
+                imeAction = ImeAction.Next
+            ),
+            keyboardActions = KeyboardActions(
+                onNext = { focusManager.moveFocus(FocusDirection.Down) }
+            )
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -367,7 +384,11 @@ fun LoginScreen(
             onValueChange = viewModel::updateUsername,
             label = { Text("Username") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardActions = KeyboardActions(
+                onNext = { focusManager.moveFocus(FocusDirection.Down) }
+            )
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -378,6 +399,15 @@ fun LoginScreen(
             label = { Text("API Key") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(
+                onDone = {
+                    // Dismiss the IME before moving focus, or on TV it stays up over the form
+                    // and keeps eating the remote.
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
+                }
+            ),
             visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
                 IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {

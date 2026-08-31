@@ -116,6 +116,30 @@ class PlaybackManager @Inject constructor(
     // handled in ZonikMediaService so they fire whether or not the UI is visible.
     @Volatile private var lastPositionSaveTime = 0L
 
+    /** A play request that arrived before the MediaController was ready. Single slot: if the
+     *  user presses two tiles while we are still connecting, they meant the second one. */
+    private data class PendingPlay(
+        val tracks: List<Track>,
+        val startIndex: Int,
+        val startPaused: Boolean,
+        val requestedAtMs: Long,
+    )
+
+    @Volatile private var pendingPlay: PendingPlay? = null
+
+    /** Starting music by surprise, long after the press, is its own bad experience. */
+    private val pendingPlayMaxAgeMs = 30_000L
+
+    /** The optimistic UI update: queue and current track land before ExoPlayer confirms, so the
+     *  screen reacts to the press immediately. Only call this once the request will really run. */
+    private fun publishPlayIntent(tracks: List<Track>, startIndex: Int) {
+        _queue.value = tracks
+        if (startIndex in tracks.indices) {
+            _currentTrack.value = tracks[startIndex]
+        }
+        _playbackRequested.tryEmit(Unit)
+    }
+
     suspend fun connect() {
         if (controller != null) return
         DebugLog.d("Playback", "Connecting to MediaService...")
@@ -132,6 +156,21 @@ class PlaybackManager @Inject constructor(
         }
 
         DebugLog.d("Playback", "Connected to MediaService")
+
+        // A press that landed while we were connecting wins over everything below: it is the
+        // only one of these the user actually asked for. Replaying it fills _queue, which also
+        // makes the two restore paths below no-op on their own guards — deliberately, since
+        // restoring a saved queue over the user's choice would then seek it to a stale position.
+        pendingPlay?.let { pending ->
+            pendingPlay = null
+            val ageMs = System.currentTimeMillis() - pending.requestedAtMs
+            if (ageMs > pendingPlayMaxAgeMs) {
+                DebugLog.d("Playback", "Dropping deferred play request — ${ageMs}ms stale")
+            } else {
+                DebugLog.d("Playback", "Replaying deferred play request: ${pending.tracks.size} tracks")
+                playTracks(pending.tracks, pending.startIndex, pending.startPaused)
+            }
+        }
 
         // Restore queue from player's current media items (e.g. after playback resumption)
         if (_queue.value.isEmpty() && (controller?.mediaItemCount ?: 0) > 0) {
@@ -349,15 +388,9 @@ class PlaybackManager @Inject constructor(
             DebugLog.d("Playback", "Capping ${tracks.size} tracks to $maxTracks (offset $start, adjusted index $adjustedIndex)")
             return playTracks(tracks.subList(start, end), adjustedIndex, startPaused)
         } else tracks
-        _queue.value = cappedTracks
-        // Set current track immediately for instant UI update (don't wait for ExoPlayer callback)
-        if (startIndex in tracks.indices) {
-            _currentTrack.value = tracks[startIndex]
-        }
-        _playbackRequested.tryEmit(Unit)
-
         // Route to Cast if a Cast session is active
         if (castManager.isCasting.value) {
+            publishPlayIntent(cappedTracks, startIndex)
             DebugLog.d("Playback", "Casting ${tracks.size} tracks from index $startIndex")
             castManager.loadQueue(
                 tracks = tracks,
@@ -370,10 +403,17 @@ class PlaybackManager @Inject constructor(
 
         val ctrl = controller
         if (ctrl == null) {
-            DebugLog.e("Playback", "playTracks called but controller is null!")
+            // Reachable for the first few seconds of a cold start, and on TV that is exactly
+            // when someone presses a shuffle tile. Hold the request and replay it once connect()
+            // finishes instead of dropping it — and publish nothing yet, because the optimistic
+            // state below would otherwise put a Now Playing screen in front of a track that is
+            // never going to start.
+            pendingPlay = PendingPlay(cappedTracks, startIndex, startPaused, System.currentTimeMillis())
+            DebugLog.w("Playback", "playTracks before the controller connected — deferring ${cappedTracks.size} tracks")
             return
         }
 
+        publishPlayIntent(cappedTracks, startIndex)
         DebugLog.d("Playback", "Playing ${tracks.size} tracks from index $startIndex")
 
         // Send track IDs via custom command to avoid Media3 per-item IPC reordering.
