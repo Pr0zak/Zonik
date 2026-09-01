@@ -6,7 +6,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -98,6 +98,62 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
 
         elif task_name == "playlist_unfavorites":
             await _run_unfavorites_playlist(db)
+
+        elif task_name == "vibe_embeddings":
+            from backend.services.embeddings import generate_embedding_async
+            from backend.models.embedding import TrackEmbedding
+            batch_limit = count or 200
+            embedded_ids = select(TrackEmbedding.track_id)
+            # Recently-played first. Coverage stalled at roughly half the library, and the
+            # missing half skews towards what is actually being listened to — so filling the
+            # backlog in play order makes vibe search and the Sound Atlas useful long before
+            # the whole library is done.
+            tracks = (await db.execute(
+                select(Track.id, Track.file_path)
+                .where(Track.id.notin_(embedded_ids))
+                .order_by(Track.last_played_at.desc().nullslast(), Track.created_at.desc())
+                .limit(batch_limit)
+            )).all()
+            embedded_count = 0
+            failed_count = 0
+            consecutive_fails = 0
+            failed_files = []
+            for i, (track_id, file_path) in enumerate(tracks):
+                try:
+                    emb_bytes = await generate_embedding_async(file_path)
+                    if emb_bytes:
+                        await db.merge(TrackEmbedding(track_id=track_id, embedding=emb_bytes))
+                        embedded_count += 1
+                        consecutive_fails = 0
+                    else:
+                        failed_count += 1
+                        consecutive_fails += 1
+                except Exception as e:
+                    failed_count += 1
+                    consecutive_fails += 1
+                    short = (file_path or "").rsplit("/", 1)[-1]
+                    failed_files.append(f"{short}: {e}")
+                    log.warning(f"[scheduler] Embedding failed for {file_path}: {e}")
+                # Commit in batches so a timeout cannot throw away the whole run — which is
+                # exactly how the manual path lost five months of progress when a deploy
+                # restarted the web process mid-flight.
+                if (i + 1) % 10 == 0:
+                    await db.commit()
+                # The CLAP model failing to load looks like every track failing in a row.
+                if consecutive_fails >= 20:
+                    log.error("[scheduler] Vibe embeddings aborting: %d consecutive failures", consecutive_fails)
+                    break
+            await db.commit()
+            remaining = (await db.execute(
+                select(func.count(Track.id)).where(Track.id.notin_(select(TrackEmbedding.track_id)))
+            )).scalar() or 0
+            job.result = json.dumps({
+                "embedded": embedded_count,
+                "failed": failed_count,
+                "batch": len(tracks),
+                "remaining": remaining,
+                "errors": failed_files[:5],
+            })
 
         elif task_name == "audio_analysis":
             from backend.services.analyzer import analyze_track_async

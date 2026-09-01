@@ -144,16 +144,24 @@ async def enrich_track(ctx: dict, track_id: str):
 
 
 async def generate_embedding(ctx: dict, track_id: str, file_path: str):
-    """Background CLAP embedding generation."""
-    from backend.services.embeddings import generate_embedding
+    """
+    Background CLAP embedding generation.
+
+    Nothing enqueues this — a repo-wide search for enqueue_job finds no caller — and it could
+    not have worked if anything did: it awaited a synchronous function and then called
+    .tobytes() on the bytes that came back. Both bugs are fixed here rather than deleting it,
+    because it stays registered in WorkerSettings and would otherwise be a trap for whoever
+    wires it up. Routine backfill is the vibe_embeddings scheduled task, not this.
+    """
+    from backend.services.embeddings import generate_embedding_async
     from backend.models.embedding import TrackEmbedding
 
-    embedding = await generate_embedding(file_path)
+    embedding = await generate_embedding_async(file_path)
     if embedding is not None:
         async with async_session() as db:
             await db.merge(TrackEmbedding(
                 track_id=track_id,
-                embedding=embedding.tobytes(),
+                embedding=embedding,
             ))
             await db.commit()
     return {"ok": embedding is not None}

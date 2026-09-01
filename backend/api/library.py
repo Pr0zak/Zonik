@@ -131,7 +131,9 @@ async def _auto_trigger_post_scan(added_count: int):
 
     log = logging.getLogger(__name__)
     async with async_session() as db:
-        for task_name in ("audio_analysis", "enrichment"):
+        # vibe_embeddings included so a newly-scanned track is searchable by vibe on arrival
+        # rather than waiting for the nightly batch to reach it.
+        for task_name in ("audio_analysis", "enrichment", "vibe_embeddings"):
             result = await db.execute(
                 select(ScheduleTask).where(ScheduleTask.task_name == task_name)
             )

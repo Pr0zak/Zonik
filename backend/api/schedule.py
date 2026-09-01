@@ -27,6 +27,7 @@ DEFAULT_TASKS = [
     {"task_name": "playlist_favorites", "interval_hours": 24, "run_at": "01:00"},
     {"task_name": "playlist_unfavorites", "interval_hours": 24, "run_at": "01:30"},
     {"task_name": "audio_analysis", "interval_hours": 24, "run_at": "02:30"},
+    {"task_name": "vibe_embeddings", "interval_hours": 24, "run_at": "02:45", "count": 300},
 
     {"task_name": "recommendation_refresh", "interval_hours": 24, "run_at": "05:30"},
     {"task_name": "upgrade_scan", "interval_hours": 168, "run_at": "06:00", "day_of_week": 0, "count": 50},
@@ -47,6 +48,7 @@ TASK_LABELS = {
     "playlist_favorites": "Favorites Playlist",
     "playlist_unfavorites": "Non-Favorites Playlist",
     "audio_analysis": "Audio Analysis",
+    "vibe_embeddings": "Vibe Embeddings",
 
     "recommendation_refresh": "Music Discovery AI",
     "upgrade_scan": "Quality Upgrade Scan",
@@ -67,6 +69,7 @@ TASK_DESCRIPTIONS = {
     "playlist_favorites": "Rebuild the Favorites playlist from all currently starred tracks.",
     "playlist_unfavorites": "Rebuild the Non-Favorites playlist from all tracks that are not starred.",
     "audio_analysis": "Run Essentia audio analysis (BPM, key, energy, danceability) on tracks that haven't been analyzed yet.",
+    "vibe_embeddings": "Generate CLAP vibe embeddings for tracks that don't have one yet, most-recently-played first. These power vibe search and the Sound Atlas.",
 
     "recommendation_refresh": "Build a taste profile from your library (genres, artists, audio features, Last.fm history), then find and score new tracks via similar artists, genre matching, and trending charts. Optionally re-ranks with Claude AI.",
     "upgrade_scan": "Find low-quality tracks (low bitrate, lossy formats) and search Soulseek for higher-quality replacements.",
