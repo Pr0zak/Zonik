@@ -766,9 +766,7 @@ private fun TvAmbientOverlay(
             pulse = pulse,
             anticipation = anticipation,
             colors = palette,
-            modifier = Modifier.fillMaxSize(),
-            centerX = 0.5f,
-            centerY = 0.38f
+            modifier = Modifier.fillMaxSize()
         )
 
         Column(

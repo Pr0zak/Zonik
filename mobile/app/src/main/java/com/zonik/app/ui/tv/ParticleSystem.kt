@@ -68,17 +68,13 @@ private fun createParticles(colors: List<Color>): List<Particle> {
     }
 }
 
-/** One expanding ring, fired on a drum hit. */
-private class Shockwave(var progress: Float = 0f, var strength: Float = 1f)
-
 /**
  * The ambient particle field.
  *
  * Three things distinguish it from the version this replaces. Trails come from a feedback
  * buffer rather than from redrawing a list of past positions, so they last for seconds at a
- * fixed cost instead of eight blobs at 240 draw calls a frame. Particles are sized per
- * frequency band rather than by one loudness scalar. And a drum hit fires a ring that crosses
- * the screen — a discrete event, because a smooth envelope is invisible from a sofa.
+ * fixed cost instead of eight blobs at 240 draw calls a frame. And particles are sized per
+ * frequency band rather than by one loudness scalar.
  */
 @Composable
 fun ParticleSystem(
@@ -86,14 +82,10 @@ fun ParticleSystem(
     anticipation: Float,
     colors: List<Color>,
     modifier: Modifier = Modifier,
-    centerX: Float = 0.5f,
-    centerY: Float = 0.4f,
 ) {
     val particles = remember(colors.hashCode()) { createParticles(colors) }
-    val shockwaves = remember { mutableListOf<Shockwave>() }
     var frameCounter by remember { mutableLongStateOf(0L) }
     var lastFrameTime by remember { mutableLongStateOf(System.nanoTime()) }
-    var lastOnset by remember { mutableLongStateOf(0L) }
 
     // The feedback buffer. Everything is drawn into this, and each frame it is composited back
     // onto itself very slightly faded and scaled — which is what turns motion into a trail that
@@ -118,13 +110,6 @@ fun ParticleSystem(
         @Suppress("UNUSED_EXPRESSION")
         frameCounter
 
-        // Fire a shockwave on a fresh onset, rate-limited so a busy mix does not fill the
-        // screen with rings.
-        if (pulse.onset > 0.9f && now - lastOnset > 140_000_000L) {
-            lastOnset = now
-            if (shockwaves.size < 4) shockwaves.add(Shockwave(strength = 0.6f + pulse.low * 0.4f))
-        }
-
         val buffer = trailBuffer?.takeIf { it.width == w.toInt() && it.height == h.toInt() }
             ?: ImageBitmap(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))
                 .also { trailBuffer = it }
@@ -148,7 +133,6 @@ fun ParticleSystem(
         val bufferScope = CanvasDrawScope()
         bufferScope.draw(this, layoutDirection, bufferCanvas, Size(w, h)) {
             drawParticles(particles, pulse, anticipation, dt, w, h)
-            drawShockwaves(shockwaves, colors.first(), centerX * w, centerY * h, w, h, dt)
         }
 
         drawImage(buffer)
@@ -201,38 +185,6 @@ private fun DrawScope.drawParticles(
                 drawLine(p.color.copy(alpha = a), Offset(cx, cy - len), Offset(cx, cy + len), strokeWidth = 1.4f)
             }
         }
-    }
-}
-
-private fun DrawScope.drawShockwaves(
-    waves: MutableList<Shockwave>,
-    color: Color,
-    cx: Float,
-    cy: Float,
-    w: Float,
-    h: Float,
-    dt: Float,
-) {
-    val maxRadius = maxOf(w, h) * 0.75f
-    val iterator = waves.iterator()
-    while (iterator.hasNext()) {
-        val wave = iterator.next()
-        // ~700ms to cross the screen: fast enough to read as a hit rather than a swell.
-        wave.progress += dt / 0.7f
-        if (wave.progress >= 1f) {
-            iterator.remove()
-            continue
-        }
-        // Ease out so it leaves fast and settles, and fade as it goes so the edge dissolves
-        // rather than hitting the bezel.
-        val eased = 1f - (1f - wave.progress) * (1f - wave.progress)
-        val alpha = (1f - wave.progress) * 0.5f * wave.strength
-        drawCircle(
-            color = color.copy(alpha = alpha),
-            radius = eased * maxRadius,
-            center = Offset(cx, cy),
-            style = Stroke(width = 3f + (1f - wave.progress) * 5f)
-        )
     }
 }
 
