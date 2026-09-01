@@ -26,6 +26,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Pause
@@ -101,7 +103,8 @@ class TvViewModel @Inject constructor(
     private val libraryRepository: LibraryRepository,
     private val syncManager: com.zonik.app.data.repository.SyncManager,
     private val logUploader: com.zonik.app.data.api.LogUploader,
-    private val updateChecker: com.zonik.app.data.api.UpdateChecker
+    private val updateChecker: com.zonik.app.data.api.UpdateChecker,
+    private val settingsRepository: com.zonik.app.data.repository.SettingsRepository
 ) : ViewModel() {
 
     // Playback state (delegated from PlaybackManager)
@@ -207,6 +210,116 @@ class TvViewModel @Inject constructor(
         _isStarred.value = track.starred
     }
 
+    // ── Ambient visualizer ────────────────────────────────────────────────────────
+    // Restored after Phase 1 deleted it. What made the old one hostile was the container
+    // around it — it unmounted the screen and ate D-pad keys — not the visuals, so the
+    // renderer comes back as it was and the container is rebuilt in TvMainScreen.
+
+    val ambientEnabled: StateFlow<Boolean> = settingsRepository.tvAmbientEnabled
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val ambientDelaySec: StateFlow<Int> = settingsRepository.tvAmbientDelaySec
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 10)
+    val ambientBeatReactive: StateFlow<Boolean> = settingsRepository.tvAmbientBeatReactive
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setAmbientEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setTvAmbientEnabled(enabled) }
+    }
+
+    fun setAmbientDelaySec(seconds: Int) {
+        viewModelScope.launch { settingsRepository.setTvAmbientDelaySec(seconds) }
+    }
+
+    fun setAmbientBeatReactive(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setTvAmbientBeatReactive(enabled) }
+    }
+
+    private val _bassLevel = MutableStateFlow(0f)
+    val bassLevel: StateFlow<Float> = _bassLevel.asStateFlow()
+    private val _fftMagnitudes = MutableStateFlow(FloatArray(32))
+    val fftMagnitudes: StateFlow<FloatArray> = _fftMagnitudes.asStateFlow()
+    private var visualizer: android.media.audiofx.Visualizer? = null
+
+    /**
+     * Taps the output mix for an FFT so the visuals can move with the music. Verified working
+     * on a Chromecast with Google TV. Needs RECORD_AUDIO; when that is missing or the device
+     * refuses the capture, the particles simply drift instead.
+     */
+    fun startVisualizer() {
+        if (visualizer != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // The session id is not valid until the player has actually started.
+                kotlinx.coroutines.delay(1500)
+                val sessionId = com.zonik.app.media.ZonikMediaService.currentAudioSessionId
+                com.zonik.app.data.DebugLog.d("TvVM", "Visualizer: audio session $sessionId")
+                if (sessionId == 0) {
+                    com.zonik.app.data.DebugLog.w("TvVM", "Visualizer: no audio session, drifting only")
+                    return@launch
+                }
+                val viz = android.media.audiofx.Visualizer(sessionId)
+                viz.captureSize = 128
+                viz.setDataCaptureListener(
+                    object : android.media.audiofx.Visualizer.OnDataCaptureListener {
+                        override fun onWaveFormDataCapture(
+                            v: android.media.audiofx.Visualizer?, waveform: ByteArray?, rate: Int
+                        ) {}
+
+                        override fun onFftDataCapture(
+                            v: android.media.audiofx.Visualizer?, fft: ByteArray?, rate: Int
+                        ) {
+                            fft ?: return
+                            val n = fft.size / 2
+                            var bass = 0f
+                            for (i in 1..4) {
+                                val re = fft[2 * i].toFloat()
+                                val im = if (2 * i + 1 < fft.size) fft[2 * i + 1].toFloat() else 0f
+                                bass += kotlin.math.sqrt(re * re + im * im)
+                            }
+                            var highs = 0f
+                            for (i in (n * 2 / 3)..(n - 1).coerceAtLeast(1)) {
+                                val re = fft[2 * i].toFloat()
+                                val im = if (2 * i + 1 < fft.size) fft[2 * i + 1].toFloat() else 0f
+                                highs += kotlin.math.sqrt(re * re + im * im)
+                            }
+                            _bassLevel.value = (bass / 400f + highs / 600f).coerceIn(0f, 1f)
+                            val mags = FloatArray(32)
+                            for (bin in 0 until 32) {
+                                val idx = 1 + bin * (n - 1) / 32
+                                val re = fft[2 * idx].toFloat()
+                                val im = if (2 * idx + 1 < fft.size) fft[2 * idx + 1].toFloat() else 0f
+                                mags[bin] = (kotlin.math.sqrt(re * re + im * im) / 128f).coerceIn(0f, 1f)
+                            }
+                            _fftMagnitudes.value = mags
+                        }
+                    },
+                    android.media.audiofx.Visualizer.getMaxCaptureRate() / 2,
+                    false,
+                    true
+                )
+                viz.enabled = true
+                visualizer = viz
+                com.zonik.app.data.DebugLog.d("TvVM", "Visualizer started (session=$sessionId)")
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.w("TvVM", "Visualizer unavailable: ${e.message}")
+            }
+        }
+    }
+
+    fun stopVisualizer() {
+        try {
+            visualizer?.release()
+        } catch (_: Exception) {
+        }
+        visualizer = null
+        _bassLevel.value = 0f
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopVisualizer()
+    }
+
     fun toggleStar() {
         val track = currentTrack.value ?: return
         viewModelScope.launch {
@@ -301,8 +414,28 @@ fun TvMainScreen(
     // focus off the sidebar item the user just pressed.
     var homeFocusClaimed by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = selectedTab != TvTab.HOME) {
-        selectedTab = TvTab.HOME
+    // ── Ambient visualizer state ─────────────────────────────────────────────────
+    val ambientEnabled by viewModel.ambientEnabled.collectAsState()
+    val ambientDelaySec by viewModel.ambientDelaySec.collectAsState()
+    var ambientActive by remember { mutableStateOf(false) }
+    var lastInteraction by remember { mutableLongStateOf(0L) }
+
+    // Arms only while something is playing, and only from the Home tab — nobody wants the
+    // screen taken over mid-way through changing a setting. A delay of 0 means on-demand only.
+    LaunchedEffect(lastInteraction, isPlaying, selectedTab, ambientEnabled, ambientDelaySec) {
+        if (!ambientEnabled || ambientDelaySec <= 0) return@LaunchedEffect
+        if (!isPlaying || selectedTab != TvTab.HOME || ambientActive) return@LaunchedEffect
+        delay(ambientDelaySec * 1000L)
+        ambientActive = true
+    }
+
+    BackHandler(enabled = ambientActive || selectedTab != TvTab.HOME) {
+        if (ambientActive) {
+            ambientActive = false
+            lastInteraction = System.currentTimeMillis()
+        } else {
+            selectedTab = TvTab.HOME
+        }
     }
 
     // Ambient background tint pulled from the current album art.
@@ -348,6 +481,25 @@ fun TvMainScreen(
                 // Transport keys only. Every D-pad key must fall through to Compose's
                 // focus system, and a held key must act once rather than ~25 times.
                 if (keyEvent.nativeKeyEvent.action != android.view.KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
+                lastInteraction = System.currentTimeMillis()
+                // Leaving ambient consumes the key that dismissed it, so the press that wakes
+                // the screen does not also fire whatever button happened to be focused behind
+                // it. Transport keys are the exception: they act and the visuals stay up, which
+                // is the whole point of having a now-playing screen.
+                if (ambientActive) {
+                    val isTransport = when (keyEvent.nativeKeyEvent.keyCode) {
+                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
+                        android.view.KeyEvent.KEYCODE_MEDIA_NEXT,
+                        android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> true
+                        else -> false
+                    }
+                    if (!isTransport) {
+                        ambientActive = false
+                        return@onPreviewKeyEvent true
+                    }
+                }
                 if (keyEvent.nativeKeyEvent.repeatCount != 0) {
                     return@onPreviewKeyEvent when (keyEvent.nativeKeyEvent.keyCode) {
                         android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
@@ -390,6 +542,7 @@ fun TvMainScreen(
                         viewModel = viewModel,
                         onAlbumClick = onNavigateToAlbum,
                         ambientColor = animatedBg,
+                        onEnterAmbient = { ambientActive = true },
                         claimInitialFocus = !homeFocusClaimed,
                         onInitialFocusClaimed = { homeFocusClaimed = true }
                     )
@@ -398,6 +551,136 @@ fun TvMainScreen(
                         onDisconnected = onDisconnected
                     )
                 }
+            }
+        }
+
+        // Drawn OVER the screen rather than instead of it. The old screensaver swapped the
+        // content tree out, which is what cost every bit of D-pad state and made the remote
+        // feel dead on the way back; this leaves focus exactly where the user left it.
+        val track = currentTrack
+        if (ambientActive && track != null) {
+            TvAmbientOverlay(viewModel = viewModel, track = track, isPlaying = isPlaying)
+        }
+    }
+}
+
+/**
+ * The ambient / visualizer screen. Beat reactivity comes from the output-mix FFT when
+ * RECORD_AUDIO has been granted; without it the particles drift and everything else still
+ * works, so the permission is asked for once and never insisted upon.
+ */
+@Composable
+private fun TvAmbientOverlay(
+    viewModel: TvViewModel,
+    track: Track,
+    isPlaying: Boolean,
+) {
+    val beatReactive by viewModel.ambientBeatReactive.collectAsState()
+    val bassLevel by viewModel.bassLevel.collectAsState()
+    val fftMagnitudes by viewModel.fftMagnitudes.collectAsState()
+    val context = LocalContext.current
+
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) viewModel.startVisualizer() }
+
+    LaunchedEffect(beatReactive) {
+        if (!beatReactive) return@LaunchedEffect
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (granted) viewModel.startVisualizer()
+        else permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { viewModel.stopVisualizer() }
+    }
+
+    var positionMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(track, isPlaying) {
+        while (true) {
+            positionMs = viewModel.getCurrentPosition()
+            durationMs = viewModel.getDuration()
+            delay(1000L)
+        }
+    }
+
+    val palette = remember(track.coverArt) {
+        listOf(ZonikColors.gold, Color(0xFF7C4DFF), Color(0xFF534AB7))
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Brush.radialGradient(listOf(Color(0xFF16121F), Color(0xFF07060B))))
+    ) {
+        ParticleSystem(
+            bassLevel = if (beatReactive) bassLevel else 0f,
+            fftMagnitudes = fftMagnitudes,
+            colors = palette,
+            modifier = Modifier.fillMaxSize(),
+            centerX = 0.5f,
+            centerY = 0.38f
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 48.dp, vertical = 27.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            CoverArt(
+                coverArtId = track.coverArt,
+                contentDescription = track.title,
+                modifier = Modifier
+                    .size(320.dp)
+                    .clip(ZonikShapes.coverArtLargeShape),
+                size = 600
+            )
+            Spacer(modifier = Modifier.height(32.dp))
+            Text(
+                text = track.title,
+                style = MaterialTheme.typography.headlineLarge,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = track.artist,
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(28.dp))
+            val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs) else 0f
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier
+                    .fillMaxWidth(0.5f)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = ZonikColors.gold,
+                trackColor = Color.White.copy(alpha = 0.1f)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(0.5f),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = formatDurationMs(positionMs),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.5f)
+                )
+                Text(
+                    text = if (durationMs > 0) formatDurationMs(durationMs) else "--:--",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.5f)
+                )
             }
         }
     }
@@ -479,6 +762,7 @@ private fun TvHomeContent(
     viewModel: TvViewModel,
     onAlbumClick: (String) -> Unit,
     ambientColor: Color = TvCardBackground,
+    onEnterAmbient: () -> Unit = {},
     claimInitialFocus: Boolean = true,
     onInitialFocusClaimed: () -> Unit = {}
 ) {
@@ -678,6 +962,21 @@ private fun TvHomeContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Enter the visualizer on demand, rather than only after the idle delay
+                        IconButton(
+                            onClick = onEnterAmbient,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .tvFocusHighlight(CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Default.GraphicEq,
+                                "Show visualizer",
+                                tint = Color.White.copy(alpha = 0.5f),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
                         // Star/unstar
                         IconButton(
                             onClick = { viewModel.toggleStar() },
@@ -825,6 +1124,42 @@ private fun TvSettingsContent(
             // and returns early for a second caller, so a repeat press is a no-op anyway.
             onClick = { viewModel.syncNow() },
             isLoading = syncState.isSyncing
+        )
+
+        // Visualizer — on/off
+        val ambientOn by viewModel.ambientEnabled.collectAsState()
+        TvSettingsButton(
+            icon = Icons.Default.GraphicEq,
+            title = "Visualizer",
+            subtitle = if (ambientOn) "On — press OK to turn off" else "Off — press OK to turn on",
+            onClick = { viewModel.setAmbientEnabled(!ambientOn) }
+        )
+
+        // Visualizer — idle delay. Cycles rather than opening a picker: one row, one button,
+        // no nested focus to get lost in.
+        val ambientDelay by viewModel.ambientDelaySec.collectAsState()
+        TvSettingsButton(
+            icon = Icons.Default.Sync,
+            title = "Start visualizer after",
+            subtitle = when (ambientDelay) {
+                0 -> "Only when I ask for it"
+                else -> "$ambientDelay seconds idle — press OK to change"
+            },
+            onClick = {
+                val steps = listOf(0, 10, 30, 60, 90, 300)
+                val next = steps[(steps.indexOf(ambientDelay).takeIf { it >= 0 }?.plus(1) ?: 1) % steps.size]
+                viewModel.setAmbientDelaySec(next)
+            }
+        )
+
+        // Visualizer — beat reactivity
+        val beatOn by viewModel.ambientBeatReactive.collectAsState()
+        TvSettingsButton(
+            icon = Icons.Default.MusicNote,
+            title = "React to the music",
+            subtitle = if (beatOn) "On — needs microphone permission to read the audio"
+                       else "Off — the visuals drift on their own",
+            onClick = { viewModel.setAmbientBeatReactive(!beatOn) }
         )
 
         // Upload Logs

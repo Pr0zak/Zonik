@@ -108,6 +108,10 @@ class ZonikMediaService : MediaLibraryService() {
     private val startRadioCommand = SessionCommand(ACTION_START_RADIO, Bundle.EMPTY)
 
     companion object {
+        /** Audio session the player is using, for the TV's ambient visualizer to tap with
+         *  android.media.audiofx.Visualizer. Same process, so no IPC needed. */
+        @Volatile var currentAudioSessionId: Int = 0
+
         // Browse tree node IDs
         private const val ROOT_ID = "root"
         private const val RECENT_ID = "recent"
@@ -303,6 +307,7 @@ class ZonikMediaService : MediaLibraryService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
+        currentAudioSessionId = player.audioSessionId
         com.zonik.app.data.DebugLog.d("MediaService", "Audio session ID: ${player.audioSessionId}")
 
         // Make the player visible to the scrobble helpers — needs main-thread reads.

@@ -142,6 +142,33 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs -> prefs[CACHE_READ_AHEAD] = count }
     }
 
+    /** Whether the TV shows its ambient visualizer at all. */
+    val tvAmbientEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_ENABLED] ?: true
+    }
+
+    suspend fun setTvAmbientEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_ENABLED] = enabled }
+    }
+
+    /** Seconds of no remote input before the visualizer takes over, or 0 for on-demand only. */
+    val tvAmbientDelaySec: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_DELAY_SEC] ?: 10
+    }
+
+    suspend fun setTvAmbientDelaySec(seconds: Int) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_DELAY_SEC] = seconds }
+    }
+
+    /** Beat reactivity needs RECORD_AUDIO; without it the visuals still drift. */
+    val tvAmbientBeatReactive: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_BEAT] ?: true
+    }
+
+    suspend fun setTvAmbientBeatReactive(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_BEAT] = enabled }
+    }
+
     val autoTabOrder: Flow<List<String>> = dataStore.data.map { prefs ->
         val raw = prefs[AUTO_TAB_ORDER]
         if (raw != null) raw.split(",") else listOf("mix", "recent", "library", "playlists")
@@ -173,6 +200,9 @@ class SettingsRepository @Inject constructor(
         private val CACHE_READ_AHEAD = intPreferencesKey("cache_read_ahead")
         private val AUTO_TAB_ORDER = stringPreferencesKey("auto_tab_order")
         private val VISUALIZER_ENABLED = booleanPreferencesKey("visualizer_enabled")
+        private val TV_AMBIENT_ENABLED = booleanPreferencesKey("tv_ambient_enabled")
+        private val TV_AMBIENT_DELAY_SEC = intPreferencesKey("tv_ambient_delay_sec")
+        private val TV_AMBIENT_BEAT = booleanPreferencesKey("tv_ambient_beat_reactive")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_PRESET = intPreferencesKey("eq_preset")
         private val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")
