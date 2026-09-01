@@ -190,10 +190,22 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
         job.finished_at = datetime.utcnow()
 
         # Capture values from ORM object BEFORE closing session —
-        # after rollback/close, the detached object can't refresh attributes
+        # after rollback/close, the detached object can't refresh attributes.
+        #
+        # `tracks` in particular is load-bearing and was missing here: task handlers assign it
+        # after their last commit, the rollback below then discards it, and the auto-download
+        # stage at the end of this function re-reads it from the database and finds NULL. That
+        # silently disabled auto-download for every task that hands work over this way —
+        # lastfm_top_tracks, discover_similar, upgrade_scan and remix_discovery — while each
+        # one went on reporting "completed" with a healthy-looking tracks_found in its result.
+        # `total` and `progress` are captured for the same reason: they were being dropped, so
+        # every scheduled job displayed 0/0 in the UI regardless of what it actually did.
         final_status = job.status
         final_result = job.result
         final_finished = job.finished_at
+        final_tracks = job.tracks
+        final_total = job.total
+        final_progress = job.progress
 
         # Close the main session FIRST to release the SQLite write lock,
         # then use a fresh session for final updates
@@ -216,7 +228,8 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                 await final_db.execute(
                     _update(Job).where(Job.id == job_id).values(
                         status=final_status, result=final_result,
-                        finished_at=final_finished,
+                        finished_at=final_finished, tracks=final_tracks,
+                        total=final_total, progress=final_progress,
                     )
                 )
                 await final_db.commit()
