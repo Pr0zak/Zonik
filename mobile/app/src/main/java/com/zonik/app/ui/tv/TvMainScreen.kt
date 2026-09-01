@@ -536,6 +536,15 @@ fun TvMainScreen(
                             return@onPreviewKeyEvent true
                         }
 
+                        // Volume and mute belong to the system and say nothing about wanting
+                        // to leave. Falling into the branch below would have swallowed them —
+                        // dismissing the visuals AND eating the keypress, so the volume would
+                        // not even change. Hand them straight back untouched.
+                        android.view.KeyEvent.KEYCODE_VOLUME_UP,
+                        android.view.KeyEvent.KEYCODE_VOLUME_DOWN,
+                        android.view.KeyEvent.KEYCODE_VOLUME_MUTE ->
+                            return@onPreviewKeyEvent false
+
                         // Anything else means "get me out of here" — UP, DOWN, BACK and the
                         // rest. The key is consumed so waking the screen does not also fire
                         // whatever button sat behind it.
