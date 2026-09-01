@@ -508,17 +508,41 @@ fun TvMainScreen(
                 // it. Transport keys are the exception: they act and the visuals stay up, which
                 // is the whole point of having a now-playing screen.
                 if (ambientActive) {
-                    val isTransport = when (keyEvent.nativeKeyEvent.keyCode) {
+                    // The visualizer is a now-playing screen, so it owns the transport while it
+                    // is up. Most TV remotes have no dedicated skip buttons — people press the
+                    // D-pad — so LEFT/RIGHT/OK have to drive playback here rather than mean
+                    // "leave", which is what the screensaver this replaced did too.
+                    when (keyEvent.nativeKeyEvent.keyCode) {
                         android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                         android.view.KeyEvent.KEYCODE_MEDIA_PLAY,
                         android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
                         android.view.KeyEvent.KEYCODE_MEDIA_NEXT,
-                        android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> true
-                        else -> false
-                    }
-                    if (!isTransport) {
-                        ambientActive = false
-                        return@onPreviewKeyEvent true
+                        android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS ->
+                            Unit // handled by the transport block below; stay in ambient
+
+                        android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            viewModel.skipNext()
+                            return@onPreviewKeyEvent true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                            viewModel.skipPrevious()
+                            return@onPreviewKeyEvent true
+                        }
+                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                        android.view.KeyEvent.KEYCODE_ENTER,
+                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                        android.view.KeyEvent.KEYCODE_BUTTON_SELECT -> {
+                            viewModel.togglePlayPause()
+                            return@onPreviewKeyEvent true
+                        }
+
+                        // Anything else means "get me out of here" — UP, DOWN, BACK and the
+                        // rest. The key is consumed so waking the screen does not also fire
+                        // whatever button sat behind it.
+                        else -> {
+                            ambientActive = false
+                            return@onPreviewKeyEvent true
+                        }
                     }
                 }
                 if (keyEvent.nativeKeyEvent.repeatCount != 0) {
