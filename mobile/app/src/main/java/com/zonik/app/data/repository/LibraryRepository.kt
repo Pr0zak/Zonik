@@ -92,6 +92,17 @@ class LibraryRepository @Inject constructor(
     suspend fun getTracksByIds(ids: List<String>): List<Track> =
         getTracksByIdsPadded(ids).filterNotNull()
 
+    /**
+     * Server-analysed tempo, for the TV's beat grid. Null when the track was never analysed —
+     * the visuals then fall back to reacting to the audio alone.
+     */
+    suspend fun getTrackTempo(trackId: String): Float? = try {
+        zonikApi.getTrackAnalysis(trackId).bpm?.takeIf { it > 20f }
+    } catch (e: Exception) {
+        com.zonik.app.data.DebugLog.w("LibraryRepo", "getTrackTempo failed: ${e.message}")
+        null
+    }
+
     /** Owned-but-never-played tracks ranked by closeness to your taste centroid
      *  (server-computed). Resolved to local Tracks, ranking order preserved. */
     suspend fun getNeglectedGems(count: Int = 100): List<Track> = try {

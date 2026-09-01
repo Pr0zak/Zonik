@@ -3,6 +3,11 @@ package com.zonik.app.ui.tv
 import android.graphics.drawable.BitmapDrawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +68,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -234,16 +242,39 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setTvAmbientBeatReactive(enabled) }
     }
 
-    private val _bassLevel = MutableStateFlow(0f)
-    val bassLevel: StateFlow<Float> = _bassLevel.asStateFlow()
-    private val _fftMagnitudes = MutableStateFlow(FloatArray(32))
-    val fftMagnitudes: StateFlow<FloatArray> = _fftMagnitudes.asStateFlow()
+    private val _pulse = MutableStateFlow(AmbientPulse())
+    val pulse: StateFlow<AmbientPulse> = _pulse.asStateFlow()
+
+    /** Server-analysed tempo for the current track, or 0 when it has none. */
+    private val _trackBpm = MutableStateFlow(0f)
+    val trackBpm: StateFlow<Float> = _trackBpm.asStateFlow()
+
     private var visualizer: android.media.audiofx.Visualizer? = null
+    private var analyzer: PulseAnalyzer? = null
+
+    init {
+        // The beat grid needs the server's tempo, which is stored per track and costs one small
+        // request. Fetched on every track change so the clock is ready before the visuals are.
+        viewModelScope.launch {
+            currentTrack.collect { track ->
+                _trackBpm.value = 0f
+                val id = track?.id ?: return@collect
+                _trackBpm.value = try {
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        libraryRepository.getTrackTempo(id) ?: 0f
+                    }
+                } catch (e: Exception) {
+                    com.zonik.app.data.DebugLog.w("TvVM", "No tempo for $id: ${e.message}")
+                    0f
+                }
+            }
+        }
+    }
 
     /**
-     * Taps the output mix for an FFT so the visuals can move with the music. Verified working
-     * on a Chromecast with Google TV. Needs RECORD_AUDIO; when that is missing or the device
-     * refuses the capture, the particles simply drift instead.
+     * Taps the output mix for an FFT so the visuals can move with the music. Verified working on
+     * a Chromecast with Google TV. Needs RECORD_AUDIO; when that is missing, or the device
+     * refuses the capture, the visuals fall back to the tempo grid alone.
      */
     fun startVisualizer() {
         if (visualizer != null) return
@@ -252,13 +283,17 @@ class TvViewModel @Inject constructor(
                 // The session id is not valid until the player has actually started.
                 kotlinx.coroutines.delay(1500)
                 val sessionId = com.zonik.app.media.ZonikMediaService.currentAudioSessionId
-                com.zonik.app.data.DebugLog.d("TvVM", "Visualizer: audio session $sessionId")
                 if (sessionId == 0) {
-                    com.zonik.app.data.DebugLog.w("TvVM", "Visualizer: no audio session, drifting only")
+                    com.zonik.app.data.DebugLog.w("TvVM", "Visualizer: no audio session; grid only")
                     return@launch
                 }
                 val viz = android.media.audiofx.Visualizer(sessionId)
-                viz.captureSize = 128
+                // Ask for the largest capture the device allows. At the old 128 points a bin was
+                // 344 Hz wide, so "bass" actually meant vocals and guitars and the kick fell in a
+                // bin that was skipped entirely.
+                viz.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
+                val pulseAnalyzer = PulseAnalyzer(viz.samplingRate / 1000)
+                analyzer = pulseAnalyzer
                 viz.setDataCaptureListener(
                     object : android.media.audiofx.Visualizer.OnDataCaptureListener {
                         override fun onWaveFormDataCapture(
@@ -269,37 +304,21 @@ class TvViewModel @Inject constructor(
                             v: android.media.audiofx.Visualizer?, fft: ByteArray?, rate: Int
                         ) {
                             fft ?: return
-                            val n = fft.size / 2
-                            var bass = 0f
-                            for (i in 1..4) {
-                                val re = fft[2 * i].toFloat()
-                                val im = if (2 * i + 1 < fft.size) fft[2 * i + 1].toFloat() else 0f
-                                bass += kotlin.math.sqrt(re * re + im * im)
-                            }
-                            var highs = 0f
-                            for (i in (n * 2 / 3)..(n - 1).coerceAtLeast(1)) {
-                                val re = fft[2 * i].toFloat()
-                                val im = if (2 * i + 1 < fft.size) fft[2 * i + 1].toFloat() else 0f
-                                highs += kotlin.math.sqrt(re * re + im * im)
-                            }
-                            _bassLevel.value = (bass / 400f + highs / 600f).coerceIn(0f, 1f)
-                            val mags = FloatArray(32)
-                            for (bin in 0 until 32) {
-                                val idx = 1 + bin * (n - 1) / 32
-                                val re = fft[2 * idx].toFloat()
-                                val im = if (2 * idx + 1 < fft.size) fft[2 * idx + 1].toFloat() else 0f
-                                mags[bin] = (kotlin.math.sqrt(re * re + im * im) / 128f).coerceIn(0f, 1f)
-                            }
-                            _fftMagnitudes.value = mags
+                            _pulse.value = pulseAnalyzer.process(fft)
                         }
                     },
-                    android.media.audiofx.Visualizer.getMaxCaptureRate() / 2,
+                    // Full rate, not half: the old setting analysed one 3 ms window in every
+                    // 100 ms and missed most of what it was meant to be watching.
+                    android.media.audiofx.Visualizer.getMaxCaptureRate(),
                     false,
                     true
                 )
                 viz.enabled = true
                 visualizer = viz
-                com.zonik.app.data.DebugLog.d("TvVM", "Visualizer started (session=$sessionId)")
+                com.zonik.app.data.DebugLog.d(
+                    "TvVM",
+                    "Visualizer started (session=$sessionId, capture=${viz.captureSize}, rate=${viz.samplingRate}Hz)"
+                )
             } catch (e: Exception) {
                 com.zonik.app.data.DebugLog.w("TvVM", "Visualizer unavailable: ${e.message}")
             }
@@ -312,7 +331,9 @@ class TvViewModel @Inject constructor(
         } catch (_: Exception) {
         }
         visualizer = null
-        _bassLevel.value = 0f
+        analyzer?.reset()
+        analyzer = null
+        _pulse.value = AmbientPulse()
     }
 
     override fun onCleared() {
@@ -576,9 +597,10 @@ private fun TvAmbientOverlay(
     isPlaying: Boolean,
 ) {
     val beatReactive by viewModel.ambientBeatReactive.collectAsState()
-    val bassLevel by viewModel.bassLevel.collectAsState()
-    val fftMagnitudes by viewModel.fftMagnitudes.collectAsState()
+    val rawPulse by viewModel.pulse.collectAsState()
+    val bpm by viewModel.trackBpm.collectAsState()
     val context = LocalContext.current
+    val pulse = if (beatReactive) rawPulse else AmbientPulse()
 
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
@@ -606,18 +628,110 @@ private fun TvAmbientOverlay(
         }
     }
 
-    val palette = remember(track.coverArt) {
-        listOf(ZonikColors.gold, Color(0xFF7C4DFF), Color(0xFF534AB7))
+    // The beat grid. The server knows the tempo but not where the downbeat falls, so an onset
+    // from the audio snaps the phase into place; from then on the clock can say when the NEXT
+    // beat lands, which is what lets motion peak on it instead of trailing it.
+    val beatClock = remember(track.id, bpm) { BeatClock(bpm) }
+    var anticipation by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(beatClock) {
+        if (!beatClock.hasTempo) return@LaunchedEffect
+        while (true) {
+            anticipation = beatClock.anticipation(System.currentTimeMillis())
+            delay(16L)
+        }
     }
+    LaunchedEffect(beatClock, pulse.onset) {
+        if (beatClock.hasTempo && pulse.onset > 0.9f) {
+            beatClock.alignTo(System.currentTimeMillis())
+        }
+    }
+
+    // Colours sampled from the artwork, so a grunge sleeve and a synth sleeve do not produce
+    // the identical field. (The restored version hardcoded three swatches keyed on coverArt,
+    // which meant the key did nothing and every album looked the same.)
+    var palette by remember(track.coverArt) {
+        mutableStateOf(listOf(ZonikColors.gold, Color(0xFF7C4DFF), Color(0xFF534AB7)))
+    }
+    var coverBitmap by remember(track.coverArt) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(track.coverArt) {
+        val coverArtId = track.coverArt ?: return@LaunchedEffect
+        val loaded = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                // Small on purpose. Magnifying a ~128px source to fill a 1080p panel IS the
+                // blur, done by the texture unit for free, and it keeps the source inside GPU
+                // cache — cheaper than the stacked full-screen gradients it replaces.
+                val request = ImageRequest.Builder(context)
+                    .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=128")
+                    .allowHardware(false)
+                    .build()
+                ((context.imageLoader.execute(request) as? SuccessResult)?.drawable
+                    as? BitmapDrawable)?.bitmap
+            } catch (_: Exception) {
+                null
+            }
+        } ?: return@LaunchedEffect
+        coverBitmap = loaded
+        val swatches = Palette.from(loaded).generate()
+        palette = listOf(
+            Color(swatches.getVibrantColor(ZonikColors.gold.value.toInt())),
+            Color(swatches.getLightMutedColor(0xFF7C4DFF.toInt())),
+            Color(swatches.getMutedColor(0xFF534AB7.toInt())),
+        )
+    }
+
+    // Cover Bloom: a slow drift across the magnified artwork, so the room the particles float
+    // in is the record itself rather than a fixed gradient.
+    val drift = rememberInfiniteTransition(label = "bloom")
+    val driftScale by drift.animateFloat(
+        initialValue = 1.12f, targetValue = 1.22f,
+        animationSpec = infiniteRepeatable(tween(90_000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bloomScale"
+    )
+    val driftX by drift.animateFloat(
+        initialValue = -0.02f, targetValue = 0.02f,
+        animationSpec = infiniteRepeatable(tween(70_000, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bloomX"
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Brush.radialGradient(listOf(Color(0xFF16121F), Color(0xFF07060B))))
     ) {
+        val bloom = coverBitmap
+        if (bloom != null) {
+            androidx.compose.foundation.Image(
+                bitmap = bloom.asImageBitmap(),
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = driftScale + pulse.low * 0.015f,
+                        scaleY = driftScale + pulse.low * 0.015f,
+                        translationX = driftX * 1000f,
+                        alpha = 0.62f
+                    )
+            )
+            // Keeps the type legible over a bright sleeve without burying the artwork. A
+            // radial scrim was the obvious choice and the wrong one: its radius is in pixels
+            // and defaults to half the smallest dimension, so on a 1080p panel it reached full
+            // opacity a third of the way out and the bloom never showed. A vertical ramp puts
+            // the darkness where the words are instead.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xA6000000), Color(0x59000000), Color(0xEB0A0810))
+                        )
+                    )
+            )
+        }
+
         ParticleSystem(
-            bassLevel = if (beatReactive) bassLevel else 0f,
-            fftMagnitudes = fftMagnitudes,
+            pulse = pulse,
+            anticipation = anticipation,
             colors = palette,
             modifier = Modifier.fillMaxSize(),
             centerX = 0.5f,

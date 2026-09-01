@@ -9,25 +9,32 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Canvas as GraphicsCanvas
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.BlendMode
 import kotlinx.coroutines.delay
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 enum class ParticleShape { ORB, RING, SPARKLE }
+
+/** Which part of the music a given particle answers to. */
+private enum class Band { LOW, MID, HIGH }
 
 private class Particle(
     var x: Float, var y: Float,
     var dx: Float, var dy: Float,
-    var baseRadius: Float, var radius: Float,
-    var color: Color, var shape: ParticleShape,
+    var baseRadius: Float,
+    var color: Color,
+    var shape: ParticleShape,
+    var band: Band,
     var alpha: Float,
-    val trail: MutableList<Offset> = mutableListOf(),
-    var pulseDecay: Float = 0f
 )
 
 private fun createParticles(colors: List<Color>): List<Particle> {
@@ -43,34 +50,59 @@ private fun createParticles(colors: List<Color>): List<Particle> {
                 ParticleShape.RING -> 8f + Math.random().toFloat() * 16f
                 ParticleShape.SPARKLE -> 3f + Math.random().toFloat() * 5f
             },
-            radius = 0f, color = colors[i % colors.size], shape = shape,
+            color = colors[i % colors.size],
+            shape = shape,
+            // Big slow things answer the kick, small bright things answer the cymbals — so the
+            // scene separates the way the music does instead of pulsing as one mass.
+            band = when (shape) {
+                ParticleShape.ORB -> Band.LOW
+                ParticleShape.RING -> Band.MID
+                ParticleShape.SPARKLE -> Band.HIGH
+            },
             alpha = when (shape) {
-                ParticleShape.ORB -> 0.08f + Math.random().toFloat() * 0.07f
-                ParticleShape.RING -> 0.1f + Math.random().toFloat() * 0.1f
-                ParticleShape.SPARKLE -> 0.15f + Math.random().toFloat() * 0.15f
+                ParticleShape.ORB -> 0.10f + Math.random().toFloat() * 0.08f
+                ParticleShape.RING -> 0.12f + Math.random().toFloat() * 0.10f
+                ParticleShape.SPARKLE -> 0.18f + Math.random().toFloat() * 0.16f
             }
-        ).also { it.radius = it.baseRadius }
+        )
     }
 }
 
+/** One expanding ring, fired on a drum hit. */
+private class Shockwave(var progress: Float = 0f, var strength: Float = 1f)
+
+/**
+ * The ambient particle field.
+ *
+ * Three things distinguish it from the version this replaces. Trails come from a feedback
+ * buffer rather than from redrawing a list of past positions, so they last for seconds at a
+ * fixed cost instead of eight blobs at 240 draw calls a frame. Particles are sized per
+ * frequency band rather than by one loudness scalar. And a drum hit fires a ring that crosses
+ * the screen — a discrete event, because a smooth envelope is invisible from a sofa.
+ */
 @Composable
 fun ParticleSystem(
-    bassLevel: Float,
-    fftMagnitudes: FloatArray = FloatArray(32),
+    pulse: AmbientPulse,
+    anticipation: Float,
     colors: List<Color>,
     modifier: Modifier = Modifier,
     centerX: Float = 0.5f,
-    centerY: Float = 0.4f
+    centerY: Float = 0.4f,
 ) {
     val particles = remember(colors.hashCode()) { createParticles(colors) }
+    val shockwaves = remember { mutableListOf<Shockwave>() }
     var frameCounter by remember { mutableLongStateOf(0L) }
     var lastFrameTime by remember { mutableLongStateOf(System.nanoTime()) }
-    var auroraPhase by remember { mutableLongStateOf(0L) }
+    var lastOnset by remember { mutableLongStateOf(0L) }
+
+    // The feedback buffer. Everything is drawn into this, and each frame it is composited back
+    // onto itself very slightly faded and scaled — which is what turns motion into a trail that
+    // curls and lingers, for two full-buffer operations regardless of how long the trail is.
+    var trailBuffer by remember { mutableStateOf<ImageBitmap?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
             frameCounter++
-            auroraPhase++
             delay(33L)
         }
     }
@@ -81,87 +113,127 @@ fun ParticleSystem(
         lastFrameTime = now
         val w = size.width
         val h = size.height
-        val cx = centerX * w
-        val cy = centerY * h
+        if (w < 1f || h < 1f) return@Canvas
 
         @Suppress("UNUSED_EXPRESSION")
         frameCounter
 
-        // ═══════════════════════════════════════════
-        // 1. Aurora / flowing colors (background)
-        // ═══════════════════════════════════════════
-        val phase = auroraPhase * 0.01f
-        for (band in 0 until 5) {
-            val bandColor = colors[band % colors.size]
-            val xOffset = sin(phase * 0.3f + band * 1.2f).toFloat() * w * 0.15f
-            val bandAlpha = 0.04f + bassLevel * 0.03f
-            drawRect(
-                color = bandColor.copy(alpha = bandAlpha),
-                topLeft = Offset(w * band / 5f + xOffset, 0f),
-                size = androidx.compose.ui.geometry.Size(w / 4f, h)
+        // Fire a shockwave on a fresh onset, rate-limited so a busy mix does not fill the
+        // screen with rings.
+        if (pulse.onset > 0.9f && now - lastOnset > 140_000_000L) {
+            lastOnset = now
+            if (shockwaves.size < 4) shockwaves.add(Shockwave(strength = 0.6f + pulse.low * 0.4f))
+        }
+
+        val buffer = trailBuffer?.takeIf { it.width == w.toInt() && it.height == h.toInt() }
+            ?: ImageBitmap(w.toInt().coerceAtLeast(1), h.toInt().coerceAtLeast(1))
+                .also { trailBuffer = it }
+
+        val bufferCanvas = GraphicsCanvas(buffer)
+        // The fade IS the trail length: everything already in the buffer gets a little more
+        // transparent each frame, so a particle leaves a tail that dies out over roughly a
+        // second and a half.
+        //
+        // DstIn, not black-over. Painting translucent black on top fades the colour toward
+        // black but drives the buffer's ALPHA toward opaque, so the layer turns into a solid
+        // black sheet that hides whatever is drawn behind it — which is exactly what buried
+        // the album-art background the first time. DstIn multiplies destination alpha by the
+        // source's instead, which is a true fade-out.
+        val fadePaint = Paint().apply {
+            color = Color.Black.copy(alpha = 1f - TRAIL_FADE)
+            blendMode = BlendMode.DstIn
+        }
+        bufferCanvas.drawRect(0f, 0f, w, h, fadePaint)
+
+        val bufferScope = CanvasDrawScope()
+        bufferScope.draw(this, layoutDirection, bufferCanvas, Size(w, h)) {
+            drawParticles(particles, pulse, anticipation, dt, w, h)
+            drawShockwaves(shockwaves, colors.first(), centerX * w, centerY * h, w, h, dt)
+        }
+
+        drawImage(buffer)
+    }
+}
+
+private fun DrawScope.drawParticles(
+    particles: List<Particle>,
+    pulse: AmbientPulse,
+    anticipation: Float,
+    dt: Float,
+    w: Float,
+    h: Float,
+) {
+    particles.forEach { p ->
+        p.x += p.dx * dt * 60f
+        p.y += p.dy * dt * 60f
+        if (p.x < -0.05f) p.x += 1.1f
+        if (p.x > 1.05f) p.x -= 1.1f
+        if (p.y < -0.05f) p.y += 1.1f
+        if (p.y > 1.05f) p.y -= 1.1f
+
+        val level = when (p.band) {
+            Band.LOW -> pulse.low
+            Band.MID -> pulse.mid
+            Band.HIGH -> pulse.high
+        }
+        // Anticipation swells everything slightly just BEFORE the grid's next beat, so motion
+        // peaks on it rather than chasing it.
+        val scale = 1f + level * 0.55f + anticipation * 0.12f
+        val r = p.baseRadius * scale
+        val cx = p.x * w
+        val cy = p.y * h
+        val a = (p.alpha * (0.7f + level * 0.6f)).coerceIn(0f, 1f)
+
+        when (p.shape) {
+            ParticleShape.ORB -> {
+                // One soft halo, not the three stacked layers the old one drew — the overdraw
+                // is what made a full-screen field expensive.
+                drawCircle(p.color.copy(alpha = a * 0.35f), radius = r * 2.2f, center = Offset(cx, cy))
+                drawCircle(p.color.copy(alpha = a), radius = r, center = Offset(cx, cy))
+            }
+            ParticleShape.RING -> drawCircle(
+                p.color.copy(alpha = a), radius = r, center = Offset(cx, cy),
+                style = Stroke(width = 1.5f + level * 2f)
             )
-        }
-
-        // ═══════════════════════════════════════════
-        // 4. Particles with trails
-        // ═══════════════════════════════════════════
-        particles.forEach { p ->
-            if (p.trail.size >= 8) p.trail.removeAt(0)
-            p.trail.add(Offset(p.x * w, p.y * h))
-
-            // Steady drift, no pulsing
-            p.x += p.dx * dt * 60f
-            p.y += p.dy * dt * 60f
-
-            // Wrap
-            if (p.x < -0.05f) p.x += 1.1f
-            if (p.x > 1.05f) p.x -= 1.1f
-            if (p.y < -0.05f) p.y += 1.1f
-            if (p.y > 1.05f) p.y -= 1.1f
-
-            // Trails
-            p.trail.forEachIndexed { idx, pos ->
-                val ta = p.alpha * 0.3f * (idx.toFloat() / p.trail.size)
-                val tr = p.radius * 0.5f * (idx.toFloat() / p.trail.size)
-                if (tr > 0.5f) drawCircle(p.color.copy(alpha = ta), tr, pos)
-            }
-
-            // Particle
-            val pos = Offset(p.x * w, p.y * h)
-            val beatAlpha = p.alpha + p.pulseDecay * 0.3f
-            drawParticle(p, pos, beatAlpha)
-        }
-    }
-}
-
-private fun DrawScope.drawParticle(p: Particle, pos: Offset, alpha: Float) {
-    when (p.shape) {
-        ParticleShape.ORB -> {
-            // Soft blurred glow — 4 layers from outer (faint) to inner (brighter)
-            drawCircle(p.color.copy(alpha = alpha * 0.08f), p.radius * 3.5f, pos)
-            drawCircle(p.color.copy(alpha = alpha * 0.15f), p.radius * 2.5f, pos)
-            drawCircle(p.color.copy(alpha = alpha * 0.3f), p.radius * 1.6f, pos)
-            drawCircle(p.color.copy(alpha = alpha), p.radius, pos)
-        }
-        ParticleShape.RING -> {
-            // Blurred ring — multiple strokes
-            drawCircle(p.color.copy(alpha = alpha * 0.1f), p.radius * 1.6f, pos, style = Stroke(6f))
-            drawCircle(p.color.copy(alpha = alpha * 0.3f), p.radius * 1.2f, pos, style = Stroke(4f))
-            drawCircle(p.color.copy(alpha = alpha), p.radius, pos, style = Stroke(2f))
-        }
-        ParticleShape.SPARKLE -> {
-            // Blurred sparkle — soft glow + rays
-            drawCircle(p.color.copy(alpha = alpha * 0.15f), p.radius * 4f, pos)
-            drawCircle(p.color.copy(alpha = alpha * 0.4f), p.radius * 2f, pos)
-            drawCircle(p.color.copy(alpha = (alpha * 1.5f).coerceAtMost(1f)), p.radius, pos)
-            val rayLen = p.radius * 4f
-            for (a in 0 until 4) {
-                val rad = a * (PI / 2f).toFloat()
-                drawLine(
-                    p.color.copy(alpha = alpha * 0.3f), pos,
-                    Offset(pos.x + cos(rad) * rayLen, pos.y + sin(rad) * rayLen), 2f
-                )
+            ParticleShape.SPARKLE -> {
+                val len = r * (1.4f + level * 1.6f)
+                drawLine(p.color.copy(alpha = a), Offset(cx - len, cy), Offset(cx + len, cy), strokeWidth = 1.4f)
+                drawLine(p.color.copy(alpha = a), Offset(cx, cy - len), Offset(cx, cy + len), strokeWidth = 1.4f)
             }
         }
     }
 }
+
+private fun DrawScope.drawShockwaves(
+    waves: MutableList<Shockwave>,
+    color: Color,
+    cx: Float,
+    cy: Float,
+    w: Float,
+    h: Float,
+    dt: Float,
+) {
+    val maxRadius = maxOf(w, h) * 0.75f
+    val iterator = waves.iterator()
+    while (iterator.hasNext()) {
+        val wave = iterator.next()
+        // ~700ms to cross the screen: fast enough to read as a hit rather than a swell.
+        wave.progress += dt / 0.7f
+        if (wave.progress >= 1f) {
+            iterator.remove()
+            continue
+        }
+        // Ease out so it leaves fast and settles, and fade as it goes so the edge dissolves
+        // rather than hitting the bezel.
+        val eased = 1f - (1f - wave.progress) * (1f - wave.progress)
+        val alpha = (1f - wave.progress) * 0.5f * wave.strength
+        drawCircle(
+            color = color.copy(alpha = alpha),
+            radius = eased * maxRadius,
+            center = Offset(cx, cy),
+            style = Stroke(width = 3f + (1f - wave.progress) * 5f)
+        )
+    }
+}
+
+private const val TRAIL_FADE = 0.10f

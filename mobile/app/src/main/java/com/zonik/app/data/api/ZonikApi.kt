@@ -79,7 +79,20 @@ interface ZonikApi {
 
     @GET("api/map/neglected-gems")
     suspend fun getNeglectedGems(@Query("limit") limit: Int = 100): NeglectedGemsResponse
+
+    @GET("api/analysis/track/{trackId}")
+    suspend fun getTrackAnalysis(@retrofit2.http.Path("trackId") trackId: String): TrackAnalysisResponse
 }
+
+/** Server-side audio analysis. Every field is optional — the endpoint answers with an `error`
+ *  key instead when a track was never analysed. */
+@Serializable
+data class TrackAnalysisResponse(
+    val bpm: Float? = null,
+    val energy: Float? = null,
+    val danceability: Float? = null,
+    val loudness: Float? = null,
+)
 
 @Serializable
 data class NeglectedGemsResponse(
