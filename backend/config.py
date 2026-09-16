@@ -137,6 +137,13 @@ class AssistantConfig(BaseModel):
     ai_duplicate_resolver: bool = True
     ai_download_advisor: bool = True
     ai_playlist_curator: bool = True
+    # Usage/cost accounting — write one ai_usage row per Claude API call.
+    # Turning this off keeps the in-memory session counters but stops the DB writes.
+    track_ai_usage: bool = True
+    # Optional pricing overrides: model-id -> [input, output] USD per 1M tokens.
+    # Consulted before the built-in snapshot in backend/services/ai/pricing.py, so
+    # rates can be corrected without a code change when Anthropic's pricing moves.
+    model_pricing: dict[str, list[float]] = {}
 
 
 class Settings(BaseModel):

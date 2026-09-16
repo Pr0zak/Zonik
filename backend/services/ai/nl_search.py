@@ -82,6 +82,7 @@ Be precise. Only include fields that the query clearly implies."""
         prompt,
         max_tokens=512,
         temperature=0.1,
+        feature="nl_search",
     )
 
     if "error" in result:

@@ -156,6 +156,7 @@ export const api = {
 
 	// AI Usage
 	getAIUsage: () => request('/config/ai-usage'),
+	getAIUsageDashboard: (days = 30) => request(`/ai-usage/dashboard?days=${days}`),
 
 	// Discovery Search (Last.fm)
 	discoverySearch: (q, limit = 5, signal) => request(buildUrl('/discovery/search', { q, limit }), { signal }),

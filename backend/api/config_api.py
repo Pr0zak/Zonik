@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -24,6 +25,8 @@ from backend.database import async_session, get_db
 from backend.models.job import Job
 
 router = APIRouter()
+
+_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 def _find_config_path() -> Path:
@@ -47,18 +50,33 @@ def _write_config(data: dict) -> None:
     path = _find_config_path()
     lines: list[str] = []
 
+    def fmt_scalar(v) -> str:
+        """One TOML value. bool before int — bool is an int subclass."""
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return repr(v)
+        if isinstance(v, list):
+            return "[" + ", ".join(fmt_scalar(i) for i in v) + "]"
+        return '"{}"'.format(str(v).replace("\\", "\\\\").replace('"', '\\"'))
+
+    def fmt_key(k) -> str:
+        """Bare key when it's safe (A-Za-z0-9_-), quoted otherwise."""
+        k = str(k)
+        return k if _BARE_KEY_RE.fullmatch(k) else '"{}"'.format(k.replace('"', '\\"'))
+
     def write_section(section: str, values: dict):
         lines.append(f"\n[{section}]")
+        # Scalars first: in TOML every key after a sub-table header belongs to
+        # that sub-table, so a dict emitted early would swallow its siblings.
+        sub_tables: list[tuple[str, dict]] = []
         for k, v in values.items():
-            if isinstance(v, bool):
-                lines.append(f'{k} = {"true" if v else "false"}')
-            elif isinstance(v, int):
-                lines.append(f"{k} = {v}")
-            elif isinstance(v, list):
-                items = ", ".join(f'"{i}"' for i in v)
-                lines.append(f"{k} = [{items}]")
+            if isinstance(v, dict):
+                sub_tables.append((k, v))
             else:
-                lines.append(f'{k} = "{v}"')
+                lines.append(f"{fmt_key(k)} = {fmt_scalar(v)}")
+        for k, v in sub_tables:
+            write_section(f"{section}.{fmt_key(k)}", v)
 
     for section, values in data.items():
         if isinstance(values, dict):

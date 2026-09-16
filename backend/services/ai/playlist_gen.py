@@ -92,7 +92,7 @@ Return JSON with selection criteria:
   "description": "1-sentence playlist description"
 }}"""
 
-    result = await call_claude(interpret_prompt, max_tokens=512, temperature=0.3)
+    result = await call_claude(interpret_prompt, max_tokens=512, temperature=0.3, feature="playlist_gen")
     if "error" in result:
         return result
 

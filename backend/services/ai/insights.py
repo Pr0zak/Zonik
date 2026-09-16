@@ -97,7 +97,7 @@ Return JSON:
   "trends": ["trend 1", ...]
 }}"""
 
-    result = await call_claude(prompt, max_tokens=512, temperature=0.6)
+    result = await call_claude(prompt, max_tokens=512, temperature=0.6, feature="insights")
     if "error" in result:
         return result
 

@@ -58,7 +58,7 @@ Return JSON array of indices ranked best to worst, with a score (0-1) and brief 
   ...
 ]"""
 
-    result = await call_claude(prompt, max_tokens=1024, temperature=0.2)
+    result = await call_claude(prompt, max_tokens=1024, temperature=0.2, feature="download_advisor")
     if "error" in result:
         return result
 

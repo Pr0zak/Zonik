@@ -84,7 +84,7 @@ async def rerank_with_claude(
         return {"error": "AI re-ranking is disabled"}
 
     prompt = build_prompt(profile, candidates)
-    result = await call_claude(prompt, max_tokens=4096)
+    result = await call_claude(prompt, max_tokens=4096, feature="recommendations")
 
     if "error" in result:
         return result

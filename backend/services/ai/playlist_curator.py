@@ -38,7 +38,7 @@ Playlists:
 
 Return ONLY the JSON array, no other text."""
 
-    result = await call_claude(prompt, max_tokens=2048)
+    result = await call_claude(prompt, max_tokens=2048, feature="playlist_curator")
     if "error" in result or not result.get("parsed"):
         return playlists
 
@@ -88,7 +88,7 @@ Tracks:
 
 Return ONLY the JSON, no other text."""
 
-    result = await call_claude(prompt, max_tokens=4096)
+    result = await call_claude(prompt, max_tokens=4096, feature="playlist_curator")
     if "error" in result or not result.get("parsed"):
         return {"overall_score": 0.5, "summary": "Review unavailable", "tracks": []}
 

@@ -55,5 +55,17 @@ transcode_cache_max_mb = 500
 [subsonic]
 server_name = "Zonik"
 
+[assistant]
+claude_api_key = ""
+claude_model = "claude-sonnet-4-20250514"
+# Record one ai_usage row per Claude API call (powers the AI usage dashboard)
+track_ai_usage = true
+
+# Optional: override the built-in pricing snapshot in
+# backend/services/ai/pricing.py. model-id -> [input, output] USD per 1M tokens.
+# [assistant.model_pricing]
+# "claude-sonnet-4-20250514" = [3.00, 15.00]
+# "claude-haiku-4-5" = [1.00, 5.00]
+
 [kimahub]
 db_url = ""  # postgresql://kima:pass@host:5432/kima

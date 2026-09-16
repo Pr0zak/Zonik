@@ -1,7 +1,7 @@
 <script>
-	import { onMount, tick } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { formatSize, formatDuration, parseUTC } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -29,6 +29,20 @@
 	let playHourlyChartEl = $state(null);
 	let playTimelineChart = null;
 	let playHourlyChart = null;
+
+	let aiUsage = $state(null);
+	let aiDays = $state(30);
+	let aiLoading = $state(false);
+	let aiError = $state(null);
+	let aiRequestSeq = 0; // monotonic — only the newest response may land
+	let aiCostChartEl = $state(null);
+	let aiTokensChartEl = $state(null);
+	let aiRequestsChartEl = $state(null);
+	let aiFeatureChartEl = $state(null);
+	let aiCostChart = null;
+	let aiTokensChart = null;
+	let aiRequestsChart = null;
+	let aiFeatureChart = null;
 
 	let peersChartEl = $state(null);
 	let transfersChartEl = $state(null);
@@ -211,6 +225,334 @@
 			buildPlayCharts();
 		} catch (e) {
 			console.error('Failed to load play history:', e);
+		}
+	}
+
+	// ---- AI Usage ------------------------------------------------------------
+	// Palette: #06b6d4 is the stats-section hue (single-hue / magnitude charts).
+	// The three categorical slots below are fixed-order and CVD-validated for this
+	// dark surface — do not cycle them or add a 4th.
+	const AI_HUE = '#06b6d4';
+	const AI_CAT = ['#3987e5', '#d95926', '#199e70']; // input / cache read / output
+	const AI_SURFACE = '#201f1f'; // var(--surface-container) — the 2px stack gap
+
+	const AI_FEATURE_LABELS = {
+		recommendations: 'Recommendations',
+		explainer: 'Explainer',
+		playlist_curator: 'Playlist curator',
+		download_advisor: 'Download advisor',
+		nl_search: 'NL search',
+		duplicate_resolver: 'Duplicate resolver',
+		insights: 'Insights',
+		auto_tagger: 'Auto tagger',
+		playlist_gen: 'Playlist generation',
+		mood_tagger: 'Mood tagger',
+		unknown: 'Unknown',
+	};
+
+	function aiFeatureLabel(f) {
+		if (!f) return 'Unknown';
+		return AI_FEATURE_LABELS[f] || f.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+	}
+
+	/**
+	 * Money formatting that scales precision to magnitude — a single Haiku call
+	 * costs a fraction of a cent and toFixed(2) would render it as "$0.00".
+	 */
+	function formatUSD(value) {
+		const n = Number(value);
+		if (!Number.isFinite(n) || n === 0) return '$0.00';
+		const abs = Math.abs(n);
+		if (abs >= 1) return `$${n.toFixed(2)}`;
+		if (abs >= 0.01) return `$${n.toFixed(4)}`;
+		if (abs < 0.000001) return '<$0.000001';
+		return `$${n.toFixed(6).replace(/0+$/, '')}`;
+	}
+
+	/**
+	 * formatUSD picks precision per value, which is right for a lone figure but
+	 * wrong down a column or across an axis: "$5.11" next to "$0.4139" puts the
+	 * decimal points in different places and can't be scanned. These two pick ONE
+	 * precision for a whole set so the values line up.
+	 */
+	function usdDigits(max, min) {
+		let digits = max >= 0.01 ? 2 : max >= 0.0001 ? 4 : 6;
+		// ...but never so coarse that the smallest real value rounds to nothing.
+		while (digits < 6 && min > 0 && min < 5 / 10 ** digits) digits++;
+		return digits;
+	}
+
+	/** Shared precision for a column of values (tables, bar labels). */
+	function usdColumn(values) {
+		const nums = (values || []).map((v) => Math.abs(Number(v) || 0)).filter((v) => v > 0);
+		if (!nums.length) return (v) => `$${(Number(v) || 0).toFixed(2)}`;
+		const digits = usdDigits(Math.max(...nums), Math.min(...nums));
+		return (v) => `$${(Number(v) || 0).toFixed(digits)}`;
+	}
+
+	/**
+	 * Axis ticks take precision from the series maximum alone — the tick values
+	 * are evenly spaced from zero, so the smallest datum is irrelevant to them
+	 * and letting it in just pads every label with noise decimals.
+	 */
+	function usdAxis(values) {
+		const max = Math.max(...(values || []).map((v) => Math.abs(Number(v) || 0)), 0);
+		const digits = max >= 0.01 ? 2 : max >= 0.0001 ? 4 : 6;
+		return (v) => `$${(Number(v) || 0).toFixed(digits)}`;
+	}
+
+	function formatTokens(value) {
+		const n = Number(value) || 0;
+		if (n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1)}M`;
+		if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+		return String(n);
+	}
+
+	function formatLatency(ms) {
+		const n = Number(ms) || 0;
+		if (n >= 10000) return `${(n / 1000).toFixed(0)}s`;
+		if (n >= 1000) return `${(n / 1000).toFixed(1)}s`;
+		return `${Math.round(n)}ms`;
+	}
+
+	function aiBucketLabel(period) {
+		if (!period) return '';
+		if (period.includes('T')) return period.slice(11, 16); // HH:00
+		return period.slice(5); // MM-DD
+	}
+
+	// Direct value labels for the horizontal cost-by-feature bars.
+	const aiBarValueLabels = {
+		id: 'aiBarValueLabels',
+		afterDatasetsDraw(chart) {
+			const meta = chart.getDatasetMeta(0);
+			if (!meta?.data?.length) return;
+			const { ctx } = chart;
+			const values = chart.data.datasets[0].data;
+			const fmt = usdColumn(values); // one precision, so the labels line up
+			ctx.save();
+			ctx.font = '10px Inter, sans-serif';
+			ctx.fillStyle = '#9ca3af';
+			ctx.textAlign = 'left';
+			ctx.textBaseline = 'middle';
+			meta.data.forEach((bar, i) => {
+				ctx.fillText(fmt(values[i]), bar.x + 6, bar.y);
+			});
+			ctx.restore();
+		},
+	};
+
+	function destroyAICharts() {
+		aiCostChart?.destroy(); aiCostChart = null;
+		aiTokensChart?.destroy(); aiTokensChart = null;
+		aiRequestsChart?.destroy(); aiRequestsChart = null;
+		aiFeatureChart?.destroy(); aiFeatureChart = null;
+	}
+
+	function buildAICharts() {
+		if (!aiUsage?.summary?.requests) return;
+		destroyAICharts();
+
+		const ts = aiUsage.timeseries || [];
+		const labels = ts.map((p) => aiBucketLabel(p.period));
+
+		// 1. Cost over time — single series, no legend (the title names it).
+		if (aiCostChartEl && ts.length) {
+			aiCostChart = new Chart(aiCostChartEl, {
+				type: 'line',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Cost',
+						data: ts.map((p) => p.cost_usd),
+						borderColor: AI_HUE,
+						backgroundColor: 'rgba(6,182,212,0.10)',
+						fill: true,
+						tension: 0.3,
+						pointRadius: 0,
+						pointHoverRadius: 4,
+						borderWidth: 2,
+					}],
+				},
+				options: {
+					...chartDefaults,
+					plugins: {
+						...chartDefaults.plugins,
+						legend: { display: false },
+						tooltip: {
+							...chartDefaults.plugins.tooltip,
+							callbacks: { label: (c) => ` ${formatUSD(c.parsed.y)}` },
+						},
+					},
+					scales: {
+						...chartDefaults.scales,
+						y: {
+							...chartDefaults.scales.y,
+							ticks: { ...chartDefaults.scales.y.ticks, callback: usdAxis(ts.map((p) => p.cost_usd)) },
+						},
+					},
+				},
+			});
+		}
+
+		// 2. Tokens over time — stacked bar, fixed 3-slot categorical order.
+		if (aiTokensChartEl && ts.length) {
+			// Cache writes are folded into the input slot rather than given a 4th
+			// categorical colour: they bill at 1.25x the input rate, and leaving
+			// them out entirely would make the stack undercount the Tokens tile.
+			const hasCacheWrite = ts.some((p) => (p.cache_write_tokens || 0) > 0);
+			const series = [
+				{
+					label: hasCacheWrite ? 'Input (incl. cache write)' : 'Input',
+					color: AI_CAT[0],
+					value: (p) => (p.input_tokens || 0) + (p.cache_write_tokens || 0),
+				},
+				{ label: 'Cache read', color: AI_CAT[1], value: (p) => p.cache_read_tokens || 0 },
+				{ label: 'Output', color: AI_CAT[2], value: (p) => p.output_tokens || 0 },
+			];
+			aiTokensChart = new Chart(aiTokensChartEl, {
+				type: 'bar',
+				data: {
+					labels,
+					datasets: series.map((s) => ({
+						label: s.label,
+						data: ts.map(s.value),
+						backgroundColor: s.color,
+						borderColor: AI_SURFACE, // 2px surface gap between stacked segments
+						borderWidth: { top: 2 },
+						borderSkipped: false,
+						borderRadius: 2,
+					})),
+				},
+				options: {
+					...chartDefaults,
+					plugins: {
+						...chartDefaults.plugins,
+						legend: { ...chartDefaults.plugins.legend, display: true, position: 'bottom' },
+						tooltip: {
+							...chartDefaults.plugins.tooltip,
+							callbacks: { label: (c) => ` ${c.dataset.label}: ${(c.parsed.y || 0).toLocaleString()}` },
+						},
+					},
+					scales: {
+						x: { ...chartDefaults.scales.x, stacked: true },
+						y: {
+							...chartDefaults.scales.y,
+							stacked: true,
+							ticks: { ...chartDefaults.scales.y.ticks, callback: (v) => formatTokens(v) },
+						},
+					},
+				},
+			});
+		}
+
+		// 3. Requests over time — its own chart, never a second axis on cost.
+		if (aiRequestsChartEl && ts.length) {
+			aiRequestsChart = new Chart(aiRequestsChartEl, {
+				type: 'bar',
+				data: {
+					labels,
+					datasets: [{
+						label: 'Requests',
+						// AI_HUE, not AI_CAT[0] — that slot means "input tokens" in the
+						// chart below, and one hue must not carry two meanings here.
+						data: ts.map((p) => p.requests),
+						backgroundColor: AI_HUE,
+						borderRadius: 3,
+						borderSkipped: false,
+					}],
+				},
+				options: {
+					...chartDefaults,
+					plugins: {
+						...chartDefaults.plugins,
+						legend: { display: false },
+						tooltip: {
+							...chartDefaults.plugins.tooltip,
+							callbacks: { label: (c) => ` ${c.parsed.y} request${c.parsed.y === 1 ? '' : 's'}` },
+						},
+					},
+				},
+			});
+		}
+
+		// 4. Cost by feature — horizontal bars, one hue, sorted desc, direct labels.
+		const feats = [...(aiUsage.by_feature || [])].sort((a, b) => (b.cost_usd || 0) - (a.cost_usd || 0));
+		if (aiFeatureChartEl && feats.length) {
+			aiFeatureChart = new Chart(aiFeatureChartEl, {
+				type: 'bar',
+				data: {
+					labels: feats.map((f) => aiFeatureLabel(f.feature)),
+					datasets: [{
+						label: 'Cost',
+						data: feats.map((f) => f.cost_usd || 0),
+						backgroundColor: AI_HUE,
+						borderRadius: 4,
+						borderSkipped: false,
+						barThickness: 14,
+					}],
+				},
+				options: {
+					...chartDefaults,
+					indexAxis: 'y',
+					interaction: { mode: 'nearest', intersect: true },
+					layout: { padding: { right: 64 } },
+					plugins: {
+						...chartDefaults.plugins,
+						legend: { display: false },
+						tooltip: {
+							...chartDefaults.plugins.tooltip,
+							callbacks: {
+								label: (c) => {
+									const f = feats[c.dataIndex];
+									return ` ${formatUSD(f.cost_usd)} · ${f.requests} call${f.requests === 1 ? '' : 's'}`;
+								},
+							},
+						},
+					},
+					scales: {
+						// Every bar carries its own value label, so a value axis would
+						// encode the same numbers twice (at four different decimal
+						// widths, since formatUSD scales precision to magnitude).
+						x: { ...chartDefaults.scales.x, display: false },
+						y: {
+							...chartDefaults.scales.y,
+							grid: { display: false },
+							// Spread, don't replace — bare ticks would drop the page's
+							// recessive #6b7280/10px pair for a brighter, larger one.
+							ticks: { ...chartDefaults.scales.y.ticks },
+						},
+					},
+				},
+				plugins: [aiBarValueLabels],
+			});
+		}
+	}
+
+	async function loadAIUsage() {
+		// Period buttons fire faster than the 90d query returns, and the slower
+		// request can resolve last — stamp each one and drop stale replies so
+		// aiUsage can never disagree with the highlighted aiDays.
+		const seq = ++aiRequestSeq;
+		aiLoading = true;
+		aiError = null;
+		destroyAICharts();
+		try {
+			const payload = await api.getAIUsageDashboard(aiDays);
+			if (seq !== aiRequestSeq) return; // superseded
+			aiUsage = payload;
+		} catch (e) {
+			if (seq !== aiRequestSeq) return;
+			console.error('Failed to load AI usage:', e);
+			// Surfaced, not swallowed: the likeliest cause is a missing
+			// ai_usage table (migration not run), and a blank card hides that.
+			aiError = e?.message || 'Could not load AI usage.';
+		} finally {
+			if (seq === aiRequestSeq) {
+				aiLoading = false;
+				await tick();
+				buildAICharts();
+			}
 		}
 	}
 
@@ -402,21 +744,32 @@
 			]);
 			// Set loading=false first so {#if} blocks render canvas elements
 			loading = false;
-			await Promise.all([loadHistory(), loadPlayHistory()]);
+			await Promise.all([loadHistory(), loadPlayHistory(), loadAIUsage()]);
 			await tick();
 			buildJobCharts();
 		} catch (e) {
 			console.error('Failed to load stats:', e);
 			loading = false;
 		}
+	});
 
-		return () => destroyCharts();
+	// NOT the onMount return value: onMount above is async, so it resolves to a
+	// Promise and Svelte discards any function it returns. Chart.js instances
+	// would otherwise outlive the page, each holding a ResizeObserver.
+	onDestroy(() => {
+		destroyCharts();
+		destroyAICharts();
+		destroyJobCharts();
 	});
 
 	function barWidth(value, max) {
 		if (!max) return '0%';
 		return Math.max(2, (value / max) * 100) + '%';
 	}
+
+	// One shared precision per cost column, so the decimal points align down it.
+	let aiModelCost = $derived(usdColumn((aiUsage?.by_model || []).map((m) => m.cost_usd)));
+	let aiRecentCost = $derived(usdColumn((aiUsage?.recent || []).map((r) => r.cost_usd)));
 
 	let maxFmt = $derived(data ? Math.max(...Object.values(data.formats), 1) : 1);
 	let maxArt = $derived(data?.top_artists?.length ? data.top_artists[0].count : 1);
@@ -685,6 +1038,205 @@
 								{/each}
 							</div>
 						</div>
+					</div>
+				{/if}
+			</Card>
+		{/if}
+
+		<!-- AI Usage -->
+		{#if aiUsage || aiError}
+			<Card padding="p-4" class="mb-8">
+				<div class="flex items-center justify-between mb-4">
+					<div class="flex items-center gap-2">
+						<Sparkles class="w-4 h-4 text-[var(--color-stats)]" />
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">AI Usage</h2>
+						{#if aiUsage?.summary?.requests}
+							<span class="text-xs text-[var(--text-muted)]">({aiUsage.summary.requests.toLocaleString()} calls)</span>
+						{/if}
+					</div>
+					<div class="flex gap-1">
+						{#each [
+							{ v: 7, l: '7d' },
+							{ v: 30, l: '30d' },
+							{ v: 90, l: '90d' },
+						] as opt}
+							<button
+								class="px-2.5 py-1 text-xs rounded transition-colors {aiDays === opt.v ? 'bg-[var(--color-stats)] text-white' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--surface-container)]'}"
+								onclick={() => { aiDays = opt.v; loadAIUsage(); }}
+							>
+								{opt.l}
+							</button>
+						{/each}
+					</div>
+				</div>
+
+				{#if aiError}
+					<div class="text-center py-12 text-sm">
+						<AlertTriangle class="w-8 h-8 mx-auto mb-2 text-red-400 opacity-70" />
+						<p class="text-[var(--text-secondary)]">Could not load AI usage.</p>
+						<p class="text-xs text-[var(--text-muted)] mt-1">{aiError}</p>
+						<p class="text-xs text-[var(--text-disabled)] mt-1">
+							If the server was just upgraded, the <span class="font-mono">ai_usage</span> migration may not have run yet.
+						</p>
+					</div>
+				{:else if !aiUsage.summary?.requests}
+					<div class="text-center py-12 text-[var(--text-muted)] text-sm">
+						<Sparkles class="w-8 h-8 mx-auto mb-2 opacity-30" />
+						<p>No AI calls recorded yet.</p>
+						{#if aiUsage.all_time?.requests}
+							<p class="text-xs mt-1">
+								{aiUsage.all_time.requests.toLocaleString()} all-time calls · {formatUSD(aiUsage.all_time.cost_usd)} — none in the last {aiDays} days.
+							</p>
+						{/if}
+					</div>
+				{:else}
+					<div class="transition-opacity {aiLoading ? 'opacity-50' : ''}">
+						<!-- Summary tiles -->
+						<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
+							<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
+								<p class="text-xs text-[var(--text-muted)]">Requests</p>
+								<p class="text-lg font-bold text-[var(--text-primary)]">{aiUsage.summary.requests.toLocaleString()}</p>
+								<p class="text-xs text-[var(--text-muted)] mt-0.5">{formatLatency(aiUsage.summary.avg_latency_ms)} avg</p>
+							</div>
+							<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
+								<p class="text-xs text-[var(--text-muted)]">Cost ({aiDays}d)</p>
+								<p class="text-lg font-bold text-[var(--text-primary)]">{formatUSD(aiUsage.summary.cost_usd)}</p>
+								<p class="text-xs text-[var(--text-muted)] mt-0.5">estimated</p>
+							</div>
+							<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
+								<p class="text-xs text-[var(--text-muted)]">All-time cost</p>
+								<p class="text-lg font-bold text-[var(--text-primary)]">{formatUSD(aiUsage.all_time?.cost_usd)}</p>
+								<p class="text-xs text-[var(--text-muted)] mt-0.5">{(aiUsage.all_time?.requests || 0).toLocaleString()} calls</p>
+							</div>
+							<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
+								<p class="text-xs text-[var(--text-muted)]">Tokens</p>
+								<p class="text-lg font-bold text-[var(--text-primary)]">{formatTokens(aiUsage.summary.total_tokens)}</p>
+								<p class="text-xs text-[var(--text-muted)] mt-0.5">
+									{formatTokens(aiUsage.summary.input_tokens)} in · {formatTokens(aiUsage.summary.output_tokens)} out{#if (aiUsage.summary.cache_read_tokens || 0) + (aiUsage.summary.cache_write_tokens || 0) > 0} · {formatTokens((aiUsage.summary.cache_read_tokens || 0) + (aiUsage.summary.cache_write_tokens || 0))} cache{/if}
+								</p>
+							</div>
+							<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
+								<p class="text-xs text-[var(--text-muted)]">Error rate</p>
+								<p class="text-lg font-bold {aiUsage.summary.errors ? 'text-red-400' : 'text-[var(--text-primary)]'}">{((aiUsage.summary.error_rate || 0) * 100).toFixed(1)}%</p>
+								<p class="text-xs text-[var(--text-muted)] mt-0.5">{aiUsage.summary.errors || 0} failed</p>
+							</div>
+						</div>
+
+						<!-- Cost + requests over time (separate charts — never one dual axis) -->
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+							<div>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Estimated Cost Over Time</h3>
+								<div class="h-48">
+									<canvas bind:this={aiCostChartEl}></canvas>
+								</div>
+							</div>
+							<div>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Requests Over Time</h3>
+								<div class="h-48">
+									<canvas bind:this={aiRequestsChartEl}></canvas>
+								</div>
+							</div>
+						</div>
+
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+							<div>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Tokens Over Time</h3>
+								<div class="h-48">
+									<canvas bind:this={aiTokensChartEl}></canvas>
+								</div>
+							</div>
+							<div>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Cost by Feature</h3>
+								<div style="height: {Math.max(192, (aiUsage.by_feature?.length || 1) * 30 + 40)}px">
+									<canvas bind:this={aiFeatureChartEl}></canvas>
+								</div>
+							</div>
+						</div>
+
+						<!-- By model -->
+						{#if aiUsage.by_model?.length}
+							<div class="mb-6">
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">By Model</h3>
+								<table class="w-full text-sm">
+									<thead>
+										<tr class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">
+											<th class="text-left font-normal pb-1.5">Model</th>
+											<th class="text-right font-normal pb-1.5">Calls</th>
+											<th class="text-right font-normal pb-1.5">In</th>
+											<th class="text-right font-normal pb-1.5">Out</th>
+											<th class="text-right font-normal pb-1.5">Cost</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each aiUsage.by_model as m}
+											<tr class="border-t border-[var(--border-subtle)]">
+												<td class="py-1.5 pr-3 text-[var(--text-body)] font-mono text-xs truncate max-w-64" title={m.model}>
+													{m.model}
+													{#if !m.known_pricing}
+														<span class="text-[var(--text-disabled)] ml-1" title="Model not in the pricing table — costed with a fallback rate">est.</span>
+													{/if}
+												</td>
+												<td class="py-1.5 text-right text-[var(--text-secondary)] font-mono text-xs">{m.requests.toLocaleString()}</td>
+												<td class="py-1.5 text-right text-[var(--text-secondary)] font-mono text-xs">{formatTokens(m.input_tokens)}</td>
+												<td class="py-1.5 text-right text-[var(--text-secondary)] font-mono text-xs">{formatTokens(m.output_tokens)}</td>
+												<td class="py-1.5 text-right text-[var(--text-primary)] font-mono text-xs">{aiModelCost(m.cost_usd)}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+
+						<!-- Recent calls -->
+						{#if aiUsage.recent?.length}
+							<div>
+								<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Recent Calls</h3>
+								<table class="w-full text-sm">
+									<thead>
+										<tr class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">
+											<th class="text-left font-normal pb-1.5">Time</th>
+											<th class="text-left font-normal pb-1.5">Feature</th>
+											<th class="text-left font-normal pb-1.5">Model</th>
+											<th class="text-right font-normal pb-1.5">Tokens</th>
+											<th class="text-right font-normal pb-1.5">Cost</th>
+											<th class="text-right font-normal pb-1.5">Latency</th>
+										</tr>
+									</thead>
+									<tbody>
+										{#each aiUsage.recent as r}
+											<tr class="border-t border-[var(--border-subtle)]">
+												<td class="py-1.5 pr-3 text-[var(--text-muted)] font-mono text-xs whitespace-nowrap">{formatDateTimestamp(r.created_at)}</td>
+												<td class="py-1.5 pr-3 text-[var(--text-body)] text-xs">
+													<span class="inline-flex items-center gap-1.5">
+														{#if !r.success}
+															<AlertTriangle class="w-3 h-3 text-red-400 flex-shrink-0" />
+														{/if}
+														{aiFeatureLabel(r.feature)}
+													</span>
+													{#if !r.success && r.error}
+														<span class="text-red-400 text-xs ml-1" title={r.error}>· {r.error}</span>
+													{/if}
+												</td>
+												<td class="py-1.5 pr-3 text-[var(--text-secondary)] font-mono text-xs truncate max-w-48" title={r.model}>{r.model}</td>
+												<td class="py-1.5 text-right text-[var(--text-secondary)] font-mono text-xs whitespace-nowrap">{formatTokens(r.input_tokens)} → {formatTokens(r.output_tokens)}</td>
+												<td class="py-1.5 text-right text-[var(--text-primary)] font-mono text-xs">{aiRecentCost(r.cost_usd)}</td>
+												<td class="py-1.5 text-right text-[var(--text-muted)] font-mono text-xs">{formatLatency(r.latency_ms)}</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+
+						<!-- Estimate disclaimer — inside {:else} so it only ever
+						     disclaims figures that are actually on screen. -->
+						<p class="text-xs text-[var(--text-muted)] mt-4 leading-relaxed">
+							Cost is <span class="text-[var(--text-secondary)]">estimated</span> from recorded token counts at published rates
+							as of {aiUsage.pricing?.as_of || 'unknown'} — these are not billed amounts.
+							{#if aiUsage.pricing?.unknown_models?.length}
+								Priced with a fallback rate (model not in the pricing table): {aiUsage.pricing.unknown_models.join(', ')}.
+							{/if}
+						</p>
 					</div>
 				{/if}
 			</Card>

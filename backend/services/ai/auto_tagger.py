@@ -60,7 +60,7 @@ Return JSON array:
   ...
 ]"""
 
-    result = await call_claude(prompt, max_tokens=1024, temperature=0.3)
+    result = await call_claude(prompt, max_tokens=1024, temperature=0.3, feature="auto_tagger")
     if "error" in result:
         return result
 

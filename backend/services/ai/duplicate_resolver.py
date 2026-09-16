@@ -73,6 +73,7 @@ were protected:
         system="You are a music library curator. Respond with ONLY a valid JSON array — no prose, no markdown code fences.",
         max_tokens=4096,
         temperature=0.2,
+        feature="duplicate_resolver",
     )
     if "error" in result:
         log.warning("[dup-resolve] chunk failed: %s", result["error"])

@@ -47,7 +47,7 @@ Return JSON:
   "factors": ["factor 1", "factor 2", ...]
 }}"""
 
-    result = await call_claude(prompt, max_tokens=512, temperature=0.5)
+    result = await call_claude(prompt, max_tokens=512, temperature=0.5, feature="explainer")
     if "error" in result:
         return result
 
