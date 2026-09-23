@@ -14,7 +14,7 @@ node_modules/
 .svelte-kit/
 frontend/build/
 cache/
-data/
+/data/
 *.log
 .env
 zonik.toml
