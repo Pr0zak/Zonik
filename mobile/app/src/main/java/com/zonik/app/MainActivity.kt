@@ -101,7 +101,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             playbackManager.connect()
         }
-        // Sync is manual or scheduled — no auto-sync on startup
+        // Library sync runs on the Settings → Sync interval via LibrarySyncWorker, not here
     }
 
     fun syncNow() {

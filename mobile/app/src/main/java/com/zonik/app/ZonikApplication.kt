@@ -10,10 +10,16 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.zonik.app.data.repository.LibrarySyncWorker
 import com.zonik.app.data.repository.SettingsRepository
 import com.zonik.app.media.CastManager
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import javax.inject.Inject
@@ -33,6 +39,8 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
     @Inject
     lateinit var settingsRepository: SettingsRepository
 
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -43,6 +51,7 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
         com.zonik.app.data.DebugLog.init(this)
         setupUncaughtExceptionHandler()
         createNotificationChannels()
+        scheduleLibrarySync()
         // Skip Cast SDK on TV (not available, wastes startup time)
         if (!isTvDevice()) {
             try {
@@ -50,6 +59,20 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
             } catch (e: Exception) {
                 com.zonik.app.data.DebugLog.w("App", "Cast SDK init failed (no Play Services?): ${e.message}")
             }
+        }
+    }
+
+    /** Keeps the periodic library sync in step with Settings → Sync (interval, Wi-Fi only). */
+    private fun scheduleLibrarySync() {
+        appScope.launch {
+            kotlinx.coroutines.flow.combine(
+                settingsRepository.syncIntervalMinutes,
+                settingsRepository.wifiOnly,
+            ) { interval, wifiOnly -> interval to wifiOnly }
+                .distinctUntilChanged()
+                .collect { (interval, wifiOnly) ->
+                    LibrarySyncWorker.schedule(this@ZonikApplication, interval, wifiOnly)
+                }
         }
     }
 

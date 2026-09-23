@@ -30,7 +30,12 @@ class SyncManager @Inject constructor(
     private val _syncState = MutableStateFlow(SyncState())
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
-    suspend fun fullSync() {
+    /**
+     * Returns true when the sync completed. [background] syncs (the scheduled worker) run
+     * silently: no "Sync complete" banner, and a failure is logged rather than shown as an
+     * error on screen, since nobody asked for it and the worker will retry.
+     */
+    suspend fun fullSync(background: Boolean = false): Boolean {
         // Atomically claim the sync slot: only the caller that flips isSyncing
         // false -> true proceeds; concurrent callers see it already running and bail.
         var claimed = false
@@ -42,7 +47,7 @@ class SyncManager @Inject constructor(
                 SyncState(isSyncing = true, phase = "Syncing artists...")
             }
         }
-        if (!claimed) return
+        if (!claimed) return false
 
         DebugLog.d("Sync", "Starting full sync (search3 method)")
 
@@ -112,15 +117,25 @@ class SyncManager @Inject constructor(
                 albumCount = albumCount,
                 trackCount = trackCount,
                 playlistCount = playlistCount,
-                lastSyncResult = "Sync complete: $summary"
+                lastSyncResult = if (background) null else "Sync complete: $summary"
             )
+            return true
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) {
+                _syncState.value = _syncState.value.copy(isSyncing = false)
+                throw e
+            }
             DebugLog.e("Sync", "Sync failed", e)
-            _syncState.value = _syncState.value.copy(
-                isSyncing = false,
-                error = e.message ?: "Sync failed",
-                lastSyncResult = "Sync failed: ${e.message}"
-            )
+            _syncState.value = if (background) {
+                _syncState.value.copy(isSyncing = false)
+            } else {
+                _syncState.value.copy(
+                    isSyncing = false,
+                    error = e.message ?: "Sync failed",
+                    lastSyncResult = "Sync failed: ${e.message}"
+                )
+            }
+            return false
         }
     }
 
