@@ -2,6 +2,7 @@ package com.zonik.app.ui.screens.playlists
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -14,6 +15,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -145,7 +147,7 @@ fun PlaylistsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlaylistListScreen(
+internal fun PlaylistListScreen(
     playlists: List<Playlist>,
     isLoading: Boolean,
     error: String?,
@@ -237,16 +239,34 @@ private fun PlaylistRow(playlist: Playlist, onClick: () -> Unit) {
         },
         supportingContent = {
             val trackLabel = "${playlist.songCount} track${if (playlist.songCount != 1) "s" else ""}"
-            val durationLabel = formatDuration(playlist.duration)
-            Text(text = "$trackLabel - $durationLabel")
+            // Playlists run to hours; "163:20" reads as a clock time, "2h 43m" doesn't.
+            val durationLabel = com.zonik.app.ui.util.formatLargeDuration(playlist.duration.toLong())
+            Text(text = "$trackLabel · $durationLabel")
         },
         leadingContent = {
-            Icon(
-                Icons.Default.QueueMusic,
-                contentDescription = null,
-                modifier = Modifier.size(40.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (playlist.coverArt != null) {
+                com.zonik.app.ui.components.CoverArt(
+                    coverArtId = playlist.coverArt,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                )
+            } else {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.QueueMusic,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         },
         modifier = Modifier.clickable(onClick = onClick)
     )

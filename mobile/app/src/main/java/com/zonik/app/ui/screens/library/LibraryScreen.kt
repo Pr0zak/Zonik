@@ -664,7 +664,7 @@ private fun GenresTab(
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
-private fun TracksTab(
+internal fun TracksTab(
     tracks: List<Track>,
     tracksRecentFirst: List<Track>,
     trackSort: TrackSort,
@@ -755,42 +755,53 @@ private fun TracksTab(
             }
         }
 
-        // Sort chips
+        // Count and sort share one line; the five sort chips used to wrap onto two rows
+        // and push the list down before the first track.
         item {
-            FlowRow(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            var sortMenuOpen by remember { mutableStateOf(false) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                TrackSort.entries.forEach { sort ->
-                    val selected = trackSort == sort
-                    FilterChip(
-                        selected = selected,
-                        onClick = { onSetSort(sort) },
-                        label = { Text(sort.label, style = MaterialTheme.typography.labelSmall) },
-                        shape = RoundedCornerShape(20.dp),
-                        trailingIcon = if (selected) {
-                            {
-                                Icon(
-                                    if (trackSortAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        } else null
-                    )
+                Text(
+                    text = "%,d tracks".format(sortedTracks.size),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                Box {
+                    TextButton(onClick = { sortMenuOpen = true }) {
+                        Icon(Icons.Default.Sort, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(trackSort.label)
+                        Icon(
+                            if (trackSortAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                            contentDescription = if (trackSortAsc) "ascending" else "descending",
+                            modifier = Modifier.padding(start = 4.dp).size(16.dp)
+                        )
+                    }
+                    DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
+                        TrackSort.entries.forEach { sort ->
+                            val selected = trackSort == sort
+                            DropdownMenuItem(
+                                text = { Text(sort.label) },
+                                onClick = { onSetSort(sort); sortMenuOpen = false },
+                                trailingIcon = if (selected) {
+                                    {
+                                        Icon(
+                                            if (trackSortAsc) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                } else null
+                            )
+                        }
+                    }
                 }
             }
-        }
-
-        // Track count
-        item {
-            Text(
-                text = "${sortedTracks.size} tracks",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
         }
 
         itemsIndexed(sortedTracks, key = { _, track -> track.id }) { index, track ->

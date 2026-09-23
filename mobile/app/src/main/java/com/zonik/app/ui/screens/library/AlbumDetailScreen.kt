@@ -232,7 +232,7 @@ fun AlbumDetailScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumDetailContent(
+internal fun AlbumDetailContent(
     album: Album?,
     tracks: List<Track>,
     onPlayAll: () -> Unit,
@@ -277,7 +277,8 @@ private fun AlbumDetailContent(
                 },
                 onToggleMarkForDeletion = { onToggleMarkForDeletion(track) },
                 onStartRadio = { onStartRadio(track) },
-                backgroundColor = rowBg
+                backgroundColor = rowBg,
+                showArtist = track.artist.isNotBlank() && track.artist != album?.artist
             )
         }
 
@@ -448,7 +449,8 @@ private fun TrackItem(
     onGoToArtist: () -> Unit,
     onToggleMarkForDeletion: () -> Unit,
     onStartRadio: () -> Unit,
-    backgroundColor: Color = Color.Transparent
+    backgroundColor: Color = Color.Transparent,
+    showArtist: Boolean = true
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -464,13 +466,17 @@ private fun TrackItem(
                             else MaterialTheme.colorScheme.onSurface
                 )
             },
-            supportingContent = {
-                Text(
-                    text = track.artist,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            },
+            // On a single-artist album the artist is already in the header; repeating it on
+            // every row is noise. Compilations and featured artists still show it.
+            supportingContent = if (showArtist) {
+                {
+                    Text(
+                        text = track.artist,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            } else null,
             leadingContent = {
                 Text(
                     text = track.track?.toString() ?: "-",

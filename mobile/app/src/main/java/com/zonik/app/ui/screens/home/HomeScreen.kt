@@ -211,7 +211,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun HomeContent(
+internal fun HomeContent(
     syncState: SyncState,
     recentTracks: List<Track>,
     recentlyPlayed: List<Track>,
@@ -265,7 +265,7 @@ private fun HomeContent(
 
         // Greeting
         Text(
-            text = "Good evening",
+            text = remember { greetingForNow() },
             style = MaterialTheme.typography.headlineLarge,
             modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp)
         )
@@ -273,29 +273,38 @@ private fun HomeContent(
         // Sync status banner
         SyncBanner(syncState = syncState, onDismiss = {})
 
-        // Shuffle row — 2-up tile grid
+        // Shuffle Mix leads: it's the one-tap "just play something", and it never runs out.
+        ShuffleTile(
+            title = "Shuffle Mix",
+            sub = "Endless random mix from your library",
+            icon = Icons.Default.Shuffle,
+            tonal = false,
+            onClick = onShuffleMix,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            ShuffleTile(
-                title = "Shuffle Mix",
-                sub = "100 random tracks",
-                icon = Icons.Default.Shuffle,
-                tonal = false,
-                onClick = onShuffleMix,
-                modifier = Modifier.weight(1f)
-            )
-            ShuffleTile(
+            QuickTile(
                 title = "Favorites",
                 sub = "Starred tracks",
                 icon = Icons.Default.Favorite,
-                tonal = true,
                 onClick = onNavigateToLibraryFavorites ?: onNavigateToLibraryTracks ?: {},
                 modifier = Modifier.weight(1f)
             )
+            QuickTile(
+                title = "Neglected Gems",
+                sub = "Starred, unplayed",
+                icon = Icons.Default.AutoAwesome,
+                onClick = onNeglectedGems,
+                modifier = Modifier.weight(1f)
+            )
         }
         Spacer(modifier = Modifier.height(12.dp))
         Row(
@@ -304,36 +313,18 @@ private fun HomeContent(
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            ShuffleTile(
+            QuickTile(
                 title = "Recently Added",
-                sub = "Shuffle 100 newest",
-                icon = Icons.Default.NewReleases,
-                tonal = true,
+                sub = "Newest 100",
+                icon = Icons.Default.Update,
                 onClick = onShuffleRecentlyAdded,
                 modifier = Modifier.weight(1f)
             )
-            ShuffleTile(
-                title = "By Release Date",
-                sub = "Shuffle 100 newest",
+            QuickTile(
+                title = "New Releases",
+                sub = "Latest by year",
                 icon = Icons.Default.CalendarMonth,
-                tonal = true,
                 onClick = onShuffleNewestByYear,
-                modifier = Modifier.weight(1f)
-            )
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ShuffleTile(
-                title = "Neglected Gems",
-                sub = "Loved-but-never-played",
-                icon = Icons.Default.AutoAwesome,
-                tonal = false,
-                onClick = onNeglectedGems,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -354,21 +345,13 @@ private fun HomeContent(
             }
         }
 
-        // All tracks shortcut
-        if (onNavigateToLibraryTracks != null) {
-            TextButton(
-                onClick = onNavigateToLibraryTracks,
-                modifier = Modifier.padding(start = 16.dp, top = 8.dp)
-            ) {
-                Icon(Icons.Default.MusicNote, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("All Tracks")
-            }
-        }
-
         // Recent Tracks (full list — preserves prior behavior)
         if (recentTracks.isNotEmpty()) {
-            SectionTitle(text = "Recent tracks")
+            SectionTitle(
+                text = "Recently added",
+                actionLabel = if (onNavigateToLibraryTracks != null) "All tracks" else null,
+                onAction = onNavigateToLibraryTracks
+            )
             recentTracks.forEachIndexed { index, track ->
                 val rowBg = if (index % 2 == 0) MaterialTheme.colorScheme.surfaceContainerLow else Color.Transparent
                 TrackListItemWithMenu(
@@ -410,12 +393,76 @@ private fun HomeContent(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 12.dp)
-    )
+private fun SectionTitle(text: String, actionLabel: String? = null, onAction: (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 4.dp, top = 20.dp, bottom = if (actionLabel != null) 4.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f)
+        )
+        if (actionLabel != null && onAction != null) {
+            TextButton(onClick = onAction) {
+                Text(actionLabel)
+                Icon(Icons.Default.ChevronRight, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+private fun greetingForNow(): String =
+    when (java.time.LocalTime.now().hour) {
+        in 5..11 -> "Good morning"
+        in 12..17 -> "Good afternoon"
+        else -> "Good evening"
+    }
+
+/** Secondary Home shortcut: icon beside the text, so four fit in the space two used to. */
+@Composable
+private fun QuickTile(
+    title: String,
+    sub: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = Color.White,
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Column {
+                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    sub,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.alpha(0.78f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 }
 
 @Composable

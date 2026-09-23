@@ -50,7 +50,22 @@ import androidx.hilt.navigation.compose.hiltViewModel
 @Composable
 fun VoiceMicButton(
     modifier: Modifier = Modifier,
-    viewModel: VoiceViewModel = hiltViewModel(),
+    viewModel: VoiceViewModel? = null,
+) {
+    // Previews and screenshot tests have no ViewModelStoreOwner for Hilt to use.
+    if (viewModel == null && androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner.current == null) {
+        IconButton(modifier = modifier, onClick = {}) {
+            Icon(Icons.Filled.Mic, contentDescription = "Voice playlist")
+        }
+        return
+    }
+    VoiceMicButtonImpl(modifier, viewModel ?: hiltViewModel())
+}
+
+@Composable
+private fun VoiceMicButtonImpl(
+    modifier: Modifier,
+    viewModel: VoiceViewModel,
 ) {
     val context = LocalContext.current
     var pendingStart by remember { mutableStateOf(false) }
