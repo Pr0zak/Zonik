@@ -36,6 +36,10 @@ class Track(TimestampMixin, Base):
     rating: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     play_count: Mapped[int] = mapped_column(Integer, default=0)
     last_played_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Inferred from scrobbles: a new track started before this one reached its
+    # 50% submission. Shuffle Mix makes frequently-skipped tracks less likely.
+    skip_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_skipped_at: Mapped[datetime | None] = mapped_column(DateTime)
     artist: Mapped["Artist | None"] = relationship("Artist", back_populates="tracks")
     album: Mapped["Album | None"] = relationship("Album", back_populates="tracks")
     analysis: Mapped["TrackAnalysis | None"] = relationship("TrackAnalysis", back_populates="track", uselist=False)

@@ -1,12 +1,14 @@
 <script>
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { formatSize, formatDuration, parseUTC } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle } from 'lucide-svelte';
+	import { formatSize, formatDuration, formatRelativeTime, parseUTC } from '$lib/utils.js';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle, SkipForward, ChevronDown, ChevronRight } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
+	import DataTable from '../../components/ui/DataTable.svelte';
+	import StatTile from '../../components/ui/StatTile.svelte';
 	import { Chart, registerables } from 'chart.js';
 
 	Chart.register(...registerables);
@@ -29,6 +31,77 @@
 	let playHourlyChartEl = $state(null);
 	let playTimelineChart = null;
 	let playHourlyChart = null;
+
+	let skipSummary = $state(null);
+	let skipRows = $state([]);
+	let skipDetailsOpen = $state(false);
+	let skipRowsLoading = $state(false);
+	let skipSortKey = $state('skip_count');
+	let skipSortDir = $state('desc');
+	let expandedSkipId = $state(null);
+
+	const skipColumns = [
+		{ key: 'title', label: 'Track', sortable: true },
+		{ key: 'album', label: 'Album', sortable: true, headerClass: 'hidden md:table-cell' },
+		{ key: 'skip_count', label: 'Skips', sortable: true, align: 'right' },
+		{ key: 'play_count', label: 'Plays', sortable: true, align: 'right', headerClass: 'hidden sm:table-cell' },
+		{ key: 'last_skipped_at', label: 'Last skipped', sortable: true, align: 'right' },
+		{ key: 'actions', label: '', width: '44px' },
+	];
+
+	// Sorting is client-side: the drill-down pulls every skipped track (capped at 500) once.
+	let sortedSkipRows = $derived.by(() => {
+		if (!skipSortKey || !skipSortDir) return skipRows;
+		const dir = skipSortDir === 'asc' ? 1 : -1;
+		const key = skipSortKey;
+		return [...skipRows].sort((a, b) => {
+			const av = a[key] ?? '';
+			const bv = b[key] ?? '';
+			if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+			return String(av).localeCompare(String(bv)) * dir;
+		});
+	});
+
+	async function loadSkipSummary() {
+		try {
+			skipSummary = await fetch('/api/live/skips/summary').then(r => r.json());
+		} catch (e) {
+			console.error('Failed to load skip summary:', e);
+		}
+	}
+
+	async function loadSkipRows() {
+		skipRowsLoading = true;
+		try {
+			skipRows = await fetch('/api/live/skips?sort=recent&limit=500').then(r => r.json());
+		} catch (e) {
+			console.error('Failed to load skipped tracks:', e);
+		} finally {
+			skipRowsLoading = false;
+		}
+	}
+
+	function toggleSkipDetails() {
+		skipDetailsOpen = !skipDetailsOpen;
+		if (skipDetailsOpen && !skipRows.length) loadSkipRows();
+	}
+
+	function setSkipSort(key, dir) {
+		skipSortKey = key;
+		skipSortDir = dir;
+	}
+
+	async function clearTrackSkips(row) {
+		try {
+			const res = await fetch(`/api/live/skips/${encodeURIComponent(row.track_id)}/reset`, { method: 'POST' });
+			if (!res.ok) throw new Error(`${res.status}`);
+			skipRows = skipRows.filter(r => r.track_id !== row.track_id);
+			addToast('Skips cleared', 'success');
+			loadSkipSummary();
+		} catch (e) {
+			addToast('Failed to clear skips', 'error');
+		}
+	}
 
 	let aiUsage = $state(null);
 	let aiDays = $state(30);
@@ -744,7 +817,7 @@
 			]);
 			// Set loading=false first so {#if} blocks render canvas elements
 			loading = false;
-			await Promise.all([loadHistory(), loadPlayHistory(), loadAIUsage()]);
+			await Promise.all([loadHistory(), loadPlayHistory(), loadAIUsage(), loadSkipSummary()]);
 			await tick();
 			buildJobCharts();
 		} catch (e) {
@@ -1038,6 +1111,101 @@
 								{/each}
 							</div>
 						</div>
+					</div>
+				{/if}
+			</Card>
+		{/if}
+
+		<!-- Skips -->
+		{#if skipSummary}
+			<Card padding="p-4" class="mb-8">
+				<div class="flex items-center gap-2 mb-4">
+					<SkipForward class="w-4 h-4 text-cyan-400" />
+					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Skips</h2>
+					<span class="text-xs text-[var(--text-disabled)] hidden sm:inline">Skipped before the halfway mark on the phone or watch · each full listen pays one back</span>
+				</div>
+
+				<div class="grid grid-cols-3 gap-3 mb-6">
+					<StatTile label="Tracks skipped" value={skipSummary.tracks_with_skips} color="#06b6d4" />
+					<StatTile label="Active skips" value={skipSummary.active_skips} color="#06b6d4" />
+					<StatTile label="Skipped (7d)" value={skipSummary.skipped_7d} color="#06b6d4" />
+				</div>
+
+				{#if skipSummary.top_artists.length}
+					<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Most-Skipped Artists</h3>
+					<div class="space-y-1.5 mb-4">
+						{#each skipSummary.top_artists as artist, i}
+							<div class="flex items-center gap-2 text-sm">
+								<span class="w-5 text-right text-[var(--text-muted)] font-mono text-xs">{i + 1}</span>
+								<span class="flex-1 truncate text-[var(--text-body)]">{artist.name}</span>
+								<span class="text-[var(--text-disabled)] text-xs">{artist.tracks} {artist.tracks === 1 ? 'track' : 'tracks'}</span>
+								<span class="text-cyan-400 text-xs font-mono w-10 text-right">{artist.skips}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+
+				<button onclick={toggleSkipDetails}
+					class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors">
+					{#if skipDetailsOpen}<ChevronDown class="w-3.5 h-3.5" />{:else}<ChevronRight class="w-3.5 h-3.5" />{/if}
+					{skipDetailsOpen ? 'Hide' : 'Show'} skipped tracks
+				</button>
+
+				{#if skipDetailsOpen}
+					<div class="mt-3">
+						{#if skipRowsLoading}
+							<Skeleton variant="table-row" count={5} />
+						{:else}
+							<DataTable
+								columns={skipColumns}
+								rows={sortedSkipRows}
+								rowKey={(r) => r.track_id}
+								sortKey={skipSortKey}
+								sortDir={skipSortDir}
+								onsort={setSkipSort}
+								onrowclick={(r) => expandedSkipId = expandedSkipId === r.track_id ? null : r.track_id}
+								viewport="32rem"
+							>
+								{#snippet row(r)}
+									<td class="px-3 py-2 max-w-0 w-1/2">
+										<p class="truncate text-[var(--text-body)]">{r.title}</p>
+										<p class="truncate text-xs text-[var(--text-muted)]">{r.artist || 'Unknown'}</p>
+									</td>
+									<td class="px-3 py-2 hidden md:table-cell max-w-0 truncate text-[var(--text-secondary)]">{r.album || '—'}</td>
+									<td class="px-3 py-2 text-right font-mono text-cyan-400">{r.skip_count}</td>
+									<td class="px-3 py-2 text-right font-mono text-[var(--text-secondary)] hidden sm:table-cell">{r.play_count}</td>
+									<td class="px-3 py-2 text-right text-xs text-[var(--text-muted)] whitespace-nowrap">{formatRelativeTime(r.last_skipped_at)}</td>
+									<td class="px-1 py-1 text-right">
+										<button onclick={(e) => { e.stopPropagation(); clearTrackSkips(r); }}
+											class="p-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+											title="Clear skips">
+											<RotateCcw class="w-3.5 h-3.5" />
+										</button>
+									</td>
+								{/snippet}
+								{#snippet expandRow(r)}
+									{#if expandedSkipId === r.track_id}
+										<tr>
+											<td colspan={skipColumns.length} class="px-3 pb-3 pt-1">
+												<div class="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-2 text-xs bg-[var(--surface-base)] rounded-lg p-3">
+													<div><p class="text-[var(--text-disabled)]">Album</p><p class="text-[var(--text-secondary)] truncate">{r.album || '—'}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Genre</p><p class="text-[var(--text-secondary)] truncate">{r.genre || '—'}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Year</p><p class="text-[var(--text-secondary)]">{r.year || '—'}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Length</p><p class="text-[var(--text-secondary)]">{r.duration ? formatDuration(r.duration) : '—'}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Format</p><p class="text-[var(--text-secondary)]">{r.format ? r.format.toUpperCase() : '—'}{#if r.bitrate} · {r.bitrate} kbps{/if}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Rating</p><p class="text-[var(--text-secondary)]">{r.rating ? '★'.repeat(r.rating) : '—'}{#if r.starred} · ♥{/if}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Last played</p><p class="text-[var(--text-secondary)]">{r.last_played_at ? formatRelativeTime(r.last_played_at) : 'Never'}</p></div>
+													<div><p class="text-[var(--text-disabled)]">Skip rate</p><p class="text-[var(--text-secondary)]">{r.skip_count + r.play_count ? Math.round(100 * r.skip_count / (r.skip_count + r.play_count)) + '%' : '—'}</p></div>
+												</div>
+											</td>
+										</tr>
+									{/if}
+								{/snippet}
+								{#snippet empty()}
+									<p class="text-sm text-[var(--text-muted)]">No skipped tracks yet.</p>
+								{/snippet}
+							</DataTable>
+						{/if}
 					</div>
 				{/if}
 			</Card>

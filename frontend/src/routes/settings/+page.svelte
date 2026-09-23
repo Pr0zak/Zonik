@@ -23,8 +23,6 @@
 		download_dir: '',
 		cover_cache_dir: '',
 		naming_scheme: '{artist}/{album}/{track_number} - {title}',
-		shuffle_recency_weight: true,
-		shuffle_recency_days: 30,
 		shuffle_new_arrival_percent: 0,
 		shuffle_new_arrival_days: 30,
 		slsk_username: '',
@@ -466,28 +464,9 @@
 				/>
 			</div>
 
-			<div class="mt-4 flex items-center justify-between">
-				<div>
-					<span class="text-sm text-[var(--text-secondary)]">Fresher Shuffle Mix</span>
-					<p class="text-xs text-[var(--text-disabled)]">Bias Shuffle Mix away from recently-played tracks so it feels fresher (vs pure random)</p>
-				</div>
-				<Toggle
-					checked={services.shuffle_recency_weight}
-					onchange={(v) => { services.shuffle_recency_weight = v; markDirty(); }}
-					color="#10b981"
-				/>
-			</div>
-			{#if services.shuffle_recency_weight}
-				<div class="mt-3">
-					<label class="text-sm text-[var(--text-secondary)]">Recency window (days · 0 = all-time)</label>
-					<p class="text-xs text-[var(--text-disabled)]">How far back counts as "recently played". Higher = stronger bias. Set to 0 for all-time — favor never/least-played across your whole history.</p>
-					<input type="number" min="0" max="3650" bind:value={services.shuffle_recency_days} oninput={markDirty} class={inputClass} />
-				</div>
-			{/if}
-
 			<div class="mt-4">
 				<label class="text-sm text-[var(--text-secondary)]">New arrivals in Shuffle Mix (%)</label>
-				<p class="text-xs text-[var(--text-disabled)]">Always mix in this share of recently-ADDED tracks, regardless of play history, so fresh downloads surface. 0 = off, max 50%.</p>
+				<p class="text-xs text-[var(--text-disabled)]">Always mix in this share of recently-ADDED tracks so fresh downloads surface. 0 = off, max 50%.</p>
 				<input type="number" min="0" max="50" bind:value={services.shuffle_new_arrival_percent} oninput={markDirty} class={inputClass} />
 			</div>
 			{#if services.shuffle_new_arrival_percent > 0}

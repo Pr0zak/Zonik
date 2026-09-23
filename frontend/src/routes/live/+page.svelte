@@ -1,6 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
-	import { Radio, Heart, Music, Globe, Plug, Disc3, History } from 'lucide-svelte';
+	import { Radio, Heart, Music, Globe, Plug, Disc3, History, SkipForward, RotateCcw } from 'lucide-svelte';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, formatRelativeTime, coverUrl } from '$lib/utils.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -14,6 +14,9 @@
 	let nowPlaying = $state([]);
 	let history = $state([]);
 	let clients = $state({ ws_clients: [], api_clients: [] });
+	let skips = $state([]);
+	let skipSort = $state('recent');
+	let loadingSkips = $state(true);
 
 	let loadingNow = $state(true);
 	let loadingHistory = $state(true);
@@ -48,6 +51,34 @@
 		}
 	}
 
+	async function loadSkips() {
+		try {
+			skips = await fetchJSON(`/api/live/skips?sort=${skipSort}&limit=50`);
+		} catch (e) {
+			console.error('Live skips:', e);
+		} finally {
+			loadingSkips = false;
+		}
+	}
+
+	function setSkipSort(sort) {
+		if (skipSort === sort) return;
+		skipSort = sort;
+		loadingSkips = true;
+		loadSkips();
+	}
+
+	async function resetSkips(item) {
+		try {
+			const res = await fetch(`/api/live/skips/${encodeURIComponent(item.track_id)}/reset`, { method: 'POST' });
+			if (!res.ok) throw new Error(`${res.status}`);
+			skips = skips.filter((s) => s.track_id !== item.track_id);
+			addToast('Skips cleared', 'success');
+		} catch (e) {
+			addToast('Failed to clear skips', 'error');
+		}
+	}
+
 	async function loadClients() {
 		try {
 			clients = await fetchJSON('/api/live/clients');
@@ -62,14 +93,18 @@
 		loadNowPlaying();
 		loadClients();
 		loadHistory();
+		loadSkips();
 
 		// Single shared timer (per dev_gotchas) — different cadences via tick counter.
-		// 3s for now-playing, 9s for clients (every 3rd tick), 30s for history (every 10th tick).
+		// 3s for now-playing, 9s for clients (every 3rd tick), 30s for history + skips (every 10th tick).
 		timer = setInterval(() => {
 			tick++;
 			loadNowPlaying();
 			if (tick % 3 === 0) loadClients();
-			if (tick % 10 === 0) loadHistory();
+			if (tick % 10 === 0) {
+				loadHistory();
+				loadSkips();
+			}
 		}, 3000);
 	});
 
@@ -98,6 +133,7 @@
 			const flip = (i) => i.track_id === item.track_id ? { ...i, starred: !item.starred } : i;
 			nowPlaying = nowPlaying.map(flip);
 			history = history.map(flip);
+			skips = skips.map(flip);
 		} catch (e) {
 			addToast('Failed to toggle favorite', 'error');
 		}
@@ -306,6 +342,78 @@
 									{h.starred ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-red-300'}"
 								title={h.starred ? 'Unstar' : 'Star'}>
 								<Heart class="w-4 h-4" fill={h.starred ? 'currentColor' : 'none'} />
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</Card>
+	</section>
+
+	<!-- Skipped -->
+	<section class="mb-6">
+		<div class="flex items-center gap-2 mb-2">
+			<SkipForward class="w-4 h-4" style="color: {SECTION_COLOR}" />
+			<h2 class="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wider">Skipped</h2>
+			<div class="ml-auto flex rounded-md border border-[var(--border-subtle)] overflow-hidden text-xs">
+				{#each [['recent', 'Recent'], ['most', 'Most skipped']] as [key, label]}
+					<button onclick={() => setSkipSort(key)}
+						class="px-2.5 py-1 transition-colors
+							{skipSort === key ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}">
+						{label}
+					</button>
+				{/each}
+			</div>
+		</div>
+		<Card padding="p-0">
+			{#if loadingSkips}
+				<Skeleton variant="list-item" count={4} />
+			{:else if !skips.length}
+				<EmptyState
+					title="No skips yet"
+					description="A track counts as skipped when the phone or watch moves on before it reaches the halfway mark. Skipped tracks come up less often in Shuffle Mix."
+				>
+					{#snippet icon()}<SkipForward class="w-10 h-10" />{/snippet}
+				</EmptyState>
+			{:else}
+				<div class="divide-y divide-[var(--border-subtle)]">
+					{#each skips as s (s.track_id)}
+						<div class="flex items-center gap-3 px-4 py-2.5 group">
+							<button class="relative w-10 h-10 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0"
+								onclick={() => play(s)}
+								title="Play">
+								{#if coverUrl(s.cover_art)}
+									<img src={coverUrl(s.cover_art, 40)} alt="" class="w-full h-full object-cover" loading="lazy" />
+								{:else}
+									<div class="flex items-center justify-center w-full h-full">
+										<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+									</div>
+								{/if}
+							</button>
+							<div class="flex-1 min-w-0">
+								<p class="text-sm text-[var(--text-primary)] truncate">{s.title}</p>
+								<p class="text-xs text-[var(--text-muted)] truncate">
+									{s.artist || 'Unknown'}{#if s.album} &middot; {s.album}{/if}
+								</p>
+								<p class="text-xs text-[var(--text-disabled)] truncate">
+									Last skipped {formatRelativeTime(s.last_skipped_at)} &middot; {s.play_count} {s.play_count === 1 ? 'play' : 'plays'}
+								</p>
+							</div>
+							<span title="Skips still counting against this track in Shuffle Mix (each full listen removes one)">
+								<Badge variant={s.skip_count >= 3 ? 'error' : s.skip_count > 0 ? 'warning' : 'default'}>
+									{s.skip_count} {s.skip_count === 1 ? 'skip' : 'skips'}
+								</Badge>
+							</span>
+							<button onclick={() => resetSkips(s)}
+								class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors flex-shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+								title="Clear skips">
+								<RotateCcw class="w-4 h-4" />
+							</button>
+							<button onclick={() => toggleStar(s)}
+								class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors flex-shrink-0
+									{s.starred ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-red-300'}"
+								title={s.starred ? 'Unstar' : 'Star'}>
+								<Heart class="w-4 h-4" fill={s.starred ? 'currentColor' : 'none'} />
 							</button>
 						</div>
 					{/each}

@@ -20,6 +20,15 @@ router = APIRouter()
 # In-memory now-playing state: {username: {track, started_at, playerId}}
 _now_playing: dict[str, dict] = {}
 
+# Skip inference, keyed per (username, client) so the phone and the watch don't
+# overwrite each other: {key: {track_id, started_at, duration, submitted}}.
+# Clients post a now-playing notice when a track starts and a submission once it
+# passes 50%. A now-playing for a *different* track while the previous one was
+# never submitted, and too little wall-clock time passed for it to have reached
+# the halfway mark, means the listener skipped it. Paused-then-skipped tracks
+# fail the time check and go uncounted, which errs on the side of not penalising.
+_skip_watch: dict[tuple[str, str], dict] = {}
+
 
 def _get_format(request: Request) -> str:
     return request.query_params.get("f", "json")
@@ -166,19 +175,44 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
         # Track unknown — return success (clients shouldn't error out the queue)
         return subsonic_response({}, _get_format(request))
 
+    username = params.get("u", "admin")
+    client = (params.get("c") or "").strip()
+    watch_key = (username, client)
+
     if is_submission:
         # Update play count and record history
         track.play_count = (track.play_count or 0) + 1
         track.last_played_at = played_at
+        # A completed listen pays one skip back, so a track isn't buried for good.
+        if track.skip_count:
+            track.skip_count -= 1
+        watched = _skip_watch.get(watch_key)
+        if watched and watched["track_id"] == song_id:
+            watched["submitted"] = True
         from backend.models.play_history import PlayHistory
         # Record the originating client (c= param: ZonikApp/ZonikWear/DSub/…) as the
         # source so "Recently Played" can show which device the play came from.
-        client = (params.get("c") or "").strip()
         db.add(PlayHistory(track_id=song_id, played_at=played_at, source=client or "subsonic"))
         await db.commit()
     else:
         # Now-playing notification
-        username = params.get("u", "admin")
+        now = datetime.utcnow()
+        prev = _skip_watch.get(watch_key)
+        if prev and prev["track_id"] != song_id and not prev["submitted"] and prev["duration"]:
+            elapsed = (now - prev["started_at"]).total_seconds()
+            if elapsed < prev["duration"] / 2:
+                skipped = await db.get(Track, prev["track_id"])
+                if skipped:
+                    skipped.skip_count = (skipped.skip_count or 0) + 1
+                    skipped.last_skipped_at = now
+                    await db.commit()
+        if not prev or prev["track_id"] != song_id:
+            _skip_watch[watch_key] = {
+                "track_id": song_id,
+                "started_at": now,
+                "duration": track.duration_seconds or 0,
+                "submitted": False,
+            }
         _now_playing[username] = {
             "track": track,
             "track_id": song_id,

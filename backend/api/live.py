@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -158,3 +158,85 @@ async def history(limit: int = 50, db: AsyncSession = Depends(get_db)) -> list[d
             "starred": track.id in starred,
         })
     return out
+
+
+@router.get("/skips")
+async def skips(sort: str = "recent", limit: int = 50, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Tracks the listener skipped (inferred from scrobbles), newest skip first or
+    most-skipped first. skip_count can be back at 0 once full listens paid it off."""
+    limit = max(1, min(limit, 500))
+    query = (
+        select(Track, Artist, Album)
+        .outerjoin(Artist, Track.artist_id == Artist.id)
+        .outerjoin(Album, Track.album_id == Album.id)
+        .where(Track.last_skipped_at.is_not(None))
+    )
+    if sort == "most":
+        query = query.where(Track.skip_count > 0).order_by(Track.skip_count.desc(), Track.last_skipped_at.desc())
+    else:
+        query = query.order_by(Track.last_skipped_at.desc())
+    rows = (await db.execute(query.limit(limit))).all()
+
+    user_id = await _admin_user_id(db)
+    starred = await _favorited_track_ids(db, user_id)
+
+    return [
+        {
+            "track_id": track.id,
+            "title": track.title,
+            "artist": artist.name if artist else None,
+            "album": album.title if album else None,
+            "cover_art": track.id if (track.cover_art_path or (album and album.cover_art_path)) else None,
+            "duration": track.duration_seconds,
+            "skip_count": track.skip_count or 0,
+            "play_count": track.play_count or 0,
+            "last_skipped_at": track.last_skipped_at.isoformat() if track.last_skipped_at else None,
+            "last_played_at": track.last_played_at.isoformat() if track.last_played_at else None,
+            "genre": track.genre,
+            "year": track.year,
+            "format": track.format,
+            "bitrate": track.bitrate,
+            "rating": track.rating,
+            "starred": track.id in starred,
+        }
+        for track, artist, album in rows
+    ]
+
+
+@router.post("/skips/{track_id}/reset")
+async def reset_skips(track_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Forget a track's skips, e.g. one counted when a new queue cut it off."""
+    track = await db.get(Track, track_id)
+    if not track:
+        raise HTTPException(status_code=404, detail="Track not found")
+    track.skip_count = 0
+    track.last_skipped_at = None
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/skips/summary")
+async def skips_summary(db: AsyncSession = Depends(get_db)) -> dict:
+    """Headline skip numbers for the Stats page, plus the most-skipped artists."""
+    tracks_with_skips, active_skips = (await db.execute(
+        select(func.count(Track.id), func.coalesce(func.sum(Track.skip_count), 0))
+        .where(Track.skip_count > 0)
+    )).one()
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    skipped_7d = (await db.execute(
+        select(func.count(Track.id)).where(Track.last_skipped_at >= week_ago)
+    )).scalar_one()
+    top_artists = (await db.execute(
+        select(Artist.name, func.sum(Track.skip_count).label("skips"), func.count(Track.id).label("tracks"))
+        .join(Artist, Track.artist_id == Artist.id)
+        .where(Track.skip_count > 0)
+        .group_by(Artist.id)
+        .order_by(func.sum(Track.skip_count).desc())
+        .limit(10)
+    )).all()
+    return {
+        "tracks_with_skips": tracks_with_skips,
+        "active_skips": int(active_skips),
+        "skipped_7d": skipped_7d,
+        "top_artists": [{"name": n, "skips": int(sk), "tracks": t} for n, sk, t in top_artists],
+    }
