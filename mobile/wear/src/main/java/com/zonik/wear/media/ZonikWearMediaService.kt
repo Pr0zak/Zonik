@@ -35,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.io.File
@@ -71,6 +72,8 @@ class ZonikWearMediaService : MediaLibraryService() {
     @Volatile private var nowPlayingPostedFor: String? = null
     private var scrobblePollJob: kotlinx.coroutines.Job? = null
     private val pendingScrobbles = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, Long>>()
+    // In-flight top-up of an endless Quick Mix; one at a time.
+    private var endlessMixJob: kotlinx.coroutines.Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -122,6 +125,7 @@ class ZonikWearMediaService : MediaLibraryService() {
                     scrobbledTrackId = null
                     postNowPlaying()
                 }
+                maybeExtendEndlessMix(player)
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -153,6 +157,34 @@ class ZonikWearMediaService : MediaLibraryService() {
         simpleCache?.release()
         simpleCache = null
         super.onDestroy()
+    }
+
+    // --- Endless Quick Mix -------------------------------------------------
+
+    /** When an endless Quick Mix is down to its last few tracks, append another batch of
+     *  random songs, leaving out anything already queued. Called on the main thread. */
+    private fun maybeExtendEndlessMix(player: androidx.media3.common.Player) {
+        if (!EndlessMix.isTagged(player.currentMediaItem)) return
+        val remaining = player.mediaItemCount - player.currentMediaItemIndex - 1
+        if (remaining > EndlessMix.LOW_WATER) return
+        if (endlessMixJob?.isActive == true) return
+        val queued = (0 until player.mediaItemCount).mapTo(HashSet()) { player.getMediaItemAt(it).mediaId }
+        endlessMixJob = scrobbleMainScope.launch {
+            val items = try {
+                withContext(Dispatchers.IO) {
+                    library.getRandomSongs(size = EndlessMix.BATCH)
+                        .filter { it.id !in queued }
+                        .mapNotNull { library.buildPlayableMediaItem(it) }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                android.util.Log.w("ZonikWearMediaService", "Endless mix top-up failed: ${e.message}")
+                return@launch
+            }
+            // A different queue may have replaced the mix while we were fetching.
+            if (items.isEmpty() || !EndlessMix.isTagged(player.currentMediaItem)) return@launch
+            player.addMediaItems(EndlessMix.tag(items))
+        }
     }
 
     // --- Scrobble ---------------------------------------------------------

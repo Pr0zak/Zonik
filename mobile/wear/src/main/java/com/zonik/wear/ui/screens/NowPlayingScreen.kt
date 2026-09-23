@@ -151,7 +151,7 @@ fun NowPlayingScreen(
                                         app.library.getRandomSongs(size = 50)
                                             .mapNotNull { app.library.buildPlayableMediaItem(it) }
                                     }
-                                    if (items.isNotEmpty()) mediaManager.playMediaItems(items, 0)
+                                    if (items.isNotEmpty()) mediaManager.playMediaItems(com.zonik.wear.media.EndlessMix.tag(items), 0)
                                 } catch (e: Exception) {
                                     android.util.Log.w("NowPlayingScreen", "Quick Mix failed: ${e.message}", e)
                                 }

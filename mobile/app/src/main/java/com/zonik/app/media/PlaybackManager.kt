@@ -123,6 +123,7 @@ class PlaybackManager @Inject constructor(
         val startIndex: Int,
         val startPaused: Boolean,
         val requestedAtMs: Long,
+        val endlessMix: Boolean = false,
     )
 
     @Volatile private var pendingPlay: PendingPlay? = null
@@ -168,7 +169,7 @@ class PlaybackManager @Inject constructor(
                 DebugLog.d("Playback", "Dropping deferred play request — ${ageMs}ms stale")
             } else {
                 DebugLog.d("Playback", "Replaying deferred play request: ${pending.tracks.size} tracks")
-                playTracks(pending.tracks, pending.startIndex, pending.startPaused)
+                playTracks(pending.tracks, pending.startIndex, pending.startPaused, pending.endlessMix)
             }
         }
 
@@ -320,6 +321,19 @@ class PlaybackManager @Inject constructor(
                 updateCurrentTrackByIndex(index)
             }
 
+            override fun onTimelineChanged(timeline: androidx.media3.common.Timeline, reason: Int) {
+                // The service appends to an endless Shuffle Mix on its own; every other queue
+                // change is mirrored here as it's made. A length mismatch means the player has
+                // items this mirror doesn't, so rebuild it rather than let skipToIndex and the
+                // persisted queue drift.
+                if (reason != Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) return
+                val count = controller?.mediaItemCount ?: return
+                if (count > 0 && _queue.value.isNotEmpty() && count != _queue.value.size) {
+                    DebugLog.d("Playback", "Timeline has $count items, queue mirror ${_queue.value.size} — resyncing")
+                    syncQueueFromPlayer()
+                }
+            }
+
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 DebugLog.e("Playback", "Player error: ${error.errorCodeName} - ${error.message}")
                 DebugLog.e("Playback", "Error cause: ${error.cause?.message}")
@@ -376,7 +390,9 @@ class PlaybackManager @Inject constructor(
         }
     }
 
-    fun playTracks(tracks: List<Track>, startIndex: Int = 0, startPaused: Boolean = false) {
+    /** [endlessMix]: the service tops the queue up with more random songs as it runs low
+     *  (Shuffle Mix), instead of stopping at the end of [tracks]. */
+    fun playTracks(tracks: List<Track>, startIndex: Int = 0, startPaused: Boolean = false, endlessMix: Boolean = false) {
         val config = getServerConfig() ?: return
         val serverUrl = config.url
         // Cap track list to avoid TransactionTooLargeException (Binder 1MB limit)
@@ -386,7 +402,7 @@ class PlaybackManager @Inject constructor(
             val end = minOf(tracks.size, start + maxTracks)
             val adjustedIndex = startIndex - start
             DebugLog.d("Playback", "Capping ${tracks.size} tracks to $maxTracks (offset $start, adjusted index $adjustedIndex)")
-            return playTracks(tracks.subList(start, end), adjustedIndex, startPaused)
+            return playTracks(tracks.subList(start, end), adjustedIndex, startPaused, endlessMix)
         } else tracks
         // Route to Cast if a Cast session is active
         if (castManager.isCasting.value) {
@@ -408,7 +424,7 @@ class PlaybackManager @Inject constructor(
             // finishes instead of dropping it — and publish nothing yet, because the optimistic
             // state below would otherwise put a Now Playing screen in front of a track that is
             // never going to start.
-            pendingPlay = PendingPlay(cappedTracks, startIndex, startPaused, System.currentTimeMillis())
+            pendingPlay = PendingPlay(cappedTracks, startIndex, startPaused, System.currentTimeMillis(), endlessMix)
             DebugLog.w("Playback", "playTracks before the controller connected — deferring ${cappedTracks.size} tracks")
             return
         }
@@ -430,6 +446,7 @@ class PlaybackManager @Inject constructor(
             putStringArrayList("track_cover_art", ArrayList(cappedTracks.map { it.coverArt ?: "" }))
             putInt("start_index", startIndex)
             if (startPaused) putBoolean("start_paused", true)
+            if (endlessMix) putBoolean("endless_mix", true)
         }
         ctrl.sendCustomCommand(
             androidx.media3.session.SessionCommand("com.zonik.app.PLAY_TRACKS", android.os.Bundle.EMPTY),

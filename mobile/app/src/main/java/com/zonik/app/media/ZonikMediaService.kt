@@ -74,6 +74,8 @@ class ZonikMediaService : MediaLibraryService() {
     // DB lookups happened to finish — a 3-track Favorites mix can easily overtake a 100-track
     // Shuffle Mix and then be overwritten by it.
     private var playTracksJob: Job? = null
+    // In-flight top-up of an endless Shuffle Mix; one at a time.
+    private var endlessMixJob: Job? = null
     private var cacheDataSourceFactory: CacheDataSource.Factory? = null
     private val preCachingInProgress = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     @Volatile private var isPlayerBuffering = false
@@ -137,6 +139,11 @@ class ZonikMediaService : MediaLibraryService() {
         private const val ACTION_START_RADIO = "com.zonik.app.START_RADIO"
         private const val EXTRA_TRACK_IDS = "track_ids"
         private const val EXTRA_START_INDEX = "start_index"
+        private const val EXTRA_ENDLESS_MIX = "endless_mix"
+
+        // Endless Shuffle Mix: fetch another batch once this few tracks are left.
+        private const val ENDLESS_MIX_LOW_WATER = 10
+        private const val ENDLESS_MIX_BATCH = 50
         private const val EXTRA_EQ_ENABLED = "eq_enabled"
         private const val EXTRA_EQ_PRESET = "eq_preset"
         private const val EXTRA_EQ_BAND_LEVELS = "eq_band_levels"
@@ -391,6 +398,7 @@ class ZonikMediaService : MediaLibraryService() {
                     scrobbledTrackId = null
                 }
                 postNowPlaying()
+                maybeExtendEndlessMix(player)
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -892,6 +900,40 @@ class ZonikMediaService : MediaLibraryService() {
             trackNumber = track.track
         )
 
+    /** Tags items as belonging to an endless Shuffle Mix. The tag lives on the items rather
+     *  than in a service flag, so any other queue replacing the mix ends it automatically. */
+    private fun asEndlessMix(items: List<MediaItem>): List<MediaItem> = items.map { item ->
+        val extras = Bundle(item.mediaMetadata.extras ?: Bundle.EMPTY)
+        extras.putBoolean(EXTRA_ENDLESS_MIX, true)
+        item.buildUpon()
+            .setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(extras).build())
+            .build()
+    }
+
+    private fun isEndlessMix(item: MediaItem?): Boolean =
+        item?.mediaMetadata?.extras?.getBoolean(EXTRA_ENDLESS_MIX) == true
+
+    /** When an endless Shuffle Mix is down to its last few tracks, append another batch of
+     *  random songs, leaving out anything already in the queue. Called on the main thread. */
+    private fun maybeExtendEndlessMix(player: androidx.media3.common.Player) {
+        if (!isEndlessMix(player.currentMediaItem)) return
+        val remaining = player.mediaItemCount - player.currentMediaItemIndex - 1
+        if (remaining > ENDLESS_MIX_LOW_WATER) return
+        if (endlessMixJob?.isActive == true) return
+        val queued = (0 until player.mediaItemCount).mapTo(HashSet()) { player.getMediaItemAt(it).mediaId }
+        endlessMixJob = scrobbleMainScope.launch {
+            val items = withContext(Dispatchers.IO) {
+                libraryRepository.getRandomSongs(count = ENDLESS_MIX_BATCH)
+                    .filter { it.id !in queued }
+                    .map { buildFullMediaItem(it) }
+            }
+            // A different queue may have replaced the mix while we were fetching.
+            if (items.isEmpty() || !isEndlessMix(player.currentMediaItem)) return@launch
+            player.addMediaItems(asEndlessMix(items))
+            com.zonik.app.data.DebugLog.d("MediaService", "Endless mix: appended ${items.size} tracks (${player.mediaItemCount} queued)")
+        }
+    }
+
     // -- Callback --
 
     private inner class BrowseTreeCallback : MediaLibrarySession.Callback {
@@ -932,7 +974,7 @@ class ZonikMediaService : MediaLibraryService() {
                 com.zonik.app.data.DebugLog.d("MediaService", "No saved queue — falling back to shuffle")
                 val tracks = runBlocking { libraryRepository.getRandomSongs(count = 100) }
                 if (tracks.isNotEmpty()) {
-                    val mediaItems = tracks.map { buildFullMediaItem(it) }
+                    val mediaItems = asEndlessMix(tracks.map { buildFullMediaItem(it) })
                     Futures.immediateFuture(
                         MediaSession.MediaItemsWithStartPosition(mediaItems, 0, 0L)
                     )
@@ -972,7 +1014,8 @@ class ZonikMediaService : MediaLibraryService() {
                             MediaSession.MediaItemsWithStartPosition(mutableListOf(), 0, 0L)
                         )
                     }
-                    val resolved = mixTracks.map { buildFullMediaItem(it) }
+                    val built = mixTracks.map { buildFullMediaItem(it) }
+                    val resolved = if (id == SHUFFLE_MIX_ID) asEndlessMix(built) else built
                     return Futures.immediateFuture(
                         MediaSession.MediaItemsWithStartPosition(resolved, 0, 0L)
                     )
@@ -1134,7 +1177,7 @@ class ZonikMediaService : MediaLibraryService() {
                     com.zonik.app.data.DebugLog.d("MediaService", "Voice search: empty query → shuffle mix")
                     val tracks = runBlocking { libraryRepository.getRandomSongs(count = 100) }
                     if (tracks.isNotEmpty()) {
-                        val mediaItems = tracks.map { buildFullMediaItem(it) }
+                        val mediaItems = asEndlessMix(tracks.map { buildFullMediaItem(it) })
                         session.player.setMediaItems(mediaItems, 0, 0)
                         session.player.prepare()
                         session.player.play()
@@ -1358,6 +1401,7 @@ class ZonikMediaService : MediaLibraryService() {
                     return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE))
                 }
                 val startPaused = args.getBoolean("start_paused", false)
+                val endlessMix = args.getBoolean(EXTRA_ENDLESS_MIX, false)
                 // Optional display fields, one per id. Absent for older controllers, so every
                 // read below is index-checked rather than assumed parallel.
                 val titles = args.getStringArrayList("track_titles")
@@ -1400,7 +1444,7 @@ class ZonikMediaService : MediaLibraryService() {
                         val safeStart = startIndex.coerceIn(0, mediaItems.size - 1)
                         val player = session.player
                         if (startPaused) player.playWhenReady = false
-                        player.setMediaItems(mediaItems, safeStart, 0)
+                        player.setMediaItems(if (endlessMix) asEndlessMix(mediaItems) else mediaItems, safeStart, 0)
                         player.prepare()
                         if (!startPaused) player.play()
                         com.zonik.app.data.DebugLog.d("MediaService", "PLAY_TRACKS: set ${mediaItems.size} items, playing from $safeStart${if (startPaused) " (paused)" else ""}")

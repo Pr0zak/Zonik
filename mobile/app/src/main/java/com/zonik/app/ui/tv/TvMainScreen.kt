@@ -132,7 +132,7 @@ class TvViewModel @Inject constructor(
                     libraryRepository.getRandomSongs(100)
                 }
                 if (songs.isNotEmpty()) {
-                    playbackManager.playTracks(songs)
+                    playbackManager.playTracks(songs, endlessMix = true)
                 }
             } catch (e: Exception) {
                 com.zonik.app.data.DebugLog.e("TvVM", "Shuffle mix failed", e)

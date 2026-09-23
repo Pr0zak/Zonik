@@ -70,7 +70,7 @@ class HomeViewModel @Inject constructor(
                 val tracks = libraryRepository.getRandomSongs(count = 100)
                 if (tracks.isNotEmpty()) {
                     playbackManager.setShuffleEnabled(false)
-                    playbackManager.playTracks(tracks)
+                    playbackManager.playTracks(tracks, endlessMix = true)
                     DebugLog.d("HomeViewModel", "Shuffle mix started with ${tracks.size} tracks")
                 } else {
                     DebugLog.w("HomeViewModel", "Shuffle mix: no tracks returned")
