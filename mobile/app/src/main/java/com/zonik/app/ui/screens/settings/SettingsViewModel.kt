@@ -397,6 +397,8 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setWifiOnly(enabled) }
     }
 
+    val syncState = syncManager.syncState
+
     fun syncNow() {
         viewModelScope.launch { syncManager.fullSync() }
     }
@@ -530,6 +532,16 @@ class SettingsViewModel @Inject constructor(
             settingsRepository.setEqPreset(preset)
             settingsRepository.setEqBandLevels(null) // Clear custom when selecting preset
             playbackManager.applyEqualizerSettings(uiState.value.eqEnabled, preset, null)
+        }
+    }
+
+    /** Switches to the Custom preset starting from a flat curve, so the band sliders show. */
+    fun useCustomEq() {
+        viewModelScope.launch {
+            val flat = List(5) { 0 }.joinToString(",")
+            settingsRepository.setEqBandLevels(flat)
+            settingsRepository.setEqPreset(-1)
+            playbackManager.applyEqualizerSettings(uiState.value.eqEnabled, -1, flat)
         }
     }
 
