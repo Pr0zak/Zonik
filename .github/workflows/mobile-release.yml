@@ -56,6 +56,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the legacy 'tools' package, which the
+          # runner's cmdline-tools 16.0 no longer offers, so sdkmanager exits 1.
+          packages: 'platform-tools'
 
       - name: Restore debug keystore from secret
         env:
