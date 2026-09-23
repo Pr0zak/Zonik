@@ -68,6 +68,9 @@ class ZonikMediaService : MediaLibraryService() {
     private var lastEqPreset: Int? = null
     private var lastEqBandLevels: String? = null
     private val preCacheScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
+    // Browse-tree lookups hit Room and the server. Media3 calls the library callbacks on the
+    // main thread, so they resolve here and hand back a pending future instead of blocking it.
+    private val browseScope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var preCacheJob: Job? = null
     // Last-command-wins for PLAY_TRACKS. Resolving a queue is asynchronous now, so two play
     // requests a D-pad press apart would otherwise land on the player in whatever order their
@@ -128,6 +131,9 @@ class ZonikMediaService : MediaLibraryService() {
         private const val FAVORITES_ID = "favorites"
         private const val NON_FAVORITES_ID = "non_favorites"
         private const val NEGLECTED_GEMS_ID = "neglected_gems"
+        private const val RECENTLY_PLAYED_ID = "recently_played"
+        private const val DOWNLOADED_ID = "downloaded"
+        private const val DOWNLOADS_MIX_ID = "downloads_mix"
 
         // Custom session commands
         private const val ACTION_TOGGLE_STAR = "com.zonik.app.TOGGLE_STAR"
@@ -162,6 +168,9 @@ class ZonikMediaService : MediaLibraryService() {
             "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT"
         private const val CONTENT_STYLE_SUPPORTED =
             "android.media.browse.CONTENT_STYLE_SUPPORTED"
+        // Groups consecutive items under a header row ("A", "B", …) in Android Auto lists.
+        private const val CONTENT_STYLE_GROUP_TITLE_HINT =
+            "android.media.browse.CONTENT_STYLE_GROUP_TITLE_HINT"
         private const val CONTENT_STYLE_GRID_ITEM_HINT_VALUE = 2
         private const val CONTENT_STYLE_LIST_ITEM_HINT_VALUE = 1
     }
@@ -504,6 +513,7 @@ class ZonikMediaService : MediaLibraryService() {
         savePlaybackState(mediaLibrarySession?.player)
         stopScrobblePoll()
         settingsScope.cancel()
+        browseScope.cancel()
         scrobbleMainScope.cancel()
         scrobbleIoScope.cancel()
         scrobblePlayer = null
@@ -696,6 +706,29 @@ class ZonikMediaService : MediaLibraryService() {
         putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST_ITEM_HINT_VALUE)
     }
 
+    /** Artwork for a bundled drawable, which Android Auto loads straight from our resources. */
+    private fun iconUri(resId: Int): Uri = Uri.parse("android.resource://$packageName/$resId")
+
+    /** Header a sorted list is grouped under: the first letter, or "#" for anything else. */
+    private fun groupLetter(name: String): String {
+        val c = name.trim().removePrefix("The ").removePrefix("the ").firstOrNull()?.uppercaseChar() ?: return "#"
+        return if (c in 'A'..'Z') c.toString() else "#"
+    }
+
+    private fun withGroup(item: MediaItem, group: String): MediaItem {
+        val extras = Bundle(item.mediaMetadata.extras ?: Bundle.EMPTY)
+        extras.putString(CONTENT_STYLE_GROUP_TITLE_HINT, group)
+        return item.buildUpon()
+            .setMediaMetadata(item.mediaMetadata.buildUpon().setExtras(extras).build())
+            .build()
+    }
+
+    /** Sorts by name (ignoring a leading "The") and tags each item with its A–Z header. */
+    private fun <T> alphabetised(items: List<T>, name: (T) -> String, toItem: (T) -> MediaItem): List<MediaItem> =
+        items
+            .sortedBy { name(it).trim().removePrefix("The ").removePrefix("the ").lowercase() }
+            .map { withGroup(toItem(it), groupLetter(name(it))) }
+
     private fun buildBrowsableItem(
         id: String,
         title: String,
@@ -875,11 +908,13 @@ class ZonikMediaService : MediaLibraryService() {
             artworkUri = coverArtUri(artist.coverArt)
         )
 
+    // One tap plays a shuffle of the genre. It used to open a folder of 50 random tracks
+    // that reshuffled on every visit, so the list moved under your finger.
     private fun genreToMediaItem(genre: Genre): MediaItem =
-        buildBrowsableItem(
+        buildPlayableItem(
             id = "$GENRE_PREFIX${genre.name}",
             title = genre.name,
-            subtitle = "${genre.songCount} songs"
+            subtitle = "Shuffle · ${genre.songCount} songs"
         )
 
     private fun playlistToMediaItem(playlist: Playlist): MediaItem =
@@ -1003,23 +1038,23 @@ class ZonikMediaService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
-            // Handle single-item mix lookups (Shuffle, Favorites, etc.)
-            if (mediaItems.size == 1) {
+            // Mixes (Shuffle, Favorites, a genre, …) arrive as a single id and need the server
+            // or the DB to expand, so that happens off the main thread.
+            if (mediaItems.size == 1 && isMixId(mediaItems[0].mediaId)) {
                 val id = mediaItems[0].mediaId
-                val mixTracks = resolveMixTracks(id)
-                if (mixTracks != null) {
-                    com.zonik.app.data.DebugLog.d("MediaService", "onSetMediaItems: resolving mix $id")
-                    if (mixTracks.isEmpty()) {
-                        return Futures.immediateFuture(
-                            MediaSession.MediaItemsWithStartPosition(mutableListOf(), 0, 0L)
-                        )
+                com.zonik.app.data.DebugLog.d("MediaService", "onSetMediaItems: resolving mix $id")
+                val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+                browseScope.launch {
+                    try {
+                        val built = (resolveMixTracks(id) ?: emptyList()).map { buildFullMediaItem(it) }
+                        val resolved = if (id == SHUFFLE_MIX_ID) asEndlessMix(built) else built
+                        future.set(MediaSession.MediaItemsWithStartPosition(resolved, 0, 0L))
+                    } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.w("MediaService", "Mix $id failed: ${e.message}")
+                        future.set(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, 0L))
                     }
-                    val built = mixTracks.map { buildFullMediaItem(it) }
-                    val resolved = if (id == SHUFFLE_MIX_ID) asEndlessMix(built) else built
-                    return Futures.immediateFuture(
-                        MediaSession.MediaItemsWithStartPosition(resolved, 0, 0L)
-                    )
                 }
+                return future
             }
 
             // Resolve ALL items here to avoid per-item onAddMediaItems IPC reordering.
@@ -1059,13 +1094,21 @@ class ZonikMediaService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>
         ): ListenableFuture<MutableList<MediaItem>> {
-            if (mediaItems.size == 1) {
+            if (mediaItems.size == 1 && isMixId(mediaItems[0].mediaId)) {
                 val id = mediaItems[0].mediaId
-                val mixTracks = resolveMixTracks(id)
-                if (mixTracks != null) {
-                    com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: resolving $id")
-                    return Futures.immediateFuture(mixTracks.map { buildFullMediaItem(it) }.toMutableList())
+                com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: resolving $id")
+                val future = SettableFuture.create<MutableList<MediaItem>>()
+                browseScope.launch {
+                    future.set(
+                        try {
+                            (resolveMixTracks(id) ?: emptyList()).map { buildFullMediaItem(it) }.toMutableList()
+                        } catch (e: Exception) {
+                            com.zonik.app.data.DebugLog.w("MediaService", "Mix $id failed: ${e.message}")
+                            mutableListOf()
+                        }
+                    )
                 }
+                return future
             }
 
             // Media3 strips localConfiguration (URI) during controller→service IPC.
@@ -1136,12 +1179,18 @@ class ZonikMediaService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-            return try {
-                val children = resolveChildren(parentId, page, pageSize)
-                Futures.immediateFuture(LibraryResult.ofItemList(children, params))
-            } catch (e: Exception) {
-                Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_IO))
+            val future = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
+            browseScope.launch {
+                future.set(
+                    try {
+                        LibraryResult.ofItemList(resolveChildren(parentId, page, pageSize), params)
+                    } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.w("MediaService", "Browse $parentId failed: ${e.message}")
+                        LibraryResult.ofError(LibraryResult.RESULT_ERROR_IO)
+                    }
+                )
             }
+            return future
         }
 
         override fun onGetItem(
@@ -1642,6 +1691,8 @@ class ZonikMediaService : MediaLibraryService() {
             ARTISTS_ID -> artistsChildren()
             ALBUMS_ID -> albumsChildren()
             GENRES_ID -> genresChildren()
+            DOWNLOADED_ID -> downloadedChildren()
+            RECENTLY_PLAYED_ID -> recentlyPlayedChildren()
             else -> dynamicChildren(parentId)
         }
         val start = page * pageSize
@@ -1655,23 +1706,33 @@ class ZonikMediaService : MediaLibraryService() {
             settingsRepository.autoTabOrder.first()
         }
         val tabMap = mapOf(
-            "mix" to buildBrowsableItem(id = MIX_ID, title = "Mix", extras = listExtras()),
-            "recent" to buildBrowsableItem(id = RECENT_ID, title = "Recently Added", extras = gridExtras()),
-            "library" to buildBrowsableItem(id = LIBRARY_ID, title = "Library", extras = listExtras()),
-            "playlists" to buildBrowsableItem(id = PLAYLISTS_ID, title = "Playlists", extras = listExtras())
+            "mix" to buildBrowsableItem(id = MIX_ID, title = "Mix", artworkUri = iconUri(R.drawable.ic_auto_shuffle), extras = listExtras()),
+            "recent" to buildBrowsableItem(id = RECENT_ID, title = "Recently Added", artworkUri = iconUri(R.drawable.ic_auto_recent), extras = gridExtras()),
+            "library" to buildBrowsableItem(id = LIBRARY_ID, title = "Library", artworkUri = iconUri(R.drawable.ic_auto_library), extras = listExtras()),
+            "playlists" to buildBrowsableItem(id = PLAYLISTS_ID, title = "Playlists", artworkUri = iconUri(R.drawable.ic_auto_playlists), extras = listExtras())
         )
         return tabOrder.mapNotNull { tabMap[it] }
     }
 
     private fun recentChildren(): List<MediaItem> {
         val albums = runBlocking {
-            libraryRepository.getRecentAlbums(20).firstOrNull() ?: emptyList()
+            libraryRepository.getRecentAlbums(50).firstOrNull() ?: emptyList()
         }
         return albums.map { albumToMediaItem(it) }
     }
 
     private fun libraryChildren(): List<MediaItem> {
+        val downloadedCount = offlineCacheManager.offlineTrackIds.value.size
         return listOf(
+            // First, because it is what still works in a dead zone.
+            buildBrowsableItem(
+                id = DOWNLOADED_ID,
+                title = "Downloaded",
+                subtitle = if (downloadedCount > 0) "$downloadedCount tracks · plays without signal"
+                else "Nothing downloaded yet",
+                artworkUri = iconUri(R.drawable.ic_auto_downloaded),
+                extras = listExtras()
+            ),
             buildBrowsableItem(
                 id = ARTISTS_ID,
                 title = "Artists",
@@ -1694,13 +1755,32 @@ class ZonikMediaService : MediaLibraryService() {
         val artists = runBlocking {
             libraryRepository.getArtists().firstOrNull() ?: emptyList()
         }
-        return artists.map { artistToMediaItem(it) }
+        return alphabetised(artists, { it.name }) { artistToMediaItem(it) }
     }
 
     private fun albumsChildren(): List<MediaItem> {
         val albums = runBlocking {
             libraryRepository.getAlbums().firstOrNull() ?: emptyList()
         }
+        return alphabetised(albums, { it.name }) { albumToMediaItem(it) }
+    }
+
+    private fun downloadedChildren(): List<MediaItem> {
+        val tracks = runBlocking {
+            libraryRepository.getOfflineCachedTracks().firstOrNull() ?: emptyList()
+        }
+        if (tracks.isEmpty()) return emptyList()
+        val shuffle = buildPlayableItem(
+            id = DOWNLOADS_MIX_ID,
+            title = "Shuffle downloads",
+            subtitle = "${tracks.size} tracks",
+            artworkUri = iconUri(R.drawable.ic_auto_shuffle)
+        )
+        return listOf(shuffle) + alphabetised(tracks, { it.title }) { trackToMediaItem(it) }
+    }
+
+    private fun recentlyPlayedChildren(): List<MediaItem> {
+        val albums = runBlocking { libraryRepository.getRecentlyPlayedAlbums(30) }
         return albums.map { albumToMediaItem(it) }
     }
 
@@ -1720,13 +1800,18 @@ class ZonikMediaService : MediaLibraryService() {
 
     private fun mixChildren(): List<MediaItem> {
         return listOf(
-            buildPlayableItem(id = SHUFFLE_MIX_ID, title = "Shuffle", subtitle = "Random songs"),
-            buildPlayableItem(id = NEGLECTED_GEMS_ID, title = "Neglected Gems", subtitle = "Loved-but-never-played"),
-            buildPlayableItem(id = NEWLY_ADDED_ID, title = "Newly Added", subtitle = "Recently added tracks"),
-            buildPlayableItem(id = FAVORITES_ID, title = "Favorites", subtitle = "Starred tracks"),
-            buildPlayableItem(id = NON_FAVORITES_ID, title = "Non-Favorites", subtitle = "Unstarred tracks")
+            buildPlayableItem(id = SHUFFLE_MIX_ID, title = "Shuffle Mix", subtitle = "Endless random mix", artworkUri = iconUri(R.drawable.ic_auto_shuffle)),
+            buildBrowsableItem(id = RECENTLY_PLAYED_ID, title = "Recently played", subtitle = "Albums you've been listening to", artworkUri = iconUri(R.drawable.ic_auto_history), extras = gridExtras()),
+            buildPlayableItem(id = FAVORITES_ID, title = "Favorites", subtitle = "Starred tracks, shuffled", artworkUri = iconUri(R.drawable.ic_auto_favorite)),
+            buildPlayableItem(id = NEGLECTED_GEMS_ID, title = "Neglected Gems", subtitle = "Starred, never played", artworkUri = iconUri(R.drawable.ic_auto_gems)),
+            buildPlayableItem(id = NEWLY_ADDED_ID, title = "Newly Added", subtitle = "Newest 100 tracks", artworkUri = iconUri(R.drawable.ic_auto_recent)),
+            buildPlayableItem(id = NON_FAVORITES_ID, title = "Non-Favorites", subtitle = "Unstarred tracks, shuffled", artworkUri = iconUri(R.drawable.ic_auto_favorite_border))
         )
     }
+
+    private fun isMixId(id: String): Boolean =
+        id in setOf(SHUFFLE_MIX_ID, NEGLECTED_GEMS_ID, NEWLY_ADDED_ID, FAVORITES_ID, NON_FAVORITES_ID, DOWNLOADS_MIX_ID) ||
+            id.startsWith(GENRE_PREFIX)
 
     /** Returns tracks for mix-type IDs, or null if not a mix ID */
     private fun resolveMixTracks(id: String): List<Track>? {
@@ -1745,7 +1830,12 @@ class ZonikMediaService : MediaLibraryService() {
                     val unstarred = libraryRepository.getUnstarredTracks()
                     unstarred.shuffled().take(100)
                 }
-                else -> null
+                DOWNLOADS_MIX_ID -> {
+                    (libraryRepository.getOfflineCachedTracks().firstOrNull() ?: emptyList()).shuffled()
+                }
+                else -> if (id.startsWith(GENRE_PREFIX)) {
+                    libraryRepository.getRandomSongs(count = 100, genre = id.removePrefix(GENRE_PREFIX))
+                } else null
             }
         }
     }
@@ -1798,6 +1888,9 @@ class ZonikMediaService : MediaLibraryService() {
             mediaId == ARTISTS_ID -> buildBrowsableItem(id = ARTISTS_ID, title = "Artists")
             mediaId == ALBUMS_ID -> buildBrowsableItem(id = ALBUMS_ID, title = "Albums")
             mediaId == GENRES_ID -> buildBrowsableItem(id = GENRES_ID, title = "Genres")
+            mediaId == DOWNLOADED_ID -> buildBrowsableItem(id = DOWNLOADED_ID, title = "Downloaded")
+            mediaId == RECENTLY_PLAYED_ID -> buildBrowsableItem(id = RECENTLY_PLAYED_ID, title = "Recently played")
+            mediaId == DOWNLOADS_MIX_ID -> buildPlayableItem(id = DOWNLOADS_MIX_ID, title = "Shuffle downloads")
             mediaId == SHUFFLE_MIX_ID -> buildPlayableItem(id = SHUFFLE_MIX_ID, title = "Shuffle")
             mediaId == NEGLECTED_GEMS_ID -> buildPlayableItem(id = NEGLECTED_GEMS_ID, title = "Neglected Gems")
             mediaId == NEWLY_ADDED_ID -> buildPlayableItem(id = NEWLY_ADDED_ID, title = "Newly Added")
@@ -1814,7 +1907,7 @@ class ZonikMediaService : MediaLibraryService() {
                 buildBrowsableItem(id = mediaId, title = mediaId.removePrefix(ARTIST_PREFIX))
             }
             mediaId.startsWith(GENRE_PREFIX) -> {
-                buildBrowsableItem(id = mediaId, title = mediaId.removePrefix(GENRE_PREFIX))
+                buildPlayableItem(id = mediaId, title = mediaId.removePrefix(GENRE_PREFIX))
             }
             mediaId.startsWith(PLAYLIST_PREFIX) -> {
                 buildBrowsableItem(id = mediaId, title = mediaId.removePrefix(PLAYLIST_PREFIX))
