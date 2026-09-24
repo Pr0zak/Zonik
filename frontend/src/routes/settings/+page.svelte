@@ -55,6 +55,76 @@
 	let aiUsage = $state(null);
 	let saving = $state(false);
 	let dirty = $state(false);
+
+	// --- Section navigation (one section at a time, deep-linkable as #key) ---
+	const SECTION_GROUPS = ['Library', 'Sources', 'Server'];
+	const SECTIONS = [
+		{ key: 'library', label: 'Library & storage', group: 'Library' },
+		{ key: 'analysis', label: 'Audio analysis', group: 'Library' },
+		{ key: 'soulseek', label: 'Soulseek', group: 'Sources' },
+		{ key: 'lastfm', label: 'Last.fm', group: 'Sources' },
+		{ key: 'spotify', label: 'Spotify', group: 'Sources' },
+		{ key: 'lidarr', label: 'Lidarr', group: 'Sources' },
+		{ key: 'apple', label: 'Apple Music', group: 'Sources' },
+		{ key: 'subsonic', label: 'Subsonic & clients', group: 'Server' },
+		{ key: 'users', label: 'Users & access', group: 'Server' },
+		{ key: 'ai', label: 'AI assistant', group: 'Server' },
+		{ key: 'database', label: 'Database', group: 'Server' },
+		{ key: 'about', label: 'About & updates', group: 'Server' },
+	];
+	const STATUS_DOT = {
+		ok: 'bg-emerald-400',
+		warn: 'bg-amber-400',
+		bad: 'bg-red-400',
+		off: 'bg-[var(--text-disabled)]',
+	};
+	let activeSection = $state('library');
+	let slskLoggedIn = $state(null);
+
+	function showSection(key) {
+		if (!SECTIONS.some(x => x.key === key)) return;
+		activeSection = key;
+		history.replaceState(history.state, '', `#${key}`);
+	}
+
+	/** Status shown beside each section in the list — from settings already loaded. */
+	function sectionStatus(key) {
+		const sv = services || {};
+		switch (key) {
+			case 'soulseek':
+				if (!sv.slsk_username) return { tone: 'off', text: 'not set up' };
+				if (slskLoggedIn === false) return { tone: 'bad', text: 'disconnected' };
+				return { tone: 'ok', text: slskLoggedIn ? 'connected' : '' };
+			case 'lastfm':
+				if (sv.has_lastfm_session_key) return { tone: 'ok', text: 'linked' };
+				return sv.has_lastfm_api_key ? { tone: 'warn', text: 'not linked' } : { tone: 'off', text: 'off' };
+			case 'spotify':
+				return sv.spotify_client_id ? { tone: 'ok', text: 'set up' } : { tone: 'off', text: 'off' };
+			case 'lidarr':
+				return sv.lidarr_enabled ? { tone: 'ok', text: 'on' } : { tone: 'off', text: 'off' };
+			case 'apple':
+				return sv.has_apple_music_developer_token ? { tone: 'ok', text: 'set up' } : { tone: 'off', text: 'off' };
+			case 'ai':
+				return sv.has_claude_api_key ? { tone: 'ok', text: 'on' } : { tone: 'off', text: 'no key' };
+			case 'users':
+				return { tone: 'ok', text: users.length ? `${users.length}` : '' };
+			case 'about':
+				if (updateInfo?.update_available) return { tone: 'warn', text: 'update' };
+				return { tone: 'ok', text: versionInfo?.version ? `v${versionInfo.version}` : '' };
+			default:
+				return { tone: 'ok', text: '' };
+		}
+	}
+
+	async function discardChanges() {
+		try {
+			applyServices(await api.getServices());
+			dirty = false;
+			addToast('Changes discarded', 'success');
+		} catch {
+			addToast("Couldn't reload settings", 'error');
+		}
+	}
 	let showField = $state({});
 
 	let versionInfo = $state(null);
@@ -86,6 +156,15 @@
 	}
 
 	onMount(() => {
+		const fromHash = window.location.hash.slice(1);
+		if (SECTIONS.some(x => x.key === fromHash)) activeSection = fromHash;
+		const onHash = () => {
+			const k = window.location.hash.slice(1);
+			if (SECTIONS.some(x => x.key === k)) activeSection = k;
+		};
+		window.addEventListener('hashchange', onHash);
+		fetch('/api/download/status').then(r => r.json()).then(d => slskLoggedIn = !!d.logged_in).catch(() => {});
+
 		// Load each section independently so one failure doesn't block the page
 		api.getStats().then(d => stats = d).catch(() => {});
 		api.getServices().then(applyServices).catch(() => {});
@@ -101,6 +180,7 @@
 		// Handle Last.fm OAuth redirect
 		const params = new URLSearchParams(window.location.search);
 		if (params.get('lastfm_auth') === 'ok') {
+			activeSection = 'lastfm';
 			addToast('Last.fm authenticated successfully!', 'success');
 			window.history.replaceState({}, '', '/settings');
 			api.getServices().then(applyServices).catch(() => {});
@@ -108,6 +188,7 @@
 			addToast('Last.fm authentication failed', 'error');
 			window.history.replaceState({}, '', '/settings');
 		}
+		return () => window.removeEventListener('hashchange', onHash);
 	});
 
 	async function checkForUpdates() {
@@ -400,10 +481,37 @@
 	}
 </script>
 
-<div class="max-w-4xl">
-	<PageHeader title="Settings" icon={Settings} color="var(--color-settings)" />
+<div class="max-w-6xl">
+	<PageHeader title="Settings" icon={Settings} color="var(--color-settings)"
+		subtitle={SECTIONS.find(x => x.key === activeSection)?.label} />
 
-	<div class="space-y-6">
+	<!-- One section at a time, picked from a grouped list with live status. The page used
+	     to be a single ~3,900px form; sections are deep-linkable as /settings#soulseek. -->
+	<div class="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-6 items-start">
+		<nav aria-label="Settings sections"
+			class="md:sticky md:top-0 flex md:flex-col gap-1 overflow-x-auto md:overflow-visible -mx-1 px-1 pb-1 md:pb-0">
+			{#each SECTION_GROUPS as group}
+				<p class="hidden md:block px-3 pt-3 pb-1 text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">{group}</p>
+				{#each SECTIONS.filter(x => x.group === group) as sec (sec.key)}
+					{@const st = sectionStatus(sec.key)}
+					<a href="#{sec.key}" onclick={(e) => { e.preventDefault(); showSection(sec.key); }}
+						aria-current={activeSection === sec.key ? 'page' : undefined}
+						class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm whitespace-nowrap transition-colors
+							{activeSection === sec.key
+								? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]'
+								: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container)]'}">
+						<span class="w-2 h-2 rounded-full flex-shrink-0 {STATUS_DOT[st.tone]}" aria-hidden="true"></span>
+						<span class="flex-1">{sec.label}</span>
+						{#if st.text}
+							<span class="hidden md:inline text-[11px] text-[var(--text-muted)]">{st.text}</span>
+						{/if}
+					</a>
+				{/each}
+			{/each}
+		</nav>
+
+		<div class="min-w-0">
+		<div id="sec-library" class={activeSection === 'library' ? 'space-y-6' : 'hidden'}>
 		<!-- 1. Library & Storage -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -478,6 +586,9 @@
 			{/if}
 		</Card>
 
+		</div>
+
+		<div id="sec-soulseek" class={activeSection === 'soulseek' ? 'space-y-6' : 'hidden'}>
 		<!-- 2. Soulseek -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -558,6 +669,9 @@
 			</div>
 		</Card>
 
+		</div>
+
+		<div id="sec-lastfm" class={activeSection === 'lastfm' ? 'space-y-6' : 'hidden'}>
 		<!-- 3. Last.fm -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -634,6 +748,9 @@
 			{/if}
 		</Card>
 
+		</div>
+
+		<div id="sec-lidarr" class={activeSection === 'lidarr' ? 'space-y-6' : 'hidden'}>
 		<!-- 4. Lidarr -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -686,6 +803,9 @@
 			{/if}
 		</Card>
 
+		</div>
+
+		<div id="sec-spotify" class={activeSection === 'spotify' ? 'space-y-6' : 'hidden'}>
 		<!-- 5. Spotify -->
 		<Card padding="p-4">
 			<div class="flex items-center gap-3 mb-4">
@@ -713,6 +833,9 @@
 			</div>
 		</Card>
 
+		</div>
+
+		<div id="sec-apple" class={activeSection === 'apple' ? 'space-y-6' : 'hidden'}>
 		<!-- 6. Apple Music -->
 		<Card padding="p-4">
 			<div class="flex items-center gap-3 mb-4">
@@ -734,6 +857,9 @@
 			</div>
 		</Card>
 
+		</div>
+
+		<div id="sec-subsonic" class={activeSection === 'subsonic' ? 'space-y-6' : 'hidden'}>
 		<!-- 7. Subsonic -->
 		<div class="bg-[var(--bg-primary)] ghost-border rounded-xl p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -765,6 +891,9 @@
 			</div>
 		</div>
 
+		</div>
+
+		<div id="sec-users" class={activeSection === 'users' ? 'space-y-6' : 'hidden'}>
 		<!-- 6. Users & Access -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -853,6 +982,9 @@
 			</div>
 		</Card>
 
+		</div>
+
+		<div id="sec-ai" class={activeSection === 'ai' ? 'space-y-6' : 'hidden'}>
 		<!-- 7. AI Assistant -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -944,6 +1076,9 @@
 			</div>
 		</Card>
 
+		</div>
+
+		<div id="sec-analysis" class={activeSection === 'analysis' ? 'space-y-6' : 'hidden'}>
 		<!-- 8. Audio Analysis -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -1019,6 +1154,9 @@
 			{/if}
 		</Card>
 
+		</div>
+
+		<div id="sec-database" class={activeSection === 'database' ? 'space-y-6' : 'hidden'}>
 		<!-- 9. Database -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -1055,6 +1193,9 @@
 			{/if}
 		</Card>
 
+		</div>
+
+		<div id="sec-about" class={activeSection === 'about' ? 'space-y-6' : 'hidden'}>
 		<!-- 8. About & Updates -->
 		<Card padding="p-4">
 			<div class="flex items-center justify-between mb-4">
@@ -1179,13 +1320,18 @@
 				</div>
 			</div>
 		</Card>
+		</div>
+		</div>
 	</div>
 </div>
 
 <!-- Sticky save bar -->
 {#if dirty}
 	<div class="sticky bottom-0 left-0 right-0 bg-[var(--surface-base)]/95 backdrop-blur px-4 py-3 flex items-center justify-between z-10">
-		<span class="text-xs text-[var(--text-muted)]">Unsaved changes</span>
-		<Button variant="primary" size="sm" loading={saving} onclick={saveServices}>Save Changes</Button>
+		<span class="text-xs text-[var(--text-muted)]">Unsaved changes — they apply across all sections</span>
+		<div class="flex items-center gap-2">
+			<Button variant="secondary" size="sm" disabled={saving} onclick={discardChanges}>Discard</Button>
+			<Button variant="primary" size="sm" loading={saving} onclick={saveServices}>Save Changes</Button>
+		</div>
 	</div>
 {/if}

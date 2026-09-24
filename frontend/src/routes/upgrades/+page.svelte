@@ -244,6 +244,9 @@
 	}
 
 	onMount(() => {
+		// Deep link from the dashboard, e.g. /upgrades?status=failed
+		const wantStatus = new URLSearchParams(window.location.search).get('status');
+		if (wantStatus) activeFilter = wantStatus;
 		loadStats();
 		loadUpgrades();
 	});

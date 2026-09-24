@@ -15,6 +15,7 @@
 	import Badge from '../components/ui/Badge.svelte';
 	import Skeleton from '../components/ui/Skeleton.svelte';
 	import StatTile from '../components/ui/StatTile.svelte';
+	import AttentionList from '../components/AttentionList.svelte';
 	import { LayoutDashboard } from 'lucide-svelte';
 
 	let stats = $state(null);
@@ -26,6 +27,15 @@
 	let loading = $state(true);
 	let transfers = $state([]);
 	let insights = $state(null);
+	let attentionSummary = $state('');
+
+	function summarise(a) {
+		const c = a?.counts || {};
+		const parts = [];
+		if (c.critical) parts.push(`${c.critical} problem${c.critical === 1 ? '' : 's'}`);
+		if (c.warning) parts.push(`${c.warning} to review`);
+		attentionSummary = parts.length ? parts.join(' · ') : 'All clear';
+	}
 
 	const unsubTransfers = activeTransfers.subscribe(v => { transfers = v; });
 	onDestroy(unsubTransfers);
@@ -116,7 +126,10 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Dashboard" icon={LayoutDashboard} color="var(--color-dashboard)" />
+	<PageHeader title="Dashboard" icon={LayoutDashboard} color="var(--color-dashboard)" subtitle={attentionSummary} />
+
+	<!-- What needs the admin comes first; the library overview follows. -->
+	<AttentionList onsummary={summarise} />
 
 	{#if loading}
 		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

@@ -515,6 +515,16 @@
 
 	onMount(() => {
 		loadBlacklist();
+		// Deep link from the dashboard, e.g. /downloads?status=failed&reason=not_found
+		const qs = new URLSearchParams(window.location.search);
+		const wantStatus = qs.get('status');
+		if (wantStatus && STATUS_QUERY[wantStatus]) {
+			jobStatusFilter = wantStatus;
+			if (wantStatus === 'failed') {
+				failureReason = qs.get('reason');
+				loadFailureGroups();
+			}
+		}
 		loadJobs();
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
