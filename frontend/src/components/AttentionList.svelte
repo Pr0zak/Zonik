@@ -6,7 +6,7 @@
 	 * there's nothing to do.
 	 */
 	import { onMount } from 'svelte';
-	import { CheckCircle2, RefreshCw } from 'lucide-svelte';
+	import { CheckCircle2, RefreshCw, ChevronRight } from 'lucide-svelte';
 	import { formatRelativeTime } from '$lib/utils.js';
 
 	let { onsummary = null } = $props();
@@ -17,10 +17,12 @@
 	let failed = $state(false);
 
 	const stripe = { critical: 'bg-red-500', warning: 'bg-amber-400', info: 'bg-cyan-400' };
+	// Same shapes as the shared Button (rounded-md, ghost border). Critical items get the
+	// danger tint instead of the bright primary fill, which clashed with the dark cards.
 	const button = {
-		critical: 'bg-[var(--color-primary)] text-white hover:opacity-90',
-		warning: 'bg-[var(--surface-container-high)] text-[var(--text-primary)] hover:bg-[var(--surface-container-highest)]',
-		info: 'bg-[var(--surface-container-high)] text-[var(--text-primary)] hover:bg-[var(--surface-container-highest)]',
+		critical: 'text-red-300 bg-red-500/10 border border-red-500/30 hover:bg-red-500/20',
+		warning: 'text-[var(--text-primary)] bg-[var(--surface-container-high)] ghost-border hover:bg-[var(--surface-container-highest)]',
+		info: 'text-[var(--text-primary)] bg-[var(--surface-container-high)] ghost-border hover:bg-[var(--surface-container-highest)]',
 	};
 
 	async function load() {
@@ -92,8 +94,9 @@
 								<p class="text-xs text-[var(--text-muted)] mt-0.5">{item.detail}</p>
 							</div>
 							<a href={item.href}
-								class="self-start sm:self-center flex-shrink-0 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap {button[item.severity] || button.info}">
+								class="self-start sm:self-center flex-shrink-0 inline-flex items-center gap-1 text-xs font-medium pl-3 pr-2 py-1.5 rounded-md transition-colors whitespace-nowrap {button[item.severity] || button.info}">
 								{item.action}
+								<ChevronRight class="w-3.5 h-3.5 opacity-70" />
 							</a>
 						</div>
 					</li>
