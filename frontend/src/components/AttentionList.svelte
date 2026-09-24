@@ -104,7 +104,7 @@
 					<div class="mt-2 flex items-end gap-[3px] h-10" role="img"
 						aria-label="Jobs started per hour over the last 24 hours">
 						{#each jobs24.bars as b}
-							<div class="flex-1 rounded-t-sm bg-[var(--color-primary)]/60 min-h-[2px]"
+							<div class="flex-1 rounded-t-sm bg-indigo-400/70 min-h-[2px]"
 								style="height: {Math.max(4, (b.count / jobs24.max) * 100)}%"
 								title="{b.hour}: {b.count} job{b.count === 1 ? '' : 's'}"></div>
 						{/each}
