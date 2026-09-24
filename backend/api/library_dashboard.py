@@ -283,8 +283,15 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
     bitrates = {r: c for r, c in bitrate_result.all()}
 
     # Analysis / embedding counts
-    analyzed = (await db.execute(select(func.count(TrackAnalysis.track_id)))).scalar() or 0
-    embedded = (await db.execute(select(func.count(TrackEmbedding.track_id)))).scalar() or 0
+    # Same definitions as the Analysis page: only rows whose track still exists, and
+    # failed-analysis stubs (bpm IS NULL) don't count as analyzed.
+    analyzed = (await db.execute(
+        select(func.count(TrackAnalysis.track_id)).join(Track, Track.id == TrackAnalysis.track_id)
+        .where(TrackAnalysis.bpm.isnot(None))
+    )).scalar() or 0
+    embedded = (await db.execute(
+        select(func.count(TrackEmbedding.track_id)).join(Track, Track.id == TrackEmbedding.track_id)
+    )).scalar() or 0
     favorites = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
     playlists = (await db.execute(select(func.count(Playlist.id)))).scalar() or 0
 

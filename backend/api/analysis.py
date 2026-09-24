@@ -30,13 +30,20 @@ async def analysis_stats(db: AsyncSession = Depends(get_db)):
     from backend.services.analyzer import ESSENTIA_SUPPORTED_EXTENSIONS
 
     total_tracks = (await db.execute(select(func.count(Track.id)))).scalar() or 0
-    analyzed_total = (await db.execute(select(func.count(TrackAnalysis.track_id)))).scalar() or 0
+    # Joined to Track: analysis/embedding rows outlive deleted tracks (no cascade on
+    # those FKs), which pushed "6583 / 6581" past 100%.
+    analyzed_total = (await db.execute(
+        select(func.count(TrackAnalysis.track_id)).join(Track, Track.id == TrackAnalysis.track_id)
+    )).scalar() or 0
     # Stub rows (bpm IS NULL) = tracks that failed analysis permanently
     analysis_skipped = (await db.execute(
-        select(func.count(TrackAnalysis.track_id)).where(TrackAnalysis.bpm.is_(None))
+        select(func.count(TrackAnalysis.track_id)).join(Track, Track.id == TrackAnalysis.track_id)
+        .where(TrackAnalysis.bpm.is_(None))
     )).scalar() or 0
     analyzed = analyzed_total - analysis_skipped
-    with_embeddings = (await db.execute(select(func.count(TrackEmbedding.track_id)))).scalar() or 0
+    with_embeddings = (await db.execute(
+        select(func.count(TrackEmbedding.track_id)).join(Track, Track.id == TrackEmbedding.track_id)
+    )).scalar() or 0
 
     # Count tracks with unsupported formats (skipped by Essentia)
     supported_fmts = [ext.lstrip(".") for ext in ESSENTIA_SUPPORTED_EXTENSIONS]

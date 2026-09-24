@@ -50,13 +50,15 @@
 	};
 
 	const statTiles = $derived([
-		{ label: 'Total', value: stats?.total ?? 0, color: 'var(--text-secondary)' },
-		{ label: 'Pending', value: stats?.pending ?? 0, color: '#9ca3af' },
-		{ label: 'Queued', value: stats?.queued ?? 0, color: '#60a5fa' },
-		{ label: 'Downloading', value: stats?.downloading ?? 0, color: '#818cf8' },
-		{ label: 'Completed', value: stats?.completed ?? 0, color: '#4ade80' },
-		{ label: 'Failed', value: stats?.failed ?? 0, color: '#f87171' },
-		{ label: 'Skipped', value: stats?.skipped ?? 0, color: '#fbbf24' },
+		{ filter: null, label: 'Total', value: stats?.total ?? 0, color: 'var(--text-secondary)' },
+		{ filter: 'pending', label: 'Pending', value: stats?.pending ?? 0, color: '#9ca3af' },
+		{ filter: 'queued', label: 'Queued', value: stats?.queued ?? 0, color: '#60a5fa' },
+		{ filter: 'downloading', label: 'Downloading', value: stats?.downloading ?? 0, color: '#818cf8' },
+		{ filter: 'completed', label: 'Completed', value: stats?.completed ?? 0, color: '#4ade80',
+			detail: stats?.size_delta ? `${stats.size_delta > 0 ? '+' : ''}${formatBytes(stats.size_delta)}` : '' },
+		{ filter: 'failed', label: 'Failed', value: stats?.failed ?? 0, color: '#f87171',
+			tone: stats?.failed ? 'bad' : 'default', detail: stats?.failed ? 'Show and retry' : '' },
+		{ filter: 'skipped', label: 'Skipped', value: stats?.skipped ?? 0, color: '#fbbf24' },
 	]);
 
 	const statusOptions = $derived([
@@ -67,7 +69,9 @@
 		{ value: 'completed', label: 'Completed', color: 'upgrades', count: stats?.completed },
 		{ value: 'failed', label: 'Failed', color: 'upgrades', count: stats?.failed },
 		{ value: 'skipped', label: 'Skipped', color: 'upgrades', count: stats?.skipped },
-	]);
+	// Empty states are hidden (the tiles above still show every count); seven pills
+	// wrapped onto a second line. The active filter always stays visible.
+	].filter(o => o.value === null || o.value === activeFilter || (o.count || 0) > 0));
 
 	const reasonOptions = [
 		{ value: null, label: 'All Reasons', color: 'upgrades' },
@@ -245,23 +249,18 @@
 	});
 </script>
 
-<div class="space-y-6">
+<div class="max-w-6xl space-y-6">
 	<PageHeader title="Upgrades" icon={ArrowUpCircle} color="var(--color-upgrades)" />
 
 	{#if stats}
 		<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
 			{#each statTiles as tile}
-				<StatTile label={tile.label} value={tile.value} color={tile.color} />
+				<StatTile label={tile.label} value={tile.value.toLocaleString()} color={tile.color}
+					detail={tile.detail} tone={tile.tone} active={activeFilter === tile.filter}
+					onclick={() => setFilter(tile.filter)} title="Show {tile.label.toLowerCase()} upgrades" />
 			{/each}
 		</div>
-		{#if stats.size_delta !== 0}
-			<p class="text-xs text-[var(--text-muted)] text-center">
-				Size change from completed upgrades:
-				<span class="{stats.size_delta > 0 ? 'text-emerald-400' : 'text-red-400'}">
-					{stats.size_delta > 0 ? '+' : ''}{formatBytes(stats.size_delta)}
-				</span>
-			</p>
-		{/if}
+
 	{/if}
 
 	<Toolbar>
@@ -361,8 +360,10 @@
 							class="rounded accent-emerald-500" />
 					{/if}
 				</td>
-				<td class="px-3 py-2">
-					<div class="flex items-center gap-3">
+				<!-- max-w-0 + w-full lets the title truncate; long titles used to push the
+				     Tries and Actions columns off the right edge. -->
+				<td class="px-3 py-2 max-w-0 w-full">
+					<div class="flex items-center gap-3 min-w-0">
 						{#if u.album_id}
 							<img src="/rest/getCoverArt?id={u.album_id}&size=40" alt=""
 								class="w-8 h-8 rounded object-cover flex-shrink-0"

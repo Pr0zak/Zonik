@@ -335,7 +335,7 @@
 	});
 </script>
 
-<div class="px-3 sm:px-6 py-5 max-w-[1600px] mx-auto">
+<div class="max-w-[1600px]">
 	<PageHeader title="Music Map" icon={MapIcon} color="#22d3ee"
 		subtitle={info.count ? `${info.count} of ${info.total} tracks mapped by sound` : 'A map of your library by sound'} />
 

@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy import select, delete, func, case
+from sqlalchemy import select, delete, func, case, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.helpers import paginate
@@ -42,9 +42,45 @@ def _job_description(j: Job) -> str:
     return ""
 
 
+# Why a download failed, grouped the way the Downloads page shows it. The message lives in
+# Job.result ({"message": ...}); for "All N sources failed" the useful part is the last
+# per-track error in Job.tracks.
+FAILURE_REASONS = {
+    "not_found": "Not found on Soulseek",
+    "rejected": "Rejected on import",
+    "peer": "Peer or transfer problem",
+}
+
+
+def _failure_filter(reason: str):
+    """SQL condition selecting failed jobs in one FAILURE_REASONS group."""
+    not_found = Job.result.like("%No results for%")
+    rejected = Job.tracks.like("%Import rejected%")
+    if reason == "not_found":
+        return not_found
+    if reason == "rejected":
+        return and_(~not_found, rejected)
+    if reason == "peer":
+        return and_(~not_found, or_(Job.tracks.is_(None), ~rejected))
+    return None
+
+
+def _type_filter(q, type: str | None):
+    if type:
+        type_list = [t.strip() for t in type.split(",") if t.strip()]
+        if type_list:
+            q = q.where(Job.type.in_(type_list))
+    return q
+
+
 @router.get("")
-async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, status: str | None = None, db: AsyncSession = Depends(get_db)):
+async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, status: str | None = None,
+                    reason: str | None = None, db: AsyncSession = Depends(get_db)):
     base = select(Job)
+    if reason:
+        cond = _failure_filter(reason)
+        if cond is not None:
+            base = base.where(Job.status == "failed", cond)
     if type:
         type_list = [t.strip() for t in type.split(",") if t.strip()]
         if type_list:
@@ -99,6 +135,57 @@ async def job_counts(type: str | None = None, db: AsyncSession = Depends(get_db)
         "failed": counts.get("failed", 0),
         "all": sum(counts.values()),
     }
+
+
+@router.get("/failures")
+async def failure_summary(type: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Failed jobs counted per FAILURE_REASONS group, largest first."""
+    out = []
+    for key, label in FAILURE_REASONS.items():
+        q = _type_filter(select(func.count(Job.id)).where(Job.status == "failed", _failure_filter(key)), type)
+        n = (await db.execute(q)).scalar_one()
+        if n:
+            out.append({"reason": key, "label": label, "count": n})
+    return sorted(out, key=lambda r: r["count"], reverse=True)
+
+
+@router.post("/retry-failed")
+async def retry_failed(background_tasks: BackgroundTasks, type: str | None = None, reason: str | None = None,
+                       db: AsyncSession = Depends(get_db)):
+    """Re-queue every failed download (optionally one FAILURE_REASONS group).
+
+    Each retried job's failed entry is deleted: the new attempt gets its own job, and
+    keeping both would count the same track twice as failed and pending."""
+    q = select(Job).where(Job.status == "failed", Job.type.in_(("download", "bulk_download")))
+    q = _type_filter(q, type)
+    if reason:
+        cond = _failure_filter(reason)
+        if cond is None:
+            return {"error": "Unknown reason"}
+        q = q.where(cond)
+    jobs = (await db.execute(q)).scalars().all()
+
+    from backend.api.download import enqueue_download
+
+    queued = 0
+    retried_jobs = 0
+    for job in jobs:
+        try:
+            tracks = json.loads(job.tracks) if job.tracks else []
+        except (json.JSONDecodeError, TypeError):
+            tracks = []
+        source = job.card.split(":", 1)[1] if job.card and ":" in job.card else None
+        wanted = [t for t in tracks if t.get("status") in ("failed", "queued", "pending", "downloading", None)
+                  and t.get("artist") and t.get("track")]
+        if not wanted:
+            continue
+        for t in wanted:
+            background_tasks.add_task(enqueue_download, t["artist"], t["track"], source=source)
+            queued += 1
+        await db.delete(job)
+        retried_jobs += 1
+    await db.commit()
+    return {"ok": True, "jobs": retried_jobs, "tracks": queued}
 
 
 @router.get("/dashboard")

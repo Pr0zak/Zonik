@@ -170,8 +170,10 @@
 					{@render children()}
 				</div>
 			</main>
+			<!-- In the content column, not under the whole window, so the sidebar keeps the full
+			     height and its last links (Logs, Settings) aren't pushed out of view. -->
+			<Player />
 		</div>
 	</div>
-	<Player />
 	<Toast />
 </div>

@@ -169,9 +169,10 @@
 	}
 </script>
 
-<!-- Floating pill player -->
+<!-- Floating pill player. Nothing renders until a track is loaded: an empty bar reading
+     "No track selected" cost every page 64px on what is mostly an admin console. -->
+{#if $currentTrack}
 <div class="glass shrink-0 sm:mx-3.5 sm:mb-3.5 sm:rounded-xl">
-	{#if $currentTrack}
 		<!-- Row 1: track info + controls + actions -->
 		<div class="flex items-center px-3 sm:px-5 gap-2 sm:gap-4 h-14 sm:h-[76px]">
 			<!-- Cover art: hidden on mobile -->
@@ -266,12 +267,8 @@
 			</div>
 			<span class="font-mono tabular-nums text-xs">{formatDuration(duration)}</span>
 		</div>
-	{:else}
-		<div class="h-14 sm:h-16 flex items-center">
-			<p class="text-sm text-[var(--text-disabled)] mx-auto">No track selected</p>
-		</div>
-	{/if}
 </div>
+{/if}
 
 {#if showEditModal}
 	<!-- svelte-ignore a11y_click_events_have_key_events -->

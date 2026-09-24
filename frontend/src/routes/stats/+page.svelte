@@ -1,6 +1,6 @@
 <script>
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { formatSize, formatDuration, formatRelativeTime, parseUTC } from '$lib/utils.js';
+	import { formatSize, formatDuration, formatLongDuration, formatRelativeTime, parseUTC } from '$lib/utils.js';
 	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle, SkipForward, ChevronDown, ChevronRight } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
@@ -877,10 +877,10 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Library Stats" color="var(--color-stats)" />
+	<PageHeader title="Library Stats" icon={BarChart3} color="var(--color-stats)" />
 
 	{#if loading}
-		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
+		<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
 			<Skeleton class="h-20 rounded-lg" />
 			<Skeleton class="h-20 rounded-lg" />
 			<Skeleton class="h-20 rounded-lg" />
@@ -897,19 +897,12 @@
 	{:else if data}
 		<!-- Overview Cards -->
 		<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
-			{#each [
-				{ v: data.tracks.toLocaleString(), l: 'Tracks' },
-				{ v: data.artists.toLocaleString(), l: 'Artists' },
-				{ v: data.albums.toLocaleString(), l: 'Albums' },
-				{ v: formatSize(data.total_size_bytes), l: 'Total Size' },
-				{ v: formatDuration(data.total_duration_seconds), l: 'Duration' },
-				{ v: data.favorites.toLocaleString(), l: 'Favorites' },
-			] as card}
-				<Card padding="p-4">
-					<p class="text-2xl font-bold text-[var(--text-primary)]">{card.v}</p>
-					<p class="text-xs text-[var(--text-muted)]">{card.l}</p>
-				</Card>
-			{/each}
+			<StatTile label="Tracks" value={data.tracks.toLocaleString()} color="var(--color-library)" href="/library" />
+			<StatTile label="Artists" value={data.artists.toLocaleString()} color="var(--color-discover)" />
+			<StatTile label="Albums" value={data.albums.toLocaleString()} color="var(--color-playlists)" />
+			<StatTile label="Total size" value={formatSize(data.total_size_bytes)} color="var(--color-stats)" />
+			<StatTile label="Duration" value={formatLongDuration(data.total_duration_seconds)} color="var(--color-stats)" />
+			<StatTile label="Favorites" value={data.favorites.toLocaleString()} color="var(--color-favorites)" href="/favorites" />
 		</div>
 
 		<!-- Processing Status -->

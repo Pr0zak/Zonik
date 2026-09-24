@@ -48,9 +48,10 @@
 		loading = true;
 		try {
 			data = await api.getDuplicates();
-			selected = new Set(
-				(data.groups || []).flatMap(g => g.tracks.filter(t => !t.is_best).map(t => t.id))
-			);
+			// Nothing selected on load: pre-selecting every non-best copy left "Delete Files"
+			// one click (and one confirm) from removing hundreds of files. "Select inferior"
+			// in the toolbar does the same thing on purpose.
+			selected = new Set();
 			// Collapsed by default — large libraries have hundreds of groups; the
 			// user expands individual groups or uses "Expand" in the toolbar.
 			expandedGroups = new Set();
@@ -302,7 +303,7 @@
 	onMount(loadDuplicates);
 </script>
 
-<div class="px-3 sm:px-6 py-5 max-w-7xl mx-auto">
+<div class="max-w-6xl">
 	<PageHeader title="Duplicates" icon={Copy} color="var(--color-duplicates)"
 		subtitle={data ? `${data.total_groups} group${data.total_groups !== 1 ? 's' : ''} \u00b7 ${data.total_duplicates} extra file${data.total_duplicates !== 1 ? 's' : ''} \u00b7 ${formatSize(data.reclaimable_bytes)} reclaimable` : ''} />
 
@@ -322,11 +323,12 @@
 		<!-- Stats Bar -->
 		{#if stats}
 			<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-4">
-				<StatTile label="Groups" value={stats.totalGroups} color="#fbbf24" />
-				<StatTile label="Extra Files" value={stats.totalExtra} color="#f87171" />
+				<StatTile label="Groups" value={stats.totalGroups.toLocaleString()} color="var(--color-duplicates)" />
+				<StatTile label="Extra files" value={stats.totalExtra.toLocaleString()} color="#f87171" detail="copies beyond the best one" />
 				<StatTile label="Reclaimable" value={formatSize(stats.reclaimable)} color="#34d399" />
-				<StatTile label="Format Mismatches" value={stats.formatMismatches} color="#c084fc" />
-				<StatTile label="Largest Group" value="{stats.largestGroup} copies" color="#60a5fa" />
+				<StatTile label="Format mismatches" value={stats.formatMismatches.toLocaleString()} color="#c084fc"
+					tone={stats.formatMismatches ? 'warn' : 'default'} detail="same track, different format" />
+				<StatTile label="Largest group" value="{stats.largestGroup} copies" color="#60a5fa" />
 			</div>
 		{/if}
 

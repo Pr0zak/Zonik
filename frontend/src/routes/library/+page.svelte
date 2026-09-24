@@ -36,8 +36,16 @@
 	let tab = $state('tracks');
 	let search = $state('');
 	let offset = $state(0);
-	let limit = $state(24);
 	const limitOptions = [24, 48, 96, 192];
+	// Remembered per browser. Pages rather than endless scroll on purpose: select mode and
+	// the bulk actions work on the visible page. 24 was a lot of paging for 6,500+ tracks.
+	function savedLimit() {
+		try {
+			const v = parseInt(localStorage.getItem('libraryPageSize') || '', 10);
+			return limitOptions.includes(v) ? v : 48;
+		} catch { return 48; }
+	}
+	let limit = $state(savedLimit());
 	let loading = $state(true);
 	let viewMode = $state('grid');
 
@@ -521,7 +529,12 @@
 		loadData();
 	}
 
-	function handlePageChange(newOffset, newLimit) { offset = newOffset; limit = newLimit; loadData(); }
+	function handlePageChange(newOffset, newLimit) {
+		offset = newOffset;
+		limit = newLimit;
+		try { localStorage.setItem('libraryPageSize', String(newLimit)); } catch {}
+		loadData();
+	}
 
 	let currentTotal = $derived(tab === 'tracks' ? trackTotal : tab === 'artists' ? artistTotal : albumTotal);
 
@@ -819,7 +832,7 @@
 		<div class="flex-1"></div>
 
 		<!-- Per-page select -->
-		<select class="bg-[var(--surface-lowest)] text-[var(--text-body)] text-xs ghost-border rounded px-2 py-1 focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" value={limit} onchange={(e) => { limit = +e.target.value; offset = 0; loadData(); }}>
+		<select class="bg-[var(--surface-lowest)] text-[var(--text-body)] text-xs ghost-border rounded px-2 py-1 focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" value={limit} onchange={(e) => handlePageChange(0, +e.target.value)}>
 			{#each limitOptions as opt}
 				<option value={opt}>{opt}/page</option>
 			{/each}

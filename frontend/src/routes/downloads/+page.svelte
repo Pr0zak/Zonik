@@ -13,6 +13,7 @@
 	import FilterPills from '../../components/ui/FilterPills.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import DataTable from '../../components/ui/DataTable.svelte';
+	import Modal from '../../components/ui/Modal.svelte';
 
 	// Search state
 	let searchQuery = $state('');
@@ -105,7 +106,15 @@
 	let jobsOffset = $state(0);
 	let jobsLoading = $state(false);
 	let expandedJob = $state(null);
-	let jobStatusFilter = $state('all');
+	// Starts unset: once the counts arrive it opens on Active when anything is in flight,
+	// otherwise Done. Opening on "All" meant a wall of failures (1,003 at the time).
+	let jobStatusFilter = $state(null);
+	let failureReason = $state(null);
+	let failureGroups = $state([]);
+	let retryConfirm = $state(null); // null | { reason, label, count }
+	let retrying = $state(false);
+	let selectedFailureGroup = $derived(failureReason ? failureGroups.find(g => g.reason === failureReason) : null);
+	const STATUS_QUERY = { active: 'pending,running', completed: 'completed', failed: 'failed', queued: 'pending', running: 'running' };
 	let jobDetails = $state({});
 	const PAGE_LIMIT = 20;
 
@@ -118,10 +127,8 @@
 	let visibleJobs = $derived(
 		jobs.filter(j => {
 			if (hiddenJobIds.has(j.id)) return false;
-			if (jobStatusFilter !== 'all') {
-				const friendly = j.status === 'pending' ? 'queued' : j.status;
-				if (friendly !== jobStatusFilter) return false;
-			}
+			// Status (and failure reason) are filtered by the server now; the old client-side
+			// filter only ever saw the 20 jobs on the current page.
 			return true;
 		}).sort((a, b) => {
 			const pa = STATUS_PRIORITY[a.status] ?? 1;
@@ -182,11 +189,15 @@
 			const c = await r.json();
 			jobStatusCounts = {
 				all: c.all || 0,
+				active: (c.pending || 0) + (c.running || 0),
 				queued: c.pending || 0,
 				running: c.running || 0,
 				completed: c.completed || 0,
 				failed: c.failed || 0,
 			};
+			if (jobStatusFilter === null) {
+				setJobFilter(jobStatusCounts.active > 0 ? 'active' : jobStatusCounts.completed > 0 ? 'completed' : 'all');
+			}
 		} catch {}
 	}
 
@@ -282,11 +293,49 @@
 		return `${speed} B/s`;
 	}
 
-	async function loadJobs() {
-		jobsLoading = true;
-		loadJobCounts();
+	function setJobFilter(v) {
+		jobStatusFilter = v;
+		failureReason = null;
+		jobsOffset = 0;
+		expandedJob = null;
+		if (v === 'failed') loadFailureGroups();
+		loadJobs(false);
+	}
+
+	function setFailureReason(reason) {
+		failureReason = failureReason === reason ? null : reason;
+		jobsOffset = 0;
+		loadJobs(false);
+	}
+
+	async function loadFailureGroups() {
+		try { failureGroups = await api.getDownloadFailures(); } catch { failureGroups = []; }
+	}
+
+	async function retryFailed() {
+		if (!retryConfirm) return;
+		retrying = true;
 		try {
-			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT);
+			const r = await api.retryFailedDownloads(retryConfirm.reason);
+			if (r?.error) throw new Error(r.error);
+			addToast(`Re-queued ${r.tracks} download${r.tracks === 1 ? '' : 's'}`, 'success');
+			retryConfirm = null;
+			failureReason = null;
+			await loadFailureGroups();
+			await loadJobs();
+		} catch (e) {
+			addToast(`Retry failed: ${e.message}`, 'error');
+		} finally {
+			retrying = false;
+		}
+	}
+
+	async function loadJobs(withCounts = true) {
+		jobsLoading = true;
+		if (withCounts) loadJobCounts();
+		try {
+			const status = jobStatusFilter && jobStatusFilter !== 'all' ? STATUS_QUERY[jobStatusFilter] : null;
+			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT, status, jobStatusFilter === 'failed' ? failureReason : null);
 			jobs = data.items || data;
 			// Only fetch details for active RUNNING jobs (not queued/pending) — limit to 10 to avoid hammering API
 			const needDetails = jobs
@@ -759,15 +808,37 @@
 			<FilterPills
 				class="mb-4"
 				options={[
-					{ value: 'all', label: 'All', color: 'downloads' },
-					{ value: 'queued', label: 'Queued', color: 'downloads', count: jobStatusCounts.queued },
-					{ value: 'running', label: 'Running', color: 'downloads', count: jobStatusCounts.running },
+					{ value: 'active', label: 'Active', color: 'downloads', count: jobStatusCounts.active },
 					{ value: 'completed', label: 'Done', color: 'downloads', count: jobStatusCounts.completed },
 					{ value: 'failed', label: 'Failed', color: 'downloads', count: jobStatusCounts.failed },
-				].filter(opt => opt.value === 'all' || (jobStatusCounts[opt.value] || 0) > 0)}
+					{ value: 'all', label: 'All', color: 'downloads' },
+				].filter(opt => opt.value === 'all' || opt.value === 'active' || (jobStatusCounts[opt.value] || 0) > 0)}
 				value={jobStatusFilter}
-				onchange={(v) => jobStatusFilter = v}
+				onchange={setJobFilter}
 			/>
+
+			{#if jobStatusFilter === 'failed' && failureGroups.length}
+				<!-- Failures grouped by why they failed, so one kind can be retried or ignored. -->
+				<div class="flex flex-wrap items-center gap-2 mb-4 -mt-1">
+					<span class="text-xs text-[var(--text-muted)]">Why:</span>
+					{#each failureGroups as g (g.reason)}
+						<button onclick={() => setFailureReason(g.reason)}
+							class="text-xs px-2.5 py-1 rounded-full border transition-colors
+								{failureReason === g.reason
+									? 'border-red-400/60 bg-red-500/15 text-red-300'
+									: 'border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}">
+							{g.label} <span class="font-mono text-[var(--text-muted)]">{g.count.toLocaleString()}</span>
+						</button>
+					{/each}
+					<Button variant="secondary" size="sm" class="ml-auto"
+						onclick={() => retryConfirm = selectedFailureGroup
+							? { reason: selectedFailureGroup.reason, label: selectedFailureGroup.label, count: selectedFailureGroup.count }
+							: { reason: null, label: 'All failures', count: jobStatusCounts.failed }}>
+						<RotateCcw class="w-3.5 h-3.5 mr-1" />
+						{selectedFailureGroup ? `Retry ${selectedFailureGroup.count.toLocaleString()}` : 'Retry all'}
+					</Button>
+				</div>
+			{/if}
 
 			{#if jobsLoading && !jobs.length}
 				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
@@ -1119,3 +1190,24 @@
 		{/if}
 	</Card>
 </div>
+
+{#if retryConfirm}
+	<Modal title="Retry failed downloads" onclose={() => retryConfirm = null} maxWidth="max-w-md">
+		{#snippet children()}
+			<p class="text-sm text-[var(--text-primary)]">
+				Re-queue <span class="font-bold">{retryConfirm.count.toLocaleString()}</span> failed download{retryConfirm.count === 1 ? '' : 's'}
+				({retryConfirm.label.toLowerCase()})?
+			</p>
+			<p class="text-xs text-[var(--text-muted)] mt-2">
+				Each one is searched for again and gets a new entry; the failed entry it replaces is removed.
+				{#if retryConfirm.reason === 'not_found'}These weren't found last time, so most will likely fail again unless new peers have them.{/if}
+			</p>
+		{/snippet}
+		{#snippet footer()}
+			<Button variant="secondary" size="sm" onclick={() => retryConfirm = null}>Cancel</Button>
+			<Button variant="primary" size="sm" disabled={retrying} onclick={retryFailed}>
+				<RotateCcw class="w-3.5 h-3.5 mr-1" /> {retrying ? 'Re-queuing…' : 'Retry'}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}

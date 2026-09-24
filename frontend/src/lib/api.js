@@ -71,8 +71,12 @@ export const api = {
 	// Transfers
 	cancelTransfer: (username, filename) =>
 		request('/download/cancel-transfer', { method: 'POST', body: JSON.stringify({ username, filename }) }),
-	getDownloadHistory: (offset = 0, limit = 20) =>
-		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`),
+	getDownloadHistory: (offset = 0, limit = 20, status = null, reason = null) =>
+		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`
+			+ (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : '')),
+	getDownloadFailures: () => request('/jobs/failures?type=download,bulk_download'),
+	retryFailedDownloads: (reason = null) =>
+		request('/jobs/retry-failed?type=download,bulk_download' + (reason ? `&reason=${reason}` : ''), { method: 'POST' }),
 	clearDownloadHistory: () =>
 		request('/jobs/clear?type=download,bulk_download', { method: 'DELETE' }),
 

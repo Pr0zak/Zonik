@@ -92,7 +92,7 @@
 		<p class="text-xs font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 
-	<nav class="flex-1 px-3 overflow-y-auto space-y-5">
+	<nav class="flex-1 px-3 overflow-y-auto space-y-4">
 		{#each navGroups as group}
 			<div>
 				<p class="px-3 mb-1.5 text-[10px] font-medium uppercase tracking-widest text-[var(--text-muted)]">{group.label}</p>

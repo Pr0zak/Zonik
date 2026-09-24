@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
-	import { formatDuration, inputClass, coverUrl } from '$lib/utils.js';
+	import { formatDuration, formatRelativeTime, inputClass, coverUrl } from '$lib/utils.js';
 	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronDown, ChevronUp, Sparkles, Import, Search, Download, Check, Loader2, ExternalLink } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -567,12 +567,19 @@
 				<div onclick={() => openPlaylist(playlist)}>
 					<Card hover padding="p-4" class="cursor-pointer group">
 						<div class="flex items-center gap-3">
-							<div class="w-10 h-10 rounded-lg bg-[var(--surface-container)] flex items-center justify-center group-hover:bg-amber-500/10 transition-colors">
-								<ListMusic class="w-5 h-5 text-[var(--text-disabled)] group-hover:text-amber-400 transition-colors" />
-							</div>
-							<div>
-								<h3 class="font-medium text-[var(--text-primary)]">{playlist.name}</h3>
-								<p class="text-xs text-[var(--text-muted)]">{playlist.track_count} tracks</p>
+							{#if coverUrl(playlist.cover_art)}
+								<img src={coverUrl(playlist.cover_art, 96)} alt="" loading="lazy"
+									class="w-12 h-12 rounded-lg object-cover flex-shrink-0 bg-[var(--surface-container)]" />
+							{:else}
+								<div class="w-12 h-12 rounded-lg bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0 group-hover:bg-amber-500/10 transition-colors">
+									<ListMusic class="w-5 h-5 text-[var(--text-disabled)] group-hover:text-amber-400 transition-colors" />
+								</div>
+							{/if}
+							<div class="min-w-0">
+								<h3 class="font-medium text-[var(--text-primary)] truncate">{playlist.name}</h3>
+								<p class="text-xs text-[var(--text-muted)]">
+									{playlist.track_count.toLocaleString()} tracks{#if playlist.updated_at} · updated {formatRelativeTime(playlist.updated_at)}{/if}
+								</p>
 							</div>
 						</div>
 					</Card>

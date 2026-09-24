@@ -46,6 +46,8 @@ async def list_playlists(db: AsyncSession = Depends(get_db)):
             "name": p.name,
             "comment": p.comment,
             "track_count": len(p.entries),
+            # First track's art stands in for the playlist cover (getCoverArt accepts a track id).
+            "cover_art": p.entries[0].track_id if p.entries else None,
             "created_at": p.created_at.isoformat() if p.created_at else None,
             "updated_at": p.updated_at.isoformat() if p.updated_at else None,
         }

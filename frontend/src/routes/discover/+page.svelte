@@ -85,6 +85,18 @@
 		{ key: 'claude', label: 'AI' },
 	];
 
+	// Readable names for recommendation sources; the raw keys (similar_track, …) were shown as-is.
+	const sourceLabels = {
+		similar_track: 'Similar track',
+		similar_artist: 'Similar artist',
+		tag: 'Genre match',
+		trending: 'Trending',
+		claude: 'AI pick',
+	};
+	function sourceLabel(source) {
+		return sourceLabels[source] || (source || '').replace(/_/g, ' ');
+	}
+
 	let filteredRecs = $derived(
 		recFilter === 'all' ? recommendations : recommendations.filter(r => r.source === recFilter)
 	);
@@ -176,13 +188,14 @@
 	const tabs = [
 		{ key: 'foryou', label: 'For You', icon: Sparkles },
 		{ key: 'newreleases', label: 'New Releases', icon: Rocket },
-		{ key: 'weeklyradar', label: 'Weekly Radar', icon: Radar },
-		{ key: 'top', label: 'Top Tracks', icon: TrendingUp },
-		{ key: 'similar', label: 'Similar Tracks', icon: Music },
-		{ key: 'artists', label: 'Similar Artists', icon: Users },
+		{ key: 'weeklyradar', label: 'Radar', title: 'Weekly Radar', icon: Radar },
+		{ key: 'top', label: 'Charts', title: 'Top tracks from the charts', icon: TrendingUp },
+		{ key: 'similar', label: 'Similar', title: 'Tracks similar to your library', icon: Music },
+		{ key: 'artists', label: 'Artists', title: 'Artists similar to yours', icon: Users },
 		{ key: 'remixes', label: 'Remixes', icon: Disc3 },
 		{ key: 'playlists', label: 'Playlists', icon: ListMusic },
-		{ key: 'search', label: 'Search', icon: Search },
+		// Icon-only: the nine full labels overflowed the row even at 1440px.
+		{ key: 'search', label: '', title: 'Search', icon: Search },
 	];
 
 	let newReleasesLoaded = $state(false);
@@ -857,6 +870,7 @@
 		{#each tabs as tab}
 			{@const Icon = tab.icon}
 			<button onclick={() => switchTab(tab.key)}
+				title={tab.title || tab.label} aria-label={tab.title || tab.label}
 				class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
 					{activeTab === tab.key
 						? 'bg-[var(--color-discover)] text-white'
@@ -1156,26 +1170,34 @@
 									{/if}
 								</div>
 
-								<!-- Score badge (clickable for breakdown) -->
-								<div class="flex-shrink-0 w-12 text-center">
+								<!-- Score badge (clickable for breakdown). On phones it moves inline beside the
+								     title so the track info keeps its width. -->
+								<div class="hidden sm:block flex-shrink-0 w-12 text-center">
 									<button onclick={() => expandedScoreId = expandedScoreId === rec.id ? null : rec.id}
 										class="inline-block px-2 py-0.5 rounded text-xs font-bold border cursor-pointer hover:opacity-80 transition-opacity {scoreBg(rec.score)} {scoreColor(rec.score)}"
-										title="Click to see score breakdown">
+										title="Match score out of 100 — click for the breakdown">
 										{Math.round(rec.score * 100)}
 									</button>
 								</div>
 
 								<!-- Track info -->
 								<div class="flex-1 min-w-0">
-									<div class="flex items-center gap-2">
+									<div class="flex items-center gap-2 min-w-0">
 										<span class="font-medium text-sm text-[var(--text-primary)] truncate">{rec.track}</span>
-										<span class="text-xs text-[var(--text-muted)] px-1.5 py-0.5 rounded bg-[var(--surface-container-high)]">{rec.source}</span>
+										<span class="hidden sm:inline text-xs text-[var(--text-muted)] px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] whitespace-nowrap">{sourceLabel(rec.source)}</span>
 									</div>
-									<div class="flex items-center gap-2 mt-0.5">
-										<span class="text-xs text-[var(--text-secondary)]">{rec.artist}</span>
+									<div class="flex items-center gap-2 mt-0.5 min-w-0">
+										<span class="text-xs text-[var(--text-secondary)] truncate">{rec.artist}</span>
 										{#if rec.lastfm_listeners}
-											<span class="text-xs text-[var(--text-muted)] font-mono">{rec.lastfm_listeners.toLocaleString()} listeners</span>
+											<span class="hidden sm:inline text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">{rec.lastfm_listeners.toLocaleString()} listeners</span>
 										{/if}
+									</div>
+									<!-- Phones: score and source share one compact line under the artist. -->
+									<div class="sm:hidden flex items-center gap-2 mt-1 text-xs">
+										<button onclick={() => expandedScoreId = expandedScoreId === rec.id ? null : rec.id}
+											class="px-1.5 rounded font-bold border {scoreBg(rec.score)} {scoreColor(rec.score)}"
+											title="Match score out of 100">{Math.round(rec.score * 100)}</button>
+										<span class="text-[var(--text-muted)] truncate">{sourceLabel(rec.source)}</span>
 									</div>
 									{#if rec.explanation}
 										<p class="text-xs text-[var(--text-muted)] mt-0.5 truncate">{rec.explanation}</p>
@@ -1219,7 +1241,7 @@
 									{/if}
 
 									<button onclick={() => explainRec(rec)}
-									class="p-1.5 rounded hover:bg-amber-500/20 text-[var(--text-muted)] hover:text-amber-400 transition-colors"
+									class="hidden sm:inline-flex p-1.5 rounded hover:bg-amber-500/20 text-[var(--text-muted)] hover:text-amber-400 transition-colors"
 									title="Why this?">
 									<HelpCircle class="w-4 h-4" />
 								</button>

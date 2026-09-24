@@ -14,6 +14,7 @@
 	import Card from '../components/ui/Card.svelte';
 	import Badge from '../components/ui/Badge.svelte';
 	import Skeleton from '../components/ui/Skeleton.svelte';
+	import StatTile from '../components/ui/StatTile.svelte';
 	import { LayoutDashboard } from 'lucide-svelte';
 
 	let stats = $state(null);
@@ -29,11 +30,7 @@
 	const unsubTransfers = activeTransfers.subscribe(v => { transfers = v; });
 	onDestroy(unsubTransfers);
 
-	const statCards = [
-		{ key: 'tracks', label: 'Tracks', icon: Music, color: 'var(--color-library)' },
-		{ key: 'artists', label: 'Artists', icon: Users, color: 'var(--color-discover)' },
-		{ key: 'albums', label: 'Albums', icon: Disc3, color: 'var(--color-playlists)' },
-	];
+	let added30 = $derived(dashboard?.growth?.reduce((s, d) => s + d.count, 0) || 0);
 
 	const JOB_LABELS = {
 		library_scan: 'Library Scan',
@@ -133,23 +130,12 @@
 	{:else if stats}
 		<!-- Row 1: Stat cards -->
 		<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-			{#each statCards as card}
-				{@const Icon = card.icon}
-				<Card padding="p-4">
-					<div class="flex items-center justify-between mb-2">
-						<Icon class="w-5 h-5" style="color: {card.color}" />
-					</div>
-					<p class="text-2xl font-bold text-[var(--text-primary)]">{stats[card.key].toLocaleString()}</p>
-					<p class="text-xs text-[var(--text-muted)]">{card.label}</p>
-				</Card>
-			{/each}
-			<Card padding="p-4">
-				<div class="flex items-center justify-between mb-2">
-					<HardDrive class="w-5 h-5" style="color: var(--color-stats)" />
-				</div>
-				<p class="text-2xl font-bold text-[var(--text-primary)]">{formatSize(stats.total_size_bytes)}</p>
-				<p class="text-xs text-[var(--text-muted)]">Total Size</p>
-			</Card>
+			<StatTile label="Tracks" value={stats.tracks.toLocaleString()} color="var(--color-library)"
+				href="/library" detail={added30 ? `+${added30.toLocaleString()} in 30 days` : ''} />
+			<StatTile label="Artists" value={stats.artists.toLocaleString()} color="var(--color-discover)" href="/library" />
+			<StatTile label="Albums" value={stats.albums.toLocaleString()} color="var(--color-playlists)" href="/library" />
+			<StatTile label="Total size" value={formatSize(stats.total_size_bytes)} color="var(--color-stats)" href="/stats"
+				detail={dashboard?.quality?.pct_lossless != null ? `${dashboard.quality.pct_lossless}% lossless` : ''} />
 		</div>
 
 		<!-- Row 2: Quick Actions + Quality Score -->
