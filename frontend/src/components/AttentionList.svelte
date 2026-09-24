@@ -46,7 +46,16 @@
 	let jobs24 = $derived.by(() => {
 		if (!jobs?.timeline?.length) return null;
 		const counts = jobs.status_counts || {};
-		const bars = jobs.timeline.slice(-24);
+		// The API lists only hours that had jobs ("YYYY-MM-DD HH:00", UTC); lay them onto
+		// the full 24 hours so quiet hours show as gaps instead of being squeezed out.
+		const byHour = new Map(jobs.timeline.map(t => [t.hour, t.count]));
+		const bars = [];
+		const now = new Date();
+		for (let i = 23; i >= 0; i--) {
+			const d = new Date(now.getTime() - i * 3600_000);
+			const key = `${d.toISOString().slice(0, 10)} ${String(d.getUTCHours()).padStart(2, '0')}:00`;
+			bars.push({ hour: key, count: byHour.get(key) || 0 });
+		}
 		const max = Math.max(...bars.map(b => b.count), 1);
 		return { bars, max, run: jobs.total_24h ?? 0, failed: counts.failed ?? 0 };
 	});
@@ -105,7 +114,7 @@
 						aria-label="Jobs started per hour over the last 24 hours">
 						{#each jobs24.bars as b}
 							<div class="flex-1 rounded-t-sm bg-indigo-400/70 min-h-[2px]"
-								style="height: {Math.max(4, (b.count / jobs24.max) * 100)}%"
+								style="height: {b.count ? Math.max(8, (b.count / jobs24.max) * 100) : 3}%; opacity: {b.count ? 1 : 0.35}"
 								title="{b.hour}: {b.count} job{b.count === 1 ? '' : 's'}"></div>
 						{/each}
 					</div>
