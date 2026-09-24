@@ -553,6 +553,7 @@ async def import_downloaded_file(
     save_path: str,
     artist_hint: str = "",
     target_track_id: str | None = None,
+    reasons: list[str] | None = None,
 ) -> str | None:
     """Move a downloaded file into the music library and index it.
 
@@ -560,17 +561,26 @@ async def import_downloaded_file(
     is higher quality, replaces the old file (upgrade). Otherwise imports
     as a new track.
 
-    Returns the track ID on success, or None on failure.
+    Returns the track ID on success, or None when the file isn't imported. Pass
+    `reasons` to learn why: a short user-facing sentence is appended to it. (Most
+    rejections are deliberate — duplicate, not an upgrade, wrong song — and the
+    download job used to report all of them as "empty, truncated, or unreadable".)
     """
     import shutil
+
+    def _why(msg: str) -> None:
+        if reasons is not None:
+            reasons.append(msg)
 
     src = Path(save_path)
     if not src.exists():
         log.warning(f"[import] File not found: {save_path}")
+        _why("the downloaded file was missing when import started")
         return None
     if src.stat().st_size == 0:
         log.warning(f"[import] Empty file (0 bytes), skipping: {save_path}")
         src.unlink(missing_ok=True)
+        _why("the peer sent an empty file")
         return None
 
     settings = get_settings()
@@ -581,6 +591,7 @@ async def import_downloaded_file(
     parsed = parse_audio_file(src, src.parent)
     if not parsed:
         log.warning(f"[import] Could not parse audio tags: {save_path}")
+        _why("the file isn't readable audio (truncated or corrupt)")
         return None
 
     new_fmt = parsed["format"] or ""
@@ -600,11 +611,13 @@ async def import_downloaded_file(
                 log.warning(f"[import] Upgrade download '{parsed['title']}' != target '{existing.title}' — discarding")
                 await _mark_upgrade_failed(db, existing.id, f"Downloaded '{parsed['title']}' is not the same track")
                 src.unlink(missing_ok=True)
+                _why(f"got '{parsed['title']}', not the track being upgraded")
                 return None
             if _quality_rank(new_fmt, new_size) <= _quality_rank(existing.format or "", existing.file_size or 0):
                 log.info(f"[import] Upgrade for '{existing.title}' not higher quality — keeping original")
                 await _mark_upgrade_failed(db, existing.id, "Downloaded file not higher quality")
                 src.unlink(missing_ok=True)
+                _why(f"the {new_fmt or 'downloaded'} file is no better than the {existing.format or 'current'} one")
                 return None
     else:
         existing = await _find_existing_track(db, parsed["title"], parsed["artist_name"] or artist_hint)
@@ -650,6 +663,7 @@ async def import_downloaded_file(
                     src.unlink(missing_ok=True)
                     if target_track_id:
                         await _mark_upgrade_failed(db, existing_id, "No free destination slot for upgrade")
+                    _why("no free file name in the library folder")
                     return None
                 dest = dest_dir / f"{base.stem} ({idx}){base.suffix}"
 
@@ -657,6 +671,7 @@ async def import_downloaded_file(
                 shutil.move(str(src), str(dest))
             except Exception as e:
                 log.warning(f"[import] Failed to move {src} → {dest}: {e}")
+                _why(f"couldn't move it into the library ({e})")
                 return None
 
             # Re-parse from the new location.
@@ -743,6 +758,7 @@ async def import_downloaded_file(
                     pass
                 if target_track_id:
                     await _mark_upgrade_failed(db, existing_id, f"Import replace failed: {str(e)[:200]}")
+                _why("replacing the old file failed; the original was kept")
                 return None
 
             # DB swap committed — now it's safe to delete the old physical file.
@@ -766,6 +782,7 @@ async def import_downloaded_file(
                 log.info(f"[import] Duplicate skipped (library has equal/better): {parsed['title']}")
                 await _mark_upgrade_failed(db, existing.id, "Downloaded file not higher quality")
                 src.unlink(missing_ok=True)
+                _why(f"already in the library as {existing.format or 'a'} at equal or better quality")
                 return None
             # Different version (remix, acoustic, live, etc.) — fall through to normal import
 
@@ -787,6 +804,7 @@ async def import_downloaded_file(
         if existing_size > 0 and abs(existing_size - new_size) / existing_size < 0.10:
             log.info(f"[import] Skipping duplicate file (same name, similar size): {src.name}")
             src.unlink(missing_ok=True)
+            _why("the same file is already in the library")
             return None
         # Different size — genuinely different file, add suffix
         stem, ext = dest.stem, dest.suffix
@@ -799,6 +817,7 @@ async def import_downloaded_file(
         shutil.move(str(src), str(dest))
     except Exception as e:
         log.warning(f"[import] Failed to move {src} → {dest}: {e}")
+        _why(f"couldn't move it into the library ({e})")
         return None
 
     # Re-parse from new location

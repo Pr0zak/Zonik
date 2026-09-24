@@ -47,21 +47,28 @@ def _job_description(j: Job) -> str:
 # per-track error in Job.tracks.
 FAILURE_REASONS = {
     "not_found": "Not found on Soulseek",
-    "rejected": "Rejected on import",
+    "no_better": "No better-quality source",
+    "rejected": "Not imported (duplicate, not better, wrong song)",
     "peer": "Peer or transfer problem",
 }
 
 
 def _failure_filter(reason: str):
-    """SQL condition selecting failed jobs in one FAILURE_REASONS group."""
+    """SQL condition selecting failed jobs in one FAILURE_REASONS group.
+
+    "rejected" also covers the old "Import rejected … empty, truncated, or unreadable"
+    message, which was attached to every importer refusal regardless of cause."""
     not_found = Job.result.like("%No results for%")
-    rejected = Job.tracks.like("%Import rejected%")
+    no_better = Job.result.like("%No source better than%")
+    rejected = or_(Job.tracks.like("%Import rejected%"), Job.tracks.like("%Not imported:%"))
     if reason == "not_found":
         return not_found
+    if reason == "no_better":
+        return no_better
     if reason == "rejected":
-        return and_(~not_found, rejected)
+        return and_(~not_found, ~no_better, rejected)
     if reason == "peer":
-        return and_(~not_found, or_(Job.tracks.is_(None), ~rejected))
+        return and_(~not_found, ~no_better, or_(Job.tracks.is_(None), ~rejected))
     return None
 
 

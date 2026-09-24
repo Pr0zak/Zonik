@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session
 from backend.models.job import Job
+from backend.models.track import Track
 from backend.models.blacklist import DownloadBlacklist
 from backend.services.soulseek import (
     search_multi_strategy, pick_best_results, normalize_text,
@@ -297,12 +298,17 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         treat a missing track_id as a failed download — never a success.
         """
         fsize = _file_size(path)
+        reasons: list[str] = []
         async with async_session() as import_sess:
             track_id = await import_downloaded_file(
-                import_sess, path, artist_hint=req.artist, target_track_id=req.target_track_id
+                import_sess, path, artist_hint=req.artist, target_track_id=req.target_track_id,
+                reasons=reasons,
             )
         if not track_id:
-            return None, fsize, f"Import rejected the file ({fsize} bytes) — empty, truncated, or unreadable"
+            # The importer says why; most rejections are deliberate (duplicate, not an
+            # upgrade, wrong song), not broken files as this message used to claim.
+            why = reasons[-1] if reasons else "the file couldn't be imported"
+            return None, fsize, f"Not imported: {why}"
         return track_id, fsize, None
 
     async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
@@ -372,12 +378,24 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         # waste a full search timeout against a dead connection.
         native_ready = bool(native_client and native_client.logged_in)
 
+        # Upgrades only consider files better than the copy being replaced. Without
+        # this the best available MP3 was downloaded and then thrown away as "not
+        # higher quality" (266 upgrades failed that way).
+        better_than = None
+        if req.target_track_id:
+            async with async_session() as q_sess:
+                cur = (await q_sess.execute(
+                    select(Track.format, Track.file_size).where(Track.id == req.target_track_id)
+                )).first()
+            if cur:
+                better_than = (cur[0] or "", cur[1] or 0)
+
         if req.username and req.filename and native_ready:
             # Direct download — try requested source first, then fall back to search
             candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
             try:
                 from backend.soulseek.search import search_multi_strategy_native
-                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track)
+                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than)
                 # Add fallbacks excluding the already-requested source
                 for fb in fallbacks:
                     if fb["username"] != req.username:
@@ -388,7 +406,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         elif native_ready:
             # Auto-download — get candidates from search
             from backend.soulseek.search import search_multi_strategy_native
-            candidates = await search_multi_strategy_native(native_client, req.artist, req.track)
+            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than)
         elif native_client:
             # Native client exists but never reconnected — fail fast with a
             # clear, recognizable error instead of falling through to slskd.
@@ -407,7 +425,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
 
         if native_ready and not candidates and job.status != "failed":
             job.status = "failed"
-            job.result = json.dumps({"message": f"No results for {req.artist} - {req.track}"})
+            if better_than is not None:
+                msg = f"No source better than the current {better_than[0] or 'file'} for {req.artist} - {req.track}"
+            else:
+                msg = f"No results for {req.artist} - {req.track}"
+            job.result = json.dumps({"message": msg})
             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
         if candidates and native_ready and parallel_sources > 1:
@@ -712,14 +734,44 @@ async def _record_delegation_failure(job_id: str, artist: str, track: str, sourc
         log.debug(f"[download] Could not record delegation failure: {e}")
 
 
-async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None) -> str:
-    """Create an individual download job with semaphore queuing. Returns job_id."""
+# Sources that fetch *new* music automatically. Before downloading for these, check the
+# library: 159 "similar" downloads were fetched only for the importer to discard them as
+# duplicates of lossless files already there.
+_LIBRARY_CHECK_SOURCES = {"similar", "discovery", "recommendation", "playlist"}
+_LOSSLESS = {"flac", "wav", "alac", "aiff"}
+
+
+async def _already_have_lossless(artist: str, track: str) -> bool:
+    """True when the library already holds this exact title by this artist in a
+    lossless format. Deliberately strict — an exact (case-insensitive) title match, so
+    'Song (Remix)' never counts as 'Song' — and lossy copies still download, because
+    the importer upgrades them in place when the new file is better."""
+    from backend.services.scanner import _find_existing_track
+    async with async_session() as sess:
+        existing = await _find_existing_track(sess, track, artist)
+    if existing is None:
+        return False
+    same_title = (existing.title or "").strip().lower() == (track or "").strip().lower()
+    return same_title and (existing.format or "").lower() in _LOSSLESS
+
+
+async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None) -> str | None:
+    """Create an individual download job with semaphore queuing. Returns job_id, or
+    None when an automatic download was skipped because the library already has it."""
     # Dedup: skip if same artist+track already pending/running
     async with async_session() as check_sess:
         existing = await _find_existing_download(check_sess, artist, track)
         if existing:
             log.info(f"[download] Dedup: {artist} — {track} already in job {existing}")
             return existing
+
+    if source in _LIBRARY_CHECK_SOURCES and not target_track_id:
+        try:
+            if await _already_have_lossless(artist, track):
+                log.info(f"[download] Skip ({source}): {artist} — {track} already in library as lossless")
+                return None
+        except Exception as e:
+            log.debug(f"[download] Library pre-check failed for {artist} — {track}: {e}")
 
     # The native Soulseek client lives in the web process; the arq worker has none.
     # If this process can't download natively, delegate to the web and wait for it.

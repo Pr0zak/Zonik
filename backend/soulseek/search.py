@@ -16,18 +16,36 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def beats_quality(ext: str, size: int, current: tuple[str, int]) -> bool:
+    """Would a file with this extension and size be an upgrade over `current`
+    (format, file_size)? Same ranking the importer applies after download: a
+    better format wins; the same format needs to be clearly larger (higher bitrate)."""
+    from backend.services.scanner import FORMAT_QUALITY
+    cur_fmt, cur_size = current
+    new_rank = FORMAT_QUALITY.get(ext.lstrip(".").lower(), 0)
+    cur_rank = FORMAT_QUALITY.get((cur_fmt or "").lower(), 0)
+    if new_rank != cur_rank:
+        return new_rank > cur_rank
+    return size > (cur_size or 0) * 1.1
+
+
 async def pick_best_results_native(
     results: list,  # list of SearchResult
     artist: str,
     track: str,
     reputation=None,
+    better_than: tuple[str, int] | None = None,
 ) -> list[dict]:
-    """Score and rank search results from native client. Returns flat file list."""
+    """Score and rank search results from native client. Returns flat file list.
+
+    better_than=(format, file_size) keeps only files that would upgrade that copy,
+    so an upgrade never downloads something the importer will throw away."""
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
     scored = []
     rejected_title = 0
+    rejected_quality = 0
     for search_result in results:
         for file_info in search_result.files:
             filename = file_info.filename
@@ -42,6 +60,10 @@ async def pick_best_results_native(
                     ext = e
                     break
             if not ext:
+                continue
+
+            if better_than is not None and not beats_quality(ext, size, better_than):
+                rejected_quality += 1
                 continue
 
             # HARD GATE: the candidate filename must actually contain the target
@@ -123,6 +145,8 @@ async def pick_best_results_native(
 
     if rejected_title:
         log.info(f"[native] title gate skipped {rejected_title} file(s) not matching '{track}'")
+    if rejected_quality:
+        log.info(f"[native] upgrade gate skipped {rejected_quality} file(s) no better than {better_than[0]}")
 
     if not scored:
         return []
@@ -146,6 +170,7 @@ async def search_multi_strategy_native(
     client: "SoulseekClient",
     artist: str,
     track: str,
+    better_than: tuple[str, int] | None = None,
 ) -> list[dict]:
     """Try multiple search strategies using native client. Returns best candidates."""
     queries = [f"{artist} {track}"]
@@ -168,7 +193,8 @@ async def search_multi_strategy_native(
         log.info(f"[native] Search strategy: '{q}'")
         results = await client.search(q)
         if results:
-            candidates = await pick_best_results_native(results, artist, track, reputation=client.reputation)
+            candidates = await pick_best_results_native(results, artist, track, reputation=client.reputation,
+                                                        better_than=better_than)
             if candidates:
                 return candidates
 

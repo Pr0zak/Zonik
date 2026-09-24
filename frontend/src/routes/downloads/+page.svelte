@@ -1200,7 +1200,8 @@
 			</p>
 			<p class="text-xs text-[var(--text-muted)] mt-2">
 				Each one is searched for again and gets a new entry; the failed entry it replaces is removed.
-				{#if retryConfirm.reason === 'not_found'}These weren't found last time, so most will likely fail again unless new peers have them.{/if}
+				{#if retryConfirm.reason === 'not_found' || retryConfirm.reason === 'no_better'}These weren't found last time, so most will likely fail again unless new peers have them.{/if}
+				{#if retryConfirm.reason === 'rejected'}These downloaded fine but weren't kept (already in the library, no better, or the wrong song), so retrying usually won't change anything.{/if}
 			</p>
 		{/snippet}
 		{#snippet footer()}
