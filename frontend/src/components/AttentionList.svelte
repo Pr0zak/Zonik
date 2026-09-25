@@ -2,11 +2,12 @@
 	/**
 	 * "Needs attention" for the admin dashboard: problems ranked by severity from
 	 * /api/attention, each with a button that opens the page (already filtered) where
-	 * it gets fixed, plus a 24-hour job strip. Collapses to one "All clear" line when
-	 * there's nothing to do.
+	 * it gets fixed, plus a 24-hour job strip — all in one compact card, one line per
+	 * problem, with lower-severity rows folded away past the first few. Collapses to one
+	 * "All clear" line when there's nothing to do.
 	 */
 	import { onMount } from 'svelte';
-	import { CheckCircle2, RefreshCw, ChevronRight } from 'lucide-svelte';
+	import { CheckCircle2, RefreshCw, ChevronRight, ChevronDown, ChevronUp } from 'lucide-svelte';
 	import { formatRelativeTime } from '$lib/utils.js';
 
 	let { onsummary = null } = $props();
@@ -16,7 +17,26 @@
 	let loading = $state(true);
 	let failed = $state(false);
 
-	const stripe = { critical: 'bg-red-500', warning: 'bg-amber-400', info: 'bg-cyan-400' };
+	const dot = { critical: 'bg-red-500', warning: 'bg-amber-400', info: 'bg-cyan-400' };
+
+	// Problems (critical) always show; the rest fold away past this many rows.
+	const COLLAPSED_ROWS = 3;
+	const EXPANDED_KEY = 'zonik.attention.expanded';
+	let expanded = $state(false);
+	try { expanded = localStorage.getItem(EXPANDED_KEY) === '1'; } catch {}
+
+	function toggle() {
+		expanded = !expanded;
+		try { localStorage.setItem(EXPANDED_KEY, expanded ? '1' : '0'); } catch {}
+	}
+
+	let shown = $derived.by(() => {
+		const items = data?.items ?? [];
+		if (expanded) return items;
+		const critical = items.filter(i => i.severity === 'critical').length;
+		return items.slice(0, Math.max(COLLAPSED_ROWS, critical));
+	});
+	let hidden = $derived((data?.items.length ?? 0) - shown.length);
 	// Same shapes as the shared Button (rounded-md, ghost border). Critical items get the
 	// danger tint instead of the bright primary fill, which clashed with the dark cards.
 	const button = {
@@ -67,7 +87,7 @@
 	{#if loading && !data}
 		<div class="space-y-2">
 			{#each [0, 1, 2] as _}
-				<div class="h-14 rounded-xl bg-[var(--surface-container)] animate-pulse"></div>
+				<div class="h-9 rounded-lg bg-[var(--surface-container)] animate-pulse"></div>
 			{/each}
 		</div>
 	{:else if failed}
@@ -76,58 +96,61 @@
 			<button onclick={load} class="ml-auto text-[var(--color-primary)] hover:underline">Try again</button>
 		</div>
 	{:else if data}
-		{#if data.items.length === 0}
-			<div class="flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3">
-				<CheckCircle2 class="w-5 h-5 text-emerald-400 flex-shrink-0" />
-				<p class="text-sm text-[var(--text-primary)]">All clear — nothing needs you right now.</p>
-			</div>
-		{:else}
-			<ul class="space-y-2">
-				{#each data.items as item (item.key)}
-					<li class="flex items-stretch rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-container)] overflow-hidden">
-						<span class="w-1 flex-shrink-0 {stripe[item.severity] || stripe.info}" aria-hidden="true"></span>
-						<div class="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 px-4 py-3">
-							<div class="flex-1 min-w-0">
-								<p class="text-sm font-semibold text-[var(--text-primary)]">
-									<span class="sr-only">{item.severity}: </span>{item.title}
-								</p>
-								<p class="text-xs text-[var(--text-muted)] mt-0.5">{item.detail}</p>
-							</div>
+		<!-- One compact card, one line per problem: the list used to be a stack of
+		     full-size cards that pushed the library stats below the fold. -->
+		<div class="rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-container)] overflow-hidden">
+			{#if data.items.length === 0}
+				<div class="flex items-center gap-3 px-4 py-2.5">
+					<CheckCircle2 class="w-4 h-4 text-emerald-400 flex-shrink-0" />
+					<p class="text-sm text-[var(--text-primary)]">All clear — nothing needs you right now.</p>
+				</div>
+			{:else}
+				<ul class="divide-y divide-[var(--border-subtle)]">
+					{#each shown as item (item.key)}
+						<li class="flex items-center gap-3 px-4 py-2">
+							<span class="w-2 h-2 rounded-full flex-shrink-0 {dot[item.severity] || dot.info}" aria-hidden="true"></span>
+							<p class="flex-1 min-w-0 truncate text-sm" title={item.detail}>
+								<span class="sr-only">{item.severity}: </span>
+								<span class="font-medium text-[var(--text-primary)]">{item.title}</span>
+								<span class="hidden md:inline text-xs text-[var(--text-muted)] ml-2">{item.detail}</span>
+							</p>
 							<a href={item.href}
-								class="self-start sm:self-center flex-shrink-0 inline-flex items-center gap-1 text-xs font-medium pl-3 pr-2 py-1.5 rounded-md transition-colors whitespace-nowrap {button[item.severity] || button.info}">
+								class="flex-shrink-0 inline-flex items-center gap-0.5 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-md transition-colors whitespace-nowrap {button[item.severity] || button.info}">
 								{item.action}
 								<ChevronRight class="w-3.5 h-3.5 opacity-70" />
 							</a>
-						</div>
-					</li>
-				{/each}
-			</ul>
-		{/if}
+						</li>
+					{/each}
+				</ul>
+				{#if hidden > 0 || expanded}
+					<button onclick={toggle}
+						class="w-full flex items-center justify-center gap-1 border-t border-[var(--border-subtle)] py-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors">
+						{#if expanded}Show less <ChevronUp class="w-3.5 h-3.5" />{:else}{hidden} more <ChevronDown class="w-3.5 h-3.5" />{/if}
+					</button>
+				{/if}
+			{/if}
 
-		<div class="mt-3 flex flex-col sm:flex-row gap-3">
-			{#if jobs24}
-				<div class="flex-1 rounded-xl border border-[var(--border-subtle)] bg-[var(--surface-container)] px-4 py-3">
-					<div class="flex items-baseline justify-between gap-2">
-						<span class="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">Jobs · last 24h</span>
-						<span class="text-xs text-[var(--text-muted)]">
-							{jobs24.run} run{#if jobs24.failed} · <span class="text-red-300">{jobs24.failed} failed</span>{/if}
-						</span>
-					</div>
-					<div class="mt-2 flex items-end gap-[3px] h-10" role="img"
+			<div class="flex items-center gap-3 border-t border-[var(--border-subtle)] px-4 py-1.5 text-xs text-[var(--text-muted)]">
+				{#if jobs24}
+					<span class="font-mono uppercase tracking-wider text-[10px] whitespace-nowrap">Jobs 24h</span>
+					<div class="flex items-end gap-px h-4 w-24 sm:w-40 flex-shrink-0" role="img"
 						aria-label="Jobs started per hour over the last 24 hours">
 						{#each jobs24.bars as b}
-							<div class="flex-1 rounded-t-sm bg-indigo-400/70 min-h-[2px]"
-								style="height: {b.count ? Math.max(8, (b.count / jobs24.max) * 100) : 3}%; opacity: {b.count ? 1 : 0.35}"
+							<div class="flex-1 rounded-t-[1px] bg-indigo-400/70 min-h-px"
+								style="height: {b.count ? Math.max(15, (b.count / jobs24.max) * 100) : 8}%; opacity: {b.count ? 1 : 0.35}"
 								title="{b.hour}: {b.count} job{b.count === 1 ? '' : 's'}"></div>
 						{/each}
 					</div>
-				</div>
-			{/if}
-			<div class="flex items-center gap-2 text-xs text-[var(--text-disabled)] sm:self-end">
-				Checked {formatRelativeTime(data.generated_at)}
-				<button onclick={load} class="p-1 rounded hover:text-[var(--text-primary)] transition-colors" title="Check again" aria-label="Check again">
-					<RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" />
-				</button>
+					<span class="whitespace-nowrap">
+						{jobs24.run} run{#if jobs24.failed} · <span class="text-red-300">{jobs24.failed} failed</span>{/if}
+					</span>
+				{/if}
+				<span class="ml-auto flex items-center gap-1 whitespace-nowrap text-[var(--text-disabled)]">
+					Checked {formatRelativeTime(data.generated_at)}
+					<button onclick={load} class="p-1 rounded hover:text-[var(--text-primary)] transition-colors" title="Check again" aria-label="Check again">
+						<RefreshCw class="w-3.5 h-3.5 {loading ? 'animate-spin' : ''}" />
+					</button>
+				</span>
 			</div>
 		</div>
 	{/if}
