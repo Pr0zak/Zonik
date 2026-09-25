@@ -15,7 +15,8 @@
 	let ro;
 
 	const GAP = 3;
-	const WEEKS = 53;
+	const MAX_WEEKS = 53;
+	const MIN_WEEKS = 12;
 	const WD_LABELS = { 1: 'Mon', 3: 'Wed', 5: 'Fri' };
 	const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 	const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -33,6 +34,21 @@
 		x.setHours(0, 0, 0, 0);
 		return x;
 	}
+
+	// Weeks to draw: back to the week of the first recorded play (no empty months
+	// from before play tracking began), capped at a year.
+	const WEEKS = $derived.by(() => {
+		const first = payload?.first_day;
+		if (!first) return MAX_WEEKS;
+		const [y, m, d] = first.split('-').map(Number);
+		const f = new Date(y, m - 1, d);
+		const today = new Date();
+		today.setHours(0, 0, 0, 0);
+		const firstSunday = addDays(f, -f.getDay());
+		const thisSunday = addDays(today, -today.getDay());
+		const weeks = Math.round((thisSunday - firstSunday) / (7 * 864e5)) + 1;
+		return Math.max(MIN_WEEKS, Math.min(MAX_WEEKS, weeks));
+	});
 
 	// Build the column-major grid: WEEKS columns, each a Date[7] Sun..Sat.
 	// Last column aligned to this week; first cell is the Sunday ~52 weeks back.
@@ -144,11 +160,11 @@
 		if (!wrap) return;
 		const rect = wrap.getBoundingClientRect();
 		// reserve room for left weekday labels (~30px) + top month labels (~18px) + padding
-		const usableW = Math.max(120, rect.width - 30 - 16);
-		const usableH = Math.max(120, rect.height - 18 - 80 - 16); // top labels + stats header + pad
+		const usableW = Math.max(120, rect.width - 34);
+		// Sized by width only: the component sits in normal flow and its height
+		// follows from the cells.
 		const byW = (usableW - GAP) / WEEKS - GAP;
-		const byH = (usableH - GAP) / 7 - GAP;
-		cellPx = Math.max(8, Math.min(22, Math.floor(Math.min(byW, byH))));
+		cellPx = Math.max(8, Math.min(32, Math.floor(byW)));
 	}
 
 	onMount(async () => {
@@ -157,6 +173,7 @@
 		if (wrap) ro.observe(wrap);
 		try {
 			payload = await api.getStreakCalendar();
+			measure();
 		} catch {
 			addToast('Failed to load listening streak', 'error');
 			payload = { days: {}, max: 0, total: 0 };
@@ -167,12 +184,9 @@
 	onDestroy(() => { if (ro) ro.disconnect(); });
 </script>
 
-<div bind:this={wrap} class="h-full w-full flex flex-col p-2 sm:p-4 select-none">
+<div bind:this={wrap} class="relative w-full flex flex-col select-none">
 	{#if loading}
-		<div class="flex-1 flex flex-col items-center justify-center gap-3">
-			<div class="w-8 h-8 border-2 border-[#22d3ee] border-t-transparent rounded-full animate-spin"></div>
-			<p class="text-sm text-[var(--text-secondary)]">Loading streak…</p>
-		</div>
+		<p class="text-sm text-[var(--text-muted)] py-4">Loading streak…</p>
 	{:else}
 		<!-- summary stats -->
 		<div class="flex flex-wrap items-stretch gap-2 sm:gap-3 mb-3">
@@ -205,7 +219,7 @@
 		</div>
 
 		<!-- heatmap -->
-		<div class="flex-1 min-h-0 overflow-auto">
+		<div class="overflow-x-auto">
 			<div class="inline-flex flex-col" style="gap:{GAP}px;">
 				<!-- month labels row -->
 				<div class="flex" style="margin-left:30px; height:14px; gap:{GAP}px; position:relative;">

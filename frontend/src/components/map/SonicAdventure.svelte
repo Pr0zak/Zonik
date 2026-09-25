@@ -2,7 +2,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
-	import { Play, Search, X, Route, Flag, MapPin, Loader2, ArrowDown } from 'lucide-svelte';
+	import { Play, Search, X, Route, Flag, MapPin, Loader2 } from 'lucide-svelte';
+	import SelectionBar from './SelectionBar.svelte';
 
 	const ACCENT = '#22d3ee';
 
@@ -129,12 +130,10 @@
 		}));
 	}
 
-	function playJourney() {
-		const list = pathToQueue();
-		if (!list.length) return;
-		storePlayTrack(list[0], list);
-		addToast(`Playing journey — ${list.length} tracks`, 'success');
-	}
+	const journeyTracks = $derived(pathToQueue());
+	const journeyName = $derived(path?.length
+		? `Journey: ${path[0].title || 'start'} → ${path[path.length - 1].title || 'destination'}`
+		: 'Journey');
 
 	function playOne(t) {
 		storePlayTrack({ id: t.track_id, title: t.title, artist: t.artist, album_id: t.album_id });
@@ -154,20 +153,14 @@
 	});
 </script>
 
-<div bind:this={rootEl} class="h-full w-full flex flex-col overflow-hidden">
-	<!-- header / blurb -->
-	<div class="px-4 sm:px-6 pt-4 pb-3 shrink-0">
-		<div class="flex items-center gap-2 text-[var(--text-primary)]">
-			<Route class="w-5 h-5" style="color:{ACCENT}" />
-			<h2 class="text-base sm:text-lg font-semibold">Sonic Adventure</h2>
-		</div>
-		<p class="text-xs sm:text-sm text-[var(--text-muted)] mt-1">
-			Build a queue that morphs from one track's sound into another's — a guided path through your library.
-		</p>
-	</div>
+<div bind:this={rootEl} class="w-full space-y-3">
+	<!-- blurb -->
+	<p class="text-sm text-[var(--text-secondary)]">
+		Pick a <span style="color:{ACCENT}">start</span> and a <span style="color:{ACCENT}">destination</span> track. Zonik fills the gap with tracks whose sound shifts gradually from one to the other.
+	</p>
 
 	<!-- pickers -->
-	<div class="px-4 sm:px-6 pb-3 shrink-0 grid grid-cols-1 md:grid-cols-2 gap-3">
+	<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 		<!-- START -->
 		<div class="relative">
 			<label class="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[var(--text-muted)] mb-1">
@@ -242,7 +235,7 @@
 	</div>
 
 	<!-- actions -->
-	<div class="px-4 sm:px-6 pb-3 shrink-0 flex flex-wrap items-center gap-2">
+	<div class="flex flex-wrap items-center gap-2">
 		<button
 			onclick={buildJourney}
 			disabled={!canBuild}
@@ -254,23 +247,24 @@
 				<Route class="w-4 h-4" /> Build journey
 			{/if}
 		</button>
-		{#if path?.length}
-			<button onclick={playJourney}
-				class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-md border border-[#22d3ee]/40 text-[#22d3ee] hover:bg-[#22d3ee]/10 transition-colors">
-				<Play class="w-4 h-4" /> Play journey ({path.length})
-			</button>
+		{#if !start || !dest}
+			<span class="text-xs text-[var(--text-disabled)]">Choose both tracks first.</span>
 		{/if}
 	</div>
 
+	{#if path?.length && !building}
+		<SelectionBar tracks={journeyTracks} name={journeyName} />
+	{/if}
+
 	<!-- result list -->
-	<div class="flex-1 min-h-0 overflow-auto px-4 sm:px-6 pb-5">
+	<div>
 		{#if building}
-			<div class="h-full flex flex-col items-center justify-center gap-3 text-[var(--text-secondary)]">
+			<div class="flex items-center gap-3 py-6 text-[var(--text-secondary)]">
 				<div class="w-8 h-8 border-2 rounded-full animate-spin" style="border-color:{ACCENT}; border-top-color:transparent"></div>
 				<p class="text-sm">Charting a path through your sound…</p>
 			</div>
 		{:else if path?.length}
-			<ol class="relative max-w-2xl mx-auto">
+			<ol class="relative max-w-3xl">
 				{#each path as t, i (t.track_id + '-' + i)}
 					<li class="relative pl-10">
 						<!-- connecting line -->
@@ -300,16 +294,6 @@
 					</li>
 				{/each}
 			</ol>
-		{:else}
-			<div class="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
-				<div class="flex items-center gap-2 text-[var(--text-disabled)]">
-					<Flag class="w-5 h-5" />
-					<ArrowDown class="w-4 h-4 rotate-[-90deg]" />
-					<MapPin class="w-5 h-5" />
-				</div>
-				<p class="text-sm text-[var(--text-secondary)]">Pick a <span style="color:{ACCENT}">start</span> and a <span style="color:{ACCENT}">destination</span> track, then build the journey.</p>
-				<p class="text-xs text-[var(--text-disabled)] max-w-sm">Zonik finds intermediate tracks whose sound gradually shifts from the first to the last, so the queue eases between the two moods.</p>
-			</div>
 		{/if}
 	</div>
 </div>

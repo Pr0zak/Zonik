@@ -127,8 +127,12 @@ export const api = {
 	locateSoundscape: (query, k = 12) => request('/map/soundscape/locate', { method: 'POST', body: JSON.stringify({ query, k }) }),
 	getListeningClock: () => request('/map/listening-clock'),
 	getNeglectedGems: (limit = 40) => request(`/map/neglected-gems?limit=${limit}`),
+	dismissGem: (trackId) => request('/map/gems/dismiss', { method: 'POST', body: JSON.stringify({ track_id: trackId }) }),
 	getAudioFeatures: () => request('/map/audio-features'),
 	getStreakCalendar: () => request('/map/streak-calendar'),
+	getMapHealth: () => request('/map/health'),
+	startAnalysis: () => request('/analysis/start', { method: 'POST' }),
+	startEmbeddings: () => request('/analysis/embeddings/start', { method: 'POST' }),
 	sonicPath: (start_id, end_id, steps = 12) => request('/map/sonic-path', { method: 'POST', body: JSON.stringify({ start_id, end_id, steps }) }),
 
 	// Config

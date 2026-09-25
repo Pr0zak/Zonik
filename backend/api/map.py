@@ -90,6 +90,17 @@ async def neglected_gems(limit: int = Query(40, ge=1, le=120), db: AsyncSession 
     return await _gems(db, limit=limit)
 
 
+class DismissRequest(BaseModel):
+    track_id: str
+
+
+@router.post("/gems/dismiss")
+async def gems_dismiss(req: DismissRequest, db: AsyncSession = Depends(get_db)):
+    """Never suggest this track as a neglected gem again."""
+    from backend.services.insights import dismiss_gem
+    return await dismiss_gem(db, req.track_id)
+
+
 @router.get("/audio-features")
 async def audio_features(db: AsyncSession = Depends(get_db)):
     """Per-track Essentia features for the Camelot wheel + Tempo×Punch grid."""
@@ -109,3 +120,10 @@ async def sonic_path(req: PathRequest, db: AsyncSession = Depends(get_db)):
     """A queue that morphs from one track's sound to another's through CLAP space."""
     from backend.services.soundscape import sonic_path as _sp
     return await _sp(db, req.start_id, req.end_id, steps=max(3, min(req.steps, 30)))
+
+
+@router.get("/health")
+async def health(db: AsyncSession = Depends(get_db)):
+    """Gaps in the analysis pipeline that distort the map, each with a fix."""
+    from backend.services.map_health import map_health
+    return await map_health(db)

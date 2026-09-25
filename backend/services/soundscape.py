@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.models.embedding import TrackEmbedding
 from backend.models.track import Track
+from backend.services.genres import genre_family
 
 log = logging.getLogger(__name__)
 
@@ -58,9 +59,11 @@ def _project_sync(mat: np.ndarray) -> np.ndarray:
         from sklearn.decomposition import PCA
         xy = PCA(n_components=2, random_state=42).fit_transform(mat)
     xy = np.asarray(xy, dtype=np.float64)
-    mn, mx = xy.min(axis=0), xy.max(axis=0)
+    # Scale to the 0.5–99.5th percentile, not the extremes: a handful of stray
+    # points otherwise shrink everything else into a clump in the middle.
+    mn, mx = np.percentile(xy, 0.5, axis=0), np.percentile(xy, 99.5, axis=0)
     rng = np.where(mx - mn == 0, 1.0, mx - mn)
-    return (xy - mn) / rng
+    return np.clip((xy - mn) / rng, 0.0, 1.0)
 
 
 async def compute_soundscape(db: AsyncSession) -> dict:
@@ -103,6 +106,9 @@ async def get_soundscape(db: AsyncSession) -> dict:
     """Serve the cached projection + per-point metadata as parallel arrays."""
     await _ensure_table(db)
     total = (await db.execute(text("SELECT COUNT(*) FROM tracks"))).scalar() or 0
+    embedded = (await db.execute(text(
+        "SELECT COUNT(*) FROM track_embeddings e JOIN tracks t ON t.id = e.track_id"
+    ))).scalar() or 0
     rows = (await db.execute(text(
         "SELECT p.track_id, p.x, p.y, p.computed_at, t.title, ar.name, t.genre, "
         "       t.play_count, t.last_played_at, t.album_id, a.energy "
@@ -138,9 +144,11 @@ async def get_soundscape(db: AsyncSession) -> dict:
         "computing": _computing,
         "count": len(ids),
         "total_tracks": total,
+        "embedded": embedded,
         "ids": ids, "x": xs, "y": ys,
         "title": title, "artist": artist, "genre": genre,
         "play_count": plays, "recency_days": recency, "energy": energy, "album_id": album,
+        "family": [genre_family(g) for g in genre],
     }
 
 
@@ -168,7 +176,8 @@ async def locate_text(db: AsyncSession, query: str, k: int = 12) -> dict:
         {f"id{i}": ids[i] for i in range(len(ids))},
     )).all()
     if not pos:
-        return {"error": "Matches aren't on the map yet — recompute the atlas."}
+        # Still useful for selection; there's just no spot on the atlas to pin.
+        return {"x": None, "y": None, "query": q, "tracks": sims, "track_ids": []}
     px = sum(p[1] for p in pos) / len(pos)
     py = sum(p[2] for p in pos) / len(pos)
     return {"x": px, "y": py, "query": q, "tracks": sims, "track_ids": [p[0] for p in pos]}

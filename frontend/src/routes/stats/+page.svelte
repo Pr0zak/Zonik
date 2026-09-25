@@ -9,6 +9,8 @@
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import DataTable from '../../components/ui/DataTable.svelte';
 	import StatTile from '../../components/ui/StatTile.svelte';
+	import StreakCalendar from '../../components/map/StreakCalendar.svelte';
+	import ListeningClock from '../../components/stats/ListeningClock.svelte';
 	import { Chart, registerables } from 'chart.js';
 
 	Chart.register(...registerables);
@@ -1108,6 +1110,18 @@
 				{/if}
 			</Card>
 		{/if}
+
+		<!-- Listening habits (moved from the Music Map) -->
+		<Card padding="p-4" class="mb-8">
+			<div class="flex items-center gap-2 mb-4">
+				<Clock class="w-4 h-4 text-cyan-400" />
+				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Listening Habits</h2>
+			</div>
+			<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-2">Daily streak</h3>
+			<StreakCalendar />
+			<h3 class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mt-6 mb-2">Listening clock</h3>
+			<ListeningClock />
+		</Card>
 
 		<!-- Skips -->
 		{#if skipSummary}
