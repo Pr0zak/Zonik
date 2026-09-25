@@ -20,7 +20,9 @@ interface ZonikApi {
     @GET("api/search/catalog")
     suspend fun searchCatalog(
         @Query("q") q: String,
-        @Query("limit") limit: Int = 25
+        @Query("limit") limit: Int = 25,
+        /** Also ask the server's AI which songs [q] describes. */
+        @Query("ai") ai: Boolean = false
     ): CatalogResponse
 
     // --- Download Trigger ---
@@ -126,7 +128,9 @@ data class VoicePlaylistResponse(
     val description: String = "",
     @SerialName("track_count") val trackCount: Int = 0,
     @SerialName("track_ids") val trackIds: List<String> = emptyList(),
-    val error: String? = null
+    val error: String? = null,
+    /** Songs that fit the request but aren't in the library. */
+    val missing: List<CatalogTrack> = emptyList()
 )
 
 @Serializable
@@ -196,7 +200,11 @@ data class CatalogResponse(
     /** "deezer", or "lastfm" when Deezer failed or found nothing. */
     val source: String? = null,
     /** Set only when every catalog was unavailable. */
-    val error: String? = null
+    val error: String? = null,
+    /** Songs the AI thinks the query describes (asked for, or catalog found nothing). */
+    @SerialName("ai_tracks") val aiTracks: List<CatalogTrack>? = null,
+    /** The server can answer ai=true (AI configured and enabled). */
+    @SerialName("ai_available") val aiAvailable: Boolean = false
 )
 
 @Serializable
@@ -212,7 +220,11 @@ data class CatalogTrack(
     @SerialName("in_library") val inLibrary: Boolean = false,
     @SerialName("track_id") val trackId: String? = null,
     /** A download of this song already queued or running. */
-    @SerialName("job_id") val jobId: String? = null
+    @SerialName("job_id") val jobId: String? = null,
+    /** "ai" when an AI suggestion rather than a catalog match. */
+    @SerialName("suggested_by") val suggestedBy: String? = null,
+    /** Why the AI suggested it. */
+    val reason: String? = null
 ) {
     val key: String get() = "cat|${artist.lowercase()}|${title.lowercase()}"
 }

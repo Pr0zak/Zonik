@@ -118,6 +118,10 @@ data class SearchUiState(
     val isCatalogSearching: Boolean = false,
     val hasCatalogSearched: Boolean = false,
     val catalogError: String? = null,
+    /** AI suggestions: songs the query might describe. null = not asked. */
+    val aiTracks: List<CatalogTrack>? = null,
+    val isAiSearching: Boolean = false,
+    val aiAvailable: Boolean = false,
     val progress: Map<String, JobProgress> = emptyMap(),
     /** Set when the download status couldn't be refreshed. */
     val statusError: String? = null,
@@ -184,7 +188,9 @@ class SearchViewModel @Inject constructor(
                             catalog = emptyList(),
                             isCatalogSearching = false,
                             hasCatalogSearched = false,
-                            catalogError = null
+                            catalogError = null,
+                            aiTracks = null,
+                            isAiSearching = false
                         )
                     }
                 } else {
@@ -578,13 +584,13 @@ class SearchViewModel @Inject constructor(
         catalogSearchJob?.cancel()
         if (query.trim().length < 2) return
         catalogSearchJob = viewModelScope.launch {
-            _uiState.update { it.copy(isCatalogSearching = true, catalogError = null) }
+            _uiState.update { it.copy(isCatalogSearching = true, catalogError = null, aiTracks = null, isAiSearching = false) }
             try {
                 val response = zonikApi.searchCatalog(query.trim())
                 _uiState.update { state ->
                     // A song someone is already downloading (here or on the web)
                     // shows its live status instead of a Get button.
-                    val adopted = response.tracks
+                    val adopted = (response.tracks + response.aiTracks.orEmpty())
                         .filter { it.jobId != null && state.getStates[it.key]?.jobId == null }
                         .associate { it.key to GetButtonState(state = GetState.Searching, jobId = it.jobId, label = "Queued") }
                     state.copy(
@@ -592,6 +598,8 @@ class SearchViewModel @Inject constructor(
                         isCatalogSearching = false,
                         hasCatalogSearched = true,
                         catalogError = response.error,
+                        aiTracks = response.aiTracks,
+                        aiAvailable = response.aiAvailable,
                         getStates = state.getStates + adopted
                     )
                 }
@@ -601,6 +609,29 @@ class SearchViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(isCatalogSearching = false, hasCatalogSearched = true, catalogError = friendlyError(e))
                 }
+            }
+        }
+    }
+
+    /** Ask the server's AI which songs the query describes. */
+    fun askAi() {
+        val query = _uiState.value.query.trim()
+        if (query.length < 2 || _uiState.value.isAiSearching) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAiSearching = true) }
+            try {
+                val response = zonikApi.searchCatalog(query, limit = 10, ai = true)
+                // Drop the answer if the query changed while the AI was thinking.
+                if (_uiState.value.query.trim() != query) return@launch
+                _uiState.update {
+                    it.copy(isAiSearching = false, aiTracks = response.aiTracks.orEmpty())
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                DebugLog.w(TAG, "AI search failed: ${e.message}")
+                _uiState.update { it.copy(isAiSearching = false, toast = "AI search failed: ${friendlyError(e)}") }
+            } finally {
+                _uiState.update { it.copy(isAiSearching = false) }
             }
         }
     }
@@ -872,7 +903,8 @@ fun SearchScreen(
                                 onToggleExpanded = { catalogExpanded = !catalogExpanded },
                                 onGet = viewModel::getCatalogTrack,
                                 onPlay = viewModel::playTrackId,
-                                onChooseSource = viewModel::chooseSources
+                                onChooseSource = viewModel::chooseSources,
+                                onAskAi = viewModel::askAi
                             )
 
                             // Raw network file list
@@ -1056,7 +1088,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.catalogSection(
     onToggleExpanded: () -> Unit,
     onGet: (CatalogTrack) -> Unit,
     onPlay: (String) -> Unit,
-    onChooseSource: (CatalogTrack) -> Unit
+    onChooseSource: (CatalogTrack) -> Unit,
+    onAskAi: () -> Unit
 ) {
     if (state.query.isBlank()) return
     val libraryIds = state.tracks.map { it.id }.toSet()
@@ -1120,6 +1153,49 @@ private fun androidx.compose.foundation.lazy.LazyListScope.catalogSection(
         item("catalog-more") {
             TextButton(onClick = onToggleExpanded, modifier = Modifier.padding(horizontal = 8.dp)) {
                 Text(if (expanded) "Show fewer" else "Show ${missing.size - CATALOG_COLLAPSED} more")
+            }
+        }
+    }
+
+    // AI: for descriptions a catalog can't match ("the song from the Drive soundtrack").
+    val ai = state.aiTracks
+    when {
+        state.isAiSearching -> item("ai-busy") {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Asking AI which songs you mean…", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        ai != null -> {
+            item("ai-h") { SubHeader("AI suggestions") }
+            if (ai.isEmpty()) {
+                item("ai-empty") {
+                    Text("The AI couldn't place that one — try the artist, a lyric, or where you heard it",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                }
+            }
+            items(ai.filter { it.key !in state.pinned }, key = { "ai-${it.key}" }) { t ->
+                CatalogTrackRow(
+                    track = t,
+                    getState = state.getStates[t.key] ?: GetButtonState(),
+                    onGet = { onGet(t) },
+                    onPlay = onPlay,
+                    onChooseSource = { onChooseSource(t) }
+                )
+            }
+        }
+        state.aiAvailable && state.hasCatalogSearched -> item("ai-ask") {
+            TextButton(onClick = onAskAi, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Not it? Ask AI which song you mean")
             }
         }
     }
@@ -2163,6 +2239,16 @@ internal fun CatalogTrackRow(
         }
         // Aligned under the title, past the 48dp cover + 12dp gap.
         Column(modifier = Modifier.padding(start = 60.dp)) {
+            track.reason?.takeIf { it.isNotBlank() }?.let { why ->
+                Text(
+                    text = why,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             if (track.inLibrary && getState.state == GetState.Idle) {
                 Text(
                     text = "In your library",

@@ -7,7 +7,10 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.lifecycle.ViewModel
+import com.zonik.app.data.api.CatalogTrack
+import com.zonik.app.data.api.DownloadTriggerRequest
 import com.zonik.app.data.api.VoicePlaylistRequest
+import com.zonik.app.data.api.friendlyError
 import com.zonik.app.data.api.ZonikApi
 import com.zonik.app.data.repository.LibraryRepository
 import com.zonik.app.media.PlaybackManager
@@ -34,6 +37,13 @@ sealed interface VoiceState {
     data class Picked(val name: String, val count: Int) : VoiceState
     /** Something went wrong; show [message] + a dismiss/retry. */
     data class Failed(val message: String) : VoiceState
+    /**
+     * Songs that fit the request but aren't in the library. [playing] tracks
+     * from the library are already playing (0 when nothing there fit).
+     */
+    data class Missing(val name: String, val playing: Int, val missing: List<CatalogTrack>) : VoiceState
+    /** Downloads started (or failed to start) for the missing songs. */
+    data class Getting(val started: Int, val failed: Int) : VoiceState
 }
 
 /**
@@ -57,6 +67,7 @@ class VoicePlaylistManager @Inject constructor(
 
     private var recognizer: SpeechRecognizer? = null
     private var size: Int = 50
+    private var lastQuery: String? = null
 
     /**
      * Begin a listening session. Must be called on the main thread with
@@ -121,6 +132,7 @@ class VoicePlaylistManager @Inject constructor(
             _state.value = VoiceState.Failed("Didn't catch that — try again.")
             return
         }
+        lastQuery = q
         _state.value = VoiceState.Curating(q)
         scope.launch {
             try {
@@ -128,21 +140,66 @@ class VoicePlaylistManager @Inject constructor(
                     api.voicePlaylist(VoicePlaylistRequest(prompt = q, size = size))
                 }
                 if (resp.error != null || resp.trackIds.isEmpty()) {
-                    _state.value = VoiceState.Failed(resp.error ?: "Couldn't build a mix for that — try rephrasing.")
+                    if (resp.missing.isNotEmpty()) {
+                        // Nothing in the library fits, but real songs do.
+                        _state.value = VoiceState.Missing(resp.name.ifBlank { q }, 0, resp.missing)
+                    } else {
+                        _state.value = VoiceState.Failed(resp.error ?: "Couldn't build a mix for that — try rephrasing.")
+                    }
                     return@launch
                 }
                 _state.value = VoiceState.Picked(resp.name.ifBlank { "Your mix" }, resp.trackCount)
-                val tracks = withContext(Dispatchers.IO) { library.getTracksByIds(resp.trackIds) }
+                val tracks = withContext(Dispatchers.IO) { resolveTracks(resp.trackIds) }
                 if (tracks.isEmpty()) {
-                    _state.value = VoiceState.Failed("Found a mix, but those tracks aren't in your library yet.")
+                    _state.value = VoiceState.Failed("Found a mix, but couldn't load its tracks from the server.")
                     return@launch
                 }
                 playback.playTracks(tracks)
-                // Now Playing auto-opens via PlaybackManager.playbackRequested — dismiss the overlay.
-                _state.value = null
+                // Now Playing auto-opens via PlaybackManager.playbackRequested. Dismiss the
+                // overlay — unless there are songs to offer, which stays up over it.
+                _state.value = if (resp.missing.isNotEmpty())
+                    VoiceState.Missing(resp.name.ifBlank { "Your mix" }, tracks.size, resp.missing)
+                else null
             } catch (e: Exception) {
-                _state.value = VoiceState.Failed("Something went wrong: ${e.message}")
+                _state.value = VoiceState.Failed(friendlyError(e))
             }
+        }
+    }
+
+    /**
+     * Tracks for [ids] in order. The local DB lags the server until the next sync,
+     * so ids it doesn't have yet are fetched from the server — they used to be
+     * dropped, and a mix of new arrivals played nothing.
+     */
+    private suspend fun resolveTracks(ids: List<String>) =
+        library.getTracksByIdsPadded(ids).mapIndexedNotNull { i, t ->
+            t ?: try { library.fetchTrack(ids[i]) } catch (_: Exception) { null }
+        }
+
+    /** Ask again with the last query (after a failure). */
+    fun retry() {
+        lastQuery?.let { submitQuery(it) } ?: dismiss()
+    }
+
+    /** Start downloads for the songs offered in [VoiceState.Missing]. */
+    fun getMissing() {
+        val s = _state.value as? VoiceState.Missing ?: return
+        scope.launch {
+            var started = 0
+            var failed = 0
+            for (t in s.missing) {
+                try {
+                    val r = withContext(Dispatchers.IO) {
+                        api.triggerDownload(DownloadTriggerRequest(artist = t.artist, track = t.title))
+                    }
+                    if (r.error == null) started++ else failed++
+                } catch (_: Exception) {
+                    failed++
+                }
+            }
+            _state.value = VoiceState.Getting(started, failed)
+            kotlinx.coroutines.delay(4_000)
+            if (_state.value is VoiceState.Getting) _state.value = null
         }
     }
 
@@ -180,4 +237,6 @@ class VoiceViewModel @Inject constructor(
     fun stopListening() = manager.stopListening()
     fun submitQuery(query: String) = manager.submitQuery(query)
     fun dismiss() = manager.dismiss()
+    fun retry() = manager.retry()
+    fun getMissing() = manager.getMissing()
 }

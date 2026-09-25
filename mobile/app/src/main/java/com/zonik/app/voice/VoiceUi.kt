@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Mic
@@ -111,7 +113,8 @@ fun VoiceOverlay(
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.55f))
             .clickable(
-                enabled = s is VoiceState.Failed || s is VoiceState.Listening,
+                enabled = s is VoiceState.Failed || s is VoiceState.Listening ||
+                    s is VoiceState.Missing || s is VoiceState.Getting,
                 onClick = { viewModel.dismiss() }
             ),
         contentAlignment = Alignment.Center,
@@ -193,7 +196,73 @@ fun VoiceOverlay(
                             style = MaterialTheme.typography.bodyMedium,
                             textAlign = TextAlign.Center,
                         )
-                        Button(onClick = { viewModel.dismiss() }) { Text("Dismiss") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            androidx.compose.material3.OutlinedButton(onClick = { viewModel.dismiss() }) { Text("Dismiss") }
+                            Button(onClick = { viewModel.retry() }) { Text("Try again") }
+                        }
+                    }
+                    is VoiceState.Missing -> {
+                        Icon(
+                            Icons.Filled.AutoAwesome,
+                            contentDescription = null,
+                            modifier = Modifier.size(36.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            if (s.playing > 0) "Playing ${s.playing} tracks from your library"
+                            else "Nothing in your library fits “${s.name}”",
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            "${if (s.playing > 0) "These also fit" else "These do"}, but you don't have them yet:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+                            s.missing.take(6).forEach { t ->
+                                Text(
+                                    "${t.title} — ${t.artist}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (s.missing.size > 6) {
+                                Text("and ${s.missing.size - 6} more", style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            androidx.compose.material3.OutlinedButton(onClick = { viewModel.dismiss() }) { Text("Not now") }
+                            Button(onClick = { viewModel.getMissing() }) {
+                                Text(if (s.missing.size == 1) "Get it" else "Get all ${s.missing.size}")
+                            }
+                        }
+                    }
+                    is VoiceState.Getting -> {
+                        Icon(
+                            if (s.failed == 0) Icons.Filled.Check else Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            modifier = Modifier.size(36.dp),
+                            tint = if (s.failed == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        )
+                        Text(
+                            when {
+                                s.started > 0 && s.failed == 0 -> "Getting ${s.started} track${if (s.started == 1) "" else "s"}"
+                                s.started > 0 -> "Getting ${s.started}; ${s.failed} couldn't start"
+                                else -> "Couldn't start the downloads"
+                            },
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            "Follow them in the Find tab — they'll play once they're in your library.",
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
