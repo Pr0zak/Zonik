@@ -244,6 +244,19 @@ data class SearchResult(
 )
 
 @Serializable
+data class SongResponse(
+    @SerialName("subsonic-response")
+    val response: SongEnvelope
+)
+
+@Serializable
+data class SongEnvelope(
+    val status: String,
+    val version: String,
+    val song: SubsonicTrack? = null
+)
+
+@Serializable
 data class RandomSongsResponse(
     @SerialName("subsonic-response")
     val response: RandomSongsEnvelope

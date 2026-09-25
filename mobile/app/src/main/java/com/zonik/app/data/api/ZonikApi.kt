@@ -182,7 +182,11 @@ data class CancelTransferRequest(
 
 @Serializable
 data class DownloadSearchResponse(
-    val results: List<DownloadResult> = emptyList()
+    val results: List<DownloadResult> = emptyList(),
+    /** Set when the library already has the song searched for (artist + track). */
+    @SerialName("library_track_id") val libraryTrackId: String? = null,
+    val blacklisted: Boolean = false,
+    val reason: String? = null
 )
 
 @Serializable
@@ -190,7 +194,8 @@ data class DownloadResult(
     val username: String = "",
     val filename: String = "",
     val size: Long = 0,
-    @SerialName("bit_rate") val bitRate: Int? = null,
+    @SerialName("bitrate") val bitRate: Int? = null,
+    val extension: String? = null,
     @SerialName("sample_rate") val sampleRate: Int? = null,
     @SerialName("bit_depth") val bitDepth: Int? = null,
     val speed: Long? = null,
@@ -207,7 +212,7 @@ data class DownloadResult(
         }
 
     val format: String
-        get() = filename.substringAfterLast(".").uppercase()
+        get() = (extension?.takeIf { it.isNotBlank() } ?: filename.substringAfterLast(".")).uppercase()
 
     val sizeMb: String
         get() = "%.1f MB".format(size / 1_048_576.0)
@@ -216,13 +221,21 @@ data class DownloadResult(
 @Serializable
 data class DownloadTriggerResponse(
     @SerialName("job_id") val jobId: String? = null,
-    val message: String? = null
+    val message: String? = null,
+    /** "already_downloading" (jobId is the existing job) or "in_library" (see trackId). */
+    val status: String? = null,
+    @SerialName("track_id") val trackId: String? = null,
+    /** "blacklisted" with [reason], returned with HTTP 200. */
+    val error: String? = null,
+    val reason: String? = null
 )
 
 @Serializable
 data class DownloadStatusResponse(
-    val status: String = "",
-    val transfers: List<TransferInfo> = emptyList()
+    // The server calls the list "downloads"; it was read as "transfers" and so
+    // always came back empty.
+    @SerialName("downloads") val transfers: List<TransferInfo> = emptyList(),
+    @SerialName("logged_in") val loggedIn: Boolean = true
 )
 
 @Serializable
@@ -236,7 +249,8 @@ data class TransferInfo(
     val speed: Long = 0,
     @SerialName("eta_seconds") val etaSeconds: Int? = null,
     @SerialName("save_path") val savePath: String? = null,
-    val error: String? = null
+    val error: String? = null,
+    @SerialName("job_id") val jobId: String? = null
 ) {
     val displayName: String
         get() {
@@ -260,7 +274,10 @@ data class JobInfo(
     val result: String? = null,
     val tracks: String? = null,
     @SerialName("started_at") val startedAt: String? = null,
-    @SerialName("finished_at") val finishedAt: String? = null
+    @SerialName("finished_at") val finishedAt: String? = null,
+    @SerialName("track_id") val trackId: String? = null,
+    @SerialName("already_in_library") val alreadyInLibrary: Boolean = false,
+    val error: String? = null
 )
 
 @Serializable
@@ -289,7 +306,10 @@ data class JobDetailResponse(
     val log: String? = null,
     val tracks: String? = null,
     @SerialName("started_at") val startedAt: String? = null,
-    @SerialName("finished_at") val finishedAt: String? = null
+    @SerialName("finished_at") val finishedAt: String? = null,
+    @SerialName("track_id") val trackId: String? = null,
+    @SerialName("already_in_library") val alreadyInLibrary: Boolean = false,
+    val error: String? = null
 )
 
 // --- Pairing Models ---

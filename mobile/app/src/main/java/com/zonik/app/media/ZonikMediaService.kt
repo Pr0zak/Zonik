@@ -1218,125 +1218,23 @@ class ZonikMediaService : MediaLibraryService() {
             query: String,
             params: LibraryParams?
         ): ListenableFuture<LibraryResult<Void>> {
-            try {
-                val lowerQuery = query.lowercase().trim()
-
-                // Empty query → shuffle mix (auto-play)
-                if (lowerQuery.isEmpty()) {
-                    com.zonik.app.data.DebugLog.d("MediaService", "Voice search: empty query → shuffle mix")
-                    val tracks = runBlocking { libraryRepository.getRandomSongs(count = 100) }
-                    if (tracks.isNotEmpty()) {
-                        val mediaItems = asEndlessMix(tracks.map { buildFullMediaItem(it) })
-                        session.player.setMediaItems(mediaItems, 0, 0)
-                        session.player.prepare()
-                        session.player.play()
-                    }
-                    session.notifySearchResultChanged(browser, query, 0, params)
-                    return Futures.immediateFuture(LibraryResult.ofVoid())
+            // Resolve off the main thread (search3 and artist expansion hit the
+            // server); only player calls hop back to Main.
+            val future = SettableFuture.create<LibraryResult<Void>>()
+            browseScope.launch {
+                val results = try {
+                    runVoiceSearch(session, query)
+                } catch (e: Exception) {
+                    com.zonik.app.data.DebugLog.w("MediaService", "Voice search failed: ${e.message}")
+                    listOf(messageItem("Search failed — can't reach your Zonik server"))
                 }
-
-                // Keyword detection: favorites/starred/liked
-                if (lowerQuery in listOf("favorites", "favourites", "starred", "liked", "my favorites", "my favourites")) {
-                    com.zonik.app.data.DebugLog.d("MediaService", "Voice search: '$query' → favorites")
-                    val tracks = runBlocking { libraryRepository.getStarredTracks().shuffled() }
-                    if (tracks.isNotEmpty()) {
-                        val mediaItems = tracks.map { buildFullMediaItem(it) }
-                        session.player.setMediaItems(mediaItems, 0, 0)
-                        session.player.prepare()
-                        session.player.play()
-                    }
-                    session.notifySearchResultChanged(browser, query, 0, params)
-                    return Futures.immediateFuture(LibraryResult.ofVoid())
+                lastSearch = query to results
+                withContext(Dispatchers.Main) {
+                    session.notifySearchResultChanged(browser, query, results.size, params)
                 }
-
-                // Genre keywords: "play rock", "play jazz", etc.
-                val genreKeywords = listOf("rock", "pop", "jazz", "electronic", "hip hop", "classical", "metal", "country", "r&b", "indie", "punk", "blues", "folk", "dance", "ambient", "reggae", "soul", "funk")
-                val matchedGenre = genreKeywords.find { lowerQuery.contains(it) }
-                if (matchedGenre != null) {
-                    com.zonik.app.data.DebugLog.d("MediaService", "Voice search: '$query' → genre mix '$matchedGenre'")
-                    val tracks = runBlocking { libraryRepository.getRandomSongs(count = 100, genre = matchedGenre) }
-                    if (tracks.isNotEmpty()) {
-                        val mediaItems = tracks.map { buildFullMediaItem(it) }
-                        session.player.setMediaItems(mediaItems, 0, 0)
-                        session.player.prepare()
-                        session.player.play()
-                        session.notifySearchResultChanged(browser, query, 0, params)
-                        return Futures.immediateFuture(LibraryResult.ofVoid())
-                    }
-                }
-
-                val (artists, albums, tracks) = runBlocking {
-                    libraryRepository.search(query)
-                }
-
-                // Auto-play: if voice search matches an artist, play all their tracks
-                if (artists.isNotEmpty()) {
-                    val topArtist = artists.first()
-                    if (topArtist.name.lowercase().contains(lowerQuery) || lowerQuery.contains(topArtist.name.lowercase())) {
-                        com.zonik.app.data.DebugLog.d("MediaService", "Voice search: '$query' → auto-play artist '${topArtist.name}'")
-                        val artistTracks = runBlocking {
-                            val (_, artistAlbums) = libraryRepository.getArtistDetail(topArtist.id)
-                            artistAlbums.flatMap { album ->
-                                val (_, albumTracks) = libraryRepository.getAlbumDetail(album.id)
-                                albumTracks
-                            }.take(100)
-                        }
-                        if (artistTracks.isNotEmpty()) {
-                            val mediaItems = artistTracks.map { buildFullMediaItem(it) }
-                            session.player.setMediaItems(mediaItems, 0, 0)
-                            session.player.prepare()
-                            session.player.play()
-                            session.notifySearchResultChanged(browser, query, 0, params)
-                            return Futures.immediateFuture(LibraryResult.ofVoid())
-                        }
-                    }
-                }
-
-                // Auto-play: if voice search matches an album, play it
-                if (albums.isNotEmpty()) {
-                    val topAlbum = albums.first()
-                    if (topAlbum.name.lowercase().contains(lowerQuery) || lowerQuery.contains(topAlbum.name.lowercase())) {
-                        com.zonik.app.data.DebugLog.d("MediaService", "Voice search: '$query' → auto-play album '${topAlbum.name}'")
-                        val albumTracks = runBlocking {
-                            val (_, albumTracks) = libraryRepository.getAlbumDetail(topAlbum.id)
-                            albumTracks
-                        }
-                        if (albumTracks.isNotEmpty()) {
-                            val mediaItems = albumTracks.map { buildFullMediaItem(it) }
-                            session.player.setMediaItems(mediaItems, 0, 0)
-                            session.player.prepare()
-                            session.player.play()
-                            session.notifySearchResultChanged(browser, query, 0, params)
-                            return Futures.immediateFuture(LibraryResult.ofVoid())
-                        }
-                    }
-                }
-
-                // Auto-play: if voice search matches a track, play it + related
-                if (tracks.isNotEmpty()) {
-                    val topTrack = tracks.first()
-                    if (topTrack.title.lowercase().contains(lowerQuery) || lowerQuery.contains(topTrack.title.lowercase())) {
-                        com.zonik.app.data.DebugLog.d("MediaService", "Voice search: '$query' → auto-play track '${topTrack.title}'")
-                        val mediaItems = tracks.take(50).map { buildFullMediaItem(it) }
-                        session.player.setMediaItems(mediaItems, 0, 0)
-                        session.player.prepare()
-                        session.player.play()
-                        session.notifySearchResultChanged(browser, query, 0, params)
-                        return Futures.immediateFuture(LibraryResult.ofVoid())
-                    }
-                }
-
-                // Fallback: show search results without auto-play
-                val results = mutableListOf<MediaItem>()
-                albums.forEach { results.add(albumToMediaItem(it)) }
-                artists.forEach { results.add(artistToMediaItem(it)) }
-                tracks.forEach { results.add(trackToMediaItem(it)) }
-                session.notifySearchResultChanged(browser, query, results.size, params)
-            } catch (e: Exception) {
-                com.zonik.app.data.DebugLog.w("MediaService", "Voice search failed: ${e.message}")
-                session.notifySearchResultChanged(browser, query, 0, params)
+                future.set(LibraryResult.ofVoid())
             }
-            return Futures.immediateFuture(LibraryResult.ofVoid())
+            return future
         }
 
         override fun onGetSearchResult(
@@ -1347,23 +1245,24 @@ class ZonikMediaService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
-            return try {
-                val (artists, albums, tracks) = runBlocking {
-                    libraryRepository.search(query)
-                }
-                val results = mutableListOf<MediaItem>()
-                albums.forEach { results.add(albumToMediaItem(it)) }
-                artists.forEach { results.add(artistToMediaItem(it)) }
-                tracks.forEach { results.add(trackToMediaItem(it)) }
-                val start = page * pageSize
-                val end = minOf(start + pageSize, results.size)
-                val paged = if (start < results.size) results.subList(start, end) else emptyList()
-                Futures.immediateFuture(
-                    LibraryResult.ofItemList(ImmutableList.copyOf(paged), params)
+            val future = SettableFuture.create<LibraryResult<ImmutableList<MediaItem>>>()
+            browseScope.launch {
+                future.set(
+                    try {
+                        // Reuse what onSearch just found instead of searching twice.
+                        val results = lastSearch?.takeIf { it.first == query }?.second
+                            ?: searchResultItems(query)
+                        val start = page * pageSize
+                        val end = minOf(start + pageSize, results.size)
+                        val paged = if (start < results.size) results.subList(start, end) else emptyList()
+                        LibraryResult.ofItemList(ImmutableList.copyOf(paged), params)
+                    } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.w("MediaService", "Search results failed: ${e.message}")
+                        LibraryResult.ofError(LibraryResult.RESULT_ERROR_IO)
+                    }
                 )
-            } catch (e: Exception) {
-                Futures.immediateFuture(LibraryResult.ofError(LibraryResult.RESULT_ERROR_IO))
             }
+            return future
         }
 
         override fun onConnect(
@@ -1914,5 +1813,143 @@ class ZonikMediaService : MediaLibraryService() {
             }
             else -> null
         }
+    }
+    // --- Voice / text search (Android Auto) ---
+
+    /** Last onSearch result, so onGetSearchResult doesn't search again. */
+    @Volatile private var lastSearch: Pair<String, List<MediaItem>>? = null
+
+    private val voiceGenres = listOf(
+        "rock", "pop", "jazz", "electronic", "hip hop", "classical", "metal", "country", "r&b",
+        "indie", "punk", "blues", "folk", "dance", "ambient", "reggae", "soul", "funk"
+    )
+    private val voiceFiller = setOf("play", "some", "me", "a", "the", "music", "songs", "song", "tracks", "mix", "radio")
+
+    /**
+     * The genre a query asks for, only when that's all it asks for — "rock",
+     * "play some jazz", "metal music". Matching any substring used to turn
+     * "Metallica" into a metal mix and "Daft Punk" into a punk mix.
+     */
+    private fun genreRequest(lowerQuery: String): String? {
+        val rest = lowerQuery.replace("hip-hop", "hip hop")
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() && it !in voiceFiller }
+            .joinToString(" ")
+        return voiceGenres.firstOrNull { it == rest }
+    }
+
+    /** A visible, non-playable row — how Auto shows "no results" or an error. */
+    private fun messageItem(text: String): MediaItem =
+        MediaItem.Builder()
+            .setMediaId("msg:${text.hashCode()}")
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(text)
+                    .setIsPlayable(false)
+                    .setIsBrowsable(false)
+                    .build()
+            )
+            .build()
+
+    private suspend fun playNow(session: MediaLibrarySession, items: List<MediaItem>) =
+        withContext(Dispatchers.Main) {
+            session.player.setMediaItems(items, 0, 0)
+            session.player.prepare()
+            session.player.play()
+        }
+
+    private suspend fun searchResultItems(query: String): List<MediaItem> {
+        val (artists, albums, tracks) = libraryRepository.search(query)
+        val results = mutableListOf<MediaItem>()
+        albums.forEach { results.add(albumToMediaItem(it)) }
+        artists.forEach { results.add(artistToMediaItem(it)) }
+        tracks.forEach { results.add(trackToMediaItem(it)) }
+        return results.ifEmpty { listOf(messageItem("No matches for \u201C$query\u201D in your library")) }
+    }
+
+    /**
+     * Handle a voice/text search. Auto-plays when the intent is clear and
+     * returns an empty list; otherwise returns the rows to show.
+     */
+    private suspend fun runVoiceSearch(session: MediaLibrarySession, query: String): List<MediaItem> {
+        val lowerQuery = query.lowercase().trim()
+        val log = { msg: String -> com.zonik.app.data.DebugLog.d("MediaService", "Voice search: $msg") }
+
+        // Empty query → shuffle mix (auto-play)
+        if (lowerQuery.isEmpty()) {
+            log("empty query → shuffle mix")
+            val tracks = libraryRepository.getRandomSongs(count = 100)
+            if (tracks.isEmpty()) return listOf(messageItem("Your library is empty"))
+            playNow(session, asEndlessMix(tracks.map { buildFullMediaItem(it) }))
+            return emptyList()
+        }
+
+        // Keyword detection: favorites/starred/liked
+        if (lowerQuery in listOf("favorites", "favourites", "starred", "liked", "my favorites", "my favourites")) {
+            log("'$query' → favorites")
+            val tracks = libraryRepository.getStarredTracks().shuffled()
+            if (tracks.isEmpty()) return listOf(messageItem("You haven't starred any tracks yet"))
+            playNow(session, tracks.map { buildFullMediaItem(it) })
+            return emptyList()
+        }
+
+        // Genre requests: "rock", "play some jazz"
+        genreRequest(lowerQuery)?.let { genre ->
+            log("'$query' → genre mix '$genre'")
+            val tracks = libraryRepository.getRandomSongs(count = 100, genre = genre)
+            if (tracks.isNotEmpty()) {
+                playNow(session, tracks.map { buildFullMediaItem(it) })
+                return emptyList()
+            }
+        }
+
+        val (artists, albums, tracks) = libraryRepository.search(query)
+
+        // Auto-play: if voice search matches an artist, play all their tracks
+        artists.firstOrNull()?.let { topArtist ->
+            val name = topArtist.name.lowercase()
+            if (name.contains(lowerQuery) || lowerQuery.contains(name)) {
+                log("'$query' → auto-play artist '${topArtist.name}'")
+                val (_, artistAlbums) = libraryRepository.getArtistDetail(topArtist.id)
+                val artistTracks = artistAlbums.flatMap { album ->
+                    libraryRepository.getAlbumDetail(album.id).second
+                }.take(100)
+                if (artistTracks.isNotEmpty()) {
+                    playNow(session, artistTracks.map { buildFullMediaItem(it) })
+                    return emptyList()
+                }
+            }
+        }
+
+        // Auto-play: if voice search matches an album, play it
+        albums.firstOrNull()?.let { topAlbum ->
+            val name = topAlbum.name.lowercase()
+            if (name.contains(lowerQuery) || lowerQuery.contains(name)) {
+                log("'$query' → auto-play album '${topAlbum.name}'")
+                val albumTracks = libraryRepository.getAlbumDetail(topAlbum.id).second
+                if (albumTracks.isNotEmpty()) {
+                    playNow(session, albumTracks.map { buildFullMediaItem(it) })
+                    return emptyList()
+                }
+            }
+        }
+
+        // Auto-play: if voice search matches a track, play it + related
+        tracks.firstOrNull()?.let { topTrack ->
+            val title = topTrack.title.lowercase()
+            if (title.contains(lowerQuery) || lowerQuery.contains(title)) {
+                log("'$query' → auto-play track '${topTrack.title}'")
+                playNow(session, tracks.take(50).map { buildFullMediaItem(it) })
+                return emptyList()
+            }
+        }
+
+        // Fallback: show search results without auto-play
+        val results = mutableListOf<MediaItem>()
+        albums.forEach { results.add(albumToMediaItem(it)) }
+        artists.forEach { results.add(artistToMediaItem(it)) }
+        tracks.forEach { results.add(trackToMediaItem(it)) }
+        if (results.isEmpty()) log("'$query' → no matches")
+        return results.ifEmpty { listOf(messageItem("No matches for \u201C$query\u201D in your library")) }
     }
 }

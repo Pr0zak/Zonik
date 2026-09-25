@@ -33,6 +33,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zonik.app.data.DebugLog
+import com.zonik.app.data.DownloadNotice
+import com.zonik.app.data.DownloadNotifier
 import com.zonik.app.data.api.*
 import com.zonik.app.data.db.ZonikDatabase
 import com.zonik.app.data.repository.LibraryRepository
@@ -61,8 +63,18 @@ data class GetButtonState(
     val pct: Float = 0f,
     val received: Long = 0L,
     val total: Long = 0L,
-    val error: String? = null
-)
+    val error: String? = null,
+    /** Short button label while working ("Finding", "Waiting", "Adding"). */
+    val label: String = "Queued",
+    /** One line under the row saying what's happening right now. */
+    val detail: String? = null,
+    /** Library track to play once done. */
+    val trackId: String? = null,
+    val speedBps: Long = 0L,
+    val etaSeconds: Long? = null
+) {
+    val inFlight: Boolean get() = state == GetState.Searching || state == GetState.Downloading
+}
 
 data class SearchUiState(
     val query: String = "",
@@ -78,11 +90,18 @@ data class SearchUiState(
     val downloadError: String? = null,
     val parsedArtist: String = "",
     val parsedTrack: String = "",
+    /** The network search's song is already in the library (server-matched). */
+    val libraryMatchId: String? = null,
     val activeTransfers: List<TransferInfo> = emptyList(),
     val activeJobs: List<JobInfo> = emptyList(),
     val recentJobs: List<JobInfo> = emptyList(),
     val getStates: Map<String, GetButtonState> = emptyMap(),
+    /** Rows you pressed Get on, kept across query changes until cleared. */
+    val pinned: Map<String, DownloadResult> = emptyMap(),
     val progress: Map<String, JobProgress> = emptyMap(),
+    /** Set when the download status couldn't be refreshed. */
+    val statusError: String? = null,
+    val soulseekOnline: Boolean = true,
     val toast: String? = null
 )
 
@@ -97,11 +116,15 @@ class SearchViewModel @Inject constructor(
     private val playbackManager: PlaybackManager,
     private val zonikApi: ZonikApi,
     private val database: ZonikDatabase,
-    private val progressClient: DownloadProgressClient
+    private val progressClient: DownloadProgressClient,
+    private val notifier: DownloadNotifier
 ) : ViewModel() {
 
     companion object {
         private const val TAG = "SearchVM"
+        // A row whose job hasn't been heard from over the WebSocket for this long
+        // is refreshed over REST instead.
+        private const val WS_STALE_MS = 15_000L
     }
 
     private val _query = MutableStateFlow("")
@@ -132,7 +155,8 @@ class SearchViewModel @Inject constructor(
                             hasDownloadSearched = false,
                             downloadError = null,
                             parsedArtist = "",
-                            parsedTrack = ""
+                            parsedTrack = "",
+                            libraryMatchId = null
                         )
                     }
                 } else {
@@ -144,25 +168,18 @@ class SearchViewModel @Inject constructor(
         // Mirror progress map into UI state and resolve get-button states
         progressClient.progress
             .onEach { progressMap ->
+                val finished = mutableListOf<String>()
                 _uiState.update { state ->
-                    val updatedGetStates = state.getStates.mapValues { (_, gs) ->
+                    val updatedGetStates = state.getStates.mapValues { (key, gs) ->
                         val jp = gs.jobId?.let { progressMap[it] } ?: return@mapValues gs
-                        val newState = when (jp.status.lowercase()) {
-                            "completed", "complete" -> GetState.Done
-                            "failed", "error", "cancelled" -> GetState.Failed
-                            "running", "in_progress" -> if (jp.total > 0) GetState.Downloading else GetState.Searching
-                            else -> if (jp.total > 0) GetState.Downloading else GetState.Searching
-                        }
-                        gs.copy(
-                            state = newState,
-                            pct = jp.pct,
-                            received = jp.progress,
-                            total = jp.total,
-                            error = jp.error
-                        )
+                        val next = gs.resolve(jp)
+                        if (next.state == GetState.Done && gs.state != GetState.Done) finished += key
+                        next
                     }
                     state.copy(progress = progressMap, getStates = updatedGetStates)
                 }
+                publishNotifications()
+                if (finished.isNotEmpty()) onDownloadsFinished(finished)
             }
             .launchIn(viewModelScope)
 
@@ -211,7 +228,25 @@ class SearchViewModel @Inject constructor(
             try {
                 val radioTracks = libraryRepository.startRadio(track.id, track.genre, track.artistId)
                 if (radioTracks.isNotEmpty()) playbackManager.playTracks(radioTracks)
-            } catch (_: Exception) {}
+                else _uiState.update { it.copy(toast = "No radio tracks found for this song") }
+            } catch (e: Exception) {
+                DebugLog.w(TAG, "Radio failed: ${e.message}")
+                _uiState.update { it.copy(toast = "Couldn't start radio: ${friendlyError(e)}") }
+            }
+        }
+    }
+
+    /** Play a library track by id — a finished download, or the copy already there. */
+    fun playTrackId(trackId: String) {
+        viewModelScope.launch {
+            try {
+                val track = libraryRepository.fetchTrack(trackId)
+                if (track != null) playbackManager.playTracks(listOf(track), 0)
+                else _uiState.update { it.copy(toast = "That track isn't in the library any more") }
+            } catch (e: Exception) {
+                DebugLog.e(TAG, "Play $trackId failed", e)
+                _uiState.update { it.copy(toast = "Couldn't play it: ${friendlyError(e)}") }
+            }
         }
     }
 
@@ -228,9 +263,13 @@ class SearchViewModel @Inject constructor(
         val artist = parsed.first.ifBlank { _uiState.value.parsedArtist }
         val track = parsed.second.ifBlank { _uiState.value.parsedTrack }
             .ifBlank { result.displayName }
+        notifier.reset(key)
         viewModelScope.launch {
             _uiState.update { state ->
-                state.copy(getStates = state.getStates + (key to GetButtonState(state = GetState.Searching)))
+                state.copy(
+                    getStates = state.getStates + (key to GetButtonState(state = GetState.Searching, label = "Starting")),
+                    pinned = state.pinned + (key to result)
+                )
             }
             try {
                 DebugLog.d(TAG, "Trigger artist='$artist' track='$track' user=${result.username}")
@@ -243,26 +282,63 @@ class SearchViewModel @Inject constructor(
                     )
                 )
                 val jobId = response.jobId
-                _uiState.update { state ->
-                    val gs = state.getStates[key] ?: GetButtonState()
-                    val newGs = gs.copy(jobId = jobId, state = GetState.Searching)
-                    state.copy(
-                        getStates = state.getStates + (key to newGs),
-                        toast = "Download queued"
+                when {
+                    response.error != null -> setRowFailed(
+                        key,
+                        if (response.error == "blacklisted") "Blocked by your download blacklist" +
+                            (response.reason?.let { ": $it" } ?: "")
+                        else response.error
                     )
+                    response.status == "in_library" && response.trackId != null -> {
+                        _uiState.update { state ->
+                            state.copy(getStates = state.getStates + (key to GetButtonState(
+                                state = GetState.Done, trackId = response.trackId, pct = 100f,
+                                detail = "Already in your library"
+                            )))
+                        }
+                        publishNotifications()
+                    }
+                    jobId == null -> setRowFailed(key, "The server didn't start the download")
+                    else -> {
+                        _uiState.update { state ->
+                            val gs = state.getStates[key] ?: GetButtonState()
+                            state.copy(
+                                getStates = state.getStates + (key to gs.copy(
+                                    jobId = jobId, state = GetState.Searching, label = "Queued",
+                                    detail = if (response.status == "already_downloading") "Already being downloaded" else null
+                                ))
+                            )
+                        }
+                        // Seed the job so the WebSocket loop connects straight away
+                        // instead of waiting for the next status poll.
+                        if (progressClient.progress.value[jobId] == null) {
+                            progressClient.setJobStatus(jobId, "running")
+                        }
+                        refreshStatus()
+                    }
                 }
-                refreshStatus()
             } catch (e: Exception) {
                 DebugLog.e(TAG, "Trigger failed", e)
-                _uiState.update { state ->
-                    val gs = state.getStates[key] ?: GetButtonState()
-                    state.copy(
-                        getStates = state.getStates + (key to gs.copy(state = GetState.Failed, error = e.message)),
-                        toast = "Download failed: ${e.message}"
-                    )
-                }
+                setRowFailed(key, friendlyError(e))
             }
         }
+    }
+
+    private fun setRowFailed(key: String, error: String) {
+        _uiState.update { state ->
+            val gs = state.getStates[key] ?: GetButtonState()
+            state.copy(getStates = state.getStates + (key to gs.copy(state = GetState.Failed, error = error)))
+        }
+        publishNotifications()
+    }
+
+    /** Drop finished and failed rows from "Your downloads". */
+    fun clearFinished() {
+        _uiState.update { state ->
+            val keep = state.pinned.filterKeys { state.getStates[it]?.inFlight == true }
+            state.copy(pinned = keep, getStates = state.getStates.filterKeys { it in keep || it in state.downloadResults.map { r -> r.key() } })
+        }
+        progressClient.clearTerminal()
     }
 
     fun cancelTransfer(transfer: TransferInfo) {
@@ -274,7 +350,7 @@ class SearchViewModel @Inject constructor(
                 refreshStatus()
             } catch (e: Exception) {
                 DebugLog.e(TAG, "Cancel failed", e)
-                _uiState.update { it.copy(toast = "Cancel failed: ${e.message}") }
+                _uiState.update { it.copy(toast = "Couldn't cancel: ${friendlyError(e)}") }
             }
         }
     }
@@ -285,14 +361,48 @@ class SearchViewModel @Inject constructor(
                 val statusResponse = zonikApi.getDownloadStatus()
                 val activeJobs = zonikApi.getActiveJobs()
                 _uiState.update {
-                    it.copy(activeTransfers = statusResponse.transfers, activeJobs = activeJobs)
+                    it.copy(
+                        activeTransfers = statusResponse.transfers,
+                        activeJobs = activeJobs,
+                        soulseekOnline = statusResponse.loggedIn,
+                        statusError = null
+                    )
                 }
+                progressClient.applyTransfers(statusResponse.transfers)
                 // Drive the WS connect loop off real server state — it only
                 // connects while there's active work to watch.
                 progressClient.setServerReportsActive(
                     statusResponse.transfers.isNotEmpty() || activeJobs.isNotEmpty()
                 )
-            } catch (_: Exception) {}
+                refreshStaleRows(activeJobs.map { it.id }.toSet())
+            } catch (e: Exception) {
+                DebugLog.w(TAG, "Status refresh failed: ${e.message}")
+                _uiState.update { it.copy(statusError = "Couldn't refresh downloads: ${friendlyError(e)}") }
+            }
+        }
+    }
+
+    /**
+     * REST fallback for rows the WebSocket hasn't updated lately — including
+     * jobs that already finished (they drop out of the active list), so a row
+     * never sits on "Queued" after the download is done.
+     */
+    private suspend fun refreshStaleRows(activeIds: Set<String>) {
+        val now = System.currentTimeMillis()
+        val progress = progressClient.progress.value
+        val stale = _uiState.value.getStates.values
+            .filter { it.inFlight && it.jobId != null }
+            .mapNotNull { it.jobId }
+            .filter { id ->
+                val p = progress[id]
+                id !in activeIds || !progressClient.connected.value || p == null || now - p.updatedAt > WS_STALE_MS
+            }
+        for (id in stale) {
+            try {
+                progressClient.applyJobSnapshot(zonikApi.getJob(id))
+            } catch (e: Exception) {
+                DebugLog.w(TAG, "Job $id refresh failed: ${e.message}")
+            }
         }
     }
 
@@ -301,7 +411,10 @@ class SearchViewModel @Inject constructor(
             try {
                 val response = zonikApi.getJobHistory(limit = 20)
                 _uiState.update { it.copy(recentJobs = response.items) }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                DebugLog.w(TAG, "History load failed: ${e.message}")
+                _uiState.update { it.copy(toast = "Couldn't load recent downloads: ${friendlyError(e)}") }
+            }
         }
     }
 
@@ -309,15 +422,58 @@ class SearchViewModel @Inject constructor(
         _uiState.update { it.copy(toast = null) }
     }
 
-    private fun runLibrarySearch(query: String) {
-        librarySearchJob?.cancel()
-        // Clear download results when query changes
-        _uiState.update {
-            it.copy(
-                downloadResults = emptyList(),
-                hasDownloadSearched = false,
-                downloadError = null
+    private fun onDownloadsFinished(keys: List<String>) {
+        val state = _uiState.value
+        val names = keys.mapNotNull { state.pinned[it]?.displayName }
+        if (names.isNotEmpty()) {
+            _uiState.update {
+                it.copy(toast = if (names.size == 1) "Ready: ${names[0]}" else "${names.size} downloads ready")
+            }
+        }
+        // The new tracks are in the library now: re-run the search so they show
+        // up there, and pull them into the local DB for Auto/Watch.
+        if (state.query.isNotBlank()) runLibrarySearch(state.query, keepNetwork = true)
+        viewModelScope.launch {
+            for (key in keys) {
+                val trackId = _uiState.value.getStates[key]?.trackId ?: continue
+                try { libraryRepository.fetchTrack(trackId) } catch (e: Exception) {
+                    DebugLog.w(TAG, "Couldn't cache new track $trackId: ${e.message}")
+                }
+            }
+        }
+        loadRecentHistory()
+        refreshStatus()
+    }
+
+    private fun publishNotifications() {
+        val state = _uiState.value
+        notifier.update(state.pinned.mapNotNull { (key, result) ->
+            val gs = state.getStates[key] ?: return@mapNotNull null
+            DownloadNotice(
+                key = key,
+                title = result.displayName,
+                active = gs.inFlight,
+                done = gs.state == GetState.Done,
+                failed = gs.state == GetState.Failed,
+                pct = gs.pct.toInt(),
+                detail = if (gs.state == GetState.Failed) gs.error else gs.detail
             )
+        })
+    }
+
+    private fun runLibrarySearch(query: String, keepNetwork: Boolean = false) {
+        librarySearchJob?.cancel()
+        // Clear download results when query changes (rows you pressed Get on
+        // stay, under "Your downloads")
+        if (!keepNetwork) {
+            _uiState.update {
+                it.copy(
+                    downloadResults = emptyList(),
+                    hasDownloadSearched = false,
+                    downloadError = null,
+                    libraryMatchId = null
+                )
+            }
         }
         librarySearchJob = viewModelScope.launch {
             _uiState.update { it.copy(isLibrarySearching = true, libraryError = null) }
@@ -333,11 +489,13 @@ class SearchViewModel @Inject constructor(
                     )
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                DebugLog.w(TAG, "Library search failed: ${e.message}")
                 _uiState.update {
                     it.copy(
                         isLibrarySearching = false,
                         hasSearched = true,
-                        libraryError = e.message ?: "Search failed"
+                        libraryError = friendlyError(e)
                     )
                 }
             }
@@ -368,15 +526,21 @@ class SearchViewModel @Inject constructor(
                     it.copy(
                         downloadResults = sorted,
                         isDownloadSearching = false,
-                        hasDownloadSearched = true
+                        hasDownloadSearched = true,
+                        libraryMatchId = response.libraryTrackId,
+                        downloadError = if (response.blacklisted)
+                            "Blocked by your download blacklist" + (response.reason?.let { r -> ": $r" } ?: "")
+                        else null
                     )
                 }
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                DebugLog.w(TAG, "Network search failed: ${e.message}")
                 _uiState.update {
                     it.copy(
                         isDownloadSearching = false,
                         hasDownloadSearched = true,
-                        downloadError = e.message ?: "Search failed"
+                        downloadError = friendlyError(e)
                     )
                 }
             }
@@ -389,7 +553,8 @@ class SearchViewModel @Inject constructor(
             while (true) {
                 delay(8_000)
                 val state = _uiState.value
-                val hasActive = state.activeTransfers.isNotEmpty() || state.activeJobs.isNotEmpty()
+                val hasActive = state.activeTransfers.isNotEmpty() || state.activeJobs.isNotEmpty() ||
+                    state.getStates.values.any { it.inFlight && it.jobId != null }
                 if (hasActive) {
                     refreshStatus()
                 } else {
@@ -402,6 +567,45 @@ class SearchViewModel @Inject constructor(
         }
     }
 }
+
+/** Where a download is, in words, from the server's job + transfer state. */
+internal fun GetButtonState.resolve(jp: JobProgress): GetButtonState {
+    val base = copy(
+        pct = jp.pct, received = jp.progress, total = jp.total,
+        speedBps = jp.speedBps, etaSeconds = jp.etaSeconds,
+        trackId = jp.trackId ?: trackId
+    )
+    return when (jp.status.lowercase()) {
+        "completed", "complete" -> base.copy(
+            state = GetState.Done, pct = 100f, error = null,
+            detail = if (jp.alreadyInLibrary) "Already in your library" else "Added to your library"
+        )
+        "failed", "error", "cancelled" -> base.copy(
+            state = GetState.Failed, error = jp.error ?: "The download failed"
+        )
+        "pending" -> base.copy(state = GetState.Searching, label = "Queued", detail = "Waiting for a free download slot")
+        else -> when (jp.transferState?.lowercase()) {
+            "transferring" -> base.copy(
+                state = GetState.Downloading,
+                detail = listOfNotNull(
+                    jp.speedBps.takeIf { it > 0 }?.let { "%.1f MB/s".format(it / 1_048_576.0) },
+                    jp.etaSeconds?.takeIf { it > 0 }?.let { formatEta(it) }
+                ).joinToString(" · ").ifBlank { null }
+            )
+            "requested", "queued", "connected" -> base.copy(
+                state = GetState.Searching, label = "Waiting", detail = "Waiting for the peer to start sending"
+            )
+            "completed" -> base.copy(state = GetState.Searching, label = "Adding", detail = "Adding to your library")
+            "failed", "denied" -> base.copy(
+                state = GetState.Searching, label = "Retrying", detail = "That source failed — trying another"
+            )
+            else -> base.copy(state = GetState.Searching, label = "Finding", detail = "Finding a source")
+        }
+    }
+}
+
+internal fun formatEta(seconds: Long): String =
+    if (seconds < 60) "${seconds}s left" else "${seconds / 60}m ${seconds % 60}s left"
 
 // endregion
 
@@ -511,6 +715,15 @@ fun SearchScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = 200.dp)
                     ) {
+                        item("status-banners") {
+                            StatusBanners(state = uiState)
+                        }
+                        yourDownloadsSection(
+                            state = uiState,
+                            onPlay = viewModel::playTrackId,
+                            onRetry = viewModel::triggerDownload,
+                            onClearFinished = viewModel::clearFinished
+                        )
                         if (uiState.query.isBlank()) {
                             // Empty state — show active downloads summary + recents
                             item("active") {
@@ -526,7 +739,8 @@ fun SearchScreen(
                                     expanded = recentExpanded,
                                     onToggle = { recentExpanded = !recentExpanded },
                                     recents = uiState.recentJobs,
-                                    onRefresh = viewModel::loadRecentHistory
+                                    onRefresh = viewModel::loadRecentHistory,
+                                    onPlay = viewModel::playTrackId
                                 )
                             }
                             item("emptyHint") {
@@ -551,7 +765,8 @@ fun SearchScreen(
                             getMoreSection(
                                 state = uiState,
                                 onSearchOnline = { viewModel.searchOnline() },
-                                onTrigger = { viewModel.triggerDownload(it) }
+                                onTrigger = { viewModel.triggerDownload(it) },
+                                onPlay = viewModel::playTrackId
                             )
 
                             item("activeFooter") {
@@ -722,7 +937,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.librarySection(
 private fun androidx.compose.foundation.lazy.LazyListScope.getMoreSection(
     state: SearchUiState,
     onSearchOnline: () -> Unit,
-    onTrigger: (DownloadResult) -> Unit
+    onTrigger: (DownloadResult) -> Unit,
+    onPlay: (String) -> Unit
 ) {
     if (state.query.isBlank()) return
 
@@ -781,6 +997,17 @@ private fun androidx.compose.foundation.lazy.LazyListScope.getMoreSection(
         item("dl-err") { ErrorBanner(text = state.downloadError) }
     }
 
+    state.libraryMatchId?.let { trackId ->
+        item("dl-have") {
+            InfoBanner(
+                icon = Icons.Default.LibraryMusic,
+                text = "You already have this song",
+                actionLabel = "Play",
+                onAction = { onPlay(trackId) }
+            )
+        }
+    }
+
     if (state.hasDownloadSearched && state.downloadResults.isEmpty() && !state.isDownloadSearching) {
         item("dl-empty") {
             Surface(
@@ -810,13 +1037,97 @@ private fun androidx.compose.foundation.lazy.LazyListScope.getMoreSection(
         }
     }
 
-    if (state.downloadResults.isNotEmpty()) {
-        items(state.downloadResults, key = { it.key() }) { result ->
+    // Rows already under "Your downloads" aren't repeated here.
+    val fresh = state.downloadResults.filter { it.key() !in state.pinned }
+    if (fresh.isNotEmpty()) {
+        items(fresh, key = { it.key() }) { result ->
             DownloadCandidateRow(
                 result = result,
                 getState = state.getStates[result.key()] ?: GetButtonState(),
-                onTrigger = { onTrigger(result) }
+                onTrigger = { onTrigger(result) },
+                onPlay = onPlay
             )
+        }
+    }
+}
+
+// endregion
+
+// region Your downloads
+
+private fun androidx.compose.foundation.lazy.LazyListScope.yourDownloadsSection(
+    state: SearchUiState,
+    onPlay: (String) -> Unit,
+    onRetry: (DownloadResult) -> Unit,
+    onClearFinished: () -> Unit
+) {
+    if (state.pinned.isEmpty()) return
+    item("yours-h") {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 8.dp, top = 8.dp)
+        ) {
+            Text(
+                text = "Your downloads",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            if (state.pinned.keys.any { state.getStates[it]?.inFlight != true }) {
+                TextButton(onClick = onClearFinished) { Text("Clear finished") }
+            }
+        }
+    }
+    items(state.pinned.entries.toList().asReversed(), key = { "yours-${it.key}" }) { (key, result) ->
+        DownloadCandidateRow(
+            result = result,
+            getState = state.getStates[key] ?: GetButtonState(),
+            onTrigger = { onRetry(result) },
+            onPlay = onPlay
+        )
+    }
+}
+
+@Composable
+private fun StatusBanners(state: SearchUiState) {
+    Column {
+        if (!state.soulseekOnline) {
+            InfoBanner(
+                icon = Icons.Default.CloudOff,
+                text = "Soulseek is offline on the server — downloads will wait until it reconnects"
+            )
+        }
+        state.statusError?.let { ErrorBanner(text = it) }
+    }
+}
+
+@Composable
+private fun InfoBanner(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    text: String,
+    actionLabel: String? = null,
+    onAction: () -> Unit = {}
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 4.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)
+        ) {
+            Icon(icon, contentDescription = null)
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(text = text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            if (actionLabel != null) {
+                TextButton(onClick = onAction) { Text(actionLabel) }
+            }
         }
     }
 }
@@ -904,8 +1215,8 @@ private fun TransferItem(transfer: TransferInfo, onCancel: () -> Unit) {
                 }
             },
             trailingContent = {
-                val isActive = transfer.state.equals("Queued", ignoreCase = true) ||
-                        transfer.state.equals("Transferring", ignoreCase = true)
+                val isActive = transfer.state.lowercase() in
+                        setOf("requested", "queued", "connected", "transferring")
                 if (isActive) {
                     IconButton(onClick = onCancel) {
                         Icon(
@@ -955,7 +1266,8 @@ private fun RecentDownloadsSection(
     expanded: Boolean,
     onToggle: () -> Unit,
     recents: List<JobInfo>,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onPlay: (String) -> Unit
 ) {
     Column(modifier = Modifier.padding(top = 8.dp)) {
         Surface(
@@ -1011,11 +1323,25 @@ private fun RecentDownloadsSection(
                                 Text(headline, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             },
                             supportingContent = {
+                                val statusText = when {
+                                    job.alreadyInLibrary -> "Already in your library"
+                                    job.status.equals("failed", true) && !job.error.isNullOrBlank() -> job.error
+                                    else -> job.status.replaceFirstChar { it.uppercase() }
+                                }
                                 Text(
-                                    text = job.status.replaceFirstChar { it.uppercase() },
+                                    text = statusText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = statusColor
+                                    color = statusColor,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                            },
+                            trailingContent = job.trackId?.let { id ->
+                                {
+                                    IconButton(onClick = { onPlay(id) }) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = "Play")
+                                    }
+                                }
                             },
                             leadingContent = {
                                 Icon(
@@ -1463,7 +1789,8 @@ private fun TrackRow(
 private fun DownloadCandidateRow(
     result: DownloadResult,
     getState: GetButtonState,
-    onTrigger: () -> Unit
+    onTrigger: () -> Unit,
+    onPlay: (String) -> Unit
 ) {
     Surface(
         color = Color.Transparent,
@@ -1514,7 +1841,11 @@ private fun DownloadCandidateRow(
                     }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                GetButton(getState = getState, onClick = onTrigger)
+                GetButton(
+                    getState = getState,
+                    onClick = onTrigger,
+                    onPlay = { getState.trackId?.let(onPlay) }
+                )
             }
             if (getState.state == GetState.Downloading && getState.total > 0) {
                 LinearProgressIndicator(
@@ -1524,7 +1855,10 @@ private fun DownloadCandidateRow(
                         .padding(top = 4.dp)
                 )
                 Text(
-                    text = "${getState.pct.toInt()}% · ${formatBytes(getState.received)} / ${formatBytes(getState.total)}",
+                    text = listOfNotNull(
+                        "${getState.pct.toInt()}% · ${formatBytes(getState.received)} / ${formatBytes(getState.total)}",
+                        getState.detail
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1533,6 +1867,13 @@ private fun DownloadCandidateRow(
                     text = getState.error,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error
+                )
+            } else if (getState.detail != null && getState.state != GetState.Idle) {
+                Text(
+                    text = getState.detail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (getState.state == GetState.Done) Color(0xFF2E7D32)
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -1563,7 +1904,7 @@ private fun QualityChip(format: String, bitRate: Int?) {
 }
 
 @Composable
-private fun GetButton(getState: GetButtonState, onClick: () -> Unit) {
+private fun GetButton(getState: GetButtonState, onClick: () -> Unit, onPlay: () -> Unit) {
     when (getState.state) {
         GetState.Idle -> {
             FilledTonalButton(onClick = onClick) {
@@ -1579,7 +1920,7 @@ private fun GetButton(getState: GetButtonState, onClick: () -> Unit) {
                     modifier = Modifier.size(14.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Queued", style = MaterialTheme.typography.labelLarge)
+                Text(getState.label, style = MaterialTheme.typography.labelLarge)
             }
         }
         GetState.Downloading -> {
@@ -1591,17 +1932,24 @@ private fun GetButton(getState: GetButtonState, onClick: () -> Unit) {
             }
         }
         GetState.Done -> {
+            val canPlay = getState.trackId != null
             FilledTonalButton(
-                onClick = {},
-                enabled = false,
+                onClick = onPlay,
+                enabled = canPlay,
                 colors = ButtonDefaults.filledTonalButtonColors(
                     containerColor = Color(0xFF2E7D32).copy(alpha = 0.18f),
-                    contentColor = Color(0xFF2E7D32)
+                    contentColor = Color(0xFF2E7D32),
+                    disabledContainerColor = Color(0xFF2E7D32).copy(alpha = 0.18f),
+                    disabledContentColor = Color(0xFF2E7D32)
                 )
             ) {
-                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(
+                    if (canPlay) Icons.Default.PlayArrow else Icons.Default.Check,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Done", style = MaterialTheme.typography.labelLarge)
+                Text(if (canPlay) "Play" else "Done", style = MaterialTheme.typography.labelLarge)
             }
         }
         GetState.Failed -> {

@@ -46,6 +46,13 @@ data class JobProgress(
     val pct: Float = 0f,
     val message: String? = null,
     val error: String? = null,
+    /** Library track to play once the job completes (new, or the copy already there). */
+    val trackId: String? = null,
+    val alreadyInLibrary: Boolean = false,
+    /** Soulseek transfer state: requested/queued/connected/transferring/... */
+    val transferState: String? = null,
+    val speedBps: Long = 0L,
+    val etaSeconds: Long? = null,
     val updatedAt: Long = System.currentTimeMillis()
 )
 
@@ -147,6 +154,64 @@ class DownloadProgressClient @Inject constructor(
             ))
         }
         recomputeHasActiveJobs()
+    }
+
+    /**
+     * Fold a REST job snapshot into the progress map — the fallback when the
+     * WebSocket is down or quiet, so rows still reach Done/Failed.
+     */
+    fun applyJobSnapshot(job: JobDetailResponse) {
+        if (job.id.isBlank() || job.status.isBlank()) return
+        _progress.update { current ->
+            val existing = current[job.id] ?: JobProgress(jobId = job.id)
+            current + (job.id to existing.copy(
+                status = job.status,
+                pct = if (job.status == "completed") 100f else existing.pct,
+                error = job.error ?: existing.error,
+                trackId = job.trackId ?: existing.trackId,
+                alreadyInLibrary = job.alreadyInLibrary || existing.alreadyInLibrary,
+                updatedAt = System.currentTimeMillis()
+            ))
+        }
+        recomputeHasActiveJobs()
+    }
+
+    /** Fold the REST transfer list (GET api/download/status) into the progress map. */
+    fun applyTransfers(transfers: List<TransferInfo>) {
+        val byJob = transfers.filter { !it.jobId.isNullOrBlank() }
+            .groupBy { it.jobId!! }
+            .mapValues { (_, ts) -> ts.firstOrNull { !isTerminalTransfer(it.state) } ?: ts.last() }
+        if (byJob.isEmpty()) return
+        _progress.update { current ->
+            var next = current
+            for ((jobId, t) in byJob) {
+                next = next + (jobId to mergeTransfer(
+                    current[jobId] ?: JobProgress(jobId = jobId),
+                    t.state, t.receivedBytes, t.totalBytes, t.speed, t.etaSeconds?.toLong()
+                ))
+            }
+            next
+        }
+        recomputeHasActiveJobs()
+    }
+
+    private fun isTerminalTransfer(state: String): Boolean =
+        state.lowercase() in setOf("completed", "failed", "denied")
+
+    private fun mergeTransfer(
+        existing: JobProgress, state: String?, received: Long, total: Long, speed: Long, eta: Long?
+    ): JobProgress {
+        if (existing.status == "completed" || existing.status == "failed") return existing
+        return existing.copy(
+            status = if (existing.status.isBlank() || existing.status == "pending") "running" else existing.status,
+            progress = received,
+            total = if (total > 0) total else existing.total,
+            pct = computePct(received, total, existing.pct),
+            transferState = state?.takeIf { it.isNotBlank() }?.lowercase() ?: existing.transferState,
+            speedBps = speed,
+            etaSeconds = eta,
+            updatedAt = System.currentTimeMillis()
+        )
     }
 
     fun clearTerminal() {
@@ -409,47 +474,69 @@ class DownloadProgressClient @Inject constructor(
         }
     }
 
+    // Server shape: {"type":"job_update","job":{id,status,progress,total,description,
+    // track_id?, already_in_library?, error?}} — see backend/api/websocket.py.
     private fun handleJobUpdate(obj: JSONObject) {
-        val data = obj.optJSONObject("data") ?: obj
-        val jobId = data.optString("job_id", data.optString("id", ""))
+        val data = obj.optJSONObject("job") ?: obj.optJSONObject("data") ?: obj
+        val jobId = data.optString("id", data.optString("job_id", ""))
         if (jobId.isBlank()) return
         val status = data.optString("status", "")
         val progress = data.optLong("progress", 0L)
         val total = data.optLong("total", 0L)
-        val message = if (data.has("message")) data.optString("message").takeIf { it.isNotBlank() } else null
-        val error = if (data.has("error")) data.optString("error").takeIf { it.isNotBlank() } else null
+        val message = data.optString("description").takeIf { it.isNotBlank() }
+            ?: data.optString("message").takeIf { it.isNotBlank() }
+        val error = data.optString("error").takeIf { it.isNotBlank() }
+        val trackId = data.optString("track_id").takeIf { it.isNotBlank() && it != "null" }
+        val already = data.optBoolean("already_in_library", false)
         _progress.update { current ->
             val existing = current[jobId] ?: JobProgress(jobId = jobId)
-            val pct = computePct(progress, total, existing.pct)
+            // Job progress is a 0/1 step count except while bytes are mirrored
+            // onto it; only trust it once the job is finished.
+            val terminal = status == "completed" || status == "failed"
             current + (jobId to existing.copy(
                 status = if (status.isNotBlank()) status else existing.status,
-                progress = if (progress > 0) progress else existing.progress,
-                total = if (total > 0) total else existing.total,
-                pct = pct,
+                pct = if (status == "completed") 100f else existing.pct,
+                progress = if (terminal && total > 1) progress else existing.progress,
+                total = if (terminal && total > 1) total else existing.total,
                 message = message ?: existing.message,
                 error = error ?: existing.error,
+                trackId = trackId ?: existing.trackId,
+                alreadyInLibrary = already || existing.alreadyInLibrary,
                 updatedAt = System.currentTimeMillis()
             ))
         }
         recomputeHasActiveJobs()
     }
 
+    // Server shape: {"type":"transfer_progress","transfers":[{job_id, state,
+    // received_bytes, total_bytes, speed, eta_seconds, error, ...}]} — the full
+    // transfer list every time.
     private fun handleTransferProgress(obj: JSONObject) {
-        val data = obj.optJSONObject("data") ?: obj
-        val jobId = data.optString("job_id", "")
-        if (jobId.isBlank()) return
-        val received = data.optLong("received_bytes", data.optLong("progress", 0L))
-        val total = data.optLong("total_bytes", data.optLong("total", 0L))
+        val transfers = obj.optJSONArray("transfers") ?: return
+        val byJob = mutableMapOf<String, JSONObject>()
+        for (i in 0 until transfers.length()) {
+            val t = transfers.optJSONObject(i) ?: continue
+            val jobId = t.optString("job_id").takeIf { it.isNotBlank() && it != "null" } ?: continue
+            // A job that fell back to another source has several transfers;
+            // the live one wins over the one that already failed.
+            if (byJob[jobId]?.optString("state")?.let { !isTerminalTransfer(it) } == true &&
+                isTerminalTransfer(t.optString("state"))) continue
+            byJob[jobId] = t
+        }
+        if (byJob.isEmpty()) return
         _progress.update { current ->
-            val existing = current[jobId] ?: JobProgress(jobId = jobId)
-            val pct = computePct(received, total, existing.pct)
-            current + (jobId to existing.copy(
-                status = if (existing.status.isBlank() || existing.status == "pending") "running" else existing.status,
-                progress = if (received > 0) received else existing.progress,
-                total = if (total > 0) total else existing.total,
-                pct = pct,
-                updatedAt = System.currentTimeMillis()
-            ))
+            var next = current
+            for ((jobId, t) in byJob) {
+                next = next + (jobId to mergeTransfer(
+                    current[jobId] ?: JobProgress(jobId = jobId),
+                    t.optString("state"),
+                    t.optLong("received_bytes", 0L),
+                    t.optLong("total_bytes", 0L),
+                    t.optLong("speed", 0L),
+                    if (t.isNull("eta_seconds")) null else t.optLong("eta_seconds")
+                ))
+            }
+            next
         }
         recomputeHasActiveJobs()
     }

@@ -173,6 +173,19 @@ class LibraryRepository @Inject constructor(
         return artist to albums
     }
 
+    /**
+     * A track by id, fetched from the server when the local DB doesn't have it
+     * yet (a download that finished since the last sync), and saved locally so
+     * Android Auto and the Watch paths can see it without waiting for a sync.
+     */
+    suspend fun fetchTrack(id: String): Track? {
+        getTrackById(id)?.let { return it }
+        val song = api.getSong(id).response.song ?: return null
+        val track = song.toDomain()
+        database.trackDao().upsertAll(listOf(TrackEntity.fromDomain(track)))
+        return track
+    }
+
     suspend fun search(query: String): Triple<List<Artist>, List<Album>, List<Track>> {
         val response = api.search3(query)
         val result = response.response.searchResult3

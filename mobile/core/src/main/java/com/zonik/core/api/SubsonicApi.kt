@@ -39,6 +39,9 @@ interface SubsonicApi {
         @Query("songOffset") songOffset: Int = 0
     ): SearchResponse
 
+    @GET("rest/getSong.view")
+    suspend fun getSong(@Query("id") id: String): SongResponse
+
     @GET("rest/getRandomSongs.view")
     suspend fun getRandomSongs(
         @Query("size") size: Int = 50,
