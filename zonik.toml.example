@@ -57,7 +57,8 @@ server_name = "Zonik"
 
 [assistant]
 claude_api_key = ""
-claude_model = "claude-sonnet-4-20250514"
+claude_model = "claude-sonnet-5"
+# claude_fast_model = "claude-haiku-4-5"   # cheap model for resolving vague song searches
 # Record one ai_usage row per Claude API call (powers the AI usage dashboard)
 track_ai_usage = true
 

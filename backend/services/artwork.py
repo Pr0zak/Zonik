@@ -63,26 +63,35 @@ async def _deezer_cover(artist: str, album: str | None, track: str | None) -> by
     """Fetch cover from Deezer API."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            query = f'artist:"{artist}"'
-            if album:
-                query += f' album:"{album}"'
-            elif track:
-                query += f' track:"{track}"'
-
+            # Plain text: Deezer's fielded syntax (artist:"..." album:"...")
+            # returns no results even for exact names, so this lookup never
+            # found anything. Plain search is fuzzy, so check the artist.
+            from backend.services.library_match import norm_artist
+            query = " ".join(filter(None, [artist, album or track]))
             resp = await client.get(
                 "https://api.deezer.com/search",
-                params={"q": query, "limit": 1},
+                params={"q": query, "limit": 5},
             )
             if resp.status_code != 200:
                 return None
 
-            data = resp.json()
-            tracks = data.get("data", [])
-            if not tracks:
+            from backend.services.library_match import norm_title
+            want = norm_artist(artist)
+            by_artist = [
+                t for t in resp.json().get("data", [])
+                if norm_artist((t.get("artist") or {}).get("name", "")) == want
+            ]
+            # For an album cover, a hit from that album beats any song by the artist.
+            want_album = norm_title(album) if album else None
+            hit = next(
+                (t for t in by_artist if want_album and norm_title((t.get("album") or {}).get("title", "")) == want_album),
+                by_artist[0] if by_artist else None,
+            )
+            if not hit:
                 return None
 
             # Get album cover (large)
-            album_data = tracks[0].get("album", {})
+            album_data = hit.get("album", {})
             cover_url = album_data.get("cover_xl") or album_data.get("cover_big") or album_data.get("cover_medium")
             if not cover_url:
                 return None

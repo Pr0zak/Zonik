@@ -45,6 +45,21 @@ def norm_artist(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", primary.lower())
 
 
+_CREDIT_SPLIT_RE = re.compile(r"\s*(?:,|&|/|\+|\bx\b|\band\b|\bwith\b|\bfeat\.?|\bfeaturing\b|\bft\.?)\s*", re.IGNORECASE)
+
+
+def artist_names(s: str) -> set[str]:
+    """Every credited artist in a credit line, normalized: "College & Electric
+    Youth" -> {"college", "electricyouth"}."""
+    return {re.sub(r"[^a-z0-9]", "", p.lower()) for p in _CREDIT_SPLIT_RE.split(s or "")} - {""}
+
+
+def artists_overlap(a: str, b: str) -> bool:
+    """Do two credit lines share an artist? Catalogs credit collaborations
+    differently ("College & Electric Youth" vs "COLLEGE")."""
+    return bool(artist_names(a) & artist_names(b))
+
+
 async def _library_index(db: AsyncSession) -> dict[tuple[str, str], str]:
     global _index, _index_built_at, _index_count
     count = (await db.execute(select(func.count(Track.id)))).scalar_one()

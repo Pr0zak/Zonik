@@ -100,6 +100,7 @@ async def is_blacklisted(db: AsyncSession, artist: str, track: str) -> str | Non
 
 
 class SearchRequest(BaseModel):
+    ai: bool = False  # rank results with the AI download advisor (adds a Claude call)
     artist: str = ""
     track: str = ""
     query: str = ""
@@ -234,7 +235,9 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
         # Optional AI scoring
         from backend.config import get_settings
         ai_settings = get_settings().assistant
-        if ai_settings.ai_download_advisor and ai_settings.claude_api_key and len(results) > 3:
+        # Opt-in per request: it's a blocking Claude call on the search path,
+        # so only callers that show its pick (the web Downloads page) ask.
+        if req.ai and ai_settings.ai_download_advisor and ai_settings.claude_api_key and len(results) > 3:
             try:
                 from backend.services.ai.download_advisor import rank_search_results
                 ai_result = await rank_search_results(artist, track, results[:15])

@@ -113,6 +113,34 @@ async def _record_usage(
         log.warning("Failed to record AI usage (%s/%s): %s", feature, model, e)
 
 
+# Newer models reject sampling parameters (temperature/top_p) with a 400, and
+# some think by default, which spends the small max_tokens budgets these callers
+# use. Matched by prefix so dated ids (claude-sonnet-5-2026...) are covered.
+_NO_SAMPLING_PREFIXES = (
+    "claude-sonnet-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8",
+    "claude-fable", "claude-mythos",
+)
+# Thinking can be switched off on these; the callers here are short JSON
+# extraction tasks that ran without thinking on the models they were written for.
+_THINKING_OPTIONAL_PREFIXES = ("claude-sonnet-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8")
+_OPUS_5_5_PREFIX = "claude-opus-5-5"
+
+
+def _model_params(model: str, max_tokens: int, temperature: float | None) -> dict:
+    """Request fields that depend on what the model accepts."""
+    out: dict = {"max_tokens": max_tokens}
+    no_sampling = model.startswith(_NO_SAMPLING_PREFIXES)
+    if temperature is not None and not no_sampling:
+        out["temperature"] = temperature
+    if model.startswith(_OPUS_5_5_PREFIX) or model.startswith(("claude-fable", "claude-mythos")):
+        # Thinking is always on: keep it brief and leave room for the answer.
+        out["output_config"] = {"effort": "low"}
+        out["max_tokens"] = max_tokens + 4096
+    elif model.startswith(_THINKING_OPTIONAL_PREFIXES):
+        out["thinking"] = {"type": "disabled"}
+    return out
+
+
 async def call_claude(
     prompt: str,
     *,
@@ -121,11 +149,17 @@ async def call_claude(
     model: str | None = None,
     temperature: float | None = None,
     feature: str = "unknown",
+    output_schema: dict | None = None,
 ) -> dict:
     """Send a prompt to Claude with concurrency control and token tracking.
 
     `feature` labels the caller (e.g. "playlist_gen", "nl_search") and is stored
     on the ai_usage row so cost can be attributed per feature.
+
+    `output_schema` (a JSON Schema object) constrains the reply to valid JSON of
+    that shape via structured outputs; "parsed" then holds it. If the model
+    rejects structured outputs the call is retried once without it, and the
+    usual JSON extraction applies.
 
     Returns dict with keys:
       - "text": raw response text
@@ -143,13 +177,16 @@ async def call_claude(
     messages = [{"role": "user", "content": prompt}]
     body: dict = {
         "model": use_model,
-        "max_tokens": max_tokens,
         "messages": messages,
+        **_model_params(use_model, max_tokens, temperature),
     }
     if system:
         body["system"] = system
-    if temperature is not None:
-        body["temperature"] = temperature
+    if output_schema is not None:
+        body["output_config"] = {
+            **body.get("output_config", {}),
+            "format": {"type": "json_schema", "schema": output_schema},
+        }
 
     # The semaphore guards *Claude* concurrency, so it wraps the HTTP call and
     # nothing else. Telemetry (an independent SQLite session that can sit on a
@@ -190,6 +227,18 @@ async def call_claude(
         )
         return returned
 
+    if resp.status_code == 400 and output_schema is not None and "output_config" in resp.text:
+        # This model doesn't take structured outputs: ask again without them.
+        log.info("Claude %s rejected structured outputs; retrying without", use_model)
+        await _record_usage(
+            feature=feature, model=use_model, started=started,
+            success=False, error="http_400_output_config",
+        )
+        return await call_claude(
+            prompt, system=system, max_tokens=max_tokens, model=model,
+            temperature=temperature, feature=feature,
+        )
+
     try:
         if resp.status_code != 200:
             error_body = resp.text[:500]
@@ -221,7 +270,11 @@ async def call_claude(
             )
             return {"error": "Empty response from Claude"}
 
-        text = content[0].get("text", "")
+        # Thinking blocks can come first on newer models; the answer is the
+        # text blocks.
+        text = "".join(b.get("text", "") for b in content if b.get("type") == "text")
+        if data.get("stop_reason") == "refusal":
+            log.warning("Claude refused a %s request", feature)
 
         await _track_usage(input_tokens=input_tok, output_tokens=output_tok)
         await _record_usage(

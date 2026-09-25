@@ -437,9 +437,10 @@
 			// Try to split "Artist - Track" for blacklist check, otherwise send as query
 			const q = searchQuery.trim();
 			const parts = q.split(/\s*[-–—]\s*/);
+			// ai: this page shows the AI download advisor's pick (the server skips it otherwise)
 			const body = parts.length >= 2
-				? { artist: parts[0], track: parts.slice(1).join(' ') }
-				: { query: q };
+				? { artist: parts[0], track: parts.slice(1).join(' '), ai: true }
+				: { query: q, ai: true };
 			const data = await fetch('/api/download/search', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },

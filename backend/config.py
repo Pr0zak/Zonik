@@ -112,7 +112,10 @@ class SubsonicConfig(BaseModel):
 class AssistantConfig(BaseModel):
     enabled: bool = True
     claude_api_key: str = ""
-    claude_model: str = "claude-sonnet-4-20250514"
+    claude_model: str = "claude-sonnet-5"
+    # Small, latency-sensitive calls (resolving "that song from ..." into
+    # artist/title candidates) use a cheaper model.
+    claude_fast_model: str = "claude-haiku-4-5"
     max_suggestions_per_call: int = 20
     w_artist_affinity: float = 0.25
     w_genre_match: float = 0.20
@@ -130,7 +133,8 @@ class AssistantConfig(BaseModel):
     ai_mood_tags: bool = True
     ai_insights: bool = True
     ai_duplicate_resolver: bool = True
-    ai_download_advisor: bool = True
+    ai_download_advisor: bool = True  # only runs when a /search request asks (ai=true)
+    ai_track_resolver: bool = True  # AI candidates for vague catalog/voice searches
     ai_playlist_curator: bool = True
     # Usage/cost accounting — write one ai_usage row per Claude API call.
     # Turning this off keeps the in-memory session counters but stops the DB writes.
