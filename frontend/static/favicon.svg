@@ -1,29 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">
   <defs>
-    <clipPath id="c1"><rect width="240" height="240" rx="44"/></clipPath>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3B2F9E"/>
+      <stop offset="1" stop-color="#15103A"/>
+    </linearGradient>
   </defs>
-  <rect width="240" height="240" rx="44" fill="#07060f"/>
-  <g clip-path="url(#c1)">
-    <circle cx="120" cy="120" r="108" fill="#0d0b18"/>
-    <circle cx="120" cy="120" r="100" fill="none" stroke="#1c1836" stroke-width="4"/>
-    <circle cx="120" cy="120" r="78"  fill="none" stroke="#1c1836" stroke-width="4"/>
-    <circle cx="120" cy="120" r="56"  fill="none" stroke="#1c1836" stroke-width="4"/>
-    <circle cx="120" cy="120" r="38" fill="#08060e"/>
-    <circle cx="120" cy="120" r="38" fill="none" stroke="#534AB7" stroke-width="2"/>
+  <rect width="240" height="240" rx="44" fill="url(#g)"/>
 
-    <!-- Z with both terminals running on into clef curls with ball terminals.
-         Identical geometry to mobile/{app,wear}/src/main/res/drawable/ic_launcher_foreground.xml
-         — both authored in this 240-unit space. Keep them in sync. -->
-    <path d="M93.4,87.7 L152.3,87.7 L87.7,152.3 L148.5,152.3"
-          fill="none" stroke="#AFA9EC" stroke-width="16.7"
-          stroke-linecap="square" stroke-linejoin="miter"/>
-
-    <path d="M148.5,152.3 C176.05,152.3 187.45,136.15 180.8,123.8 C175.1,113.35 160.85,115.25 159.9,126.65"
-          fill="none" stroke="#AFA9EC" stroke-width="16.7" stroke-linecap="round"/>
-    <circle cx="159.9" cy="128.55" r="11.9" fill="#AFA9EC"/>
-
-    <path d="M93.4,87.7 C65.85,87.7 54.45,103.85 61.1,116.2 C66.8,126.65 81.05,124.75 82,113.35"
-          fill="none" stroke="#AFA9EC" stroke-width="16.7" stroke-linecap="round"/>
-    <circle cx="82" cy="110.45" r="11.9" fill="#AFA9EC"/>
+  <!-- "Broadcast": a Z between two pairs of sound arcs. Same geometry as
+       mobile/{app,wear}/src/main/res/drawable/ic_launcher_foreground.xml (both
+       authored in this 240-unit space), scaled up 1.35x here because the web
+       icon is not cropped by a launcher mask. Keep them in sync. -->
+  <g transform="translate(120 120) scale(1.35) translate(-120 -120)"
+     fill="none" stroke="#AFA9EC" stroke-linecap="round">
+    <path d="M98,98 L142,98 L98,142 L142,142" stroke-width="13" stroke-linejoin="round"/>
+    <path d="M158.30,87.86 A50,50 0 0,1 158.30,152.14 M81.70,152.14 A50,50 0 0,1 81.70,87.86" stroke-width="8"/>
+    <path d="M174.72,83.09 A66,66 0 0,1 174.72,156.91 M65.28,156.91 A66,66 0 0,1 65.28,83.09" stroke-width="8" stroke-opacity="0.6"/>
   </g>
 </svg>
