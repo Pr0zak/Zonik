@@ -35,7 +35,7 @@ async def rank_search_results(
             "filename": r.get("filename", ""),
             "size_mb": round(r.get("size", 0) / 1024 / 1024, 1),
             "bitrate": r.get("bitrate"),
-            "format": r.get("format", ""),
+            "format": r.get("extension") or r.get("format", ""),
             "username": r.get("username", ""),
             "speed": r.get("speed", 0),
             "queue_length": r.get("queue_length", 0),

@@ -129,6 +129,7 @@
 				});
 				const data = await res.json();
 				if (data.error) { trackStatus[trackKey(t)] = 'failed'; continue; }
+				if (data.status === 'in_library') { delete trackStatus[trackKey(t)]; t.in_library = true; continue; }
 				trackStatus[trackKey(t)] = 'downloading';
 				started++;
 			} catch {

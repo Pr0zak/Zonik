@@ -18,6 +18,8 @@ from backend.soulseek.protocol.types import (
 log = logging.getLogger(__name__)
 
 DEFAULT_SEARCH_TIMEOUT = 25
+SEARCH_MIN_WAIT = 5.0   # never return before this, so slower peers get a chance
+SEARCH_QUIET = 3.0      # ...then stop once no new response for this long
 DEFAULT_PEER_TIMEOUT = 20
 
 
@@ -56,6 +58,8 @@ class SoulseekClient:
         self.peers: dict[str, PeerConnection] = {}
         self._search_results: dict[bytes, list[SearchResult]] = {}
         self._search_events: dict[bytes, asyncio.Event] = {}
+        self._search_max: dict[bytes, int] = {}
+        self._search_last: dict[bytes, float] = {}
         self._peer_address_futures: dict[str, asyncio.Future] = {}
         self._last_broadcast: float = 0
         self._peer_cleanup_task: asyncio.Task | None = None
@@ -125,22 +129,46 @@ class SoulseekClient:
         timeout: float = DEFAULT_SEARCH_TIMEOUT,
         max_responses: int = 50,
     ) -> list[SearchResult]:
-        """Search the Soulseek network and collect results for `timeout` seconds."""
+        """Search the Soulseek network and collect results.
+
+        Returns as soon as results settle — at least SEARCH_MIN_WAIT seconds in,
+        with responses in hand and none new for SEARCH_QUIET seconds — or when
+        max_responses peers have answered. Only a search nobody answers waits
+        the full `timeout`.
+        """
         token = os.urandom(4)
-        self._search_results[token] = []
-        self._search_events[token] = asyncio.Event()
+        results_list: list[SearchResult] = []
+        event = asyncio.Event()
+        self._search_results[token] = results_list
+        self._search_events[token] = event
+        self._search_max[token] = max_responses
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        self._search_last[token] = started
 
-        await self.server.file_search(token, query)
-
-        # Wait for timeout or max_responses
         try:
-            await asyncio.wait_for(self._search_events[token].wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            pass
-
-        results = self._search_results.pop(token, [])
-        self._search_events.pop(token, None)
-        return results[:max_responses]
+            await self.server.file_search(token, query)
+            while True:
+                now = loop.time()
+                remaining = timeout - (now - started)
+                if remaining <= 0 or event.is_set():
+                    break
+                if (
+                    results_list
+                    and now - started >= SEARCH_MIN_WAIT
+                    and now - self._search_last.get(token, started) >= SEARCH_QUIET
+                ):
+                    break
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=min(0.5, remaining))
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            self._search_results.pop(token, None)
+            self._search_events.pop(token, None)
+            self._search_max.pop(token, None)
+            self._search_last.pop(token, None)
+        return results_list[:max_responses]
 
     async def download(self, username: str, filename: str, job_id: str | None = None) -> Transfer:
         """Initiate a download from a specific user. job_id links the transfer to its Job for progress sync."""
@@ -341,6 +369,11 @@ class SoulseekClient:
                     queue_length=msg["queue_length"],
                 )
                 self._search_results[token].append(result)
+                self._search_last[token] = asyncio.get_running_loop().time()
+                if len(self._search_results[token]) >= self._search_max.get(token, 50):
+                    event = self._search_events.get(token)
+                    if event:
+                        event.set()
 
         elif kind == "transfer_request":
             if msg.get("direction") == TransferDirection.UPLOAD:

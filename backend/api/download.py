@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 
@@ -119,6 +120,49 @@ class BulkDownloadRequest(BaseModel):
     source: str | None = None
 
 
+async def find_in_library(db: AsyncSession, artist: str, track: str) -> str | None:
+    """Library track id for artist+track, or None.
+
+    Uses the discovery matcher (case, punctuation and "feat." insensitive). That
+    matcher also ignores a trailing "(...)", so a request that names a version
+    — "(Live)", "[Remix]" — is never matched: the plain song being in the
+    library doesn't mean that version is.
+    """
+    artist, track = (artist or "").strip(), (track or "").strip()
+    if not artist or not track or re.search(r"[\(\[]", track):
+        return None
+    from backend.api.discovery import _batch_library_match
+    items = [{"name": track, "artist": artist}]
+    await _batch_library_match(db, items)
+    return items[0].get("track_id")
+
+
+def job_outcome(status: str, result_json: str | None) -> dict:
+    """What a client needs to finish a download row: the playable track, or why not.
+
+    Sent on the final job_update so clients don't have to fetch the job and
+    parse its result string.
+    """
+    try:
+        result = json.loads(result_json) if result_json else {}
+    except (TypeError, ValueError):
+        result = {}
+    if not isinstance(result, dict):
+        return {}
+    out: dict = {}
+    if result.get("track_id"):
+        out["track_id"] = result["track_id"]
+    if result.get("already_in_library"):
+        out["already_in_library"] = True
+    if status == "failed":
+        error = result.get("error") or result.get("message")
+        if error and result.get("last_error") and result["last_error"] != error:
+            error = f"{error}: {result['last_error']}"
+        if error:
+            out["error"] = error
+    return out
+
+
 @router.post("/search")
 async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)):
     """Search Soulseek P2P network — returns all results with quality info."""
@@ -203,7 +247,10 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
             except Exception as e:
                 log.debug("AI download advisor error: %s", e)
 
-        return {"results": results, "count": len(results), "users": len(users)}
+        return {
+            "results": results, "count": len(results), "users": len(users),
+            "library_track_id": await find_in_library(db, artist, track),
+        }
 
     # Legacy slskd fallback — limited results
     candidates = await search_multi_strategy(artist, track)
@@ -233,6 +280,14 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     if reason:
         return {"error": "blacklisted", "reason": reason}
 
+    # Auto-download (no specific file picked, not an upgrade) of a song the
+    # library already has: nothing to fetch, hand back the track. A picked file
+    # still goes ahead — it may be a better copy, and the importer sorts that out.
+    if not req.filename and not req.target_track_id:
+        in_lib = await find_in_library(db, req.artist, req.track)
+        if in_lib:
+            return {"status": "in_library", "track_id": in_lib}
+
     # Dedup: skip if same artist+track already pending/running
     existing = await _find_existing_download(db, req.artist, req.track)
     if existing:
@@ -240,28 +295,28 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         return {"status": "already_downloading", "job_id": existing}
 
     job_id = str(uuid.uuid4())
+    desc = f"{req.artist} — {req.track}"
+    card = f"dl:{req.source}" if req.source else "dl"
+    sem = _get_semaphore()
+
+    # Write the Job row before returning its id, so a client that looks the job
+    # up straight away finds it instead of "Job not found".
+    initial_status = "pending" if sem.locked() else "running"
+    async with async_session() as job_sess:
+        job = Job(
+            id=job_id, type="download", card=card, status=initial_status,
+            started_at=datetime.utcnow(),
+            tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued" if initial_status == "pending" else "pending"}]),
+        )
+        job_sess.add(job)
+        await job_sess.commit()
+        job_sess.expunge(job)
+    await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
 
     async def do_download():
-        desc = f"{req.artist} — {req.track}"
-        card = f"dl:{req.source}" if req.source else "dl"
-        sem = _get_semaphore()
-
-        # Create job with short-lived session
-        initial_status = "pending" if sem.locked() else "running"
-        async with async_session() as db:
-            job = Job(
-                id=job_id, type="download", card=card, status=initial_status,
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued" if initial_status == "pending" else "pending"}]),
-            )
-            db.add(job)
-            await db.commit()
-            db.expunge(job)
-        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
-
         # Wait for semaphore — no DB session held
         async with sem:
-            if initial_status == "pending":
+            if job.status == "pending":
                 job.status = "running"
                 await _save_job_obj(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
@@ -282,6 +337,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
     async def _save_job():
         await _save_job_obj(job)
 
+    outcome: dict = {}  # extra facts for the job result, set by _import_or_fail
+
     def _file_size(path):
         """Get file size in bytes, or 0 if unavailable."""
         try:
@@ -299,11 +356,19 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         """
         fsize = _file_size(path)
         reasons: list[str] = []
+        existing_ids: list[str] = []
         async with async_session() as import_sess:
             track_id = await import_downloaded_file(
                 import_sess, path, artist_hint=req.artist, target_track_id=req.target_track_id,
-                reasons=reasons,
+                reasons=reasons, existing_ids=existing_ids,
             )
+        if not track_id and existing_ids:
+            # The library already has this song at equal or better quality. The
+            # listener asked for the song, not this particular file, so that's
+            # a success: hand back the track they already have. (This used to
+            # fail the job and count against a peer that sent a good file.)
+            outcome["already_in_library"] = True
+            return existing_ids[0], fsize, None
         if not track_id:
             # The importer says why; most rejections are deliberate (duplicate, not an
             # upgrade, wrong song), not broken files as this message used to claim.
@@ -662,10 +727,18 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         job.result = json.dumps({"error": str(e)})
     finally:
         job.finished_at = datetime.utcnow()
+        if outcome and job.status == "completed":
+            try:
+                job.result = json.dumps({**json.loads(job.result or "{}"), **outcome})
+            except (TypeError, ValueError):
+                pass
         # Capture status before save (avoid reading from detached ORM object later)
         final_status = job.status
         await _save_job()
-        await broadcast_job_update({"id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1, "description": desc})
+        await broadcast_job_update({
+            "id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1,
+            "description": desc, **job_outcome(final_status, job.result),
+        })
         # Clean up zero-byte and non-audio leftovers in download dir
         try:
             from backend.services.scanner import cleanup_download_dir

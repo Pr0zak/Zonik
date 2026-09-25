@@ -554,6 +554,7 @@ async def import_downloaded_file(
     artist_hint: str = "",
     target_track_id: str | None = None,
     reasons: list[str] | None = None,
+    existing_ids: list[str] | None = None,
 ) -> str | None:
     """Move a downloaded file into the music library and index it.
 
@@ -565,6 +566,11 @@ async def import_downloaded_file(
     `reasons` to learn why: a short user-facing sentence is appended to it. (Most
     rejections are deliberate — duplicate, not an upgrade, wrong song — and the
     download job used to report all of them as "empty, truncated, or unreadable".)
+
+    Pass `existing_ids` to learn which library track made a download redundant:
+    when the file is rejected because the library already has that song at
+    equal or better quality, its id is appended, so the caller can hand the
+    listener the track they asked for instead of a failure.
     """
     import shutil
 
@@ -783,6 +789,8 @@ async def import_downloaded_file(
                 await _mark_upgrade_failed(db, existing.id, "Downloaded file not higher quality")
                 src.unlink(missing_ok=True)
                 _why(f"already in the library as {existing.format or 'a'} at equal or better quality")
+                if existing_ids is not None:
+                    existing_ids.append(existing.id)
                 return None
             # Different version (remix, acoustic, live, etc.) — fall through to normal import
 
@@ -805,6 +813,12 @@ async def import_downloaded_file(
             log.info(f"[import] Skipping duplicate file (same name, similar size): {src.name}")
             src.unlink(missing_ok=True)
             _why("the same file is already in the library")
+            if existing_ids is not None:
+                dup_id = (await db.execute(
+                    select(Track.id).where(Track.file_path == str(dest))
+                )).scalar_one_or_none()
+                if dup_id:
+                    existing_ids.append(dup_id)
             return None
         # Different size — genuinely different file, add suffix
         stem, ext = dest.stem, dest.suffix

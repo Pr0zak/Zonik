@@ -11,6 +11,7 @@ from backend.api.helpers import paginate
 from backend.database import get_db
 from backend.models.job import Job
 from backend.api.websocket import broadcast_job_update
+from backend.api.download import job_outcome
 
 router = APIRouter()
 
@@ -123,6 +124,7 @@ async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, s
         if j.type in ("download", "bulk_download"):
             item["result"] = j.result
             item["tracks"] = j.tracks
+            item.update(job_outcome(j.status, j.result))
         items.append(item)
     return {"items": items, "total": total}
 
@@ -408,4 +410,5 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "tracks": job.tracks,
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        **job_outcome(job.status, job.result),
     }
