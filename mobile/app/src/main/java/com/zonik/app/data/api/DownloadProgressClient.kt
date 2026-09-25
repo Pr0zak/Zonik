@@ -49,6 +49,8 @@ data class JobProgress(
     /** Library track to play once the job completes (new, or the copy already there). */
     val trackId: String? = null,
     val alreadyInLibrary: Boolean = false,
+    /** Peers that failed this job — excluded when trying another source. */
+    val failedSources: List<String> = emptyList(),
     /** Soulseek transfer state: requested/queued/connected/transferring/... */
     val transferState: String? = null,
     val speedBps: Long = 0L,
@@ -170,6 +172,7 @@ class DownloadProgressClient @Inject constructor(
                 error = job.error ?: existing.error,
                 trackId = job.trackId ?: existing.trackId,
                 alreadyInLibrary = job.alreadyInLibrary || existing.alreadyInLibrary,
+                failedSources = job.failedSources.ifEmpty { existing.failedSources },
                 updatedAt = System.currentTimeMillis()
             ))
         }
@@ -488,6 +491,9 @@ class DownloadProgressClient @Inject constructor(
         val error = data.optString("error").takeIf { it.isNotBlank() }
         val trackId = data.optString("track_id").takeIf { it.isNotBlank() && it != "null" }
         val already = data.optBoolean("already_in_library", false)
+        val failedSources = data.optJSONArray("failed_sources")?.let { arr ->
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { u -> u.isNotBlank() } }
+        } ?: emptyList()
         _progress.update { current ->
             val existing = current[jobId] ?: JobProgress(jobId = jobId)
             // Job progress is a 0/1 step count except while bytes are mirrored
@@ -502,6 +508,7 @@ class DownloadProgressClient @Inject constructor(
                 error = error ?: existing.error,
                 trackId = trackId ?: existing.trackId,
                 alreadyInLibrary = already || existing.alreadyInLibrary,
+                failedSources = failedSources.ifEmpty { existing.failedSources },
                 updatedAt = System.currentTimeMillis()
             ))
         }

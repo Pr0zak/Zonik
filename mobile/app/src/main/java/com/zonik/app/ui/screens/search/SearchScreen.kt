@@ -71,9 +71,24 @@ data class GetButtonState(
     /** Library track to play once done. */
     val trackId: String? = null,
     val speedBps: Long = 0L,
-    val etaSeconds: Long? = null
+    val etaSeconds: Long? = null,
+    /** Peers that failed this job, skipped by "Try another source". */
+    val failedSources: List<String> = emptyList()
 ) {
     val inFlight: Boolean get() = state == GetState.Searching || state == GetState.Downloading
+}
+
+/**
+ * Something you pressed Get on: a catalog song (the server picks the file) or
+ * a specific file from the network list.
+ */
+data class DownloadRow(
+    val artist: String,
+    val track: String,
+    val catalog: CatalogTrack? = null,
+    val file: DownloadResult? = null
+) {
+    val title: String get() = catalog?.title ?: file?.displayName ?: track
 }
 
 data class SearchUiState(
@@ -97,7 +112,12 @@ data class SearchUiState(
     val recentJobs: List<JobInfo> = emptyList(),
     val getStates: Map<String, GetButtonState> = emptyMap(),
     /** Rows you pressed Get on, kept across query changes until cleared. */
-    val pinned: Map<String, DownloadResult> = emptyMap(),
+    val pinned: Map<String, DownloadRow> = emptyMap(),
+    /** Catalog (Deezer/Last.fm) matches for the query, owned or not. */
+    val catalog: List<CatalogTrack> = emptyList(),
+    val isCatalogSearching: Boolean = false,
+    val hasCatalogSearched: Boolean = false,
+    val catalogError: String? = null,
     val progress: Map<String, JobProgress> = emptyMap(),
     /** Set when the download status couldn't be refreshed. */
     val statusError: String? = null,
@@ -133,7 +153,11 @@ class SearchViewModel @Inject constructor(
 
     private var librarySearchJob: Job? = null
     private var downloadSearchJob: Job? = null
+    private var catalogSearchJob: Job? = null
     private var statusPollJob: Job? = null
+    // "Choose source…" sets the query and starts a network search at once; the
+    // debounced library search that follows must not wipe those results.
+    private var keepNetworkForQuery: String? = null
 
     init {
         // Library search reacts to debounced query changes
@@ -156,11 +180,17 @@ class SearchViewModel @Inject constructor(
                             downloadError = null,
                             parsedArtist = "",
                             parsedTrack = "",
-                            libraryMatchId = null
+                            libraryMatchId = null,
+                            catalog = emptyList(),
+                            isCatalogSearching = false,
+                            hasCatalogSearched = false,
+                            catalogError = null
                         )
                     }
                 } else {
-                    runLibrarySearch(q)
+                    runLibrarySearch(q, keepNetwork = q == keepNetworkForQuery)
+                    keepNetworkForQuery = null
+                    runCatalogSearch(q)
                 }
             }
             .launchIn(viewModelScope)
@@ -257,28 +287,67 @@ class SearchViewModel @Inject constructor(
         runDownloadSearch(query)
     }
 
+    /** Get a specific file from the network list. */
     fun triggerDownload(result: DownloadResult) {
         val parsed = parseQuery(_uiState.value.query)
-        val key = result.key()
         val artist = parsed.first.ifBlank { _uiState.value.parsedArtist }
         val track = parsed.second.ifBlank { _uiState.value.parsedTrack }
             .ifBlank { result.displayName }
+        startDownload(result.key(), DownloadRow(artist, track, file = result), result.username, result.filename)
+    }
+
+    /** Get a catalog song — the server finds and picks the best source. */
+    fun getCatalogTrack(track: CatalogTrack) {
+        startDownload(track.key, DownloadRow(track.artist, track.title, catalog = track))
+    }
+
+    /**
+     * After a failure: let the server pick again, skipping every peer that has
+     * failed this song so far (and the picked file's peer, for a file row).
+     */
+    fun tryAnotherSource(key: String) {
+        val state = _uiState.value
+        val row = state.pinned[key] ?: return
+        val gs = state.getStates[key]
+        val exclude = ((gs?.failedSources ?: emptyList()) + listOfNotNull(row.file?.username)).distinct()
+        startDownload(key, row, excludeUsers = exclude)
+    }
+
+    /** Show the raw network file list for a catalog song. */
+    fun chooseSources(track: CatalogTrack) {
+        val q = "${track.artist} - ${track.title}"
+        keepNetworkForQuery = q
+        onQueryChanged(q)
+        runDownloadSearch(q)
+    }
+
+    private fun startDownload(
+        key: String,
+        row: DownloadRow,
+        username: String? = null,
+        filename: String? = null,
+        excludeUsers: List<String> = emptyList()
+    ) {
         notifier.reset(key)
         viewModelScope.launch {
             _uiState.update { state ->
+                val carried = state.getStates[key]?.failedSources ?: emptyList()
                 state.copy(
-                    getStates = state.getStates + (key to GetButtonState(state = GetState.Searching, label = "Starting")),
-                    pinned = state.pinned + (key to result)
+                    getStates = state.getStates + (key to GetButtonState(
+                        state = GetState.Searching, label = "Starting", failedSources = carried
+                    )),
+                    pinned = state.pinned + (key to row)
                 )
             }
             try {
-                DebugLog.d(TAG, "Trigger artist='$artist' track='$track' user=${result.username}")
+                DebugLog.d(TAG, "Trigger artist='${row.artist}' track='${row.track}' user=$username exclude=$excludeUsers")
                 val response = zonikApi.triggerDownload(
                     DownloadTriggerRequest(
-                        artist = artist,
-                        track = track,
-                        username = result.username,
-                        filename = result.filename
+                        artist = row.artist,
+                        track = row.track,
+                        username = username,
+                        filename = filename,
+                        excludeUsers = excludeUsers
                     )
                 )
                 val jobId = response.jobId
@@ -336,7 +405,7 @@ class SearchViewModel @Inject constructor(
     fun clearFinished() {
         _uiState.update { state ->
             val keep = state.pinned.filterKeys { state.getStates[it]?.inFlight == true }
-            state.copy(pinned = keep, getStates = state.getStates.filterKeys { it in keep || it in state.downloadResults.map { r -> r.key() } })
+            state.copy(pinned = keep, getStates = state.getStates.filterKeys { it in keep })
         }
         progressClient.clearTerminal()
     }
@@ -424,7 +493,7 @@ class SearchViewModel @Inject constructor(
 
     private fun onDownloadsFinished(keys: List<String>) {
         val state = _uiState.value
-        val names = keys.mapNotNull { state.pinned[it]?.displayName }
+        val names = keys.mapNotNull { state.pinned[it]?.title }
         if (names.isNotEmpty()) {
             _uiState.update {
                 it.copy(toast = if (names.size == 1) "Ready: ${names[0]}" else "${names.size} downloads ready")
@@ -432,7 +501,10 @@ class SearchViewModel @Inject constructor(
         }
         // The new tracks are in the library now: re-run the search so they show
         // up there, and pull them into the local DB for Auto/Watch.
-        if (state.query.isNotBlank()) runLibrarySearch(state.query, keepNetwork = true)
+        if (state.query.isNotBlank()) {
+            runLibrarySearch(state.query, keepNetwork = true)
+            runCatalogSearch(state.query)
+        }
         viewModelScope.launch {
             for (key in keys) {
                 val trackId = _uiState.value.getStates[key]?.trackId ?: continue
@@ -447,11 +519,11 @@ class SearchViewModel @Inject constructor(
 
     private fun publishNotifications() {
         val state = _uiState.value
-        notifier.update(state.pinned.mapNotNull { (key, result) ->
+        notifier.update(state.pinned.mapNotNull { (key, row) ->
             val gs = state.getStates[key] ?: return@mapNotNull null
             DownloadNotice(
                 key = key,
-                title = result.displayName,
+                title = row.title,
                 active = gs.inFlight,
                 done = gs.state == GetState.Done,
                 failed = gs.state == GetState.Failed,
@@ -497,6 +569,37 @@ class SearchViewModel @Inject constructor(
                         hasSearched = true,
                         libraryError = friendlyError(e)
                     )
+                }
+            }
+        }
+    }
+
+    private fun runCatalogSearch(query: String) {
+        catalogSearchJob?.cancel()
+        if (query.trim().length < 2) return
+        catalogSearchJob = viewModelScope.launch {
+            _uiState.update { it.copy(isCatalogSearching = true, catalogError = null) }
+            try {
+                val response = zonikApi.searchCatalog(query.trim())
+                _uiState.update { state ->
+                    // A song someone is already downloading (here or on the web)
+                    // shows its live status instead of a Get button.
+                    val adopted = response.tracks
+                        .filter { it.jobId != null && state.getStates[it.key]?.jobId == null }
+                        .associate { it.key to GetButtonState(state = GetState.Searching, jobId = it.jobId, label = "Queued") }
+                    state.copy(
+                        catalog = response.tracks,
+                        isCatalogSearching = false,
+                        hasCatalogSearched = true,
+                        catalogError = response.error,
+                        getStates = state.getStates + adopted
+                    )
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                DebugLog.w(TAG, "Catalog search failed: ${e.message}")
+                _uiState.update {
+                    it.copy(isCatalogSearching = false, hasCatalogSearched = true, catalogError = friendlyError(e))
                 }
             }
         }
@@ -573,7 +676,8 @@ internal fun GetButtonState.resolve(jp: JobProgress): GetButtonState {
     val base = copy(
         pct = jp.pct, received = jp.progress, total = jp.total,
         speedBps = jp.speedBps, etaSeconds = jp.etaSeconds,
-        trackId = jp.trackId ?: trackId
+        trackId = jp.trackId ?: trackId,
+        failedSources = jp.failedSources.ifEmpty { failedSources }
     )
     return when (jp.status.lowercase()) {
         "completed", "complete" -> base.copy(
@@ -682,6 +786,7 @@ fun SearchScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf(SearchFilter.ALL) }
     var recentExpanded by rememberSaveable { mutableStateOf(false) }
+    var catalogExpanded by rememberSaveable(uiState.query) { mutableStateOf(false) }
 
     LaunchedEffect(uiState.toast) {
         if (uiState.toast != null) {
@@ -721,7 +826,7 @@ fun SearchScreen(
                         yourDownloadsSection(
                             state = uiState,
                             onPlay = viewModel::playTrackId,
-                            onRetry = viewModel::triggerDownload,
+                            onRetry = viewModel::tryAnotherSource,
                             onClearFinished = viewModel::clearFinished
                         )
                         if (uiState.query.isBlank()) {
@@ -761,7 +866,16 @@ fun SearchScreen(
                                 onStartRadio = { viewModel.startRadio(it) }
                             )
 
-                            // Get more section
+                            catalogSection(
+                                state = uiState,
+                                expanded = catalogExpanded,
+                                onToggleExpanded = { catalogExpanded = !catalogExpanded },
+                                onGet = viewModel::getCatalogTrack,
+                                onPlay = viewModel::playTrackId,
+                                onChooseSource = viewModel::chooseSources
+                            )
+
+                            // Raw network file list
                             getMoreSection(
                                 state = uiState,
                                 onSearchOnline = { viewModel.searchOnline() },
@@ -932,6 +1046,87 @@ private fun androidx.compose.foundation.lazy.LazyListScope.librarySection(
 
 // endregion
 
+// region Catalog section
+
+private const val CATALOG_COLLAPSED = 8
+
+private fun androidx.compose.foundation.lazy.LazyListScope.catalogSection(
+    state: SearchUiState,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+    onGet: (CatalogTrack) -> Unit,
+    onPlay: (String) -> Unit,
+    onChooseSource: (CatalogTrack) -> Unit
+) {
+    if (state.query.isBlank()) return
+    val libraryIds = state.tracks.map { it.id }.toSet()
+    // Owned songs the library search missed (a typo, "feat." naming) — the
+    // catalog's fuzzy match found them, so offer Play here.
+    val closeOwned = state.catalog.filter { it.inLibrary && it.trackId != null && it.trackId !in libraryIds }
+    val missing = state.catalog.filter { !it.inLibrary && it.key !in state.pinned }
+    if (!state.isCatalogSearching && !state.hasCatalogSearched) return
+
+    item("catalog-h") {
+        Spacer(modifier = Modifier.height(16.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)
+        ) {
+            Text(
+                text = "Not in your library",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f)
+            )
+            if (state.isCatalogSearching) {
+                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+    state.catalogError?.let { err -> item("catalog-err") { ErrorBanner(text = err) } }
+
+    if (closeOwned.isNotEmpty()) {
+        item("catalog-owned-h") { SubHeader("Did you mean") }
+        items(closeOwned, key = { "cat-owned-${it.key}" }) { t ->
+            CatalogTrackRow(t, GetButtonState(), onGet = {}, onPlay = onPlay, onChooseSource = null)
+        }
+    }
+
+    if (state.hasCatalogSearched && missing.isEmpty() && closeOwned.isEmpty() && state.catalogError == null) {
+        item("catalog-empty") {
+            Text(
+                text = if (state.catalog.isEmpty()) "No matches in the catalog — try the network search below"
+                else "You already have everything that matches",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+    }
+
+    val shown = if (expanded) missing else missing.take(CATALOG_COLLAPSED)
+    items(shown, key = { "cat-${it.key}" }) { t ->
+        CatalogTrackRow(
+            track = t,
+            getState = state.getStates[t.key] ?: GetButtonState(),
+            onGet = { onGet(t) },
+            onPlay = onPlay,
+            onChooseSource = { onChooseSource(t) }
+        )
+    }
+    if (missing.size > CATALOG_COLLAPSED) {
+        item("catalog-more") {
+            TextButton(onClick = onToggleExpanded, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text(if (expanded) "Show fewer" else "Show ${missing.size - CATALOG_COLLAPSED} more")
+            }
+        }
+    }
+}
+
+// endregion
+
 // region Get more section
 
 private fun androidx.compose.foundation.lazy.LazyListScope.getMoreSection(
@@ -951,7 +1146,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.getMoreSection(
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)
         ) {
             Text(
-                text = "Get more",
+                text = "Network sources",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f)
@@ -1058,7 +1253,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.getMoreSection(
 private fun androidx.compose.foundation.lazy.LazyListScope.yourDownloadsSection(
     state: SearchUiState,
     onPlay: (String) -> Unit,
-    onRetry: (DownloadResult) -> Unit,
+    onRetry: (String) -> Unit,
     onClearFinished: () -> Unit
 ) {
     if (state.pinned.isEmpty()) return
@@ -1080,13 +1275,23 @@ private fun androidx.compose.foundation.lazy.LazyListScope.yourDownloadsSection(
             }
         }
     }
-    items(state.pinned.entries.toList().asReversed(), key = { "yours-${it.key}" }) { (key, result) ->
-        DownloadCandidateRow(
-            result = result,
-            getState = state.getStates[key] ?: GetButtonState(),
-            onTrigger = { onRetry(result) },
-            onPlay = onPlay
-        )
+    items(state.pinned.entries.toList().asReversed(), key = { "yours-${it.key}" }) { (key, row) ->
+        val gs = state.getStates[key] ?: GetButtonState()
+        when {
+            row.catalog != null -> CatalogTrackRow(
+                track = row.catalog.copy(inLibrary = false),
+                getState = gs,
+                onGet = { onRetry(key) },
+                onPlay = onPlay,
+                onChooseSource = null
+            )
+            row.file != null -> DownloadCandidateRow(
+                result = row.file,
+                getState = gs,
+                onTrigger = { onRetry(key) },
+                onPlay = onPlay
+            )
+        }
     }
 }
 
@@ -1786,7 +1991,7 @@ private fun TrackRow(
 // region Download candidate row
 
 @Composable
-private fun DownloadCandidateRow(
+internal fun DownloadCandidateRow(
     result: DownloadResult,
     getState: GetButtonState,
     onTrigger: () -> Unit,
@@ -1847,35 +2052,125 @@ private fun DownloadCandidateRow(
                     onPlay = { getState.trackId?.let(onPlay) }
                 )
             }
-            if (getState.state == GetState.Downloading && getState.total > 0) {
-                LinearProgressIndicator(
-                    progress = { getState.pct / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp)
+            DownloadStatusLine(getState)
+        }
+    }
+}
+
+/** Progress bar, stage, or failure reason under a download row. */
+@Composable
+private fun DownloadStatusLine(getState: GetButtonState) {
+    if (getState.state == GetState.Downloading && getState.total > 0) {
+        LinearProgressIndicator(
+            progress = { getState.pct / 100f },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp)
+        )
+        Text(
+            text = listOfNotNull(
+                "${getState.pct.toInt()}% · ${formatBytes(getState.received)} / ${formatBytes(getState.total)}",
+                getState.detail
+            ).joinToString(" · "),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else if (getState.state == GetState.Failed && getState.error != null) {
+        Text(
+            text = getState.error,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error
+        )
+    } else if (getState.detail != null && getState.state != GetState.Idle) {
+        Text(
+            text = getState.detail,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (getState.state == GetState.Done) Color(0xFF2E7D32)
+            else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** A catalog song: owned (Play) or not (Get, or pick the file yourself). */
+@Composable
+internal fun CatalogTrackRow(
+    track: CatalogTrack,
+    getState: GetButtonState,
+    onGet: () -> Unit,
+    onPlay: (String) -> Unit,
+    onChooseSource: (() -> Unit)?
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            coil.compose.AsyncImage(
+                model = track.coverUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(6.dp))
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = track.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = listOfNotNull(
-                        "${getState.pct.toInt()}% · ${formatBytes(getState.received)} / ${formatBytes(getState.total)}",
-                        getState.detail
+                        track.artist,
+                        track.album?.takeIf { it.isNotBlank() },
+                        track.duration?.takeIf { it > 0 }?.let { formatDuration(it) }
                     ).joinToString(" · "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else if (getState.state == GetState.Failed && getState.error != null) {
-                Text(
-                    text = getState.error,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
-                )
-            } else if (getState.detail != null && getState.state != GetState.Idle) {
-                Text(
-                    text = getState.detail,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (getState.state == GetState.Done) Color(0xFF2E7D32)
-                    else MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            if (track.inLibrary && track.trackId != null && getState.state == GetState.Idle) {
+                FilledTonalButton(onClick = { onPlay(track.trackId) }) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Play", style = MaterialTheme.typography.labelLarge)
+                }
+            } else {
+                GetButton(getState = getState, onClick = onGet, onPlay = { getState.trackId?.let(onPlay) })
+            }
+            if (onChooseSource != null && !track.inLibrary &&
+                (getState.state == GetState.Idle || getState.state == GetState.Failed)) {
+                Box {
+                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Choose source…") },
+                            leadingIcon = { Icon(Icons.Default.List, contentDescription = null) },
+                            onClick = { menuOpen = false; onChooseSource() }
+                        )
+                    }
+                }
+            }
+        }
+        // Aligned under the title, past the 48dp cover + 12dp gap.
+        Column(modifier = Modifier.padding(start = 60.dp)) {
+            if (track.inLibrary && getState.state == GetState.Idle) {
+                Text(
+                    text = "In your library",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF2E7D32)
+                )
+            }
+            DownloadStatusLine(getState)
         }
     }
 }
@@ -1962,7 +2257,7 @@ private fun GetButton(getState: GetButtonState, onClick: () -> Unit, onPlay: () 
             ) {
                 Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Retry", style = MaterialTheme.typography.labelLarge)
+                Text("Try another", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

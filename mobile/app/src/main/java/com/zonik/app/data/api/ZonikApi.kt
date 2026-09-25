@@ -15,6 +15,14 @@ interface ZonikApi {
     @POST("api/download/search")
     suspend fun searchDownloads(@Body request: DownloadSearchRequest): DownloadSearchResponse
 
+    // --- Catalog Search (tracks owned or not) ---
+
+    @GET("api/search/catalog")
+    suspend fun searchCatalog(
+        @Query("q") q: String,
+        @Query("limit") limit: Int = 25
+    ): CatalogResponse
+
     // --- Download Trigger ---
 
     @POST("api/download/trigger")
@@ -156,7 +164,9 @@ data class DownloadTriggerRequest(
     val artist: String,
     val track: String,
     val username: String? = null,
-    val filename: String? = null
+    val filename: String? = null,
+    /** Peers to skip — "try another source" after these failed. */
+    @SerialName("exclude_users") val excludeUsers: List<String> = emptyList()
 )
 
 @Serializable
@@ -179,6 +189,33 @@ data class CancelTransferRequest(
 )
 
 // --- Response Models ---
+
+@Serializable
+data class CatalogResponse(
+    val tracks: List<CatalogTrack> = emptyList(),
+    /** "deezer", or "lastfm" when Deezer failed or found nothing. */
+    val source: String? = null,
+    /** Set only when every catalog was unavailable. */
+    val error: String? = null
+)
+
+@Serializable
+data class CatalogTrack(
+    val title: String = "",
+    val artist: String = "",
+    val album: String? = null,
+    val duration: Int? = null,
+    @SerialName("cover_url") val coverUrl: String? = null,
+    @SerialName("preview_url") val previewUrl: String? = null,
+    val explicit: Boolean = false,
+    val source: String? = null,
+    @SerialName("in_library") val inLibrary: Boolean = false,
+    @SerialName("track_id") val trackId: String? = null,
+    /** A download of this song already queued or running. */
+    @SerialName("job_id") val jobId: String? = null
+) {
+    val key: String get() = "cat|${artist.lowercase()}|${title.lowercase()}"
+}
 
 @Serializable
 data class DownloadSearchResponse(
@@ -277,7 +314,8 @@ data class JobInfo(
     @SerialName("finished_at") val finishedAt: String? = null,
     @SerialName("track_id") val trackId: String? = null,
     @SerialName("already_in_library") val alreadyInLibrary: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    @SerialName("failed_sources") val failedSources: List<String> = emptyList()
 )
 
 @Serializable
@@ -309,7 +347,8 @@ data class JobDetailResponse(
     @SerialName("finished_at") val finishedAt: String? = null,
     @SerialName("track_id") val trackId: String? = null,
     @SerialName("already_in_library") val alreadyInLibrary: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    @SerialName("failed_sources") val failedSources: List<String> = emptyList()
 )
 
 // --- Pairing Models ---
