@@ -2,6 +2,7 @@ package com.zonik.app.media
 
 import android.content.Intent
 import android.net.Uri
+import androidx.media3.common.Player
 import android.os.Bundle
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -61,6 +62,7 @@ class ZonikMediaService : MediaLibraryService() {
     @Inject lateinit var simpleCache: SimpleCache
     @Inject lateinit var offlineCacheManager: OfflineCacheManager
     @Inject lateinit var cachingDns: com.zonik.app.data.api.CachingDns
+    @Inject lateinit var zonikApi: com.zonik.app.data.api.ZonikApi
 
     private var mediaLibrarySession: MediaLibrarySession? = null
     private var equalizer: android.media.audiofx.Equalizer? = null
@@ -395,7 +397,8 @@ class ZonikMediaService : MediaLibraryService() {
 
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 // Update custom buttons for the new track
-                val trackId = mediaItem?.mediaId?.removePrefix(TRACK_PREFIX) ?: ""
+                // A preview isn't a library track: no star button, no now-playing.
+                val trackId = mediaItem?.mediaId?.takeUnless { isPreviewId(it) }?.removePrefix(TRACK_PREFIX) ?: ""
                 mediaLibrarySession?.setCustomLayout(buildCustomLayout(trackId))
                 // Pre-cache upcoming tracks (skip during playlist setup)
                 if (reason == androidx.media3.common.Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
@@ -553,6 +556,7 @@ class ZonikMediaService : MediaLibraryService() {
     private fun checkScrobbleThreshold() {
         val player = scrobblePlayer ?: return
         val mediaId = player.currentMediaItem?.mediaId ?: return
+        if (isPreviewId(mediaId)) return
         val trackId = mediaId.removePrefix(TRACK_PREFIX)
         if (trackId.isEmpty() || trackId == scrobbledTrackId) return
         val duration = player.duration
@@ -575,6 +579,7 @@ class ZonikMediaService : MediaLibraryService() {
     private fun postNowPlaying() {
         val player = scrobblePlayer ?: return
         val mediaId = player.currentMediaItem?.mediaId ?: return
+        if (isPreviewId(mediaId)) return
         val trackId = mediaId.removePrefix(TRACK_PREFIX)
         if (trackId.isEmpty() || trackId == nowPlayingPostedFor) return
         nowPlayingPostedFor = trackId
@@ -601,10 +606,14 @@ class ZonikMediaService : MediaLibraryService() {
     private fun savePlaybackState(player: androidx.media3.common.Player?) {
         if (player == null || player.mediaItemCount == 0) return
         try {
-            val trackIds = (0 until player.mediaItemCount).map { i ->
-                player.getMediaItemAt(i).mediaId.removePrefix(TRACK_PREFIX)
-            }
-            val index = player.currentMediaItemIndex
+            // Previews are transient stand-ins, not tracks — leave them out and
+            // shift the saved index past any that came before the current item.
+            val ids = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
+            val trackIds = ids.filterNot { isPreviewId(it) }.map { it.removePrefix(TRACK_PREFIX) }
+            if (trackIds.isEmpty()) return
+            val current = player.currentMediaItemIndex
+            val index = (current - ids.take(current.coerceAtLeast(0)).count { isPreviewId(it) })
+                .coerceIn(0, trackIds.lastIndex)
             val position = player.currentPosition.coerceAtLeast(0L)
             runBlocking {
                 settingsRepository.savePlaybackState(trackIds, index, position)
@@ -1057,6 +1066,19 @@ class ZonikMediaService : MediaLibraryService() {
                 return future
             }
 
+            // "Get: <song>" from Auto search: start the download, play the preview.
+            if (mediaItems.size == 1 && mediaItems[0].mediaId.startsWith(GET_ID_PREFIX)) {
+                val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+                browseScope.launch {
+                    val items = try { listOfNotNull(startCatalogGet(mediaItems[0])) } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.w("MediaService", "Auto get failed: ${e.message}")
+                        emptyList()
+                    }
+                    future.set(MediaSession.MediaItemsWithStartPosition(items, 0, 0L))
+                }
+                return future
+            }
+
             // Resolve ALL items here to avoid per-item onAddMediaItems IPC reordering.
             // Reconstruct URIs from requestMetadata.mediaUri (survives IPC).
             val resolved = mediaItems.map { item ->
@@ -1104,6 +1126,19 @@ class ZonikMediaService : MediaLibraryService() {
                             (resolveMixTracks(id) ?: emptyList()).map { buildFullMediaItem(it) }.toMutableList()
                         } catch (e: Exception) {
                             com.zonik.app.data.DebugLog.w("MediaService", "Mix $id failed: ${e.message}")
+                            mutableListOf()
+                        }
+                    )
+                }
+                return future
+            }
+
+            if (mediaItems.size == 1 && mediaItems[0].mediaId.startsWith(GET_ID_PREFIX)) {
+                val future = SettableFuture.create<MutableList<MediaItem>>()
+                browseScope.launch {
+                    future.set(
+                        try { listOfNotNull(startCatalogGet(mediaItems[0])).toMutableList() } catch (e: Exception) {
+                            com.zonik.app.data.DebugLog.w("MediaService", "Auto get failed: ${e.message}")
                             mutableListOf()
                         }
                     )
@@ -1508,6 +1543,7 @@ class ZonikMediaService : MediaLibraryService() {
         val player = session.player
         if (player.mediaItemCount == 0) return null
         val currentItem = player.currentMediaItem ?: return null
+        if (isPreviewId(currentItem.mediaId)) return null  // not a library track yet
         var trackId = currentItem.mediaId.removePrefix(TRACK_PREFIX)
         if (trackId.isBlank()) {
             val title = currentItem.mediaMetadata.title?.toString()
@@ -1864,7 +1900,8 @@ class ZonikMediaService : MediaLibraryService() {
         albums.forEach { results.add(albumToMediaItem(it)) }
         artists.forEach { results.add(artistToMediaItem(it)) }
         tracks.forEach { results.add(trackToMediaItem(it)) }
-        return results.ifEmpty { listOf(messageItem("No matches for \u201C$query\u201D in your library")) }
+        results.addAll(catalogItems(query, tracks.map { it.id }.toSet()))
+        return results.ifEmpty { listOf(messageItem("No matches for \u201C$query\u201D")) }
     }
 
     /**
@@ -1949,7 +1986,172 @@ class ZonikMediaService : MediaLibraryService() {
         albums.forEach { results.add(albumToMediaItem(it)) }
         artists.forEach { results.add(artistToMediaItem(it)) }
         tracks.forEach { results.add(trackToMediaItem(it)) }
+        results.addAll(catalogItems(query, tracks.map { it.id }.toSet()))
         if (results.isEmpty()) log("'$query' → no matches")
-        return results.ifEmpty { listOf(messageItem("No matches for \u201C$query\u201D in your library")) }
+        return results.ifEmpty { listOf(messageItem("No matches for \u201C$query\u201D")) }
+    }
+
+    // --- "Get" from Android Auto: catalog songs you don't have ---
+
+    /** Catalog songs offered in search results, by their get: media id. */
+    private val catalogOffers = java.util.concurrent.ConcurrentHashMap<String, com.zonik.app.data.api.CatalogTrack>()
+
+    /** Downloads started from Auto, by preview media id → job id. */
+    private val autoGets = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    private val maxCatalogOffers = 5
+
+    /**
+     * Search-result rows for songs the library doesn't have: "Get: <title>". Owned songs the
+     * library search missed (a typo) come back as ordinary playable tracks. Empty when the
+     * catalog is unreachable — library results still show.
+     */
+    private suspend fun catalogItems(query: String, shownTrackIds: Set<String>): List<MediaItem> {
+        if (query.isBlank()) return emptyList()
+        val response = try { zonikApi.searchCatalog(query, limit = 10) } catch (e: Exception) {
+            com.zonik.app.data.DebugLog.w("MediaService", "Catalog search failed: ${e.message}")
+            return emptyList()
+        }
+        val out = mutableListOf<MediaItem>()
+        for (t in response.tracks) {
+            if (t.inLibrary) {
+                val id = t.trackId ?: continue
+                if (id in shownTrackIds) continue
+                libraryRepository.fetchTrack(id)?.let { out.add(trackToMediaItem(it)) }
+                continue
+            }
+            if (out.count { it.mediaId.startsWith(GET_ID_PREFIX) } >= maxCatalogOffers) continue
+            val mediaId = GET_ID_PREFIX + t.key.hashCode().toUInt().toString(16)
+            catalogOffers[mediaId] = t
+            out.add(
+                MediaItem.Builder()
+                    .setMediaId(mediaId)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle("Get: ${t.title}")
+                            .setArtist(t.artist)
+                            .setSubtitle(if (t.previewUrl != null) "Not in your library · plays a preview while it downloads"
+                                else "Not in your library · tap to download")
+                            .setArtworkUri(t.coverUrl?.let { Uri.parse(it) })
+                            .setIsPlayable(true)
+                            .setIsBrowsable(false)
+                            .build()
+                    )
+                    .build()
+            )
+        }
+        return out
+    }
+
+    /**
+     * Start downloading a "Get:" song and return what to play meanwhile: the real track when
+     * the library already has it, else its 30 s preview (null when there is none — the real
+     * track then starts playing by itself once it arrives).
+     */
+    private suspend fun startCatalogGet(item: MediaItem): MediaItem? {
+        val t = catalogOffers[item.mediaId] ?: com.zonik.app.data.api.CatalogTrack(
+            // The offer map doesn't survive a service restart; the row's own metadata does.
+            title = item.mediaMetadata.title?.toString()?.removePrefix("Get: ").orEmpty(),
+            artist = item.mediaMetadata.artist?.toString().orEmpty()
+        )
+        if (t.title.isBlank() || t.artist.isBlank()) return null
+        com.zonik.app.data.DebugLog.d("MediaService", "Auto get: ${t.artist} - ${t.title}")
+        val response = zonikApi.triggerDownload(
+            com.zonik.app.data.api.DownloadTriggerRequest(artist = t.artist, track = t.title)
+        )
+        if (response.status == "in_library" && response.trackId != null) {
+            return libraryRepository.fetchTrack(response.trackId)?.let { buildFullMediaItem(it) }
+        }
+        val previewId = PREVIEW_ID_PREFIX + (response.jobId ?: t.key.hashCode().toString())
+        val preview = previewItem(previewId, t, when {
+            response.error == "blacklisted" -> "Blocked by your download blacklist"
+            response.error != null -> "Couldn't get it: ${response.error}"
+            response.jobId == null -> "Couldn't start the download"
+            else -> "Preview · getting the full track…"
+        })
+        response.jobId?.let { watchAutoGet(previewId, it, t) }
+        return preview
+    }
+
+    private fun previewItem(mediaId: String, t: com.zonik.app.data.api.CatalogTrack, status: String): MediaItem? {
+        val url = t.previewUrl ?: return null
+        return MediaItem.Builder()
+            .setMediaId(mediaId)
+            .setUri(url)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(t.title)
+                    .setArtist(t.artist)
+                    .setAlbumTitle(status)
+                    .setSubtitle(status)
+                    .setArtworkUri(t.coverUrl?.let { Uri.parse(it) })
+                    .setIsPlayable(true)
+                    .setIsBrowsable(false)
+                    .build()
+            )
+            .build()
+    }
+
+    /**
+     * Poll the download and, when it lands, swap the preview for the real track — and play
+     * it if the preview is current or the queue has run out. A failure relabels the preview.
+     */
+    private fun watchAutoGet(previewId: String, jobId: String, t: com.zonik.app.data.api.CatalogTrack) {
+        autoGets[previewId]?.cancel()
+        autoGets[previewId] = browseScope.launch {
+            try {
+                val deadline = System.currentTimeMillis() + 20 * 60_000L
+                while (System.currentTimeMillis() < deadline) {
+                    kotlinx.coroutines.delay(4_000)
+                    val job = try { zonikApi.getJob(jobId) } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.w("MediaService", "Auto get $jobId poll failed: ${e.message}")
+                        continue
+                    }
+                    when (job.status) {
+                        "completed" -> {
+                            val track = job.trackId?.let { libraryRepository.fetchTrack(it) } ?: return@launch
+                            com.zonik.app.data.DebugLog.d("MediaService", "Auto get done: ${track.title}")
+                            val full = buildFullMediaItem(track)
+                            withContext(Dispatchers.Main) { swapPreview(previewId, full, play = true) }
+                            return@launch
+                        }
+                        "failed" -> {
+                            com.zonik.app.data.DebugLog.w("MediaService", "Auto get failed: ${job.error}")
+                            previewItem(previewId, t, "Couldn't get the full track: ${job.error ?: "download failed"}")
+                                ?.let { relabeled -> withContext(Dispatchers.Main) { swapPreview(previewId, relabeled, play = false) } }
+                            return@launch
+                        }
+                    }
+                }
+            } finally {
+                autoGets.remove(previewId)
+            }
+        }
+    }
+
+    private fun swapPreview(previewId: String, replacement: MediaItem, play: Boolean) {
+        val player = mediaLibrarySession?.player ?: return
+        val index = (0 until player.mediaItemCount).firstOrNull { player.getMediaItemAt(it).mediaId == previewId }
+        if (index == null) {
+            // No preview (none existed, or the listener moved on). Start the track only if
+            // nothing else is playing — never interrupt what they chose since.
+            if (play && (player.mediaItemCount == 0 || player.playbackState == Player.STATE_ENDED)) {
+                player.setMediaItem(replacement)
+                player.prepare()
+                player.play()
+            }
+            return
+        }
+        val wasCurrent = index == player.currentMediaItemIndex
+        val ended = player.playbackState == Player.STATE_ENDED
+        // Respect a pause: the real track is queued in place but only starts if
+        // the listener was playing (or the preview simply ran out).
+        val resume = player.playWhenReady
+        player.replaceMediaItem(index, replacement)
+        if (play && (wasCurrent || ended)) {
+            player.seekTo(index, 0L)
+            player.prepare()
+            if (resume) player.play()
+        }
     }
 }
