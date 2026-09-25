@@ -184,23 +184,23 @@
 	const issues = $derived.by(() => {
 		if (!health) return [];
 		const out = [];
-		if (health.unprojected > 0) out.push({ key: 'atlas', text: `${health.unprojected.toLocaleString()} analysed tracks aren't on the sound atlas yet`, action: 'Rebuild atlas', run: rebuildAtlas, busy: rebuilding });
+		if (health.unprojected > 0) out.push({ key: 'atlas', text: `${health.unprojected.toLocaleString()} tracks not on the atlas`, action: 'Rebuild atlas', run: rebuildAtlas, busy: rebuilding });
 		const pending = Math.max(health.unanalysed, health.no_embedding);
-		if (pending > 0) out.push({ key: 'analyse', text: `${pending.toLocaleString()} tracks haven't been analysed, so they're missing from the map`, action: 'Analyse', run: analyse, busy: analysing });
-		if (health.loudness_outliers?.length) out.push({ key: 'loud', text: `${health.loudness_outliers.length} tracks have impossible loudness readings (above 0 dB) — likely broken files`, action: 'Show them', run: selectOutliers });
-		if (health.no_genre > 0) out.push({ key: 'genre', text: `${health.no_genre.toLocaleString()} tracks have no genre and show as Unknown`, action: 'Open library', href: '/library' });
+		if (pending > 0) out.push({ key: 'analyse', text: `${pending.toLocaleString()} not analysed`, action: 'Analyse', run: analyse, busy: analysing });
+		if (health.loudness_outliers?.length) out.push({ key: 'loud', text: `${health.loudness_outliers.length} impossible loudness readings (likely broken files)`, action: 'Show them', run: selectOutliers });
+		if (health.no_genre > 0) out.push({ key: 'genre', text: `${health.no_genre.toLocaleString()} tracks with no genre`, action: 'Open library', href: '/library' });
 		return out;
 	});
 </script>
 
 {#if issues.length}
-	<div class="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 divide-y divide-amber-500/10">
+	<div class="flex flex-wrap gap-1.5 mt-3">
 		{#each issues as it (it.key)}
-			<div class="flex items-center gap-2 px-3 py-1.5 text-xs">
+			<div class="flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 pl-2 pr-1 py-0.5 text-xs">
 				<TriangleAlert class="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-				<span class="flex-1 text-[var(--text-secondary)]">{it.text}</span>
+				<span class="text-[var(--text-secondary)]">{it.text}</span>
 				{#if it.href}
-					<a href={it.href} class="text-amber-400 hover:underline whitespace-nowrap">{it.action}</a>
+					<a href={it.href} class="px-2 py-1 text-amber-400 hover:underline whitespace-nowrap">{it.action}</a>
 				{:else}
 					<Button variant="warning" size="sm" loading={it.busy} onclick={it.run} class="whitespace-nowrap">{it.action}</Button>
 				{/if}
@@ -229,7 +229,7 @@
 			<span class="px-2 py-1.5 text-[var(--text-muted)] bg-[var(--surface-lowest)]">Colour</span>
 			{#each [['family', 'Genre'], ['plays', 'Plays']] as [m, label]}
 				<button onclick={() => (colorMode = m)} aria-pressed={colorMode === m}
-					class="px-2.5 py-1.5 {colorMode === m ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--surface-lowest)] text-[var(--text-secondary)] hover:bg-[var(--surface-container-high)]'}">{label}</button>
+					class="px-2.5 py-1.5 {colorMode === m ? 'bg-[#22d3ee]/15 text-[#22d3ee] font-medium' : 'bg-[var(--surface-lowest)] text-[var(--text-secondary)] hover:bg-[var(--surface-container-high)]'}">{label}</button>
 			{/each}
 		</div>
 		<Toggle size="sm" checked={unplayedOnly} onchange={(v) => (unplayedOnly = v)} label="Never played" color="#f59e0b" />

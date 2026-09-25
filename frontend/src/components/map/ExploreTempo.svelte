@@ -34,8 +34,7 @@
 	const sx = (bpm) => PAD.left + clamp01(tx(bpm)) * pw();
 	const sy = (db) => PAD.top + (1 - clamp01(ty(db))) * ph();
 	const plotted = (p) => p.bpm > 0 && p.loudness != null;
-	const outside = (p) => tx(p.bpm) < 0 || tx(p.bpm) > 1 || ty(p.loudness) < 0 || ty(p.loudness) > 1;
-
+	
 	function draw() {
 		if (!ctx) return;
 		ctx.clearRect(0, 0, width, height);
@@ -77,8 +76,8 @@
 			const x = sx(p.bpm), y = sy(p.loudness);
 			const sel = selected.has(p.i), hov = p.i === hover.i;
 			ctx.globalAlpha = hov ? 1 : dim ? (sel ? 0.95 : 0.1) : 0.7;
-			if (p.bad || outside(p)) {
-				ctx.strokeStyle = p.bad ? '#f87171' : colorOf(p);
+			if (p.bad) {
+				ctx.strokeStyle = '#f87171';
 				ctx.lineWidth = 1.5;
 				ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.2832); ctx.stroke();
 			} else {

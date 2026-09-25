@@ -111,11 +111,6 @@
 			ctx.fill();
 		}
 		ctx.globalAlpha = 1;
-
-		ctx.fillStyle = 'rgba(148,163,184,0.5)';
-		ctx.font = '600 11px Inter, sans-serif';
-		ctx.fillText('inner: minor · outer: major', cx, cy - 7);
-		ctx.fillText('further out = faster', cx, cy + 8);
 	}
 
 	const requestDraw = frameScheduler(draw);
@@ -173,7 +168,7 @@
 <div bind:this={container} class="relative w-full h-full">
 	<canvas bind:this={canvas} onmousemove={onMove} onmouseleave={onLeave} onclick={onClick} class="block cursor-pointer"></canvas>
 	<p class="absolute top-3 left-3 text-xs text-[var(--text-muted)] max-w-[220px] leading-snug pointer-events-none">
-		Click a track to select everything that mixes with it. Click an empty part of a key to take the whole key. Shift adds.
+		Inner ring minor, outer ring major; further out is faster.<br />Click a track to select everything that mixes with it. Click an empty part of a key to take the whole key. Shift adds.
 	</p>
 	{#if hover.i >= 0}
 		<HoverCard p={points[hover.i]} x={hover.x} y={hover.y} {width} />
