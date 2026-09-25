@@ -301,37 +301,16 @@ async def match_tracks_to_library(tracks: list[dict], db) -> list[dict]:
     """Match imported tracks against local library.
 
     Returns tracks enriched with local_track_id (if matched) and in_library flag.
+    Uses the shared matcher, so "Song (Remastered)" by "Artist feat. X" finds
+    the library's "Song" by "Artist" — the old exact match didn't, and queued
+    downloads of tracks the library already had.
     """
-    from sqlalchemy import select, func
-    from backend.models.track import Track
-    from backend.models.artist import Artist
+    from backend.services.library_match import batch_library_match
 
-    matched = 0
-    for t in tracks:
-        title = t.get("title", "").strip()
-        artist = t.get("artist", "").strip()
-        if not title:
-            t["in_library"] = False
-            continue
-
-        # Exact match on title + artist
-        stmt = (
-            select(Track.id)
-            .join(Artist, Track.artist_id == Artist.id, isouter=True)
-            .where(
-                func.lower(Track.title) == title.lower(),
-                func.lower(Artist.name) == artist.lower(),
-            )
-            .limit(1)
-        )
-        result = await db.execute(stmt)
-        row = result.scalar_one_or_none()
-
-        if row:
-            t["local_track_id"] = row
-            t["in_library"] = True
-            matched += 1
-        else:
-            t["in_library"] = False
-
+    items = [{"name": (t.get("title") or "").strip(), "artist": (t.get("artist") or "").strip()} for t in tracks]
+    await batch_library_match(db, items)
+    for t, m in zip(tracks, items):
+        t["in_library"] = m["in_library"]
+        if m["track_id"]:
+            t["local_track_id"] = m["track_id"]
     return tracks

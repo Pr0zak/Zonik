@@ -58,60 +58,12 @@ _NEW_RELEASE_MAX_ALBUMS = 40      # bounds response size after the date filter
 _NEW_RELEASE_FALLBACK_ALBUMS = 12
 
 
-_PAREN_SUFFIX_RE = re.compile(r"\s*[\(\[][^\(\)\[\]]*[\)\]]\s*$")
-_FEAT_RE = re.compile(r"\s+(feat\.?|featuring|ft\.?)\s+.+$", re.IGNORECASE)
-
-
-def _norm_title(s: str) -> str:
-    s = _PAREN_SUFFIX_RE.sub("", s).strip()
-    return re.sub(r"[^a-z0-9]", "", s.lower())
-
-
-def _norm_artist(s: str) -> str:
-    primary = s.split(",", 1)[0]
-    primary = _FEAT_RE.sub("", primary).strip()
-    return re.sub(r"[^a-z0-9]", "", primary.lower())
-
-
-async def _batch_library_match(
-    db: AsyncSession,
-    items: list[dict],
-    name_key: str = "name",
-    artist_key: str = "artist",
-) -> None:
-    """Annotate a list of dicts with in_library/track_id via a single batched query.
-
-    Match is permissive: title and artist are normalized to alphanumerics with
-    parenthetical suffixes ("(Remastered 2014)") and "feat./featuring" sections
-    stripped, and the comma-joined primary artist is used. This handles the
-    common cases where Spotify/Last.fm naming diverges from the local library.
-    """
-    if not items:
-        return
-
-    # Pull every (artist, title) pair once. Library is small (~5-10k tracks);
-    # full scan is cheaper than building OR-of-100-conditions and avoids the
-    # exact-match brittleness that previously caused dupes.
-    lib_result = await db.execute(
-        select(Track.id, Track.title, Artist.name)
-        .join(Artist, Track.artist_id == Artist.id)
-    )
-    lib_map: dict[tuple[str, str], str] = {}
-    for track_id, title, artist in lib_result.all():
-        if not title or not artist:
-            continue
-        lib_map.setdefault((_norm_artist(artist), _norm_title(title)), track_id)
-
-    for t in items:
-        name = t.get(name_key) or ""
-        artist = t.get(artist_key) or ""
-        if not name or not artist:
-            t["in_library"] = False
-            t["track_id"] = None
-            continue
-        matched_id = lib_map.get((_norm_artist(artist), _norm_title(name)))
-        t["in_library"] = matched_id is not None
-        t["track_id"] = matched_id
+# One library matcher for every caller — see backend/services/library_match.py.
+from backend.services.library_match import (  # noqa: E402
+    batch_library_match as _batch_library_match,
+    norm_artist as _norm_artist,
+    norm_title as _norm_title,
+)
 
 
 async def _fetch_spotify_new_releases(country: str) -> list[dict]:

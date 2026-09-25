@@ -113,6 +113,7 @@ class DownloadRequest(BaseModel):
     filename: str | None = None
     source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
     target_track_id: str | None = None  # the existing track this download should upgrade/replace
+    exclude_users: list[str] = []  # peers to skip — "try another source" after these failed
 
 
 class BulkDownloadRequest(BaseModel):
@@ -123,7 +124,7 @@ class BulkDownloadRequest(BaseModel):
 async def find_in_library(db: AsyncSession, artist: str, track: str) -> str | None:
     """Library track id for artist+track, or None.
 
-    Uses the discovery matcher (case, punctuation and "feat." insensitive). That
+    Uses the shared library matcher (case, punctuation and "feat." insensitive). That
     matcher also ignores a trailing "(...)", so a request that names a version
     — "(Live)", "[Remix]" — is never matched: the plain song being in the
     library doesn't mean that version is.
@@ -131,10 +132,8 @@ async def find_in_library(db: AsyncSession, artist: str, track: str) -> str | No
     artist, track = (artist or "").strip(), (track or "").strip()
     if not artist or not track or re.search(r"[\(\[]", track):
         return None
-    from backend.api.discovery import _batch_library_match
-    items = [{"name": track, "artist": artist}]
-    await _batch_library_match(db, items)
-    return items[0].get("track_id")
+    from backend.services.library_match import match_library
+    return await match_library(db, artist, track)
 
 
 def job_outcome(status: str, result_json: str | None) -> dict:
@@ -154,6 +153,10 @@ def job_outcome(status: str, result_json: str | None) -> dict:
         out["track_id"] = result["track_id"]
     if result.get("already_in_library"):
         out["already_in_library"] = True
+    if result.get("failed_sources"):
+        out["failed_sources"] = result["failed_sources"]
+    elif result.get("username") and status == "failed":
+        out["failed_sources"] = [result["username"]]
     if status == "failed":
         error = result.get("error") or result.get("message")
         if error and result.get("last_error") and result["last_error"] != error:
@@ -488,12 +491,17 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded" if ok else "failed"}])
             candidates = []  # Skip native loop
 
+        if req.exclude_users and candidates:
+            skip = {u.lower() for u in req.exclude_users}
+            candidates = [c for c in candidates if c["username"].lower() not in skip]
+
         if native_ready and not candidates and job.status != "failed":
             job.status = "failed"
             if better_than is not None:
                 msg = f"No source better than the current {better_than[0] or 'file'} for {req.artist} - {req.track}"
             else:
-                msg = f"No results for {req.artist} - {req.track}"
+                msg = (f"No other sources for {req.artist} - {req.track}" if req.exclude_users
+                       else f"No results for {req.artist} - {req.track}")
             job.result = json.dumps({"message": msg})
             job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
 
