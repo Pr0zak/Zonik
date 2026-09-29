@@ -58,6 +58,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private class Program(val id: Int, val uniforms: Map<String, Int>, val aPos: Int)
 
     private val programs = HashMap<DemoEffect, Program>()
+    private var blit: Program? = null
+
+    // Offscreen buffer for lowRes effects, half the surface in each direction.
+    private var fbo = 0
+    private var fboTexture = 0
+    private var fboWidth = 0
+    private var fboHeight = 0
+    private var surfaceWidth = 0
+    private var surfaceHeight = 0
     private var current = initial
     /** Fade-in from black when the surface first appears. */
     private var fade = 0f
@@ -86,9 +95,22 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var time = 0f
     private var clock = 0.0
 
-    // The Mandelbrot dive: which target, and how deep (natural log of the magnification).
-    private var zoomTarget = MANDEL_TARGETS.random()
-    private var zoomLog = 0f
+    // The Mandelbrot dive: the target, how far it has dived (e-folds of magnification, which
+    // grows without end), and the view that works out to once looped — see [advanceDive].
+    private var zoomTarget: MandelTarget = MandelbrotTargets.random()
+    private var zoomDepth = 0.0
+    private var zoomScale = MANDEL_START_SCALE
+    private var zoomTurn = 0.0
+    private var zoomOnScreen = false
+    private var zoomSinceTarget = 0f
+    private var zoomFlash = 0f
+    private var zoomFlashRising = false
+    // Series skip for this frame (see [computeSkip]).
+    private var skipCount = 0
+    private var skipAr = 0.0
+    private var skipAi = 0.0
+    private var skipZr = 0.0
+    private var skipZi = 0.0
 
     // Kicks counted so the kaleidoscope can change its wedge count every few bars.
     private var kickCount = 0
@@ -106,6 +128,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             val locations = UNIFORM_NAMES.associateWith { GLES20.glGetUniformLocation(id, it) }
             programs[e] = Program(id, locations, GLES20.glGetAttribLocation(id, "aPos"))
         }
+        val blitId = buildProgram(DEMO_VERTEX, BLIT_FRAGMENT, DemoEffect.TUNNEL)
+        blit = Program(
+            blitId,
+            (UNIFORM_NAMES + "uLowRes").associateWith { GLES20.glGetUniformLocation(blitId, it) },
+            GLES20.glGetAttribLocation(blitId, "aPos")
+        )
+        // Buffers belonged to the old context; onSurfaceChanged makes new ones.
+        fbo = 0
+        fboTexture = 0
         fade = 0f
         next = null
 
@@ -134,6 +165,44 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
         aspect = width.toFloat() / height.coerceAtLeast(1)
+        surfaceWidth = width
+        surfaceHeight = height
+        createLowResBuffer(maxOf(1, width / 2), maxOf(1, height / 2))
+    }
+
+    private fun createLowResBuffer(width: Int, height: Int) {
+        if (fbo != 0) {
+            GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
+            GLES20.glDeleteTextures(1, intArrayOf(fboTexture), 0)
+        }
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        fboTexture = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTexture)
+        // Not a power of two, so GLES 2 insists on clamp and no mipmaps.
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, width, height, 0,
+            GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, null
+        )
+        GLES20.glGenFramebuffers(1, ids, 0)
+        fbo = ids[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
+        GLES20.glFramebufferTexture2D(
+            GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTexture, 0
+        )
+        if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+            // Without it the lowRes effects simply draw at full resolution.
+            DebugLog.w("DemoRenderer", "Low-res framebuffer incomplete; drawing full size")
+            GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
+            fbo = 0
+        }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        fboWidth = width
+        fboHeight = height
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -195,6 +264,24 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     private fun draw(e: DemoEffect, wipe: Float, incomingSide: Boolean) {
         val prog = programs[e] ?: return
+        val scaler = blit
+        if (!e.lowRes || fbo == 0 || scaler == null) {
+            drawWith(prog, e, wipe, incomingSide, fade)
+            return
+        }
+        // The whole effect at half size — no wipe, no fade, those belong to the final pass —
+        // then scaled up through the blit, which applies them at full resolution.
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
+        GLES20.glViewport(0, 0, fboWidth, fboHeight)
+        drawWith(prog, e, wipe = -1f, incomingSide = false, fadeValue = 1f)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTexture)
+        drawWith(scaler, e, wipe, incomingSide, fade)
+    }
+
+    private fun drawWith(prog: Program, e: DemoEffect, wipe: Float, incomingSide: Boolean, fadeValue: Float) {
         uniforms = prog.uniforms
         GLES20.glUseProgram(prog.id)
         val drift = clock * 0.1
@@ -203,15 +290,27 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uPhase", phase)
         u1("uSpin", spin)
         u1("uTime", time)
-        u1("uFade", fade)
+        u1("uFade", fadeValue)
         u1("uWipe", wipe)
         u1("uWipeSide", if (incomingSide) 1f else 0f)
         u1("uWipeKind", wipeKind.toFloat())
-        uniforms["uZoomCenter"]?.let { if (it >= 0) GLES20.glUniform2f(it, zoomTarget[0], zoomTarget[1]) }
-        u1("uZoomScale", MANDEL_START_SCALE / exp(zoomLog))
-        // Fade in at the top of each dive and out before precision runs out at the bottom.
-        u1("uZoomFade", (zoomLog / MANDEL_FADE_LOG).coerceIn(0f, 1f) *
-            ((MANDEL_MAX_LOG - zoomLog) / MANDEL_FADE_LOG).coerceIn(0f, 1f))
+        if (e == DemoEffect.MANDELBROT) {
+            val t = zoomTarget
+            uniforms["uZoomCenter"]?.let { if (it >= 0) GLES20.glUniform2f(it, t.cRe.toFloat(), t.cIm.toFloat()) }
+            val angle = zoomTurn + spin * Math.PI
+            u2("uZoomRot", kotlin.math.cos(angle).toFloat(), kotlin.math.sin(angle).toFloat())
+            u1("uZoomScale", zoomScale.toFloat())
+            u1("uZoomFlash", zoomFlash)
+            u1("uPre", t.preperiod.toFloat())
+            u1("uPer", t.period.toFloat())
+            val c = t.cycle
+            u2("uCyc0", c[0], c[1])
+            u2("uCyc1", c.getOrElse(2) { c[0] }, c.getOrElse(3) { c[1] })
+            u2("uCyc2", c.getOrElse(4) { c[0] }, c.getOrElse(5) { c[1] })
+            u1("uSkip", skipCount.toFloat())
+            u2("uA", skipAr.toFloat(), skipAi.toFloat())
+            u2("uZ0", skipZr.toFloat(), skipZi.toFloat())
+        }
         u1("uSegments", SEGMENTS[(kickCount / KICKS_PER_SEGMENT_CHANGE) % SEGMENTS.size])
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         u1("uTwist", (sin(drift * 1.3) * 0.06).toFloat() + mid * 0.05f)
@@ -228,6 +327,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
         uniforms["uTex"]?.let { GLES20.glUniform1i(it, 0) }
+        uniforms["uLowRes"]?.let { if (it >= 0) GLES20.glUniform1i(it, 1) }
 
         GLES20.glEnableVertexAttribArray(prog.aPos)
         GLES20.glVertexAttribPointer(prog.aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
@@ -269,14 +369,99 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         time = (time + TIME_RATE * dt) % WRAP
         clock += dt
         moveBalls()
-        // The dive only advances while it is on screen, so it starts from the top each time.
-        if (current == DemoEffect.MANDELBROT || next == DemoEffect.MANDELBROT) {
-            zoomLog += (0.22f + low * 0.35f + kick * 0.3f) * dt
-            if (zoomLog > MANDEL_MAX_LOG) {
-                zoomLog = 0f
-                zoomTarget = MANDEL_TARGETS.filter { it !== zoomTarget }.random()
-            }
+        advanceDive(dt)
+    }
+
+    /**
+     * The Mandelbrot dive. Each time the effect comes on screen it picks a fresh random point
+     * and dives from the whole set down to [MANDEL_LOOP_SCALE]; from there it loops through one
+     * step of the point's self-similarity — the magnification keeps growing, but at the end of
+     * each loop the view (scale ÷ |λ|, turned by arg λ) is the picture it started from, so the
+     * zoom never ends and the per-pixel work never grows. Every few minutes it cuts to another
+     * random point through a white flash, landing on a kick.
+     */
+    private fun advanceDive(dt: Float) {
+        val onScreen = current == DemoEffect.MANDELBROT || next == DemoEffect.MANDELBROT
+        if (onScreen && !zoomOnScreen) {
+            zoomTarget = MandelbrotTargets.random()
+            zoomDepth = 0.0
+            zoomSinceTarget = 0f
+            zoomFlash = 0f
+            zoomFlashRising = false
         }
+        zoomOnScreen = onScreen
+        if (!onScreen) return
+
+        zoomDepth += (0.25f + low * 0.4f + kick * 0.3f) * dt
+        zoomSinceTarget += dt
+        if (!zoomFlashRising && zoomFlash == 0f && zoomSinceTarget > MANDEL_RETARGET_SEC &&
+            (kick > 0.9f || zoomSinceTarget > MANDEL_RETARGET_SEC + BEAT_WAIT_SEC)
+        ) {
+            zoomFlashRising = true
+        }
+        if (zoomFlashRising) {
+            zoomFlash += dt / 0.12f
+            if (zoomFlash >= 1f) {
+                // Hidden behind the flash: straight into the new point's loop, no second intro.
+                zoomFlash = 1f
+                zoomFlashRising = false
+                zoomTarget = MandelbrotTargets.random()
+                zoomDepth = MANDEL_LOOP_DEPTH
+                zoomSinceTarget = 0f
+            }
+        } else {
+            zoomFlash = (zoomFlash - dt / 0.6f).coerceAtLeast(0f)
+        }
+
+        if (zoomDepth <= MANDEL_LOOP_DEPTH) {
+            zoomScale = MANDEL_START_SCALE * exp(-zoomDepth)
+            zoomTurn = 0.0
+        } else {
+            val loops = (zoomDepth - MANDEL_LOOP_DEPTH) / kotlin.math.ln(zoomTarget.lambdaMag)
+            val u = loops - kotlin.math.floor(loops)
+            zoomScale = MANDEL_LOOP_SCALE * Math.pow(zoomTarget.lambdaMag, -u)
+            zoomTurn = -u * zoomTarget.lambdaArg
+        }
+        computeSkip()
+    }
+
+    /**
+     * Series approximation. While a pixel's difference from the reference orbit is tiny it grows
+     * almost linearly — ε_n ≈ A_n·δ + B_n·δ², with A_{n+1} = 2·Z_n·A_n + 1 and
+     * B_{n+1} = 2·Z_n·B_n + A_n², the same for every pixel — so run those iterations once here
+     * and let the shader start from ε = A·δ. Stops as soon as the dropped B·δ² term could reach
+     * [SKIP_TOLERANCE] of A·δ anywhere on screen. (Bounding |A·δ| itself instead is far too
+     * strict: A grows by |λ| per cycle, and it stopped the skip after four steps.)
+     */
+    private fun computeSkip() {
+        val t = zoomTarget
+        // The farthest a pixel's δ reaches: the screen corner plus the centre wander.
+        val maxDelta = zoomScale * (kotlin.math.hypot(aspect.toDouble(), 1.0) + 0.2)
+        var zr = 0.0; var zi = 0.0
+        var ar = 0.0; var ai = 0.0
+        var br = 0.0; var bi = 0.0
+        var n = 0
+        while (n < MAX_SKIP) {
+            val nar = 2 * (zr * ar - zi * ai) + 1
+            val nai = 2 * (zr * ai + zi * ar)
+            val nbr = 2 * (zr * br - zi * bi) + (ar * ar - ai * ai)
+            val nbi = 2 * (zr * bi + zi * br) + 2 * ar * ai
+            if (kotlin.math.hypot(nbr, nbi) * maxDelta > SKIP_TOLERANCE * kotlin.math.hypot(nar, nai)) break
+            val next = n + 1
+            val nzr: Double
+            val nzi: Double
+            if (next < t.preperiod) {
+                nzr = zr * zr - zi * zi + t.cRe
+                nzi = 2 * zr * zi + t.cIm
+            } else {
+                val j = (next - t.preperiod) % t.period
+                nzr = t.cycle[j * 2].toDouble()
+                nzi = t.cycle[j * 2 + 1].toDouble()
+            }
+            ar = nar; ai = nai; br = nbr; bi = nbi; zr = nzr; zi = nzi
+            n = next
+        }
+        skipCount = n; skipAr = ar; skipAi = ai; skipZr = zr; skipZi = zi
     }
 
     /**
@@ -318,7 +503,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val elapsed = now - fpsWindowStartNs
         if (elapsed >= FPS_LOG_INTERVAL_NS) {
             val fps = fpsFrames * 1e9f / elapsed
-            DebugLog.d("DemoRenderer", "${current.name} %.1f fps".format(fps))
+            val extra = if (current == DemoEffect.MANDELBROT) " (skip $skipCount, |λ| %.1f)".format(zoomTarget.lambdaMag) else ""
+            DebugLog.d("DemoRenderer", "${current.name} %.1f fps$extra".format(fps))
             fpsWindowStartNs = now
             fpsFrames = 0
         }
@@ -375,26 +561,19 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val KICKS_PER_SEGMENT_CHANGE = 16
         val SEGMENTS = floatArrayOf(6f, 8f, 5f, 12f)
 
-        /** Magnification the dive starts at (the whole set on screen) and how deep it goes. */
-        const val MANDEL_START_SCALE = 1.4f
-        val MANDEL_MAX_LOG = kotlin.math.ln(2000f)
-        /** Depth over which each dive fades in and out: about a second each at cruise. */
-        const val MANDEL_FADE_LOG = 0.25f
-
+        /** Half-height of the view at the top of a dive: the whole set on screen. */
+        const val MANDEL_START_SCALE = 1.4
         /**
-         * Points on the edge of the set that stay detailed all the way down: seahorse and
-         * elephant valleys, spirals, and minibrots on the antenna.
+         * Where the self-similar loop runs. Deep enough that the similarity is exact to the eye
+         * (it is only asymptotic), shallow enough that points still escape within 40 iterations.
          */
-        val MANDEL_TARGETS = listOf(
-            floatArrayOf(-0.7436439f, 0.1318259f),
-            floatArrayOf(-0.7746806f, -0.1374169f),
-            floatArrayOf(0.2549870f, -0.0005680f),
-            floatArrayOf(-0.1010964f, 0.9562865f),
-            floatArrayOf(-0.0452407f, 0.9868162f),
-            floatArrayOf(0.0016437f, -0.8224676f),
-            floatArrayOf(-1.2506600f, 0.0201200f),
-            floatArrayOf(-0.1607014f, 1.0375665f),
-        )
+        const val MANDEL_LOOP_SCALE = 2e-5
+        val MANDEL_LOOP_DEPTH = kotlin.math.ln(MANDEL_START_SCALE / MANDEL_LOOP_SCALE)
+        /** How long one point is dived into before cutting to another. */
+        const val MANDEL_RETARGET_SEC = 150f
+        const val MAX_SKIP = 60
+        const val SKIP_TOLERANCE = 1e-3
+
         const val CRUISE = 0.12f
         const val ATTACK_RATE = 30f
         const val RELEASE_RATE = 7f
@@ -406,7 +585,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val UNIFORM_NAMES = listOf(
             "uAspect", "uCenter", "uPhase", "uSpin", "uTime", "uTwist",
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
-            "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomFade",
+            "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
+            "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uC0", "uC1", "uC2", "uTex",
         )
 

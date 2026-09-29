@@ -15,7 +15,16 @@ package com.zonik.app.ui.tv
  * texture coordinate, through `fract(x * k / 2)`, or through `sin(πk · x)` with integer k — or
  * the wrap shows as a jump.
  */
-enum class DemoEffect(val label: String, body: String) {
+enum class DemoEffect(
+    val label: String,
+    body: String,
+    /**
+     * Drawn at half resolution into an offscreen buffer and scaled up: for the escape-time
+     * fractals, whose pixels along the set's edge run the whole iteration loop whatever else is
+     * done. A quarter of the pixels, and their soft glowing filaments barely show the difference.
+     */
+    val lowRes: Boolean = false,
+) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
     STARFIELD("Starfield", STARFIELD_BODY),
@@ -31,11 +40,20 @@ enum class DemoEffect(val label: String, body: String) {
     VORONOI("Crystal", VORONOI_BODY),
     AURORA("Aurora", AURORA_BODY),
     VECTORBALLS("Vector balls", VECTORBALLS_BODY),
-    JULIA("Julia", JULIA_BODY),
-    MANDELBROT("Mandelbrot zoom", MANDELBROT_BODY);
+    JULIA("Julia", JULIA_BODY, lowRes = true),
+    MANDELBROT("Mandelbrot zoom", MANDELBROT_BODY, lowRes = true);
 
     val fragmentShader: String = HEADER + body + FOOTER
 }
+
+/**
+ * Scales a [DemoEffect.lowRes] effect's offscreen buffer up to the screen. It goes through the
+ * shared FOOTER, so wipes and the fade-in still happen at full resolution.
+ */
+internal val BLIT_FRAGMENT: String = HEADER + """
+uniform sampler2D uLowRes;
+vec3 shade(vec2 p) { return texture2D(uLowRes, vPos * 0.5 + 0.5).rgb; }
+""" + FOOTER
 
 internal const val DEMO_VERTEX = """
 attribute vec2 aPos;
@@ -75,7 +93,16 @@ uniform float uWipeSide;
 uniform float uWipeKind;
 uniform vec2 uZoomCenter;
 uniform float uZoomScale;
-uniform float uZoomFade;
+uniform vec2 uZoomRot;
+uniform float uZoomFlash;
+uniform float uPre;
+uniform float uPer;
+uniform vec2 uCyc0;
+uniform vec2 uCyc1;
+uniform vec2 uCyc2;
+uniform float uSkip;
+uniform vec2 uA;
+uniform vec2 uZ0;
 uniform float uSegments;
 uniform vec3 uBalls[5];
 uniform vec3 uC0;
@@ -494,13 +521,16 @@ vec3 shade(vec2 p) {
     float heat = clamp(base * 1.15 + (n - 0.5) * 1.3, 0.0, 1.0);
     heat *= 0.9 + 0.3 * uKick;
 
-    // The classic fire ramp — black, deep red, orange, yellow, a white-hot core. The cover only
-    // tints it: taken from a palette, fire stops looking like fire.
-    vec3 col = mix(vec3(0.0), vec3(0.55, 0.03, 0.0), smoothstep(0.05, 0.35, heat));
-    col = mix(col, vec3(1.0, 0.35, 0.02), smoothstep(0.3, 0.6, heat));
-    col = mix(col, vec3(1.0, 0.78, 0.18), smoothstep(0.55, 0.85, heat));
-    col = mix(col, vec3(1.0, 0.97, 0.85), smoothstep(0.85, 1.0, heat) * 0.8);
-    col = mix(col, dot(col, vec3(0.33)) * vivid(uC0) * 1.4, 0.2);
+    // A fire ramp in the cover's colours: black, then its deep shade, its main colour, a pale
+    // tip, and a white-hot core. colorAt falls back to a rainbow for greyscale sleeves, so a
+    // black-and-white cover still burns in colour.
+    vec3 deep = colorAt(0.66) * 0.45;
+    vec3 body = colorAt(0.0);
+    vec3 tip = mix(colorAt(0.33), vec3(1.0), 0.5);
+    vec3 col = mix(vec3(0.0), deep, smoothstep(0.05, 0.35, heat));
+    col = mix(col, body, smoothstep(0.3, 0.6, heat));
+    col = mix(col, tip, smoothstep(0.55, 0.85, heat));
+    col = mix(col, vec3(1.0, 0.97, 0.9), smoothstep(0.85, 1.0, heat) * 0.7);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
@@ -701,7 +731,7 @@ vec3 shade(vec2 p) {
         // Fractional escape count, so the bands blend instead of stepping.
         float sn = n + 1.0 - log2(0.5 * log2(m2));
         float t = clamp(sn / 24.0, 0.0, 1.0);
-        col = colorAt(sn * 0.06 + uPhase * 0.5 + uKick * 0.2) * (0.25 + 1.1 * sqrt(t))
+        col = colorAt(sn * 0.2 - uTime * 8.0 - uPhase * 0.5 + uKick * 0.2) * (0.25 + 1.1 * sqrt(t))
             * (0.7 + 0.4 * uLow);
     }
     col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
@@ -710,41 +740,73 @@ vec3 shade(vec2 p) {
 """
 
 /**
- * An endless dive into the Mandelbrot set. The CPU picks a random point on the set's edge from
- * a list of places that stay interesting all the way down, zooms toward it exponentially, and
- * when fp32 runs out of precision (around 2000x) fades out and dives toward another. Bass speeds
- * the dive, the kick jumps the palette, the interior glows into each beat.
+ * An endless dive into the Mandelbrot set, toward a random Misiurewicz point (see
+ * `MandelbrotTargets`).
  *
- * 32 iterations with early escape: enough to resolve the edge to the depth it reaches, and the
- * most this GPU can afford — watch its fps line first if the Chromecast stutters.
+ * Rendered by perturbation: every pixel is the target's own orbit Z plus a small difference ε,
+ * and only ε is iterated — ε' = 2Zε + ε² + δ, where δ is the pixel's offset from the target.
+ * That keeps full precision at any depth in fp32, because nothing adds a tiny δ to a large c.
+ * Z needs no iterating either: the first `uPre` steps are computed here, after which it is the
+ * cycle `uCyc0..2` repeating forever.
+ *
+ * The CPU loops the zoom through one step of the point's self-similarity, so the dive never
+ * ends and never gets deeper than one loop's worth of iterations. Bass speeds the dive, the
+ * kick jumps the palette, the bands cycle steadily inward.
  */
 private const val MANDELBROT_BODY = """
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+
 vec3 shade(vec2 p) {
     // FOOTER shifts p by the centre wander; undo it so the dive stays on its target.
-    vec2 q = rot(uSpin * PI) * (p + uCenter);
-    vec2 c = uZoomCenter + q * uZoomScale;
-    vec2 z = vec2(0.0);
-    float n = 0.0;
+    vec2 d = cmul(p + uCenter, uZoomRot) * uZoomScale;
+    // Series skip: the CPU has already run the first uSkip iterations, which at depth are the
+    // same for every pixel up to a linear factor — ε = A·δ and z' = A — so start from there.
+    vec2 Z = uZ0;
+    vec2 e = cmul(uA, d);
+    vec2 dz = uA;
+    float n = uSkip;
     float m2 = 0.0;
+    bool escaped = false;
     for (int i = 0; i < 32; i++) {
-        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        vec2 z = Z + e;
+        dz = 2.0 * cmul(z, dz) + vec2(1.0, 0.0);
+        e = 2.0 * cmul(Z, e) + cmul(e, e) + d;
+        float next = n + 1.0;
+        if (next < uPre) {
+            Z = cmul(Z, Z) + uZoomCenter;
+        } else {
+            float j = mod(next - uPre, uPer);
+            Z = j < 0.5 ? uCyc0 : (j < 1.5 ? uCyc1 : uCyc2);
+        }
+        n = next;
+        z = Z + e;
         m2 = dot(z, z);
         // A large bailout keeps the smooth colouring below free of bands.
-        if (m2 > 64.0) break;
-        n += 1.0;
+        if (m2 > 64.0) {
+            escaped = true;
+            break;
+        }
     }
     vec3 col;
-    if (n >= 32.0) {
-        col = colorAt(0.66) * (0.05 + 0.12 * uBeat);
+    if (!escaped) {
+        col = colorAt(0.66) * (0.04 + 0.1 * uBeat);
     } else {
         float mu = n - log2(log2(m2) * 0.5);
-        // Several trips round the palette across the escape range — bands are what make the
-        // edge's detail legible — and classic palette cycling: the bands flow steadily inward
-        // (uTime * 4 is one cycle every 5 s and whole at the wrap), bass and the kick push them.
-        float f = mu * 0.25 - uTime * 4.0 - uPhase * 0.5 + uKick * 0.12;
-        col = colorAt(f) * (0.3 + 0.7 * sqrt(clamp(mu / 32.0, 0.0, 1.0))) * (0.75 + 0.45 * uLow);
+        // Distance to the set, in screen pixels: the filaments glow and open space goes dark,
+        // where escape time alone washes everything out once the dive is deep.
+        float dist = 0.25 * sqrt(m2) * log(m2) / max(length(dz), 1e-6);
+        float px = dist / (uZoomScale * 2.0 / 540.0);
+        float glow = exp(-px * 0.12);
+        // Many trips round the palette across the escape range, cycling steadily inward
+        // (uTime * 8 is one cycle every 2.5 s and whole at the wrap; bass and the kick push them).
+        // The bands fill open space dimly; the filaments glow in the palette's opposite colour,
+        // so both read instead of the glow washing the bands out.
+        float f = mu * 0.45 - uTime * 8.0 - uPhase * 0.5 + uKick * 0.12;
+        float band = 0.5 + 0.5 * sin(2.0 * PI * f);
+        col = colorAt(f) * (0.2 + 0.25 * band);
+        col += colorAt(f + 0.5) * glow * (0.8 + 0.5 * uLow);
     }
-    col *= uZoomFade;
+    col = mix(col, vec3(1.0), uZoomFlash);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
