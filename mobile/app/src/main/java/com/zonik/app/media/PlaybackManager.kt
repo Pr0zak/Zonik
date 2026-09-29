@@ -228,9 +228,13 @@ class PlaybackManager @Inject constructor(
             }
         }
 
-        // When Cast session starts, transfer current playback to Cast device
+        // When a Cast session starts, transfer current playback to the Cast device; when it
+        // ends, take it back.
         scope.launch(Dispatchers.Main) {
+            var wasCasting = false
             castManager.isCasting.collect { casting ->
+                if (!casting && wasCasting) handBackFromCast()
+                wasCasting = casting
                 if (casting) {
                     val queue = _queue.value
                     val track = _currentTrack.value
@@ -605,6 +609,28 @@ class PlaybackManager @Inject constructor(
      * eight-digit minute count with an empty progress bar for the whole track. The track's own
      * tagged length (seconds) stands in until, or unless, the player knows better.
      */
+    /**
+     * Picks playback up on the phone where the Cast device left off. Without this the local
+     * player sat paused wherever it was when casting began, often several tracks back.
+     *
+     * The track is the one the cast-status collector last matched, and the local player holds
+     * one media item per queue entry, so the queue index addresses it directly. Left paused:
+     * disconnecting from a TV should not start music on the phone's speaker unannounced.
+     */
+    private fun handBackFromCast() {
+        val c = controller ?: return
+        val track = _currentTrack.value ?: return
+        val position = castManager.lastKnownPositionMs.coerceAtLeast(0L)
+        val index = _queue.value.indexOfFirst { it.id == track.id }
+        if (index in 0 until c.mediaItemCount) {
+            c.seekTo(index, position)
+        } else {
+            c.seekTo(position)
+        }
+        c.pause()
+        DebugLog.d("Playback", "Cast ended; resumed locally at '${track.title}' ${position}ms (paused)")
+    }
+
     fun getDuration(): Long {
         if (castManager.isCasting.value) return castManager.getDuration()
         val fromPlayer = controller?.duration ?: androidx.media3.common.C.TIME_UNSET

@@ -164,6 +164,17 @@ The `mobile/` subdirectory is a Gradle multi-module Kotlin/Compose project:
 - **`mobile/wear/`** — Pixel Watch standalone player (browses + streams direct from server)
 - **`mobile/core/`** — shared Subsonic API, models, and auth interceptor used by both
 
+### Android Auto
+
+The phone app works in the car through **Android Auto**: plug in or connect wirelessly and Zonik appears in Auto's media apps.
+
+- Browse Mix, Recently Added, Library and Playlists — the tabs are yours to reorder in the phone's settings
+- Voice search ("play … on Zonik") and typed search, which lists results rather than guessing
+- Star or delete the playing track from the car screen
+- Songs you don't have yet can be fetched straight from Auto's search, over Soulseek via the server
+
+Because the APK is sideloaded rather than installed from the Play Store, Android Auto hides it until you allow unknown sources: open Android Auto's settings, tap **Version** ten times to enable developer mode, then turn on **Unknown sources** in the developer settings.
+
 ### Installing
 
 Latest builds are attached to GitHub releases tagged **`app-vX.Y.Z`** — grab `zonik-vX.Y.Z-debug.apk` (phone) or `zonik-wear-vX.Y.Z-debug.apk` (watch). The phone app's pairing flow generates a 6-digit code that the server's `/pair` page consumes — no typing credentials on the watch. The phone can also push its `ServerConfig` to a paired watch over Bluetooth via the Wear Data Layer (**Settings → Wear OS → Send**).

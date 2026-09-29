@@ -34,10 +34,17 @@ mobile/
 - **Queue restore** — resumes last queue and position after app restart
 
 ### Multi-Device
-- **Android Auto** — configurable browse tabs, star/delete buttons, voice search
+- **Android Auto** — full in-car player: reorderable browse tabs, voice and typed search, star/delete buttons, fetch missing songs from search
 - **Chromecast** — Google Cast SDK with styled media receiver
 - **Google TV** — remote-first TV interface and a demo-scene music visualizer
 - **Pixel Watch** — standalone player; streams direct from server, no phone required
+
+### Android Auto
+- Browse tree: Mix, Recently Added, Library and Playlists — reorder or hide tabs in the phone's Settings
+- Voice search ("play … on Zonik") and typed search that lists results instead of playing the first match
+- Star and delete buttons on the Now Playing screen
+- Songs that aren't in your library can be fetched from Auto's search results; the server downloads them over Soulseek
+- Needs Android Auto's **Unknown sources** developer setting, because the APK is sideloaded (see Installing)
 
 ### Google TV
 - **The Stage** — Now Playing is the whole screen: big art, title, progress, transport, "Up next"

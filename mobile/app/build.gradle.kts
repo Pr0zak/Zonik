@@ -16,8 +16,8 @@ android {
         applicationId = "com.zonik.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 245
-        versionName = "1.31.0"
+        versionCode = 246
+        versionName = "1.32.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -144,7 +144,6 @@ dependencies {
     implementation(libs.androidx.browser)
 
     // Security
-    implementation(libs.security.crypto)
 
     // Wear Data Layer — push ServerConfig to a paired watch
     implementation(libs.play.services.wearable)

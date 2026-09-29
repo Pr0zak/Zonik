@@ -7,6 +7,10 @@ import com.zonik.wear.data.api.WearNetwork
 import com.zonik.wear.data.repository.WearLibraryRepository
 import com.zonik.wear.data.repository.WearSettingsRepository
 import com.zonik.wear.media.WearMediaManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Manual DI for the watch app — wired lazily so a cold MediaSession bind
@@ -29,8 +33,11 @@ class WearApp : Application() {
     lateinit var mediaManager: WearMediaManager
         private set
 
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override fun onCreate() {
         super.onCreate()
+        appScope.launch { settings.encryptStoredCredentials() }
         mediaManager = WearMediaManager(this)
         // App-scoped MediaController bind. Keeping the connection out of the
         // Activity lifecycle means rotating / ambient / pausing won't tear

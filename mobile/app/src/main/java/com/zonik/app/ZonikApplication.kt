@@ -51,6 +51,7 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
         com.zonik.app.data.DebugLog.init(this)
         setupUncaughtExceptionHandler()
         createNotificationChannels()
+        appScope.launch(Dispatchers.IO) { settingsRepository.encryptStoredCredentials() }
         scheduleLibrarySync()
         // Skip Cast SDK on TV (not available, wastes startup time)
         if (!isTvDevice()) {
@@ -101,22 +102,12 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
     private fun createNotificationChannels() {
         val manager = getSystemService(NotificationManager::class.java)
 
-        val playbackChannel = NotificationChannel(
-            PLAYBACK_CHANNEL_ID,
-            "Playback",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "Music playback controls"
-        }
-
-        val syncChannel = NotificationChannel(
-            SYNC_CHANNEL_ID,
-            "Library Sync",
-            NotificationManager.IMPORTANCE_LOW
-        ).apply {
-            description = "Library synchronization status"
-            setSound(null, null)
-        }
+        // Playback notifications come from Media3, which posts on its own channel, and library
+        // sync posts nothing — the "Playback" and "Library Sync" channels older releases
+        // created only ever sat empty in the system's notification settings. Remove them from
+        // installs that still have them.
+        manager.deleteNotificationChannel("zonik_playback")
+        manager.deleteNotificationChannel("zonik_sync")
 
         val downloadChannel = NotificationChannel(
             DOWNLOAD_CHANNEL_ID,
@@ -126,7 +117,7 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
             description = "Download progress and completion"
         }
 
-        manager.createNotificationChannels(listOf(playbackChannel, syncChannel, downloadChannel))
+        manager.createNotificationChannel(downloadChannel)
     }
 
     override fun newImageLoader(): ImageLoader {
@@ -148,8 +139,6 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
     }
 
     companion object {
-        const val PLAYBACK_CHANNEL_ID = "zonik_playback"
-        const val SYNC_CHANNEL_ID = "zonik_sync"
         const val DOWNLOAD_CHANNEL_ID = "zonik_downloads"
     }
 }

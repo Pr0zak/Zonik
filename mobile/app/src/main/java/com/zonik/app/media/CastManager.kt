@@ -46,6 +46,14 @@ class CastManager @Inject constructor(
 
     private var remoteMediaClientCallback: RemoteMediaClient.Callback? = null
 
+    /**
+     * Where the Cast device had got to, for handing playback back to the phone when the
+     * session ends. Taken while the session is ending (the remote client is still readable
+     * then) and on every status update, in case the receiver drops without an orderly end.
+     */
+    @Volatile var lastKnownPositionMs: Long = 0L
+        private set
+
     private val sessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(session: CastSession) {
             DebugLog.d(TAG, "Cast session starting")
@@ -65,7 +73,8 @@ class CastManager @Inject constructor(
         }
 
         override fun onSessionEnding(session: CastSession) {
-            DebugLog.d(TAG, "Cast session ending")
+            session.remoteMediaClient?.approximateStreamPosition?.let { lastKnownPositionMs = it }
+            DebugLog.d(TAG, "Cast session ending at ${lastKnownPositionMs}ms")
         }
 
         override fun onSessionEnded(session: CastSession, error: Int) {
@@ -110,6 +119,7 @@ class CastManager @Inject constructor(
         unregisterMediaCallback(session) // avoid double-register
         val callback = object : RemoteMediaClient.Callback() {
             override fun onStatusUpdated() {
+                lastKnownPositionMs = client.approximateStreamPosition
                 val mediaInfo = client.mediaInfo
                 val metadata = mediaInfo?.metadata
                 val title = metadata?.getString(MediaMetadata.KEY_TITLE)

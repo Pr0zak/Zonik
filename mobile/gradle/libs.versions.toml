@@ -113,7 +113,6 @@ androidx-mediarouter = { group = "androidx.mediarouter", name = "mediarouter", v
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 
 # Security
-security-crypto = { group = "androidx.security", name = "security-crypto", version = "1.1.0-alpha06" }
 
 # Wear OS
 wear-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "wear-compose" }

@@ -30,7 +30,7 @@ Sideloaded APKs, not the Play Store.
 - **Login:** server URL, username and API key, checked with a raw `ping.view` call.
 - **Pair with code:** `POST api/pair`, then the app polls `GET api/pair/{code}` until the server hands over a config. The TV starts this flow automatically.
 - **Subsonic token auth:** `t = md5(apiKey + salt)` with a random 16-character `s` on every request, `v=1.16.1`, `c=ZonikApp` (the watch sends `c=ZonikWear`).
-- **Credential storage:** Preferences DataStore (`settings`) holds URL, username and key as plain string keys. `security-crypto` is declared as a dependency but not used.
+- **Credential storage:** Preferences DataStore (`settings`) holds URL and username as plain string keys; the API key and the Last.fm session key are encrypted with an AES-GCM key held in the Android Keystore (`core/security/CredentialCipher`, values prefixed `enc1:`). Plain values from older releases are re-saved encrypted at startup. A key that can no longer be decrypted — a backup restored onto another device — counts as signed out. The watch app does the same for its key.
 - **Base URL:** Retrofit is built against a `http://localhost/` placeholder that an interceptor rewrites to the configured server. `ServerConfigCache` keeps the current config in a volatile field.
 - **`CachingDns`:** tries the system resolver first. If that fails, it falls back to the last good addresses, kept for 24 h in a `dns_cache` DataStore.
 
@@ -118,7 +118,7 @@ Sideloaded APKs, not the Play Store.
 
 ### 3.9 Notifications
 - **Playback:** Media3's default notification from the `MediaSession`, including the custom buttons in 4.3.
-- **Channels:** `ZonikApplication` creates `zonik_playback`, `zonik_sync` and `zonik_downloads`. Only `zonik_downloads` is posted to by app code.
+- **Channels:** `ZonikApplication` creates `zonik_downloads`; playback notifications use Media3's own channel. The unused `zonik_playback` and `zonik_sync` channels of older releases are deleted at startup.
 - **Cast:** the Cast SDK posts its own notification.
 
 ### 3.10 Theming
@@ -181,7 +181,7 @@ DI is Hilt. The OkHttp clients are built in `di/AppModule.kt`. The main client h
 - Exposes `currentTrack`, `isPlaying`, `isBuffering`, `queue`, `playbackError` and `recentlyPlayed` as `StateFlow`s.
 - Builds `stream.view` URLs (`estimateContentLength=true`) for Cast and queue edits, and implements the adaptive-bitrate policy.
 - On a phone, restores the last queue paused after connecting. The TV skips this.
-- **Cast:** when a Cast session starts it pauses local playback and loads the current queue onto the receiver through `CastManager`. The transport controls route to Cast while casting. There is no handoff back when the session ends.
+- **Cast:** when a Cast session starts it pauses local playback and loads the current queue onto the receiver through `CastManager`. The transport controls route to Cast while casting. When the session ends, playback hands back to the phone: the local player moves to the track and position the receiver had reached (`CastManager.lastKnownPositionMs`) and stays paused.
 
 #### API clients
 - **`SubsonicApi` (core):** ping, artists and albums, `search3`, `getRandomSongs`, genres, playlists, `getStarred2`, star/unstar, scrobble, `setRating`, `getSimilarSongs2`, `getSongsByGenre`, `getNowPlaying`, and more. `stream.view` and `getCoverArt.view` URLs are built by hand.
@@ -443,7 +443,7 @@ TV devices are detected at runtime by `isTvDevice()`: the leanback or television
 | Wear Compose Material 3, Horologist, Tiles | 1.6.1 / 0.6.20 / 1.4.1 | Watch UI |
 | Paparazzi | 1.3.5 | JVM screenshot tests (`app/src/test/.../screenshots`) |
 
-Paging 3 (`paging-runtime`, `paging-compose`, `room-paging`), `security-crypto` and AndroidX Browser are declared in `app/build.gradle.kts` but not used.
+Paging 3 (`paging-runtime`, `paging-compose`, `room-paging`) and AndroidX Browser are declared in `app/build.gradle.kts` but not used.
 
 ## 8. Screens — UI summary (phone)
 
@@ -513,7 +513,6 @@ Paging 3 (`paging-runtime`, `paging-compose`, `room-paging`), `security-crypto` 
 - Crossfade, ReplayGain or normalization, skip silence, sleep timer.
 - Lyrics (OpenSubsonic `getLyricsBySongId`).
 - Incremental sync; storing playlists in Room; persistent offline scrobble queue (the `pending_scrobbles` table is unused).
-- Encrypted credential storage; Paging 3.
-- Cast handoff back to local playback when a session ends.
+- Paging 3.
 - Voice playlists in Android Auto or on the watch.
 - Queue drag-to-reorder; smart playlists; playlist import/export.

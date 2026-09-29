@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.zonik.app.ui.util.isTvDevice
 import com.zonik.core.model.ServerConfig
+import com.zonik.core.security.CredentialCipher
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -22,15 +23,33 @@ class SettingsRepository @Inject constructor(
     // hasSystemFeature is a binder round-trip — resolve it once, not on every flow emission.
     private val isTv: Boolean by lazy { context.isTvDevice() }
 
+    // The API key and the Last.fm session key are stored encrypted (see CredentialCipher).
+    // DataStore re-emits on every settings change, and a Keystore decrypt is not free, so the
+    // last stored value and its plain text are kept and reused while the stored value is
+    // unchanged.
+    @Volatile private var decryptedFor: String? = null
+    @Volatile private var decrypted: String? = null
+
+    private fun reveal(stored: String?): String? {
+        if (stored == null) return null
+        if (stored == decryptedFor) return decrypted
+        val plain = CredentialCipher.decrypt(stored)
+        decryptedFor = stored
+        decrypted = plain
+        return plain
+    }
+
     val serverConfig: Flow<ServerConfig?> = dataStore.data.map { prefs ->
         val url = prefs[SERVER_URL] ?: return@map null
         val username = prefs[USERNAME] ?: return@map null
-        val apiKey = prefs[API_KEY] ?: return@map null
+        val apiKey = reveal(prefs[API_KEY]) ?: return@map null
         ServerConfig(url, username, apiKey)
     }
 
+    // A key that can no longer be decrypted (a backup restored onto another device) counts as
+    // signed out, so the user is sent to pair again instead of failing every request.
     val isLoggedIn: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[SERVER_URL] != null && prefs[USERNAME] != null && prefs[API_KEY] != null
+        prefs[SERVER_URL] != null && prefs[USERNAME] != null && reveal(prefs[API_KEY]) != null
     }
 
     val wifiBitrate: Flow<Int> = dataStore.data.map { prefs ->
@@ -58,14 +77,29 @@ class SettingsRepository @Inject constructor(
     }
 
     val lastFmSessionKey: Flow<String?> = dataStore.data.map { prefs ->
-        prefs[LASTFM_SESSION_KEY]
+        prefs[LASTFM_SESSION_KEY]?.let { CredentialCipher.decrypt(it) }
     }
 
     suspend fun saveServerConfig(config: ServerConfig) {
         dataStore.edit { prefs ->
             prefs[SERVER_URL] = config.url
             prefs[USERNAME] = config.username
-            prefs[API_KEY] = config.apiKey
+            prefs[API_KEY] = CredentialCipher.encrypt(config.apiKey)
+        }
+    }
+
+    /**
+     * Re-saves credentials stored in plain text by releases before they were encrypted. Runs
+     * once per start; a no-op when they already are.
+     */
+    suspend fun encryptStoredCredentials() {
+        dataStore.edit { prefs ->
+            prefs[API_KEY]?.takeIf { !CredentialCipher.isEncrypted(it) }?.let {
+                prefs[API_KEY] = CredentialCipher.encrypt(it)
+            }
+            prefs[LASTFM_SESSION_KEY]?.takeIf { !CredentialCipher.isEncrypted(it) }?.let {
+                prefs[LASTFM_SESSION_KEY] = CredentialCipher.encrypt(it)
+            }
         }
     }
 
@@ -95,7 +129,7 @@ class SettingsRepository @Inject constructor(
 
     suspend fun setLastFmSessionKey(key: String?) {
         dataStore.edit { prefs ->
-            if (key != null) prefs[LASTFM_SESSION_KEY] = key
+            if (key != null) prefs[LASTFM_SESSION_KEY] = CredentialCipher.encrypt(key)
             else prefs.remove(LASTFM_SESSION_KEY)
         }
     }
