@@ -10,6 +10,15 @@
 	import Button from '../../components/ui/Button.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
+
+	// Claude models offered for the AI features, newest generation. Prices are per 1M
+	// input / output tokens, so the cost of a switch is visible where it is made.
+	const CLAUDE_MODELS = [
+		{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5 — recommended ($2 / $10)' },
+		{ id: 'claude-opus-5', label: 'Claude Opus 5 — more capable ($5 / $25)' },
+		{ id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 — fastest, cheapest ($1 / $5)' },
+		{ id: 'claude-fable-5-1', label: 'Claude Fable 5.1 — most capable ($10 / $50)' },
+	];
 	import Toggle from '../../components/ui/Toggle.svelte';
 
 	// The API never sends a stored secret back — it returns an empty value plus a has_* flag —
@@ -1024,8 +1033,15 @@
 						<label class="block text-xs text-[var(--text-muted)] mb-1">Model</label>
 						<select bind:value={services.claude_model} oninput={() => dirty = true}
 							class={inputClass}>
-							<option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-							<option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+							<!-- The current models. A model saved under an id not listed here (an older
+							     or dated one) is shown as-is rather than being silently replaced by the
+							     first option on the next save. -->
+							{#if services.claude_model && !CLAUDE_MODELS.some((m) => m.id === services.claude_model)}
+								<option value={services.claude_model}>{services.claude_model} (current)</option>
+							{/if}
+							{#each CLAUDE_MODELS as m}
+								<option value={m.id}>{m.label}</option>
+							{/each}
 						</select>
 					</div>
 				</div>

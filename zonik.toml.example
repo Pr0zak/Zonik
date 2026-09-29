@@ -65,7 +65,7 @@ track_ai_usage = true
 # Optional: override the built-in pricing snapshot in
 # backend/services/ai/pricing.py. model-id -> [input, output] USD per 1M tokens.
 # [assistant.model_pricing]
-# "claude-sonnet-4-20250514" = [3.00, 15.00]
+# "claude-sonnet-5" = [2.00, 10.00]
 # "claude-haiku-4-5" = [1.00, 5.00]
 
 [kimahub]

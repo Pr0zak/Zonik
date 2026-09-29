@@ -12,7 +12,7 @@ To correct or add a rate without touching code, set ``model_pricing`` under
 ``[assistant]`` in ``zonik.toml``::
 
     [assistant.model_pricing]
-    "claude-sonnet-4-20250514" = [3.00, 15.00]   # [input, output] USD per 1M tokens
+    "claude-sonnet-5" = [2.00, 10.00]   # [input, output] USD per 1M tokens
 
 Config entries are consulted before ``DEFAULT_PRICING`` and win outright.
 
@@ -28,13 +28,16 @@ import re
 log = logging.getLogger(__name__)
 
 #: The date these rates were last verified against Anthropic's published pricing.
-PRICING_AS_OF: str = "2026-06-24"
+PRICING_AS_OF: str = "2026-09-29"
 
 #: model id -> (input $/1M tokens, output $/1M tokens)
 DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     # Current families
+    "claude-fable-5-1": (10.00, 50.00),
+    "claude-mythos-5-1": (10.00, 50.00),
     "claude-fable-5": (10.00, 50.00),
     "claude-mythos-5": (10.00, 50.00),
+    "claude-opus-5-5": (4.00, 20.00),
     "claude-opus-5": (5.00, 25.00),
     "claude-opus-4-8": (5.00, 25.00),
     "claude-opus-4-7": (5.00, 25.00),
@@ -54,7 +57,7 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
 
 #: Used when a model id isn't recognised. Mid-tier rates, so the estimate lands in the
 #: right order of magnitude instead of reading as free.
-FALLBACK_RATES: tuple[float, float] = DEFAULT_PRICING["claude-sonnet-4-6"]
+FALLBACK_RATES: tuple[float, float] = DEFAULT_PRICING["claude-sonnet-5"]
 
 #: Cache reads bill at 10% of the input rate; 5-minute cache writes at 125%.
 CACHE_READ_MULTIPLIER: float = 0.10
@@ -131,8 +134,8 @@ def estimate_cost(
 ) -> float:
     """Estimated USD cost of one call. Never raises — returns 0.0 on garbage input.
 
-    Zonik's default model is ``claude-sonnet-4-20250514`` (3.00 / 15.00), so
-    ``estimate_cost("claude-sonnet-4-20250514", 10_000, 2_000)`` == 0.06.
+    Zonik's default model is ``claude-sonnet-5`` (2.00 / 10.00), so
+    ``estimate_cost("claude-sonnet-5", 10_000, 2_000)`` == 0.04.
     """
     try:
         rate_in, rate_out = get_rates(model)

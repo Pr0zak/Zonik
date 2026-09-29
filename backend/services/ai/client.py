@@ -122,8 +122,16 @@ _NO_SAMPLING_PREFIXES = (
 )
 # Thinking can be switched off on these; the callers here are short JSON
 # extraction tasks that ran without thinking on the models they were written for.
-_THINKING_OPTIONAL_PREFIXES = ("claude-sonnet-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8")
-_OPUS_5_5_PREFIX = "claude-opus-5-5"
+_THINKING_OPTIONAL_PREFIXES = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8")
+# Thinking stays on for these, kept brief with low effort. Opus 5.5, Fable and Mythos
+# refuse to disable it; Opus 5 accepts "disabled" but then can write a tool call or
+# <thinking> tags into its visible text, so low effort is the safer way to keep it short.
+_LOW_EFFORT_PREFIXES = ("claude-opus-5", "claude-fable", "claude-mythos")
+# Models that take the server-side refusal fallback: if a safety classifier declines the
+# request, the API re-runs it on a fallback model inside the same call rather than
+# returning an empty refusal. "default" lets the API pick the fallback by category.
+_REFUSAL_FALLBACK_MODELS = ("claude-opus-5", "claude-fable-5-1")
+_REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
 def _model_params(model: str, max_tokens: int, temperature: float | None) -> dict:
@@ -132,13 +140,27 @@ def _model_params(model: str, max_tokens: int, temperature: float | None) -> dic
     no_sampling = model.startswith(_NO_SAMPLING_PREFIXES)
     if temperature is not None and not no_sampling:
         out["temperature"] = temperature
-    if model.startswith(_OPUS_5_5_PREFIX) or model.startswith(("claude-fable", "claude-mythos")):
-        # Thinking is always on: keep it brief and leave room for the answer.
+    if model.startswith(_LOW_EFFORT_PREFIXES):
+        # Thinking on, kept brief, with room left for the answer.
         out["output_config"] = {"effort": "low"}
         out["max_tokens"] = max_tokens + 4096
     elif model.startswith(_THINKING_OPTIONAL_PREFIXES):
         out["thinking"] = {"type": "disabled"}
+    if model in _REFUSAL_FALLBACK_MODELS:
+        out["fallbacks"] = "default"
     return out
+
+
+def request_headers(api_key: str, model: str) -> dict:
+    """Headers for a Messages API call, with the beta flags the model's params need."""
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    if model in _REFUSAL_FALLBACK_MODELS:
+        headers["anthropic-beta"] = _REFUSAL_FALLBACK_BETA
+    return headers
 
 
 async def call_claude(
@@ -204,11 +226,7 @@ async def call_claude(
         try:
             resp = await client.post(
                 ANTHROPIC_API_URL,
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
+                headers=request_headers(api_key, use_model),
                 json=body,
             )
         except httpx.TimeoutException:

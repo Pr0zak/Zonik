@@ -122,7 +122,7 @@ class ServiceConfig(BaseModel):
     apple_music_developer_token: str = ""
     # AI Assistant
     claude_api_key: str = ""
-    claude_model: str = "claude-sonnet-4-20250514"
+    claude_model: str = "claude-sonnet-5"
     # AI feature toggles
     ai_reranking: bool = True
     ai_search: bool = True
@@ -366,18 +366,17 @@ async def test_service(service: str):
             return {"status": "error", "message": "No Claude API key configured"}
         import httpx
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
+            from backend.services.ai.client import _model_params, request_headers
+            # The same per-model fields and beta headers as real calls, so the test
+            # exercises what the features will send (thinking settings, fallbacks).
+            async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": api_key,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
+                    headers=request_headers(api_key, model),
                     json={
                         "model": model,
-                        "max_tokens": 32,
                         "messages": [{"role": "user", "content": "Reply with just the word 'ok'."}],
+                        **_model_params(model, 32, None),
                     },
                 )
                 if resp.status_code == 200:
