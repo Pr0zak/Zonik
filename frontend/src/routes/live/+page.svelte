@@ -371,7 +371,7 @@
 			{:else if !skips.length}
 				<EmptyState
 					title="No skips yet"
-					description="A track counts as skipped when the phone or watch moves on before it reaches the halfway mark. Skipped tracks come up less often in Shuffle Mix."
+					description="A track counts as skipped when the phone or watch moves on before it reaches the halfway mark."
 				>
 					{#snippet icon()}<SkipForward class="w-10 h-10" />{/snippet}
 				</EmptyState>
@@ -399,7 +399,7 @@
 									Last skipped {formatRelativeTime(s.last_skipped_at)} &middot; {s.play_count} {s.play_count === 1 ? 'play' : 'plays'}
 								</p>
 							</div>
-							<span title="Skips still counting against this track in Shuffle Mix (each full listen removes one)">
+							<span title="Skips on this track (each full listen removes one)">
 								<Badge variant={s.skip_count >= 3 ? 'error' : s.skip_count > 0 ? 'warning' : 'default'}>
 									{s.skip_count} {s.skip_count === 1 ? 'skip' : 'skips'}
 								</Badge>

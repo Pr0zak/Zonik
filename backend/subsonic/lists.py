@@ -167,12 +167,11 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
 
     cfg = get_settings().subsonic
 
-    # Uniform random order, except that tracks you keep skipping are pushed back:
-    # each skip multiplies the sort key, so a track skipped once is about half as
-    # likely to make the cut, three times about a quarter. Completed plays pay the
-    # count back down (see scrobble), so a track is not buried for good.
+    # Uniform random order. Skips are tracked for the Stats page but deliberately
+    # don't weigh on the mix: skipping a track usually means "not right now", not
+    # "never", so it keeps the same odds as everything else.
     def _random_order(q):
-        return q.order_by((func.abs(func.random()) * (1.0 + func.coalesce(Track.skip_count, 0))).asc())
+        return q.order_by(func.random())
 
     # New-arrivals quota: pull a guaranteed slice of the mix from tracks ADDED in the
     # last N days (by created_at), so fresh downloads always surface.
