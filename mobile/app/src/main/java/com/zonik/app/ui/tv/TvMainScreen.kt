@@ -3,11 +3,6 @@ package com.zonik.app.ui.tv
 import android.graphics.drawable.BitmapDrawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -57,7 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -68,9 +63,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
@@ -83,6 +77,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zonik.app.data.repository.LibraryRepository
+import com.zonik.app.data.repository.SettingsRepository
 import com.zonik.app.media.PlaybackManager
 import com.zonik.core.model.Track
 import com.zonik.app.ui.components.CoverArt
@@ -240,6 +235,13 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientBeatReactive(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setTvAmbientBeatReactive(enabled) }
+    }
+
+    val ambientEffect: StateFlow<String> = settingsRepository.tvAmbientEffect
+        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsRepository.TV_AMBIENT_EFFECT_AUTO)
+
+    fun setAmbientEffect(effect: String) {
+        viewModelScope.launch { settingsRepository.setTvAmbientEffect(effect) }
     }
 
     private val _pulse = MutableStateFlow(AmbientPulse())
@@ -620,8 +622,8 @@ fun TvMainScreen(
 
 /**
  * The ambient / visualizer screen. Beat reactivity comes from the output-mix FFT when
- * RECORD_AUDIO has been granted; without it the particles drift and everything else still
- * works, so the permission is asked for once and never insisted upon.
+ * RECORD_AUDIO has been granted; without it the effect keeps time from the server's tempo and
+ * everything else still works, so the permission is asked for once and never insisted upon.
  */
 @Composable
 private fun TvAmbientOverlay(
@@ -630,10 +632,8 @@ private fun TvAmbientOverlay(
     isPlaying: Boolean,
 ) {
     val beatReactive by viewModel.ambientBeatReactive.collectAsState()
-    val rawPulse by viewModel.pulse.collectAsState()
     val bpm by viewModel.trackBpm.collectAsState()
     val context = LocalContext.current
-    val pulse = if (beatReactive) rawPulse else AmbientPulse()
 
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
@@ -661,23 +661,17 @@ private fun TvAmbientOverlay(
         }
     }
 
-    // The beat grid. The server knows the tempo but not where the downbeat falls, so an onset
-    // from the audio snaps the phase into place; from then on the clock can say when the NEXT
-    // beat lands, which is what lets motion peak on it instead of trailing it.
+    // "Auto" moves to the next effect on every track change, from a random start so two
+    // sessions do not open on the same one.
+    val effectSetting by viewModel.ambientEffect.collectAsState()
+    var autoIndex by remember { mutableIntStateOf(kotlin.random.Random.nextInt(DemoEffect.entries.size)) }
+    LaunchedEffect(track.id) { autoIndex++ }
+    val effect = DemoEffect.entries.firstOrNull { it.name == effectSetting }
+        ?: DemoEffect.entries[autoIndex % DemoEffect.entries.size]
+
+    // The beat grid, from the server's stored tempo. The visualizer aligns its phase to the
+    // onsets it hears and uses it to swell into each beat rather than trailing it.
     val beatClock = remember(track.id, bpm) { BeatClock(bpm) }
-    var anticipation by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(beatClock) {
-        if (!beatClock.hasTempo) return@LaunchedEffect
-        while (true) {
-            anticipation = beatClock.anticipation(System.currentTimeMillis())
-            delay(16L)
-        }
-    }
-    LaunchedEffect(beatClock, pulse.onset) {
-        if (beatClock.hasTempo && pulse.onset > 0.9f) {
-            beatClock.alignTo(System.currentTimeMillis())
-        }
-    }
 
     // Colours sampled from the artwork, so a grunge sleeve and a synth sleeve do not produce
     // the identical field. (The restored version hardcoded three swatches keyed on coverArt,
@@ -690,83 +684,50 @@ private fun TvAmbientOverlay(
         val coverArtId = track.coverArt ?: return@LaunchedEffect
         val loaded = kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
-                // Small on purpose. Magnifying a ~128px source to fill a 1080p panel IS the
-                // blur, done by the texture unit for free, and it keeps the source inside GPU
-                // cache — cheaper than the stacked full-screen gradients it replaces.
+                // Small on purpose: it becomes the tunnel's wall texture, and 128px keeps the
+                // whole cover inside the GPU's texture cache.
                 val request = ImageRequest.Builder(context)
                     .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=128")
                     .allowHardware(false)
                     .build()
-                ((context.imageLoader.execute(request) as? SuccessResult)?.drawable
-                    as? BitmapDrawable)?.bitmap
+                val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable
+                    as? BitmapDrawable)?.bitmap ?: return@withContext null
+                // Palette runs here, off the main thread, which is also where the media
+                // session dispatches the remote's play/skip commands.
+                bitmap to Palette.from(bitmap).generate()
             } catch (_: Exception) {
                 null
             }
         } ?: return@LaunchedEffect
-        coverBitmap = loaded
-        val swatches = Palette.from(loaded).generate()
+        val (bitmap, swatches) = loaded
+        coverBitmap = bitmap
         palette = listOf(
-            Color(swatches.getVibrantColor(ZonikColors.gold.value.toInt())),
+            Color(swatches.getVibrantColor(ZonikColors.gold.toArgb())),
             Color(swatches.getLightMutedColor(0xFF7C4DFF.toInt())),
             Color(swatches.getMutedColor(0xFF534AB7.toInt())),
         )
     }
 
-    // Cover Bloom: a slow drift across the magnified artwork, so the room the particles float
-    // in is the record itself rather than a fixed gradient.
-    val drift = rememberInfiniteTransition(label = "bloom")
-    val driftScale by drift.animateFloat(
-        initialValue = 1.12f, targetValue = 1.22f,
-        animationSpec = infiniteRepeatable(tween(90_000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "bloomScale"
-    )
-    val driftX by drift.animateFloat(
-        initialValue = -0.02f, targetValue = 0.02f,
-        animationSpec = infiniteRepeatable(tween(70_000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "bloomX"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.radialGradient(listOf(Color(0xFF16121F), Color(0xFF07060B))))
-    ) {
-        val bloom = coverBitmap
-        if (bloom != null) {
-            androidx.compose.foundation.Image(
-                bitmap = bloom.asImageBitmap(),
-                contentDescription = null,
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = driftScale + pulse.low * 0.015f,
-                        scaleY = driftScale + pulse.low * 0.015f,
-                        translationX = driftX * 1000f,
-                        alpha = 0.62f
-                    )
-            )
-            // Keeps the type legible over a bright sleeve without burying the artwork. A
-            // radial scrim was the obvious choice and the wrong one: its radius is in pixels
-            // and defaults to half the smallest dimension, so on a 1080p panel it reached full
-            // opacity a third of the way out and the bloom never showed. A vertical ramp puts
-            // the darkness where the words are instead.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xA6000000), Color(0x59000000), Color(0xEB0A0810))
-                        )
-                    )
-            )
-        }
-
-        ParticleSystem(
-            pulse = pulse,
-            anticipation = anticipation,
-            colors = palette,
+    // No background on this Box: the GL surface sits behind the window and shows through a
+    // hole in it, so anything opaque drawn here would cover the effect.
+    Box(modifier = Modifier.fillMaxSize()) {
+        DemoVisualizer(
+            effect = effect,
+            pulse = viewModel.pulse,
+            beatClock = beatClock,
+            cover = coverBitmap,
+            palette = palette,
             modifier = Modifier.fillMaxSize()
+        )
+        // Keeps the type legible without burying the effect: darkness where the words are.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color(0x66000000), Color(0x00000000), Color(0xCC0A0810))
+                    )
+                )
         )
 
         Column(
@@ -1305,6 +1266,21 @@ private fun TvSettingsContent(
             subtitle = if (beatOn) "On — needs microphone permission to read the audio"
                        else "Off — the visuals drift on their own",
             onClick = { viewModel.setAmbientBeatReactive(!beatOn) }
+        )
+
+        // Visualizer — effect. Cycles like the delay row: Auto, then each effect in turn.
+        val effectSetting by viewModel.ambientEffect.collectAsState()
+        TvSettingsButton(
+            icon = Icons.Default.GraphicEq,
+            title = "Visualizer effect",
+            subtitle = (DemoEffect.entries.firstOrNull { it.name == effectSetting }?.label
+                ?: "Auto — a different one each track") + " — press OK to change",
+            onClick = {
+                val options = listOf(SettingsRepository.TV_AMBIENT_EFFECT_AUTO) +
+                    DemoEffect.entries.map { it.name }
+                val next = options[(options.indexOf(effectSetting) + 1) % options.size]
+                viewModel.setAmbientEffect(next)
+            }
         )
 
         // Upload Logs

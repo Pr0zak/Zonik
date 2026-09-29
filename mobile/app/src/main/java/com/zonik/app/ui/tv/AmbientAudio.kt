@@ -125,7 +125,8 @@ class PulseAnalyzer(private val sampleRate: Int) {
  */
 class BeatClock(bpm: Float) {
     private val periodMs: Float = if (bpm > 20f) 60_000f / bpm else 0f
-    private var phaseOriginMs: Long = 0L
+    // Written on the main thread when an onset lands, read every frame on the GL thread.
+    @Volatile private var phaseOriginMs: Long = 0L
 
     val hasTempo: Boolean get() = periodMs > 0f
 

@@ -169,6 +169,15 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs -> prefs[TV_AMBIENT_BEAT] = enabled }
     }
 
+    /** A `DemoEffect` name for one fixed effect, or [TV_AMBIENT_EFFECT_AUTO] to change each track. */
+    val tvAmbientEffect: Flow<String> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_EFFECT] ?: TV_AMBIENT_EFFECT_AUTO
+    }
+
+    suspend fun setTvAmbientEffect(effect: String) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_EFFECT] = effect }
+    }
+
     val autoTabOrder: Flow<List<String>> = dataStore.data.map { prefs ->
         val raw = prefs[AUTO_TAB_ORDER]
         if (raw != null) raw.split(",") else listOf("mix", "recent", "library", "playlists")
@@ -203,6 +212,8 @@ class SettingsRepository @Inject constructor(
         private val TV_AMBIENT_ENABLED = booleanPreferencesKey("tv_ambient_enabled")
         private val TV_AMBIENT_DELAY_SEC = intPreferencesKey("tv_ambient_delay_sec")
         private val TV_AMBIENT_BEAT = booleanPreferencesKey("tv_ambient_beat_reactive")
+        private val TV_AMBIENT_EFFECT = stringPreferencesKey("tv_ambient_effect")
+        const val TV_AMBIENT_EFFECT_AUTO = "AUTO"
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_PRESET = intPreferencesKey("eq_preset")
         private val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")
