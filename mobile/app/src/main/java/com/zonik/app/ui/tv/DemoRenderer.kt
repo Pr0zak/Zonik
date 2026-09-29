@@ -58,15 +58,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private class Program(val id: Int, val uniforms: Map<String, Int>, val aPos: Int)
 
     private val programs = HashMap<DemoEffect, Program>()
-    private var blit: Program? = null
 
-    // Offscreen buffer for lowRes effects, half the surface in each direction.
-    private var fbo = 0
-    private var fboTexture = 0
-    private var fboWidth = 0
-    private var fboHeight = 0
-    private var surfaceWidth = 0
-    private var surfaceHeight = 0
     private var current = initial
     /** Fade-in from black when the surface first appears. */
     private var fade = 0f
@@ -112,6 +104,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var skipZr = 0.0
     private var skipZi = 0.0
 
+    // The spectrum as drawn: eased toward each capture every frame, uploaded as a 64x1 texture.
+    private val spectrum = FloatArray(SPECTRUM_BANDS)
+    private val spectrumBytes = ByteBuffer.allocateDirect(SPECTRUM_BANDS)
+    private var spectrumTexture = 0
+
+    // Shockwave rings: seconds since each was launched by a kick, or -1 when idle.
+    private val ringAges = floatArrayOf(-1f, -1f, -1f, -1f)
+    private var sinceKick = 0f
+
     // Kicks counted so the kaleidoscope can change its wedge count every few bars.
     private var kickCount = 0
     private val balls = FloatArray(15)
@@ -128,15 +129,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             val locations = UNIFORM_NAMES.associateWith { GLES20.glGetUniformLocation(id, it) }
             programs[e] = Program(id, locations, GLES20.glGetAttribLocation(id, "aPos"))
         }
-        val blitId = buildProgram(DEMO_VERTEX, BLIT_FRAGMENT, DemoEffect.TUNNEL)
-        blit = Program(
-            blitId,
-            (UNIFORM_NAMES + "uLowRes").associateWith { GLES20.glGetUniformLocation(blitId, it) },
-            GLES20.glGetAttribLocation(blitId, "aPos")
-        )
-        // Buffers belonged to the old context; onSurfaceChanged makes new ones.
-        fbo = 0
-        fboTexture = 0
+
         fade = 0f
         next = null
 
@@ -154,6 +147,18 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_MIRRORED_REPEAT)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glGenTextures(1, ids, 0)
+        spectrumTexture = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, spectrumTexture)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, SPECTRUM_BANDS, 1, 0,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, null
+        )
+
         // A new EGL context has lost any texture uploaded to the old one.
         pendingCover = cover ?: fallbackTexture(paletteColors)
 
@@ -165,44 +170,6 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
         aspect = width.toFloat() / height.coerceAtLeast(1)
-        surfaceWidth = width
-        surfaceHeight = height
-        createLowResBuffer(maxOf(1, width / 2), maxOf(1, height / 2))
-    }
-
-    private fun createLowResBuffer(width: Int, height: Int) {
-        if (fbo != 0) {
-            GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            GLES20.glDeleteTextures(1, intArrayOf(fboTexture), 0)
-        }
-        val ids = IntArray(1)
-        GLES20.glGenTextures(1, ids, 0)
-        fboTexture = ids[0]
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTexture)
-        // Not a power of two, so GLES 2 insists on clamp and no mipmaps.
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, width, height, 0,
-            GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, null
-        )
-        GLES20.glGenFramebuffers(1, ids, 0)
-        fbo = ids[0]
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
-        GLES20.glFramebufferTexture2D(
-            GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTexture, 0
-        )
-        if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-            // Without it the lowRes effects simply draw at full resolution.
-            DebugLog.w("DemoRenderer", "Low-res framebuffer incomplete; drawing full size")
-            GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            fbo = 0
-        }
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-        fboWidth = width
-        fboHeight = height
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -213,6 +180,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
         pendingCover?.let { uploadCover(it) }
         advance(dt)
+        uploadSpectrum()
 
         // Only fades in from black when the surface first appears; switching effects uses a
         // transition instead.
@@ -264,24 +232,6 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     private fun draw(e: DemoEffect, wipe: Float, incomingSide: Boolean) {
         val prog = programs[e] ?: return
-        val scaler = blit
-        if (!e.lowRes || fbo == 0 || scaler == null) {
-            drawWith(prog, e, wipe, incomingSide, fade)
-            return
-        }
-        // The whole effect at half size — no wipe, no fade, those belong to the final pass —
-        // then scaled up through the blit, which applies them at full resolution.
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
-        GLES20.glViewport(0, 0, fboWidth, fboHeight)
-        drawWith(prog, e, wipe = -1f, incomingSide = false, fadeValue = 1f)
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-        GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight)
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTexture)
-        drawWith(scaler, e, wipe, incomingSide, fade)
-    }
-
-    private fun drawWith(prog: Program, e: DemoEffect, wipe: Float, incomingSide: Boolean, fadeValue: Float) {
         uniforms = prog.uniforms
         GLES20.glUseProgram(prog.id)
         val drift = clock * 0.1
@@ -290,7 +240,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uPhase", phase)
         u1("uSpin", spin)
         u1("uTime", time)
-        u1("uFade", fadeValue)
+        u1("uFade", fade)
         u1("uWipe", wipe)
         u1("uWipeSide", if (incomingSide) 1f else 0f)
         u1("uWipeKind", wipeKind.toFloat())
@@ -327,7 +277,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
         uniforms["uTex"]?.let { GLES20.glUniform1i(it, 0) }
-        uniforms["uLowRes"]?.let { if (it >= 0) GLES20.glUniform1i(it, 1) }
+        uniforms["uSpectrum"]?.let { if (it >= 0) GLES20.glUniform1i(it, 2) }
+        uniforms["uRings"]?.let { if (it >= 0) GLES20.glUniform4f(it, ringAges[0], ringAges[1], ringAges[2], ringAges[3]) }
 
         GLES20.glEnableVertexAttribArray(prog.aPos)
         GLES20.glVertexAttribPointer(prog.aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
@@ -358,6 +309,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         if (target.onset > 0.9f && lastOnset <= 0.9f) {
             kick = 1f
             kickCount++
+            launchRing()
         }
         lastOnset = target.onset
         kick *= exp(-dt * KICK_DECAY)
@@ -369,6 +321,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         time = (time + TIME_RATE * dt) % WRAP
         clock += dt
         moveBalls()
+        advanceSpectrum(target, dt)
+        advanceRings(dt)
         advanceDive(dt)
     }
 
@@ -465,6 +419,60 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     }
 
     /**
+     * Eases the drawn spectrum toward the latest capture. With no capture at all there is still
+     * something to draw: the three smoothed bands spread across the 64, with a slow ripple so
+     * the bars are not a flat shelf.
+     */
+    private fun advanceSpectrum(target: AmbientPulse, dt: Float) {
+        val captured = target.spectrum
+        for (i in 0 until SPECTRUM_BANDS) {
+            val goal = if (captured != null && captured.size == SPECTRUM_BANDS) {
+                captured[i]
+            } else {
+                val t = i / (SPECTRUM_BANDS - 1f)
+                val level = when {
+                    t < 0.33f -> low
+                    t < 0.7f -> mid
+                    else -> high
+                }
+                (level * (0.6f + 0.4f * sin(i * 0.9f + clock.toFloat() * 3f))).coerceIn(0f, 1f)
+            }
+            spectrum[i] = ease(spectrum[i], goal, dt)
+        }
+    }
+
+    /** Ages the shockwave rings; with no kicks for a while, launches one anyway. */
+    private fun advanceRings(dt: Float) {
+        sinceKick += dt
+        if (sinceKick > RING_IDLE_SEC) launchRing()
+        for (i in ringAges.indices) {
+            if (ringAges[i] < 0f) continue
+            ringAges[i] += dt
+            if (ringAges[i] > RING_LIFE_SEC) ringAges[i] = -1f
+        }
+    }
+
+    private fun launchRing() {
+        sinceKick = 0f
+        // Reuse an idle slot, else the oldest ring.
+        var slot = ringAges.indexOfFirst { it < 0f }
+        if (slot < 0) slot = ringAges.indices.maxBy { ringAges[it] }
+        ringAges[slot] = 0f
+    }
+
+    private fun uploadSpectrum() {
+        spectrumBytes.position(0)
+        for (v in spectrum) spectrumBytes.put((v.coerceIn(0f, 1f) * 255f).toInt().toByte())
+        spectrumBytes.position(0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, spectrumTexture)
+        GLES20.glTexSubImage2D(
+            GLES20.GL_TEXTURE_2D, 0, 0, 0, SPECTRUM_BANDS, 1,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, spectrumBytes
+        )
+    }
+
+    /**
      * Lissajous paths for the metaballs, each at its own speed so they never settle into a
      * pattern. The first three are sized by bass, mids and highs; the other two just drift.
      */
@@ -549,7 +557,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     }
 
     private companion object {
-        const val TEX_SIZE = 128
+        /** The cover texture. 256 so the framing effects can show the cover itself crisply. */
+        const val TEX_SIZE = 256
         const val WRAP = 2f
         /** uTime's speed: one full cycle of the slow, music-independent drift every 40 s. */
         const val TIME_RATE = 0.05f
@@ -572,6 +581,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         /** How long one point is dived into before cutting to another. */
         const val MANDEL_RETARGET_SEC = 150f
         const val MAX_SKIP = 60
+        const val RING_LIFE_SEC = 3f
+        const val RING_IDLE_SEC = 2.5f
         const val SKIP_TOLERANCE = 1e-3
 
         const val CRUISE = 0.12f
@@ -587,6 +598,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
+            "uSpectrum", "uRings",
             "uC0", "uC1", "uC2", "uTex",
         )
 

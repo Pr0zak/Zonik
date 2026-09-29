@@ -19,11 +19,11 @@ enum class DemoEffect(
     val label: String,
     body: String,
     /**
-     * Drawn at half resolution into an offscreen buffer and scaled up: for the escape-time
-     * fractals, whose pixels along the set's edge run the whole iteration loop whatever else is
-     * done. A quarter of the pixels, and their soft glowing filaments barely show the difference.
+     * The effect draws the album cover itself, dead centre, and frames it. The ambient
+     * overlay then leaves out its own cover and keeps only the title and progress, at the
+     * bottom, so the two never sit on top of each other.
      */
-    val lowRes: Boolean = false,
+    val framesCover: Boolean = false,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
@@ -40,20 +40,14 @@ enum class DemoEffect(
     VORONOI("Crystal", VORONOI_BODY),
     AURORA("Aurora", AURORA_BODY),
     VECTORBALLS("Vector balls", VECTORBALLS_BODY),
-    JULIA("Julia", JULIA_BODY, lowRes = true),
-    MANDELBROT("Mandelbrot zoom", MANDELBROT_BODY, lowRes = true);
+    JULIA("Julia", JULIA_BODY),
+    MANDELBROT("Mandelbrot zoom", MANDELBROT_BODY),
+    SHOCKWAVE("Shockwaves", SHOCKWAVE_BODY, framesCover = true),
+    GODRAYS("God rays", GODRAYS_BODY, framesCover = true),
+    SUNBURST("Sunburst", SUNBURST_BODY, framesCover = true);
 
     val fragmentShader: String = HEADER + body + FOOTER
 }
-
-/**
- * Scales a [DemoEffect.lowRes] effect's offscreen buffer up to the screen. It goes through the
- * shared FOOTER, so wipes and the fade-in still happen at full resolution.
- */
-internal val BLIT_FRAGMENT: String = HEADER + """
-uniform sampler2D uLowRes;
-vec3 shade(vec2 p) { return texture2D(uLowRes, vPos * 0.5 + 0.5).rgb; }
-""" + FOOTER
 
 internal const val DEMO_VERTEX = """
 attribute vec2 aPos;
@@ -109,6 +103,8 @@ uniform vec3 uC0;
 uniform vec3 uC1;
 uniform vec3 uC2;
 uniform sampler2D uTex;
+uniform sampler2D uSpectrum;
+uniform vec4 uRings;
 
 const float PI = 3.14159265;
 
@@ -145,6 +141,25 @@ vec3 colorAt(float f) {
 
 // Squaring pushes the midtones down, so a pale sleeve still reads as a shape rather than a haze.
 vec3 punch(vec3 c) { return c * c * 1.3; }
+
+// Signed distance to the album cover: a rounded square of half-size h at the centre.
+float coverDist(vec2 p, float h) {
+    vec2 q = abs(p) - vec2(h - 0.03);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - 0.03;
+}
+
+// Lays the album cover, half-size h, over col at the centre, with a soft drop shadow. For the
+// effects that frame the cover rather than build from it.
+vec3 withCover(vec3 col, vec2 p, float h) {
+    float d = coverDist(p + vec2(0.0, 0.025), h);
+    col *= 1.0 - 0.55 * exp(-max(d, 0.0) * 16.0);
+    float inside = 1.0 - smoothstep(0.0, 0.006, coverDist(p, h));
+    vec2 uv = vec2(p.x, -p.y) / (2.0 * h) + 0.5;
+    return mix(col, texture2D(uTex, uv).rgb, inside);
+}
+
+// One band of the 64-band spectrum, 0..1.
+float band(float i) { return texture2D(uSpectrum, vec2((i + 0.5) / 64.0, 0.5)).r; }
 
 mat2 rot(float a) { float c = cos(a); float s = sin(a); return mat2(c, s, -s, c); }
 """
@@ -809,5 +824,105 @@ vec3 shade(vec2 p) {
     col = mix(col, vec3(1.0), uZoomFlash);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
+}
+"""
+
+/**
+ * Shockwaves: every kick launches a ring from behind the cover that races outward and bends
+ * the light it passes through, like a drop in water. The CPU times the rings (`uRings` holds
+ * each one's age in seconds, -1 when idle) and launches one anyway if the music gives no kick
+ * for a while.
+ */
+private const val SHOCKWAVE_BODY = """
+vec3 shade(vec2 p) {
+    // The cover stays dead centre: undo FOOTER's wander.
+    p += uCenter;
+    float h = 0.3 + 0.012 * uKick;
+    float r = length(p);
+
+    // Each ring's profile at this radius, and a matching radial push for the refraction.
+    float push = 0.0;
+    vec3 rings = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        float age = i == 0 ? uRings.x : (i == 1 ? uRings.y : (i == 2 ? uRings.z : uRings.w));
+        if (age < 0.0) continue;
+        float radius = h * 1.3 + age * 0.75;
+        float x = r - radius;
+        float prof = exp(-x * x * 180.0) * exp(-age * 1.1);
+        push += x * exp(-x * x * 60.0) * exp(-age * 1.1);
+        rings += colorAt(float(i) * 0.25 + uPhase * 0.5) * prof;
+    }
+
+    // A soft wavy field in the cover's colours — deliberately not rings, so the shockwaves read
+    // as the only rings on screen — sampled where the shockwaves bend it.
+    vec2 q = p * (1.0 - 0.45 * push);
+    float field = 0.5 + 0.5 * sin(q.x * 5.0 + 1.6 * sin(q.y * 4.0 + uTime * PI * 2.0) + uPhase * PI * 2.0);
+    field *= 0.5 + 0.5 * sin(q.y * 6.0 - 1.2 * sin(q.x * 3.0 - uTime * PI * 4.0));
+    vec3 col = mix(colorAt(0.66) * 0.04, colorAt(0.33) * 0.2, field);
+    col *= 0.7 + 0.5 * uLow;
+    col += rings * (1.1 + 0.6 * uHigh);
+    col += colorAt(0.05) * exp(-max(coverDist(p, h), 0.0) * 9.0) * (0.25 + 0.6 * uBeat);
+    col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * God rays: shafts of light in the cover's colours stream out from behind it, slowly turning.
+ * Bass brightens them, the kick flares them, and a halo behind the cover swells into each beat.
+ */
+private const val GODRAYS_BODY = """
+vec3 shade(vec2 p) {
+    p += uCenter;
+    float h = 0.3 + 0.01 * uKick;
+    float r = length(p);
+    float a = atan(p.y, p.x + 1e-4);
+
+    // Three fans of rays at whole-number counts, so each wraps cleanly round the circle and
+    // uSpin (period 2) turns them seamlessly.
+    float rays = pow(0.5 + 0.5 * sin(a * 9.0 + uSpin * PI * 9.0), 6.0)
+               + 0.7 * pow(0.5 + 0.5 * sin(a * 14.0 - uSpin * PI * 14.0 + 1.3), 10.0)
+               + 0.5 * pow(0.5 + 0.5 * sin(a * 5.0 + uTime * PI * 2.0 + 0.7), 4.0);
+    float fall = exp(-max(r - h, 0.0) * 1.7);
+    float strength = 0.35 + 0.8 * uLow + 1.1 * uKick;
+    vec3 col = colorAt(0.66) * 0.04;
+    col += mix(colorAt(0.05), colorAt(0.33), 0.5 + 0.5 * sin(a * 3.0)) * rays * fall * strength;
+    col += colorAt(0.05) * exp(-max(coverDist(p, h), 0.0) * 6.0) * (0.35 + 0.8 * uBeat);
+    col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * Spectrum sunburst: the 64-band spectrum as a ring of bars around the cover, bass at the top
+ * and mirrored down both sides, so the ring stays symmetrical. Each bar has a bright tip and a
+ * soft glow at its root.
+ */
+private const val SUNBURST_BODY = """
+vec3 shade(vec2 p) {
+    p += uCenter;
+    float h = 0.3;
+    float r = length(p);
+    // 0 at the top, 1 at the bottom, the same on both sides.
+    float u = abs(atan(p.x, p.y)) / PI;
+    float seg = floor(u * 63.999);
+    float level = band(seg);
+    float inner = h * 1.5;
+    float len = 0.04 + level * 0.42;
+    float across = fract(u * 64.0);
+    // Bars a little narrower than their slot, with soft edges.
+    float barX = smoothstep(0.1, 0.2, across) * (1.0 - smoothstep(0.8, 0.9, across));
+    float barR = smoothstep(inner, inner + 0.008, r) * (1.0 - smoothstep(inner + len - 0.008, inner + len, r));
+    float bar = barX * barR;
+    float tip = barX * exp(-abs(r - (inner + len)) * 60.0);
+
+    vec3 hue = colorAt(u * 0.5 + uPhase * 0.5);
+    vec3 col = colorAt(0.66) * 0.04;
+    col += colorAt(0.05) * exp(-max(r - inner, 0.0) * 5.0) * 0.2 * (0.5 + uLow);
+    col += hue * bar * (0.55 + 0.6 * level);
+    col += mix(hue, vec3(1.0), 0.5) * tip * 0.8;
+    col += hue * exp(-abs(r - inner) * 40.0) * (0.3 + 0.7 * uKick);
+    col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
+    return withCover(col, p, h);
 }
 """

@@ -19,7 +19,14 @@ data class AmbientPulse(
     val high: Float = 0f,
     /** Rises on a detected onset and decays; a discrete event rather than a level. */
     val onset: Float = 0f,
+    /**
+     * [SPECTRUM_BANDS] log-spaced bands from 40 Hz to 16 kHz, each 0..1, for effects that draw
+     * the spectrum itself. Null when there is no capture.
+     */
+    val spectrum: FloatArray? = null,
 )
+
+const val SPECTRUM_BANDS = 64
 
 /**
  * Turns raw FFT frames into an [AmbientPulse].
@@ -49,6 +56,10 @@ class PulseAnalyzer(private val sampleRate: Int) {
     /** Previous low-band magnitude, for the rising-edge test that flags an onset. */
     private var lastLowRaw = 0f
 
+    // Per-band envelope and rolling peak, like the three bands above but 64 of them.
+    private val bandEnv = FloatArray(SPECTRUM_BANDS)
+    private val bandPeak = FloatArray(SPECTRUM_BANDS) { MIN_PEAK }
+
     fun process(fft: ByteArray): AmbientPulse {
         val bins = fft.size / 2
         if (bins < 4) return AmbientPulse()
@@ -74,13 +85,46 @@ class PulseAnalyzer(private val sampleRate: Int) {
         lastLowRaw = lowRaw
         onsetEnv = if (rise > ONSET_THRESHOLD) 1f else (onsetEnv - ONSET_DECAY).coerceAtLeast(0f)
 
-        return AmbientPulse(low = lowEnv, mid = midEnv, high = highEnv, onset = onsetEnv)
+        return AmbientPulse(
+            low = lowEnv, mid = midEnv, high = highEnv, onset = onsetEnv,
+            spectrum = spectrum(fft, bins, binHz),
+        )
+    }
+
+    /**
+     * Log-spaced bands, so the bass gets as many bars as the treble does rather than the four
+     * bins a linear split would give it. Each band has its own rolling peak for the same reason
+     * the three main bands do: hi-hats are quiet in absolute terms and would never move a bar
+     * normalised against the kick.
+     */
+    private fun spectrum(fft: ByteArray, bins: Int, binHz: Float): FloatArray {
+        val out = FloatArray(SPECTRUM_BANDS)
+        for (i in 0 until SPECTRUM_BANDS) {
+            val from = SPECTRUM_LOW_HZ * Math.pow(SPECTRUM_RATIO, i / SPECTRUM_BANDS.toDouble()).toFloat()
+            val to = SPECTRUM_LOW_HZ * Math.pow(SPECTRUM_RATIO, (i + 1) / SPECTRUM_BANDS.toDouble()).toFloat()
+            // A low band narrower than one bin still gets the bin it falls in.
+            val first = (from / binHz).toInt().coerceIn(1, bins - 1)
+            val last = maxOf(first, (to / binHz).toInt().coerceAtMost(bins - 1))
+            var sum = 0f
+            for (b in first..last) {
+                val re = fft[2 * b].toFloat()
+                val im = if (2 * b + 1 < fft.size) fft[2 * b + 1].toFloat() else 0f
+                sum += sqrt(re * re + im * im)
+            }
+            val raw = sum / (last - first + 1)
+            bandPeak[i] = decayPeak(bandPeak[i], raw)
+            bandEnv[i] = follow(bandEnv[i], (raw / bandPeak[i]).coerceIn(0f, 1f))
+            out[i] = bandEnv[i]
+        }
+        return out
     }
 
     fun reset() {
         lowEnv = 0f; midEnv = 0f; highEnv = 0f; onsetEnv = 0f
         lowPeak = MIN_PEAK; midPeak = MIN_PEAK; highPeak = MIN_PEAK
         lastLowRaw = 0f
+        bandEnv.fill(0f)
+        bandPeak.fill(MIN_PEAK)
     }
 
     private fun magnitudeBetween(
@@ -111,6 +155,9 @@ class PulseAnalyzer(private val sampleRate: Int) {
         const val MIN_PEAK = 1e-3f
         const val ONSET_THRESHOLD = 0.22f
         const val ONSET_DECAY = 0.12f
+        const val SPECTRUM_LOW_HZ = 40f
+        /** 40 Hz × 400 = 16 kHz at the top of the last band. */
+        const val SPECTRUM_RATIO = 400.0
     }
 }
 

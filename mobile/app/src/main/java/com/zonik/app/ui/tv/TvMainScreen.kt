@@ -85,7 +85,7 @@ import com.zonik.app.ui.components.CoverArt
 import com.zonik.app.ui.theme.ZonikColors
 import com.zonik.app.ui.theme.ZonikShapes
 import com.zonik.app.ui.util.formatDurationMs
-import com.zonik.app.ui.util.tvFocusHighlight
+import com.zonik.app.ui.util.tvFocusLift
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -198,6 +198,49 @@ class TvViewModel @Inject constructor(
                     playbackManager.playTracks(albumTracks)
                 }
             } catch (_: Exception) {}
+        }
+    }
+
+    // ── Browse rails (the Stage's DOWN panel) ─────────────────────────────────────
+
+    /** The play queue, for the Stage's "Up next" line. */
+    val queue: StateFlow<List<Track>> = playbackManager.queue
+
+    /** Newest albums in the local library; no network needed. */
+    val recentAlbums: StateFlow<List<com.zonik.core.model.Album>> = libraryRepository.getRecentAlbums(20)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _recentlyPlayedAlbums = MutableStateFlow<List<com.zonik.core.model.Album>>(emptyList())
+    val recentlyPlayedAlbums: StateFlow<List<com.zonik.core.model.Album>> = _recentlyPlayedAlbums.asStateFlow()
+
+    private val _playlists = MutableStateFlow<List<com.zonik.core.model.Playlist>>(emptyList())
+    val playlists: StateFlow<List<com.zonik.core.model.Playlist>> = _playlists.asStateFlow()
+
+    /** Refreshes the rails that come from the server. Called each time browse opens. */
+    fun loadBrowse() {
+        viewModelScope.launch {
+            try {
+                val (recent, lists) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    libraryRepository.getRecentlyPlayedAlbums(20) to libraryRepository.getPlaylists()
+                }
+                _recentlyPlayedAlbums.value = recent
+                _playlists.value = lists
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.w("TvVM", "Browse rails failed: ${e.message}")
+            }
+        }
+    }
+
+    fun playPlaylist(playlistId: String) {
+        viewModelScope.launch {
+            try {
+                val tracks = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    libraryRepository.getPlaylistTracks(playlistId)
+                }
+                if (tracks.isNotEmpty()) playbackManager.playTracks(tracks)
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.e("TvVM", "Play playlist failed", e)
+            }
         }
     }
 
@@ -444,10 +487,6 @@ class TvViewModel @Inject constructor(
 // Tab definitions
 // ──────────────────────────────────────────────────────────────────────────────
 
-private enum class TvTab(val label: String) {
-    HOME("Home"),
-    SETTINGS("Settings")
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Colors
@@ -465,18 +504,17 @@ private const val INFO_VISIBLE_MS = 10_000L
 
 @Composable
 fun TvMainScreen(
-    onNavigateToAlbum: (String) -> Unit = {},
     onDisconnected: () -> Unit = {},
     viewModel: TvViewModel = hiltViewModel()
 ) {
     val currentTrack by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(TvTab.HOME) }
-    // One-shot, hoisted above the tab swap: `when (selectedTab)` tears TvHomeContent down and
-    // rebuilds it, so an effect living inside it re-fires on every return to Home and yanks
-    // focus off the sidebar item the user just pressed.
-    var homeFocusClaimed by remember { mutableStateOf(false) }
+    // The Stage is the root; Settings replaces it full-screen. `panel` is what sits over the
+    // Stage (the UP strip or the DOWN rails) and lives here so BACK and the ambient timer can
+    // see it.
+    var showSettings by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf(StagePanel.NONE) }
 
     // ── Ambient visualizer state ─────────────────────────────────────────────────
     val ambientEnabled by viewModel.ambientEnabled.collectAsState()
@@ -484,21 +522,27 @@ fun TvMainScreen(
     var ambientActive by remember { mutableStateOf(false) }
     var lastInteraction by remember { mutableLongStateOf(0L) }
 
-    // Arms only while something is playing, and only from the Home tab — nobody wants the
-    // screen taken over mid-way through changing a setting. A delay of 0 means on-demand only.
-    LaunchedEffect(lastInteraction, isPlaying, selectedTab, ambientEnabled, ambientDelaySec) {
+    // Arms only while something is playing and the bare Stage is up — nobody wants the screen
+    // taken over mid-way through changing a setting or picking an album. A delay of 0 means
+    // on-demand only.
+    LaunchedEffect(lastInteraction, isPlaying, showSettings, panel, ambientEnabled, ambientDelaySec) {
         if (!ambientEnabled || ambientDelaySec <= 0) return@LaunchedEffect
-        if (!isPlaying || selectedTab != TvTab.HOME || ambientActive) return@LaunchedEffect
+        if (!isPlaying || showSettings || panel != StagePanel.NONE || ambientActive) return@LaunchedEffect
         delay(ambientDelaySec * 1000L)
         ambientActive = true
     }
 
-    BackHandler(enabled = ambientActive || selectedTab != TvTab.HOME) {
-        if (ambientActive) {
-            ambientActive = false
-            lastInteraction = System.currentTimeMillis()
-        } else {
-            selectedTab = TvTab.HOME
+    // With nothing playing the rails ARE the screen, so BACK leaves the app from there rather
+    // than closing them onto an empty Stage.
+    val railsAreHome = currentTrack == null && panel == StagePanel.BROWSE
+    BackHandler(enabled = ambientActive || showSettings || (panel != StagePanel.NONE && !railsAreHome)) {
+        when {
+            ambientActive -> {
+                ambientActive = false
+                lastInteraction = System.currentTimeMillis()
+            }
+            showSettings -> showSettings = false
+            else -> panel = StagePanel.NONE
         }
     }
 
@@ -618,36 +662,24 @@ fun TvMainScreen(
             }
     ) {
         // 48dp/27dp is the 5% overscan margin every TV panel is allowed to eat.
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 48.dp, vertical = 27.dp)
         ) {
-            TvSidebar(
-                selectedTab = selectedTab,
-                onTabSelected = { selectedTab = it }
-            )
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .padding(start = 24.dp)
-            ) {
-                when (selectedTab) {
-                    TvTab.HOME -> TvHomeContent(
-                        viewModel = viewModel,
-                        onAlbumClick = onNavigateToAlbum,
-                        ambientColor = animatedBg,
-                        onEnterAmbient = { ambientActive = true },
-                        claimInitialFocus = !homeFocusClaimed,
-                        onInitialFocusClaimed = { homeFocusClaimed = true }
-                    )
-                    TvTab.SETTINGS -> TvSettingsContent(
-                        viewModel = viewModel,
-                        onDisconnected = onDisconnected
-                    )
-                }
+            if (showSettings) {
+                TvSettingsContent(viewModel = viewModel, onDisconnected = onDisconnected)
+            } else {
+                TvStage(
+                    viewModel = viewModel,
+                    panel = panel,
+                    onPanelChange = { panel = it },
+                    onEnterAmbient = { ambientActive = true },
+                    onOpenSettings = {
+                        panel = StagePanel.NONE
+                        showSettings = true
+                    },
+                )
             }
         }
 
@@ -757,17 +789,21 @@ private fun TvAmbientOverlay(
                 .graphicsLayer { alpha = infoAlpha }
                 .padding(horizontal = 48.dp, vertical = 27.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            // An effect that frames the cover draws it at the centre itself, so the words move
+            // to the bottom out of its way instead of stacking a second cover over the first.
+            verticalArrangement = if (effect.framesCover) Arrangement.Bottom else Arrangement.Center
         ) {
-            CoverArt(
-                coverArtId = track.coverArt,
-                contentDescription = track.title,
-                modifier = Modifier
-                    .size(320.dp)
-                    .clip(ZonikShapes.coverArtLargeShape),
-                size = 600
-            )
-            Spacer(modifier = Modifier.height(32.dp))
+            if (!effect.framesCover) {
+                CoverArt(
+                    coverArtId = track.coverArt,
+                    contentDescription = track.title,
+                    modifier = Modifier
+                        .size(320.dp)
+                        .clip(ZonikShapes.coverArtLargeShape),
+                    size = 600
+                )
+                Spacer(modifier = Modifier.height(32.dp))
+            }
             Text(
                 text = track.title,
                 style = MaterialTheme.typography.headlineLarge,
@@ -814,406 +850,7 @@ private fun TvAmbientOverlay(
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Sidebar Navigation
-// ──────────────────────────────────────────────────────────────────────────────
 
-@Composable
-private fun TvSidebar(
-    selectedTab: TvTab,
-    onTabSelected: (TvTab) -> Unit
-) {
-    val sidebarIcons = mapOf(
-        TvTab.HOME to Icons.Default.Home,
-        TvTab.SETTINGS to Icons.Default.Settings
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .width(80.dp)
-            .background(Color(0xFF1A1824))
-            .padding(vertical = 27.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Logo at top
-        Icon(
-            painter = androidx.compose.ui.res.painterResource(id = com.zonik.app.R.drawable.ic_logo_z),
-            contentDescription = "Zonik",
-            tint = ZonikColors.gold,
-            modifier = Modifier.size(32.dp)
-        )
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Nav items
-        TvTab.entries.forEach { tab ->
-            val isSelected = tab == selectedTab
-            val icon = sidebarIcons[tab] ?: Icons.Default.Home
-            Column(
-                modifier = Modifier
-                    .padding(vertical = 4.dp)
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        if (isSelected) ZonikColors.gold.copy(alpha = 0.15f)
-                        else Color.Transparent
-                    )
-                    .tvFocusHighlight(RoundedCornerShape(12.dp))
-                    .clickable { onTabSelected(tab) },
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = tab.label,
-                    tint = if (isSelected) ZonikColors.gold else Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = tab.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (isSelected) ZonikColors.gold else Color.White.copy(alpha = 0.5f)
-                )
-            }
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// Home Tab
-// ──────────────────────────────────────────────────────────────────────────────
-
-@Composable
-private fun TvHomeContent(
-    viewModel: TvViewModel,
-    onAlbumClick: (String) -> Unit,
-    ambientColor: Color = TvCardBackground,
-    onEnterAmbient: () -> Unit = {},
-    claimInitialFocus: Boolean = true,
-    onInitialFocusClaimed: () -> Unit = {}
-) {
-    val currentTrack by viewModel.currentTrack.collectAsState()
-    val isPlaying by viewModel.isPlaying.collectAsState()
-    val scrollState = rememberScrollState()
-
-    // Nothing was focused at launch, so the first press of the remote was always
-    // spent blindly acquiring focus instead of doing something. Only on the first composition
-    // of the session, though — see homeFocusClaimed.
-    val firstTile = remember { FocusRequester() }
-    LaunchedEffect(claimInitialFocus) {
-        if (!claimInitialFocus) return@LaunchedEffect
-        try {
-            firstTile.requestFocus()
-        } catch (_: IllegalStateException) {
-            // Node not attached yet; the remote's first press will acquire focus normally.
-        }
-        onInitialFocusClaimed()
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(vertical = 16.dp)
-    ) {
-        // Shuffle buttons side by side
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            // Shuffle Mix
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp)
-                    .clip(ZonikShapes.buttonShape)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(ZonikColors.gradientStart, ZonikColors.gradientEnd)
-                        ),
-                        ZonikShapes.buttonShape
-                    )
-                    .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .focusRequester(firstTile)
-                    .clickable { viewModel.shuffleMix() },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(Icons.Default.Shuffle, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Shuffle Mix", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            // Shuffle Favorites
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp)
-                    .clip(ZonikShapes.buttonShape)
-                    .background(TvCardBackground, ZonikShapes.buttonShape)
-                    .border(1.dp, ZonikColors.gold.copy(alpha = 0.3f), ZonikShapes.buttonShape)
-                    .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleFavorites() },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(Icons.Default.Favorite, null, tint = ZonikColors.gold, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Shuffle Favorites", style = MaterialTheme.typography.titleLarge, color = ZonikColors.gold, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Recently Added + Release Date side by side
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp)
-                    .clip(ZonikShapes.buttonShape)
-                    .background(TvCardBackground, ZonikShapes.buttonShape)
-                    .border(1.dp, ZonikColors.gold.copy(alpha = 0.3f), ZonikShapes.buttonShape)
-                    .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleRecentlyAdded() },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(Icons.Default.NewReleases, null, tint = ZonikColors.gold, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("Recently Added", style = MaterialTheme.typography.titleLarge, color = ZonikColors.gold, fontWeight = FontWeight.Bold)
-                }
-            }
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(56.dp)
-                    .clip(ZonikShapes.buttonShape)
-                    .background(TvCardBackground, ZonikShapes.buttonShape)
-                    .border(1.dp, ZonikColors.gold.copy(alpha = 0.3f), ZonikShapes.buttonShape)
-                    .tvFocusHighlight(ZonikShapes.buttonShape)
-                    .clickable { viewModel.shuffleNewestByYear() },
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Icon(Icons.Default.CalendarMonth, null, tint = ZonikColors.gold, modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text("By Release Date", style = MaterialTheme.typography.titleLarge, color = ZonikColors.gold, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // Now Playing section
-        if (currentTrack != null) {
-            Spacer(modifier = Modifier.height(32.dp))
-            Text(
-                text = "Now Playing",
-                style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(
-                                ambientColor.copy(alpha = 0.8f),
-                                TvCardBackground
-                            )
-                        ),
-                        ZonikShapes.cardShape
-                    )
-                    .padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                CoverArt(
-                    coverArtId = currentTrack!!.coverArt,
-                    contentDescription = currentTrack!!.title,
-                    modifier = Modifier
-                        .size(200.dp)
-                        .clip(ZonikShapes.coverArtLargeShape),
-                    size = 600
-                )
-                Spacer(modifier = Modifier.width(24.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = currentTrack!!.title,
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = currentTrack!!.artist,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color.White.copy(alpha = 0.7f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = currentTrack!!.album,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.5f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    // Playback controls
-                    Spacer(modifier = Modifier.height(16.dp))
-                    val isStarred by viewModel.isStarred.collectAsState()
-                    LaunchedEffect(currentTrack) { viewModel.refreshStarred() }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // Enter the visualizer on demand, rather than only after the idle delay
-                        IconButton(
-                            onClick = onEnterAmbient,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .tvFocusHighlight(CircleShape)
-                        ) {
-                            Icon(
-                                Icons.Default.GraphicEq,
-                                "Show visualizer",
-                                tint = Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        // Star/unstar
-                        IconButton(
-                            onClick = { viewModel.toggleStar() },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .tvFocusHighlight(CircleShape)
-                        ) {
-                            Icon(
-                                if (isStarred) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                                if (isStarred) "Unstar" else "Star",
-                                tint = if (isStarred) ZonikColors.gold else Color.White.copy(alpha = 0.5f),
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        IconButton(
-                            onClick = { viewModel.skipPrevious() },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .tvFocusHighlight(CircleShape)
-                        ) {
-                            Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
-                        IconButton(
-                            onClick = { viewModel.togglePlayPause() },
-                            modifier = Modifier
-                                .size(56.dp)
-                                .background(
-                                    Brush.horizontalGradient(listOf(ZonikColors.gradientStart, ZonikColors.gradientEnd)),
-                                    CircleShape
-                                )
-                                .tvFocusHighlight(CircleShape)
-                        ) {
-                            Icon(
-                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                if (isPlaying) "Pause" else "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(32.dp)
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.skipNext() },
-                            modifier = Modifier
-                                .size(48.dp)
-                                .tvFocusHighlight(CircleShape)
-                        ) {
-                            Icon(Icons.Default.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
-                    }
-
-                    // Progress bar
-                    Spacer(modifier = Modifier.height(12.dp))
-                    var positionMs by remember { mutableLongStateOf(0L) }
-                    var durationMs by remember { mutableLongStateOf(0L) }
-                    LaunchedEffect(isPlaying, currentTrack) {
-                        positionMs = viewModel.getCurrentPosition()
-                        durationMs = viewModel.getDuration()
-                        // A just-transitioned item reports no duration until its source is
-                        // prepared. While paused nothing else re-reads, so a single sample
-                        // would leave the bar empty and the label at a garbage value forever.
-                        var settle = 0
-                        while (durationMs <= 0 && settle < 20) {
-                            delay(250L)
-                            settle++
-                            positionMs = viewModel.getCurrentPosition()
-                            durationMs = viewModel.getDuration()
-                        }
-                        while (isPlaying) {
-                            delay(500L)
-                            positionMs = viewModel.getCurrentPosition()
-                            durationMs = viewModel.getDuration()
-                        }
-                    }
-                    val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs) else 0f
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                        color = ZonikColors.gold,
-                        trackColor = Color.White.copy(alpha = 0.1f)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = formatDurationMs(positionMs),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.5f)
-                        )
-                        Text(
-                            // An unprepared item reports C.TIME_UNSET, which formats as a
-                            // seven-digit minute count.
-                            text = if (durationMs > 0) formatDurationMs(durationMs) else "--:--",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.5f)
-                        )
-                    }
-                }
-            }
-        }
-
-        // Bottom spacing for playback bar clearance
-        Spacer(modifier = Modifier.height(80.dp))
-    }
-}
 
 @Composable
 private fun TvSettingsContent(
@@ -1232,11 +869,19 @@ private fun TvSettingsContent(
         })
         return
     }
-    LaunchedEffect(returnFocus) {
-        if (returnFocus) {
-            runCatching { visualizerRow.requestFocus() }
-            returnFocus = false
+    // Settings opens from the Stage's strip, whose button is gone the moment this replaces it,
+    // so focus has to be put somewhere on purpose: the first row on the way in, the Visualizer
+    // row on the way back from its page.
+    val firstRow = remember { FocusRequester() }
+    // Keyed to the list appearing, not to the flag: clearing the flag below must not restart
+    // this and send focus back to the first row.
+    LaunchedEffect(Unit) {
+        val target = if (returnFocus) visualizerRow else firstRow
+        for (attempt in 0 until 5) {
+            androidx.compose.runtime.withFrameNanos { }
+            if (runCatching { target.requestFocus() }.isSuccess) break
         }
+        returnFocus = false
     }
     val onOpenVisualizer = { showVisualizer = true }
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -1260,6 +905,7 @@ private fun TvSettingsContent(
 
         // Sync
         TvSettingsButton(
+            modifier = Modifier.focusRequester(firstRow),
             icon = Icons.Default.Sync,
             title = if (syncState.isSyncing) "Syncing..." else "Sync Library",
             subtitle = when {
@@ -1332,8 +978,9 @@ private fun TvSettingsButton(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            // Lift before background: the glow's shadow must sit under the row, not over it.
+            .tvFocusLift(ZonikShapes.cardShape, scale = 1.02f)
             .background(TvCardBackground, ZonikShapes.cardShape)
-            .tvFocusHighlight(ZonikShapes.cardShape)
             // Never gate this with `clickable(enabled = …)`. Compose undelegates the clickable's
             // focus target when enabled flips false, and detaching the *focused* node clears
             // focus all the way to the root — so a row that disables itself on click takes the

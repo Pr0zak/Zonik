@@ -44,10 +44,10 @@ fun rememberAmbientArt(coverArt: String?): AmbientArt {
         val coverArtId = coverArt ?: return@LaunchedEffect
         val loaded = withContext(Dispatchers.IO) {
             try {
-                // Small on purpose: it becomes a wall texture, and 128px keeps the whole cover
-                // inside the GPU's texture cache.
+                // Small on purpose: it becomes a GPU texture. 256px is enough for the effects
+                // that show the cover itself at the centre, and still sits in texture cache.
                 val request = ImageRequest.Builder(context)
-                    .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=128")
+                    .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=256")
                     .allowHardware(false)
                     .build()
                 val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable

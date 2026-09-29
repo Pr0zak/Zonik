@@ -38,7 +38,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zonik.app.ui.theme.ZonikColors
-import com.zonik.app.ui.util.tvFocusHighlight
+import com.zonik.app.ui.util.tvFocusLift
 
 private val RowShape = RoundedCornerShape(8.dp)
 private val CardFill = Color(0xFF1E1C2A)
@@ -224,8 +224,8 @@ private fun SettingRow(
         modifier = modifier
             .fillMaxWidth()
             .height(34.dp)
+            .tvFocusLift(RowShape, scale = 1.02f)
             .background(CardFill, RowShape)
-            .tvFocusHighlight(RowShape)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -257,9 +257,9 @@ private fun EffectCard(
     Column(
         modifier = modifier
             .height(44.dp)
-            .background(fill, RowShape)
             .onFocusChanged { if (it.isFocused) onFocused() }
-            .tvFocusHighlight(RowShape)
+            .tvFocusLift(RowShape)
+            .background(fill, RowShape)
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -291,8 +291,8 @@ private fun ChipButton(label: String, onClick: () -> Unit) {
         style = MaterialTheme.typography.labelMedium,
         color = Color.White,
         modifier = Modifier
+            .tvFocusLift(RoundedCornerShape(50))
             .background(CardFill, RoundedCornerShape(50))
-            .tvFocusHighlight(RoundedCornerShape(50))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp)
     )

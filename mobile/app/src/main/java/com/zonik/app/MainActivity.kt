@@ -237,9 +237,6 @@ fun ZonikApp(
             composable(Screen.Main.route) {
                 if (isTv()) {
                     com.zonik.app.ui.tv.TvMainScreen(
-                        onNavigateToAlbum = { albumId ->
-                            rootNavController.navigate(Screen.AlbumDetail.createRoute(albumId))
-                        },
                         onDisconnected = {
                             rootNavController.navigate(Screen.Login.route) {
                                 popUpTo(0) { inclusive = true }
