@@ -30,6 +30,12 @@ enum class DemoEffect(
      * effect on screen for it.
      */
     val feedback: Boolean = false,
+    /**
+     * Drawn at half resolution and scaled up: for the voxel flight, whose per-pixel ray march
+     * cannot be made cheap enough for the Chromecast at full size — and the original voxel
+     * engines were chunky anyway. Wipes and fades still happen at full resolution.
+     */
+    val halfRes: Boolean = false,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
@@ -61,7 +67,7 @@ enum class DemoEffect(
     SCROLLER("Sine scroller", SCROLLER_BODY),
     GLENZ("Glenz vector", GLENZ_BODY),
     DOTTUNNEL("Dot tunnel", DOTTUNNEL_BODY),
-    VOXEL("Voxel hills", VOXEL_BODY);
+    VOXEL("Voxel hills", VOXEL_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + body + FOOTER
 }
@@ -72,7 +78,9 @@ enum class DemoEffect(
  */
 internal val BLIT_FRAGMENT: String = HEADER + """
 uniform sampler2D uBlit;
-vec3 shade(vec2 p) { return texture2D(uBlit, vPos * 0.5 + 0.5).rgb; }
+// 1 for a full-size buffer; 0.5 when the effect drew into the lower-left quarter (halfRes).
+uniform float uBlitScale;
+vec3 shade(vec2 p) { return texture2D(uBlit, (vPos * 0.5 + 0.5) * uBlitScale).rgb; }
 """ + FOOTER
 
 /**
@@ -151,6 +159,9 @@ uniform sampler2D uWave;
 uniform sampler2D uTitle;
 uniform float uTitleAspect;
 uniform sampler2D uPrev;
+uniform sampler2D uHeight;
+uniform vec3 uTunnel[9];
+uniform float uRainbow;
 uniform vec2 uPx;
 
 const float PI = 3.14159265;
@@ -178,12 +189,14 @@ vec3 vivid(vec3 c) { return c / max(max(c.r, c.g), max(c.b, 0.15)); }
 // A palette colour for effects drawn from colour alone rather than from the cover image. A
 // black-and-white sleeve gives grey swatches, and no amount of brightening makes grey into a
 // plasma, so the less colour the cover has, the more of the classic rainbow shows through.
+// `uRainbow` (0..0.7) is how much rainbow to mix in, worked out on the CPU from the palette's
+// saturation. It is 0 for any colourful cover, and then the three cos() calls are skipped —
+// a branch every pixel takes the same way, so it costs nothing, and effects call this a lot.
 vec3 colorAt(float f) {
     vec3 fromCover = vivid(pal(f));
+    if (uRainbow <= 0.0) return fromCover;
     vec3 rainbow = 0.5 + 0.5 * cos(2.0 * PI * (f + vec3(0.0, 0.33, 0.67)));
-    float sat = max(max(uC0.r, uC0.g), uC0.b) - min(min(uC0.r, uC0.g), uC0.b)
-              + max(max(uC1.r, uC1.g), uC1.b) - min(min(uC1.r, uC1.g), uC1.b);
-    return mix(rainbow, fromCover, clamp(sat * 2.0, 0.3, 1.0));
+    return mix(fromCover, rainbow, uRainbow);
 }
 
 // Squaring pushes the midtones down, so a pale sleeve still reads as a shape rather than a haze.
@@ -220,6 +233,34 @@ float titleAt(vec2 uv) {
 
 // The previous frame at screen uv (0..1), for feedback effects.
 vec3 prevAt(vec2 uv) { return texture2D(uPrev, uv).rgb; }
+
+// For effects built around one object at the centre, which is where the album cover sits
+// while track info shows: moves the object round a wide ellipse (one lap every 20 s) at
+// `scale` of its size, so it spends only moments behind the cover. Returns the point in the
+// object's own coordinates.
+vec2 roam(vec2 p, float scale) {
+    float t = uTime * PI * 2.0;
+    vec2 centre = vec2(cos(t) * 0.68 * uAspect, sin(t) * 0.55);
+    return (p - centre) / scale;
+}
+
+// atan2 to within ~0.005 rad from a polynomial: plenty for picking the nearest of a ring's
+// dots, and a fraction of what the built-in costs on the Chromecast's GPU.
+float fastAtan2(float y, float x) {
+    float ax = abs(x);
+    float ay = abs(y);
+    float a = min(ax, ay) / (max(ax, ay) + 1e-6);
+    float s = a * a;
+    float r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
+    if (ay > ax) r = 1.57079637 - r;
+    if (x < 0.0) r = 3.14159274 - r;
+    if (y < 0.0) r = -r;
+    return r;
+}
+
+// Triangle wave in -1..1 with period 1: a trig-free stand-in for sin(2πx) where the exact
+// curve does not matter.
+float tri(float x) { return abs(fract(x) - 0.5) * 4.0 - 1.0; }
 
 mat2 rot(float a) { float c = cos(a); float s = sin(a); return mat2(c, s, -s, c); }
 """
@@ -362,9 +403,6 @@ vec3 shade(vec2 p) {
         vec2 cell = floor(q);
         vec2 f = fract(q) - 0.5;
         float h = hash(cell + fi * 31.7);
-        // Most cells are empty. A cell spans many pixels, so neighbours take the same branch
-        // and the skip is real rather than a divergent-branch cost.
-        if (h < 0.55) continue;
         vec2 off = fract(vec2(h * 17.0, h * 43.0)) - 0.5;
         vec2 s = f - off * 0.7;
 
@@ -374,9 +412,12 @@ vec3 shade(vec2 p) {
         float dist = length(vec2(along, across));
 
         float size = 0.03 + 0.07 * h * h;
-        float twinkle = 0.7 + 0.6 * uHigh * (0.5 + 0.5 * sin(h * 50.0 + uTime * PI * 40.0));
-        float star = smoothstep(size, 0.0, dist) * fade * twinkle;
-        col += star * mix(vec3(1.0), pal(h), 0.5) * 1.6;
+        // A sawtooth twinkle and a two-colour tint rather than sin() and the full palette, and
+        // empty cells masked by a multiply rather than a `continue`: still 30 fps before this.
+        // (uTime * 20: whole cycles over uTime's wrap.)
+        float twinkle = 0.7 + 0.6 * uHigh * fract(h * 7.0 + uTime * 20.0);
+        float star = smoothstep(size, 0.0, dist) * fade * twinkle * step(0.55, h);
+        col += star * mix(vec3(1.0), mix(uC0, uC1, h), 0.5) * 1.6;
     }
     return col;
 }
@@ -681,9 +722,11 @@ vec3 shade(vec2 p) {
             vec2 o = vec2(float(i), float(j));
             float h = hash(ci + o);
             float h2 = fract(h * 13.7);
-            vec2 seed = 0.5
-                + 0.38 * vec2(sin(uTime * PI * 2.0 + h * 6.2831), cos(uTime * PI * 4.0 + h2 * 6.2831))
-                + 0.08 * uMid * vec2(sin(uPhase * PI * 4.0 + h * 40.0), cos(uPhase * PI * 4.0 + h2 * 40.0));
+            // Triangle waves rather than sin/cos, and the mids widen the same path rather than
+            // adding a second: no trig in the 3x3 search at all (it ran the Chromecast at
+            // 25 fps). tri(uTime + …) and tri(uTime * 2 + …): whole cycles over the wrap.
+            vec2 seed = 0.5 + (0.38 + 0.08 * uMid)
+                * vec2(tri(uTime + h), tri(uTime * 2.0 + h2 + 0.25));
             vec2 r = o + seed - f;
             float d = dot(r, r);
             if (d < d1) {
@@ -741,6 +784,7 @@ vec3 shade(vec2 p) {
  */
 private const val VECTORBALLS_BODY = """
 vec3 shade(vec2 p) {
+    p = roam(p, 0.85);
     float a = uPhase * PI;
     float b = 0.45 * sin(uTime * PI * 2.0);
     float ca = cos(a);
@@ -1119,22 +1163,36 @@ vec3 shade(vec2 p) {
         float rad = h * 1.6 + fr * 0.22;
         float tilt = 0.35 + 0.18 * fr;
         float dir = ring == 1 ? -1.0 : 1.0;
+        vec3 ringCol = colorAt(fr / 3.0 + uPhase * 0.5);
         vec2 q = rot(0.4 * fr + sin(uTime * PI * 2.0 + fr) * 0.15) * p;
-        // The ring's own path, faint.
-        float e = length(vec2(q.x, q.y / tilt)) - rad;
-        col += colorAt(fr / 3.0 + uPhase * 0.5) * exp(-abs(e) * 120.0) * 0.06;
-        for (int k = 0; k < 8; k++) {
-            float fk = float(k);
-            // uPhase * PI * (ring + 1): a whole number of turns over uPhase's wrap.
-            float ang = fk / 8.0 * 2.0 * PI + dir * uPhase * PI * (fr + 1.0);
-            vec2 d = q - vec2(cos(ang) * rad, sin(ang) * rad * tilt);
-            float near = sin(ang) * 0.5 + 0.5;
-            float sz = 0.012 + 0.012 * near + 0.01 * uKick;
-            float dd = dot(d, d) / (sz * sz);
-            vec3 c = colorAt(fr / 3.0 + fk / 24.0 + uPhase * 0.5);
-            col += c * exp(-dd) * (0.6 + 0.6 * near + 0.5 * uKick);
-            col += c * exp(-dd / 9.0) * 0.12 * (0.5 + uHigh);
-        }
+        // In the ring's own frame the ellipse is a circle, so the pixel's angle there picks
+        // out the nearest of the ring's 8 particles directly — one distance test per ring
+        // instead of eight. (Testing all 24 ran the Chromecast at 6 fps.)
+        vec2 qe = vec2(q.x, q.y / tilt);
+        float qlen = length(qe);
+        float e = qlen - rad;
+        // Rational falloffs in place of exp(): the same soft shape at a fraction of the cost.
+        col += ringCol * 0.06 / (1.0 + e * e * 14400.0);
+        // Away from the ring there is no particle to find: skip the rest, a coherent branch.
+        if (abs(e) > 0.12) continue;
+        // uPhase * PI * (ring + 1): a whole number of turns over uPhase's wrap.
+        float spinA = dir * uPhase * PI * (fr + 1.0);
+        float a = fastAtan2(qe.y, qe.x + 1e-4) - spinA;
+        // The nearest particle is at most an eighth of a turn round from the pixel's own
+        // direction; turning that direction by the difference places it without cos/sin
+        // (a 22.5° turn is still within ~0.1% by the small-angle series).
+        float delta = floor(a / (2.0 * PI) * 8.0 + 0.5) / 8.0 * 2.0 * PI - a;
+        float cd = 1.0 - delta * delta * 0.5 + delta * delta * delta * delta / 24.0;
+        float sd = delta - delta * delta * delta / 6.0;
+        vec2 u = qe / max(qlen, 1e-4);
+        vec2 onRing = u * cd + vec2(-u.y, u.x) * sd;
+        vec2 d = q - vec2(onRing.x * rad, onRing.y * rad * tilt);
+        float near = onRing.y * 0.5 + 0.5;
+        float sz = 0.012 + 0.012 * near + 0.01 * uKick;
+        float dd = dot(d, d) / (sz * sz);
+        vec3 c = mix(ringCol, vec3(1.0), 0.2 * near);
+        col += c * (0.6 + 0.6 * near + 0.5 * uKick) / (1.0 + dd + 0.5 * dd * dd);
+        col += c * 0.12 * (0.5 + uHigh) / (1.0 + dd / 9.0);
     }
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return withCover(col, p, h);
@@ -1275,6 +1333,7 @@ vec3 shade(vec2 p) {
  */
 private const val GLENZ_BODY = """
 vec3 shade(vec2 p) {
+    p = roam(p, 0.7);
     float s = 1.0 + 0.12 * uKick + 0.08 * uLow;
     float d = s * 0.57735;
     // uSpin * PI and uTime * PI * 2: whole turns over their wrap.
@@ -1346,22 +1405,39 @@ vec3 shade(vec2 p) {
 private const val DOTTUNNEL_BODY = """
 vec3 shade(vec2 p) {
     vec3 col = colorAt(0.66) * 0.03;
-    for (int j = 0; j < 12; j++) {
-        float fj = float(j);
-        // fract(… + uPhase * 0.5): whole ring spacings over uPhase's wrap.
-        float z = max(1.0 - fract(fj / 12.0 + uPhase * 0.5), 0.03);
-        vec2 c = vec2(sin(uTime * PI * 2.0 + z * 4.0), cos(uTime * PI * 4.0 + z * 3.0)) * 0.35 * z;
-        vec2 q = p - c;
+    // Two palette colours for the whole tunnel, mixed per ring by depth. Each ring's centre and
+    // depth are the same for every pixel, so the CPU works them out once a frame (`uTunnel`:
+    // x, y, z). With the fast atan and the small-angle placement below the loop has no trig
+    // left in it — the first version, twelve rings with a palette lookup, two exp()s and three
+    // trig calls each, ran the Chromecast at 9 fps.
+    vec3 nearCol = colorAt(uPhase * 0.5);
+    vec3 farCol = colorAt(uPhase * 0.5 + 0.4);
+    float boost = 0.9 + 0.6 * uLow;
+    float spacing = 2.0 * PI / 24.0;
+    for (int j = 0; j < 9; j++) {
+        vec3 ring = uTunnel[j];
+        float z = ring.z;
+        vec2 q = p - ring.xy;
+        float len = length(q);
         float R = 0.22 / z;
-        float tw = fj * 0.26 + uSpin * PI;
-        float a = atan(q.y, q.x + 1e-4) + tw;
-        float ad = floor(a / (2.0 * PI) * 24.0 + 0.5) / 24.0 * 2.0 * PI - tw;
-        vec2 d = q - vec2(cos(ad), sin(ad)) * R;
         float size = (0.006 + 0.004 * uHigh) / z * (1.0 + 0.3 * uKick);
+        // Nearly every pixel is nowhere near this ring. Rings are bands, so neighbouring
+        // pixels take the same branch and skipping the dot maths saves real work.
+        if (abs(len - R) > size * 6.0) continue;
+        float tw = float(j) * 0.26 + uSpin * PI;
+        float a = fastAtan2(q.y, q.x + 1e-4) + tw;
+        // Angle to the nearest dot, at most half a dot spacing: small enough that
+        // cos ≈ 1 − δ²/2 and sin ≈ δ − δ³/6 place the dot exactly enough.
+        float delta = floor(a / spacing + 0.5) * spacing - a;
+        float cd = 1.0 - delta * delta * 0.5;
+        float sd = delta - delta * delta * delta / 6.0;
+        vec2 u = q / max(len, 1e-4);
+        vec2 dotPos = (u * cd + vec2(-u.y, u.x) * sd) * R;
+        vec2 d = q - dotPos;
         float dd = dot(d, d) / (size * size);
         float fog = smoothstep(1.0, 0.55, z);
-        vec3 dc = colorAt(z * 0.6 + fj / 12.0 + uPhase * 0.5);
-        col += dc * (exp(-dd) + exp(-sqrt(dd) * 0.5) * 0.08) * fog * (0.9 + 0.6 * uLow);
+        vec3 dc = mix(nearCol, farCol, fract(z * 0.6 + float(j) / 9.0));
+        col += dc * (1.0 / (1.0 + dd + 0.5 * dd * dd) + 0.08 / (1.0 + dd * 0.1)) * fog * boost;
     }
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
@@ -1375,16 +1451,11 @@ vec3 shade(vec2 p) {
  * with contour banding for the voxel look and fog into the sky.
  */
 private const val VOXEL_BODY = """
-// Terrain height. Every term along z is a whole number of cycles over 20 units, which is how far
-// the camera moves over uPhase's wrap (uPhase * 10), so the flight never jumps.
-float terrain(vec2 xz, float camZ) {
-    float k = PI / 10.0;
-    float h = 0.6 * sin(xz.x * 0.35 + sin(xz.y * k * 2.0) * 1.5) * cos(xz.y * k * 3.0)
-            + 0.35 * sin(xz.x * 0.9 + xz.y * k * 4.0)
-            + 0.15 * sin(xz.x * 2.1 - xz.y * k * 7.0);
-    h += abs(xz.x) * 0.25;
-    h += band(floor(clamp(abs(xz.x) * 5.0, 0.0, 63.0))) * 0.9 * exp(-max(xz.y - camZ, 0.0) * 0.25);
-    return h;
+// Terrain height: one read of a tileable heightmap built on the CPU (`uHeight`, repeating every
+// 20 units, which is how far the camera moves over uPhase's wrap, so the flight never jumps),
+// in place of the six sines per step that ran the Chromecast at 7 fps.
+float terrain(vec2 xz) {
+    return texture2D(uHeight, xz * 0.05).r * 1.6 + abs(xz.x) * 0.25;
 }
 
 vec3 shade(vec2 p) {
@@ -1393,14 +1464,24 @@ vec3 shade(vec2 p) {
     vec3 rd = normalize(vec3(p.x, p.y - 0.25, 1.6));
 
     vec3 sky = mix(colorAt(0.05) * 0.5, colorAt(0.66) * 0.1, smoothstep(-0.1, 0.8, p.y));
-    float sun = exp(-length(p - vec2(0.0, 0.35)) * 7.0);
+    float sun = 1.0 / (1.0 + dot(p - vec2(0.0, 0.35), p - vec2(0.0, 0.35)) * 60.0);
     sky += colorAt(0.1) * sun * (0.8 + 0.6 * uBeat);
 
+    // The spectrum lifts the ground nearest the camera, one band per slice of the screen,
+    // looked up once per pixel rather than at every step.
+    float lift = band(floor(clamp(abs(p.x) * 40.0, 0.0, 63.0))) * 0.9;
+
     vec3 col = sky;
+    // Looking up from well above the ground, a ray never meets it: the top of the screen is
+    // pure sky and skips the march entirely.
+    if (rd.y > 0.08) {
+        col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+        return col;
+    }
     float t = 0.3;
-    for (int i = 0; i < 40; i++) {
+    for (int i = 0; i < 24; i++) {
         vec3 pos = ro + rd * t;
-        float h = terrain(pos.xz, camZ);
+        float h = terrain(pos.xz) + lift * max(0.0, 1.0 - t * 0.2);
         if (pos.y < h) {
             vec3 ground = colorAt(h * 0.3 + 0.1) * (0.35 + 0.25 * h);
             ground *= 0.8 + 0.2 * step(0.5, fract(h * 6.0));
@@ -1408,7 +1489,7 @@ vec3 shade(vec2 p) {
             col = mix(ground, sky, fog);
             break;
         }
-        t += 0.08 + t * 0.06;
+        t += 0.12 + t * 0.09;
     }
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;

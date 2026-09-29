@@ -599,9 +599,17 @@ class PlaybackManager @Inject constructor(
         return pos
     }
 
+    /**
+     * The current item's length in ms. The player reports C.TIME_UNSET for a stream it cannot
+     * size — a transcoded stream has no Content-Length — and every screen formatted that as an
+     * eight-digit minute count with an empty progress bar for the whole track. The track's own
+     * tagged length (seconds) stands in until, or unless, the player knows better.
+     */
     fun getDuration(): Long {
         if (castManager.isCasting.value) return castManager.getDuration()
-        return controller?.duration ?: 0L
+        val fromPlayer = controller?.duration ?: androidx.media3.common.C.TIME_UNSET
+        if (fromPlayer > 0 && fromPlayer != androidx.media3.common.C.TIME_UNSET) return fromPlayer
+        return (_currentTrack.value?.duration ?: 0) * 1000L
     }
 
     private fun maybePersistPosition() {

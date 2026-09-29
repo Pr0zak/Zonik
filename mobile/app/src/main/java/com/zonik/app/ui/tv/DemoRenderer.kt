@@ -43,6 +43,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     @Volatile var beatClock: BeatClock? = null
     @Volatile private var pendingCover: Bitmap? = null
     @Volatile private var palette: FloatArray = paletteOf(DEFAULT_PALETTE)
+    /** How much rainbow colorAt() mixes in: none for a colourful cover, some for a grey one. */
+    @Volatile private var rainbow: Float = rainbowFor(paletteOf(DEFAULT_PALETTE))
 
     /** What the walls are made of, kept so a recreated GL context can upload it again. */
     @Volatile private var cover: Bitmap? = null
@@ -75,6 +77,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     fun setPalette(colors: List<Color>) {
         paletteColors = colors
         palette = paletteOf(colors)
+        rainbow = rainbowFor(palette)
         // Without a cover the walls are drawn from the palette, so keep them in step.
         if (cover == null) pendingCover = fallbackTexture(colors)
     }
@@ -98,6 +101,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var scratch: Target? = null
     private var slotCurrent: Slot? = null
     private var slotNext: Slot? = null
+    /** Scale the blit samples its source at: 0.5 when a halfRes effect filled a quarter of it. */
+    private var blitScale = 1f
     private var surfaceWidth = 1
     private var surfaceHeight = 1
 
@@ -162,6 +167,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val ringAges = floatArrayOf(-1f, -1f, -1f, -1f)
     private var sinceKick = 0f
 
+    // The dot tunnel's rings — centre x, y and depth z each — the same for every pixel, so
+    // worked out here once a frame rather than per pixel in the shader.
+    private val tunnelRings = FloatArray(27)
+
     // Kicks counted so the kaleidoscope can change its wedge count every few bars.
     private var kickCount = 0
     private val balls = FloatArray(15)
@@ -202,6 +211,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_MIRRORED_REPEAT)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        uploadHeightmap()
+
         waveTexture = makeTexture(GLES20.GL_NEAREST)
         GLES20.glTexImage2D(
             GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, WAVEFORM_POINTS, 1, 0,
@@ -372,6 +383,18 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val pass = scratch
         val scaler = blit
         val trailsPass = trailsProgram
+        if (e.halfRes && !e.feedback && !trails && pass != null && scaler != null) {
+            // Into the lower-left quarter of the scratch buffer, then scaled up by the blit.
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, pass.fbo)
+            GLES20.glViewport(0, 0, surfaceWidth / 2, surfaceHeight / 2)
+            drawWith(prog, e, -1f, false, 1f, prevTex = 0, srcTex = 0)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight)
+            blitScale = 0.5f
+            drawWith(scaler, e, wipe, incomingSide, fade, prevTex = 0, srcTex = pass.tex)
+            blitScale = 1f
+            return
+        }
         if (!(e.feedback || trails) || slot == null || pass == null || scaler == null || trailsPass == null) {
             drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = 0)
             return
@@ -406,6 +429,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uFade", fadeValue)
         u1("uWipe", wipe)
         u2("uPx", 1f / surfaceWidth, 1f / surfaceHeight)
+        u1("uBlitScale", blitScale)
+        u1("uRainbow", rainbow)
         u1("uTitleAspect", titleAspect)
         u1("uWipeSide", if (incomingSide) 1f else 0f)
         u1("uWipeKind", wipeKind.toFloat())
@@ -428,6 +453,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         }
         u1("uSegments", SEGMENTS[(kickCount / KICKS_PER_SEGMENT_CHANGE) % SEGMENTS.size])
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
+        uniforms["uTunnel"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 9, tunnelRings, 0) }
         u1("uTwist", (sin(drift * 1.3) * 0.06).toFloat() + mid * 0.05f)
         u1("uLow", low)
         u1("uMid", mid)
@@ -444,6 +470,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         uniforms["uTex"]?.let { GLES20.glUniform1i(it, 0) }
         uniforms["uSpectrum"]?.let { if (it >= 0) GLES20.glUniform1i(it, 2) }
         uniforms["uWave"]?.let { if (it >= 0) GLES20.glUniform1i(it, 3) }
+        uniforms["uHeight"]?.let { if (it >= 0) GLES20.glUniform1i(it, 1) }
         uniforms["uTitle"]?.let { if (it >= 0) GLES20.glUniform1i(it, 4) }
         if (prevTex != 0) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
@@ -500,6 +527,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         time = (time + TIME_RATE * dt) % WRAP
         clock += dt
         moveBalls()
+        moveTunnel()
         advanceSpectrum(target, dt)
         advanceRings(dt)
         advanceDive(dt)
@@ -662,6 +690,47 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
+    /**
+     * The voxel landscape's terrain, built once: a tileable heightmap from sines whose
+     * frequencies are whole numbers over the tile, so it repeats seamlessly in both directions.
+     * Kept bound on texture unit 1, which nothing else uses. Sampling it costs the shader one
+     * texture read per step where evaluating the sines cost six.
+     */
+    private fun uploadHeightmap() {
+        val n = HEIGHTMAP_SIZE
+        val raw = FloatArray(n * n)
+        var lo = Float.MAX_VALUE
+        var hi = -Float.MAX_VALUE
+        val tau = (2 * Math.PI).toFloat()
+        for (y in 0 until n) for (x in 0 until n) {
+            val u = x / n.toFloat()
+            val v = y / n.toFloat()
+            val h = 0.6f * sin(tau * (u * 2f + sin(tau * v) * 0.3f)) * kotlin.math.cos(tau * v * 3f) +
+                0.35f * sin(tau * (u * 5f + v * 4f)) +
+                0.15f * sin(tau * (u * 11f - v * 7f)) +
+                0.08f * sin(tau * (u * 23f + v * 17f))
+            raw[y * n + x] = h
+            if (h < lo) lo = h
+            if (h > hi) hi = h
+        }
+        val bytes = ByteBuffer.allocateDirect(n * n)
+        for (h in raw) bytes.put(((h - lo) / (hi - lo) * 255f).toInt().toByte())
+        bytes.position(0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_REPEAT)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_REPEAT)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, n, n, 0,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, bytes
+        )
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+    }
+
     private fun uploadTitle(bitmap: android.graphics.Bitmap) {
         pendingTitle = null
         GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
@@ -682,6 +751,17 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, spectrumBytes
         )
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+    }
+
+    private fun moveTunnel() {
+        val t = time * Math.PI
+        for (j in 0 until 9) {
+            val f = (j / 9f + phase * 0.5f) % 1f
+            val z = maxOf(1f - f, 0.03f)
+            tunnelRings[j * 3] = (sin(t * 2 + z * 4) * 0.35 * z).toFloat()
+            tunnelRings[j * 3 + 1] = (cos(t * 4 + z * 3) * 0.35 * z).toFloat()
+            tunnelRings[j * 3 + 2] = z
+        }
     }
 
     /**
@@ -795,6 +875,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val MAX_SKIP = 60
         const val RING_LIFE_SEC = 3f
         const val TITLE_TEXT_PX = 96f
+        const val HEIGHTMAP_SIZE = 256
         const val RING_IDLE_SEC = 2.5f
         const val SKIP_TOLERANCE = 1e-3
 
@@ -811,11 +892,21 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
-            "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx",
+            "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow",
             "uC0", "uC1", "uC2", "uTex",
         )
 
         val DEFAULT_PALETTE = listOf(Color(0xFFE8B84A), Color(0xFF7C4DFF), Color(0xFF534AB7))
+
+        /**
+         * The shader used to work this out per pixel: the first two swatches' saturation, and
+         * the less there is, the more classic rainbow shows through (never more than 70%).
+         */
+        fun rainbowFor(p: FloatArray): Float {
+            fun sat(o: Int) = maxOf(p[o], p[o + 1], p[o + 2]) - minOf(p[o], p[o + 1], p[o + 2])
+            val coverWeight = ((sat(0) + sat(3)) * 2f).coerceIn(0.3f, 1f)
+            return 1f - coverWeight
+        }
 
         fun paletteOf(colors: List<Color>): FloatArray {
             val c = if (colors.size >= 3) colors else DEFAULT_PALETTE
