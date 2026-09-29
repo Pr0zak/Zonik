@@ -32,6 +32,11 @@ import kotlin.math.sin
 class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     @Volatile var effect: DemoEffect = initial
+    /** Motion trails on every effect: each frame is laid over a faded copy of the last. */
+    @Volatile var trails: Boolean = false
+    @Volatile private var pendingTitle: android.graphics.Bitmap? = null
+    /** Kept so a recreated GL context can draw the title again. */
+    @Volatile private var titleText = ""
     /** A fixed wipe kind, or -1 to move through them. */
     @Volatile var transitionStyle: Int = -1
     @Volatile var pulse: AmbientPulse = AmbientPulse()
@@ -48,6 +53,25 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         pendingCover = bitmap ?: fallbackTexture(paletteColors)
     }
 
+    /**
+     * The track title, drawn white on transparent into a texture for the sine scroller. Built
+     * here on the caller's thread (a one-line Canvas draw) and uploaded on the GL thread.
+     */
+    fun setTitle(text: String) {
+        titleText = text
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            color = android.graphics.Color.WHITE
+            textSize = TITLE_TEXT_PX
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val label = text.ifBlank { "Zonik" }.take(80)
+        val width = (paint.measureText(label) + TITLE_TEXT_PX).toInt().coerceIn(64, 4096)
+        val height = (TITLE_TEXT_PX * 1.5f).toInt()
+        val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        android.graphics.Canvas(bitmap).drawText(label, TITLE_TEXT_PX / 2f, TITLE_TEXT_PX * 1.1f, paint)
+        pendingTitle = bitmap
+    }
+
     fun setPalette(colors: List<Color>) {
         paletteColors = colors
         palette = paletteOf(colors)
@@ -56,6 +80,31 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     }
 
     private class Program(val id: Int, val uniforms: Map<String, Int>, val aPos: Int)
+
+    /** An offscreen colour buffer: a texture and the framebuffer that draws into it. */
+    private class Target(val fbo: Int, val tex: Int)
+
+    /**
+     * Feedback for one effect on screen: the frame it drew last, and the one it is drawing.
+     * Two of these, so a feedback effect sliding in during a transition does not scribble over
+     * the one sliding out.
+     */
+    private class Slot(var prev: Target, var next: Target) {
+        fun swap() { val t = prev; prev = next; next = t }
+    }
+
+    private var blit: Program? = null
+    private var trailsProgram: Program? = null
+    private var scratch: Target? = null
+    private var slotCurrent: Slot? = null
+    private var slotNext: Slot? = null
+    private var surfaceWidth = 1
+    private var surfaceHeight = 1
+
+    private var waveTexture = 0
+    private val waveBytes = ByteBuffer.allocateDirect(WAVEFORM_POINTS)
+    private var titleTexture = 0
+    private var titleAspect = 4f
 
     private val programs = HashMap<DemoEffect, Program>()
 
@@ -129,6 +178,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             val locations = UNIFORM_NAMES.associateWith { GLES20.glGetUniformLocation(id, it) }
             programs[e] = Program(id, locations, GLES20.glGetAttribLocation(id, "aPos"))
         }
+        blit = buildPass(BLIT_FRAGMENT)
+        trailsProgram = buildPass(TRAILS_FRAGMENT)
+        // Buffers belonged to the old context; onSurfaceChanged makes new ones.
+        scratch = null
+        slotCurrent = null
+        slotNext = null
 
         fade = 0f
         next = null
@@ -147,6 +202,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_MIRRORED_REPEAT)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        waveTexture = makeTexture(GLES20.GL_NEAREST)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, WAVEFORM_POINTS, 1, 0,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, null
+        )
+        titleTexture = makeTexture(GLES20.GL_LINEAR)
+        setTitle(titleText)
+
         GLES20.glGenTextures(1, ids, 0)
         spectrumTexture = ids[0]
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, spectrumTexture)
@@ -170,6 +233,68 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
         aspect = width.toFloat() / height.coerceAtLeast(1)
+        surfaceWidth = width.coerceAtLeast(1)
+        surfaceHeight = height.coerceAtLeast(1)
+        listOfNotNull(scratch, slotCurrent?.prev, slotCurrent?.next, slotNext?.prev, slotNext?.next)
+            .forEach { deleteTarget(it) }
+        scratch = makeTarget()
+        slotCurrent = Slot(makeTarget(), makeTarget())
+        slotNext = Slot(makeTarget(), makeTarget())
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+    }
+
+    /** A CLAMP texture bound on the current unit, left bound for the caller to fill. */
+    private fun makeTexture(filter: Int): Int {
+        val ids = IntArray(1)
+        GLES20.glGenTextures(1, ids, 0)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, filter)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, filter)
+        return ids[0]
+    }
+
+    /** A surface-sized offscreen buffer, cleared to black. */
+    private fun makeTarget(): Target {
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE7)
+        val tex = makeTexture(GLES20.GL_LINEAR)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, surfaceWidth, surfaceHeight, 0,
+            GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, null
+        )
+        val ids = IntArray(1)
+        GLES20.glGenFramebuffers(1, ids, 0)
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, ids[0])
+        GLES20.glFramebufferTexture2D(
+            GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, tex, 0
+        )
+        if (GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER) != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+            DebugLog.w("DemoRenderer", "Offscreen buffer incomplete; feedback effects will not draw")
+        }
+        clearTarget(Target(ids[0], tex))
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        return Target(ids[0], tex)
+    }
+
+    private fun clearTarget(t: Target) {
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, t.fbo)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+    }
+
+    private fun deleteTarget(t: Target) {
+        GLES20.glDeleteFramebuffers(1, intArrayOf(t.fbo), 0)
+        GLES20.glDeleteTextures(1, intArrayOf(t.tex), 0)
+    }
+
+    private fun buildPass(fragment: String): Program {
+        val id = buildProgram(DEMO_VERTEX, fragment, DemoEffect.TUNNEL)
+        return Program(
+            id,
+            (UNIFORM_NAMES + listOf("uBlit", "uCur")).associateWith { GLES20.glGetUniformLocation(id, it) },
+            GLES20.glGetAttribLocation(id, "aPos")
+        )
     }
 
     override fun onDrawFrame(gl: GL10?) {
@@ -181,6 +306,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         pendingCover?.let { uploadCover(it) }
         advance(dt)
         uploadSpectrum()
+        uploadWave()
+        pendingTitle?.let { uploadTitle(it) }
 
         // Only fades in from black when the surface first appears; switching effects uses a
         // transition instead.
@@ -211,6 +338,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             if (transition >= 1f) {
                 current = incoming
                 next = null
+                // The incoming effect's feedback becomes the current one's.
+                val done = slotNext
+                slotNext = slotCurrent
+                slotCurrent = done
                 DebugLog.d("DemoRenderer", "Effect -> ${current.name}")
             }
             return
@@ -225,13 +356,45 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             next = requested
             transition = 0f
             waitedForBeat = 0f
+            // A feedback effect coming in starts from black, not from the last one's leftovers.
+            slotNext?.let { clearTarget(it.prev); clearTarget(it.next) }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             val style = transitionStyle
-            wipeKind = if (style in 0 until WIPE_KINDS) style else (wipeKind + 1) % WIPE_KINDS
+            // "Mixed" picks at random, never the same wipe twice running.
+            wipeKind = if (style in 0 until WIPE_KINDS) style
+            else (wipeKind + 1 + kotlin.random.Random.nextInt(WIPE_KINDS - 1)) % WIPE_KINDS
         }
     }
 
     private fun draw(e: DemoEffect, wipe: Float, incomingSide: Boolean) {
         val prog = programs[e] ?: return
+        val slot = if (incomingSide) slotNext else slotCurrent
+        val pass = scratch
+        val scaler = blit
+        val trailsPass = trailsProgram
+        if (!(e.feedback || trails) || slot == null || pass == null || scaler == null || trailsPass == null) {
+            drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = 0)
+            return
+        }
+        // Offscreen first, whole and unwiped; the blit to the screen applies the wipe and fade.
+        if (e.feedback) {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.next.fbo)
+            drawWith(prog, e, -1f, false, 1f, prevTex = slot.prev.tex, srcTex = 0)
+        } else {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, pass.fbo)
+            drawWith(prog, e, -1f, false, 1f, prevTex = 0, srcTex = 0)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.next.fbo)
+            drawWith(trailsPass, e, -1f, false, 1f, prevTex = slot.prev.tex, srcTex = pass.tex)
+        }
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+        drawWith(scaler, e, wipe, incomingSide, fade, prevTex = 0, srcTex = slot.next.tex)
+        slot.swap()
+    }
+
+    private fun drawWith(
+        prog: Program, e: DemoEffect, wipe: Float, incomingSide: Boolean, fadeValue: Float,
+        prevTex: Int, srcTex: Int,
+    ) {
         uniforms = prog.uniforms
         GLES20.glUseProgram(prog.id)
         val drift = clock * 0.1
@@ -240,8 +403,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uPhase", phase)
         u1("uSpin", spin)
         u1("uTime", time)
-        u1("uFade", fade)
+        u1("uFade", fadeValue)
         u1("uWipe", wipe)
+        u2("uPx", 1f / surfaceWidth, 1f / surfaceHeight)
+        u1("uTitleAspect", titleAspect)
         u1("uWipeSide", if (incomingSide) 1f else 0f)
         u1("uWipeKind", wipeKind.toFloat())
         if (e == DemoEffect.MANDELBROT) {
@@ -278,6 +443,20 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
         uniforms["uTex"]?.let { GLES20.glUniform1i(it, 0) }
         uniforms["uSpectrum"]?.let { if (it >= 0) GLES20.glUniform1i(it, 2) }
+        uniforms["uWave"]?.let { if (it >= 0) GLES20.glUniform1i(it, 3) }
+        uniforms["uTitle"]?.let { if (it >= 0) GLES20.glUniform1i(it, 4) }
+        if (prevTex != 0) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, prevTex)
+            uniforms["uPrev"]?.let { if (it >= 0) GLES20.glUniform1i(it, 5) }
+        }
+        if (srcTex != 0) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE6)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, srcTex)
+            uniforms["uBlit"]?.let { if (it >= 0) GLES20.glUniform1i(it, 6) }
+            uniforms["uCur"]?.let { if (it >= 0) GLES20.glUniform1i(it, 6) }
+        }
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         uniforms["uRings"]?.let { if (it >= 0) GLES20.glUniform4f(it, ringAges[0], ringAges[1], ringAges[2], ringAges[3]) }
 
         GLES20.glEnableVertexAttribArray(prog.aPos)
@@ -460,6 +639,38 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         ringAges[slot] = 0f
     }
 
+    /**
+     * The latest captured waveform; without a capture, a sine shaped by the three bands so the
+     * scope still breathes with the tempo grid.
+     */
+    private fun uploadWave() {
+        val captured = pulse.waveform
+        waveBytes.position(0)
+        for (i in 0 until WAVEFORM_POINTS) {
+            val v = if (captured != null && captured.size == WAVEFORM_POINTS) captured[i]
+            else 0.5f + 0.35f * (low * sin(i * 0.15f + clock.toFloat() * 6f) +
+                0.5f * mid * sin(i * 0.61f - clock.toFloat() * 9f)) / 1.5f
+            waveBytes.put((v.coerceIn(0f, 1f) * 255f).toInt().toByte())
+        }
+        waveBytes.position(0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, waveTexture)
+        GLES20.glTexSubImage2D(
+            GLES20.GL_TEXTURE_2D, 0, 0, 0, WAVEFORM_POINTS, 1,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, waveBytes
+        )
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+    }
+
+    private fun uploadTitle(bitmap: android.graphics.Bitmap) {
+        pendingTitle = null
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE4)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, titleTexture)
+        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        titleAspect = bitmap.width.toFloat() / bitmap.height
+    }
+
     private fun uploadSpectrum() {
         spectrumBytes.position(0)
         for (v in spectrum) spectrumBytes.put((v.coerceIn(0f, 1f) * 255f).toInt().toByte())
@@ -470,6 +681,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             GLES20.GL_TEXTURE_2D, 0, 0, 0, SPECTRUM_BANDS, 1,
             GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, spectrumBytes
         )
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
     /**
@@ -565,8 +777,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val FADE_RATE = 4f
         const val TRANSITION_SEC = 1.6f
         const val BEAT_WAIT_SEC = 1.5f
-        /** Block dissolve, iris, clock sweep, ragged wipe — see `wipeMask` in DemoEffects. */
-        const val WIPE_KINDS = 4
+        /** How many wipes `wipeMask` in DemoEffects knows; names in [DEMO_TRANSITIONS]. */
+        val WIPE_KINDS = DEMO_TRANSITIONS.size
         const val KICKS_PER_SEGMENT_CHANGE = 16
         val SEGMENTS = floatArrayOf(6f, 8f, 5f, 12f)
 
@@ -582,6 +794,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val MANDEL_RETARGET_SEC = 150f
         const val MAX_SKIP = 60
         const val RING_LIFE_SEC = 3f
+        const val TITLE_TEXT_PX = 96f
         const val RING_IDLE_SEC = 2.5f
         const val SKIP_TOLERANCE = 1e-3
 
@@ -598,7 +811,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
-            "uSpectrum", "uRings",
+            "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx",
             "uC0", "uC1", "uC2", "uTex",
         )
 

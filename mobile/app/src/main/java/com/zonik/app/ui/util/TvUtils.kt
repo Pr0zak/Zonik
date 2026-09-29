@@ -74,7 +74,9 @@ fun Modifier.tvFocusLift(
         .then(
             if (isFocused) {
                 Modifier
-                    .shadow(18.dp, shape, ambientColor = ZonikColors.gold, spotColor = ZonikColors.gold)
+                    // A close halo, not a cast shadow: a larger elevation spreads the glow far
+                    // past the element and into whatever clips its neighbours.
+                    .shadow(6.dp, shape, ambientColor = ZonikColors.gold, spotColor = ZonikColors.gold)
                     .border(3.dp, ZonikColors.gold, shape)
             } else {
                 Modifier

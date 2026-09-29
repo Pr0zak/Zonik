@@ -325,6 +325,13 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setTvAmbientTransition(kind) }
     }
 
+    val ambientTrails: StateFlow<Boolean> = settingsRepository.tvAmbientTrails
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setAmbientTrails(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setTvAmbientTrails(enabled) }
+    }
+
     private val _pulse = MutableStateFlow(AmbientPulse())
     val pulse: StateFlow<AmbientPulse> = _pulse.asStateFlow()
 
@@ -379,21 +386,26 @@ class TvViewModel @Inject constructor(
                 analyzer = pulseAnalyzer
                 viz.setDataCaptureListener(
                     object : android.media.audiofx.Visualizer.OnDataCaptureListener {
+                        // Both arrive on the capture thread, waveform first; the waveform is held
+                        // and rides along with the next FFT pulse.
                         override fun onWaveFormDataCapture(
                             v: android.media.audiofx.Visualizer?, waveform: ByteArray?, rate: Int
-                        ) {}
+                        ) {
+                            waveform ?: return
+                            latestWave = downsampleWave(waveform)
+                        }
 
                         override fun onFftDataCapture(
                             v: android.media.audiofx.Visualizer?, fft: ByteArray?, rate: Int
                         ) {
                             fft ?: return
-                            _pulse.value = pulseAnalyzer.process(fft)
+                            _pulse.value = pulseAnalyzer.process(fft).copy(waveform = latestWave)
                         }
                     },
                     // Full rate, not half: the old setting analysed one 3 ms window in every
                     // 100 ms and missed most of what it was meant to be watching.
                     android.media.audiofx.Visualizer.getMaxCaptureRate(),
-                    false,
+                    true,
                     true
                 )
                 viz.enabled = true
@@ -408,6 +420,22 @@ class TvViewModel @Inject constructor(
         }
     }
 
+    @Volatile private var latestWave: FloatArray? = null
+
+    /** 8-bit unsigned PCM (128 = silence) averaged down to [WAVEFORM_POINTS] values in 0..1. */
+    private fun downsampleWave(pcm: ByteArray): FloatArray {
+        val out = FloatArray(WAVEFORM_POINTS)
+        val per = maxOf(1, pcm.size / WAVEFORM_POINTS)
+        for (i in 0 until WAVEFORM_POINTS) {
+            var sum = 0
+            val start = i * per
+            val end = minOf(pcm.size, start + per)
+            for (j in start until end) sum += pcm[j].toInt() and 0xFF
+            out[i] = if (end > start) sum / (end - start) / 255f else 0.5f
+        }
+        return out
+    }
+
     fun stopVisualizer() {
         try {
             visualizer?.release()
@@ -416,6 +444,7 @@ class TvViewModel @Inject constructor(
         visualizer = null
         analyzer?.reset()
         analyzer = null
+        latestWave = null
         _pulse.value = AmbientPulse()
     }
 
@@ -723,22 +752,36 @@ private fun TvAmbientOverlay(
         }
     }
 
-    // Rotation: the next enabled effect on every track change and, if set, on a timer within
-    // the track (restarted by each track change). Starts at a random point so two sessions do
-    // not open on the same effect. The renderer holds each switch for the next kick.
+    // Rotation: a new effect on every track change and, if set, on a timer within the track
+    // (restarted by each track change). The order is a shuffled deck: every enabled effect
+    // plays once before any repeats, and a fresh shuffle never opens on the one just shown.
+    // The renderer holds each switch for the next kick.
     val enabled by viewModel.ambientEffects.collectAsState()
     val rotateSec by viewModel.ambientRotateSec.collectAsState()
     val transition by viewModel.ambientTransition.collectAsState()
-    var autoIndex by remember { mutableIntStateOf(kotlin.random.Random.nextInt(1000)) }
-    LaunchedEffect(track.id) { autoIndex++ }
+    val trails by viewModel.ambientTrails.collectAsState()
+    var deck by remember(enabled) { mutableStateOf(enabled.shuffled()) }
+    var deckIndex by remember(enabled) { mutableIntStateOf(0) }
+    fun advanceDeck() {
+        if (deckIndex + 1 < deck.size) {
+            deckIndex++
+        } else {
+            val last = deck[deckIndex]
+            var next = enabled.shuffled()
+            if (next.size > 1 && next.first() == last) next = next.drop(1) + next.first()
+            deck = next
+            deckIndex = 0
+        }
+    }
+    LaunchedEffect(track.id) { advanceDeck() }
     LaunchedEffect(track.id, rotateSec) {
         if (rotateSec <= 0) return@LaunchedEffect
         while (true) {
             delay(rotateSec * 1000L)
-            autoIndex++
+            advanceDeck()
         }
     }
-    val effect = enabled[autoIndex.mod(enabled.size)]
+    val effect = deck.getOrElse(deckIndex) { enabled.first() }
 
     // Cover and title: always, never, or shown on each track change and remote press, then
     // faded so the effect gets the whole screen.
@@ -768,6 +811,8 @@ private fun TvAmbientOverlay(
             cover = art.cover,
             palette = art.palette,
             transition = transition,
+            title = "${track.title}  ·  ${track.artist}",
+            trails = trails,
             modifier = Modifier.fillMaxSize()
         )
         // Keeps the type legible without burying the effect: darkness where the words are.
@@ -892,8 +937,10 @@ private fun TvSettingsContent(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
-            .padding(vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            // Inside the scroll, which clips to its own bounds: room for the focused row's lift
+            // and glow on every side, or it is cut off at the edges.
+            .padding(horizontal = 24.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
             text = "Settings",

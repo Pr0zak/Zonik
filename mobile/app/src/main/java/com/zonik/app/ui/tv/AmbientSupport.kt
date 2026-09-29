@@ -27,7 +27,10 @@ data class AmbientArt(val cover: Bitmap?, val palette: List<Color>)
 private val DEFAULT_AMBIENT_PALETTE = listOf(ZonikColors.gold, Color(0xFF7C4DFF), Color(0xFF534AB7))
 
 /** The wipes the renderer can switch effects with, in `uWipeKind` order. */
-val DEMO_TRANSITIONS = listOf("Block dissolve", "Iris", "Clock sweep", "Ragged wipe")
+val DEMO_TRANSITIONS = listOf(
+    "Block dissolve", "Iris", "Clock sweep", "Ragged wipe", "Checkerboard",
+    "Diamond", "Spiral", "Venetian blinds", "Split doors", "Radiating dissolve",
+)
 
 /** Effects built on the cover image itself; the rest only take its colours. */
 val COVER_EFFECTS = setOf(DemoEffect.TUNNEL, DemoEffect.ROTOZOOM, DemoEffect.KALEIDOSCOPE)

@@ -34,12 +34,18 @@ fun DemoVisualizer(
     modifier: Modifier = Modifier,
     /** A fixed wipe from [DEMO_TRANSITIONS], or -1 to vary them. */
     transition: Int = -1,
+    /** Shown by the sine scroller. */
+    title: String = "",
+    /** Motion trails on every effect. */
+    trails: Boolean = false,
 ) {
     // One renderer for the life of the screen: changing [effect] fades between effects on the
     // same surface instead of tearing the GL context down.
     val renderer = remember { DemoRenderer(effect) }
     LaunchedEffect(renderer, effect) { renderer.effect = effect }
     LaunchedEffect(renderer, transition) { renderer.transitionStyle = transition }
+    LaunchedEffect(renderer, title) { renderer.setTitle(title) }
+    LaunchedEffect(renderer, trails) { renderer.trails = trails }
 
     LaunchedEffect(renderer, pulse, beatClock) {
         pulse.collect { p ->

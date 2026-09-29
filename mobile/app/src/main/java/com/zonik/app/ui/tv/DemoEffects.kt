@@ -24,6 +24,12 @@ enum class DemoEffect(
      * bottom, so the two never sit on top of each other.
      */
     val framesCover: Boolean = false,
+    /**
+     * The effect reads its own previous frame (`uPrev`) and draws the next one from it — fire
+     * rising, ink drifting, an image melting outward. The renderer keeps a pair of buffers per
+     * effect on screen for it.
+     */
+    val feedback: Boolean = false,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
@@ -41,13 +47,49 @@ enum class DemoEffect(
     AURORA("Aurora", AURORA_BODY),
     VECTORBALLS("Vector balls", VECTORBALLS_BODY),
     JULIA("Julia", JULIA_BODY),
-    MANDELBROT("Mandelbrot zoom", MANDELBROT_BODY),
+    MANDELBROT("Mandelbrot", MANDELBROT_BODY),
     SHOCKWAVE("Shockwaves", SHOCKWAVE_BODY, framesCover = true),
     GODRAYS("God rays", GODRAYS_BODY, framesCover = true),
-    SUNBURST("Sunburst", SUNBURST_BODY, framesCover = true);
+    SUNBURST("Sunburst", SUNBURST_BODY, framesCover = true),
+    DEMOFIRE("Demo fire", DEMOFIRE_BODY, feedback = true),
+    MELT("Melt", MELT_BODY, framesCover = true, feedback = true),
+    INK("Ink", INK_BODY, feedback = true),
+    OSCILLOSCOPE("Oscilloscope", OSCILLOSCOPE_BODY, framesCover = true),
+    ORBITS("Orbits", ORBITS_BODY, framesCover = true),
+    SKYLINE("Neon skyline", SKYLINE_BODY),
+    KALEIDOFRAME("Kaleido frame", KALEIDOFRAME_BODY, framesCover = true),
+    SCROLLER("Sine scroller", SCROLLER_BODY),
+    GLENZ("Glenz vector", GLENZ_BODY),
+    DOTTUNNEL("Dot tunnel", DOTTUNNEL_BODY),
+    VOXEL("Voxel hills", VOXEL_BODY);
 
     val fragmentShader: String = HEADER + body + FOOTER
 }
+
+/**
+ * Copies an offscreen buffer (`uBlit`) to the screen through the shared FOOTER, so a feedback
+ * or trails effect still gets its wipe and fade at full resolution.
+ */
+internal val BLIT_FRAGMENT: String = HEADER + """
+uniform sampler2D uBlit;
+vec3 shade(vec2 p) { return texture2D(uBlit, vPos * 0.5 + 0.5).rgb; }
+""" + FOOTER
+
+/**
+ * Trails: this frame (`uCur`) laid over the last trails frame, zoomed out a hair and faded, so
+ * anything that moves leaves a streak. `max` rather than a blend keeps the fresh frame at full
+ * strength; the small subtraction makes the tail reach true black in 8-bit instead of
+ * stalling at a faint haze.
+ */
+internal val TRAILS_FRAGMENT: String = HEADER + """
+uniform sampler2D uCur;
+vec3 shade(vec2 p) {
+    vec2 uv = vPos * 0.5 + 0.5;
+    vec3 cur = texture2D(uCur, uv).rgb;
+    vec3 old = prevAt((uv - 0.5) * 0.992 + 0.5) * 0.86 - 0.01;
+    return max(cur, old);
+}
+""" + FOOTER
 
 internal const val DEMO_VERTEX = """
 attribute vec2 aPos;
@@ -105,6 +147,11 @@ uniform vec3 uC2;
 uniform sampler2D uTex;
 uniform sampler2D uSpectrum;
 uniform vec4 uRings;
+uniform sampler2D uWave;
+uniform sampler2D uTitle;
+uniform float uTitleAspect;
+uniform sampler2D uPrev;
+uniform vec2 uPx;
 
 const float PI = 3.14159265;
 
@@ -161,6 +208,19 @@ vec3 withCover(vec3 col, vec2 p, float h) {
 // One band of the 64-band spectrum, 0..1.
 float band(float i) { return texture2D(uSpectrum, vec2((i + 0.5) / 64.0, 0.5)).r; }
 
+// The audio waveform at x in 0..1 across the capture, as -1..1.
+float wave(float x) { return texture2D(uWave, vec2(x, 0.5)).r * 2.0 - 1.0; }
+
+// Coverage (0..1) of the track title, rendered white on transparent, at uv in 0..1 over the
+// text's own box (uTitleAspect wide per 1 high). Outside the box: 0.
+float titleAt(vec2 uv) {
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    return texture2D(uTitle, vec2(uv.x, 1.0 - uv.y)).a;
+}
+
+// The previous frame at screen uv (0..1), for feedback effects.
+vec3 prevAt(vec2 uv) { return texture2D(uPrev, uv).rgb; }
+
 mat2 rot(float a) { float c = cos(a); float s = sin(a); return mat2(c, s, -s, c); }
 """
 
@@ -172,11 +232,23 @@ mat2 rot(float a) { float c = cos(a); float s = sin(a); return mat2(c, s, -s, c)
  */
 private const val FOOTER = """
 float wipeMask(vec2 frag, vec2 p) {
+    float a = fract(atan(p.y, p.x + 1e-4) / (2.0 * PI) + 0.25);
     if (uWipeKind < 0.5) return hash(floor(frag / 12.0));                    // block dissolve
     if (uWipeKind < 1.5) return length(p) / 2.1;                             // iris from centre
-    if (uWipeKind < 2.5) return fract(atan(p.y, p.x + 1e-4) / (2.0 * PI) + 0.25); // clock sweep
-    return clamp(p.x / uAspect * 0.45 + 0.5, 0.0, 1.0) * 0.85
+    if (uWipeKind < 2.5) return a;                                           // clock sweep
+    if (uWipeKind < 3.5) return clamp(p.x / uAspect * 0.45 + 0.5, 0.0, 1.0) * 0.85
          + hash(vec2(floor(frag.y / 10.0), 7.0)) * 0.15;                     // ragged wipe
+    if (uWipeKind < 4.5) {                                                   // checkerboard
+        vec2 f = fract(frag / 60.0) - 0.5;
+        vec2 cell = floor(frag / 60.0);
+        return mod(cell.x + cell.y, 2.0) * 0.5 + max(abs(f.x), abs(f.y));
+    }
+    if (uWipeKind < 5.5) return (abs(p.x) / uAspect + abs(p.y)) * 0.5;      // diamond
+    if (uWipeKind < 6.5) return clamp((a + floor(length(p) * 2.4)) / 5.2, 0.0, 1.0); // spiral
+    if (uWipeKind < 7.5) return fract(frag.y / 54.0) * 0.8
+         + (p.x / uAspect * 0.5 + 0.5) * 0.2;                                // venetian blinds
+    if (uWipeKind < 8.5) return abs(p.x) / uAspect;                         // split doors
+    return hash(floor(frag / 24.0)) * 0.45 + length(p) / 2.1 * 0.55;        // radiating dissolve
 }
 
 void main() {
@@ -924,5 +996,421 @@ vec3 shade(vec2 p) {
     col += hue * exp(-abs(r - inner) * 40.0) * (0.3 + 0.7 * uKick);
     col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
     return withCover(col, p, h);
+}
+"""
+
+/**
+ * The demo fire, done the original way: every frame each pixel takes the average of the pixels
+ * just below it in the previous frame and cools a little, while the bottom row is re-seeded
+ * with random hot spots. Heat rises, spreads and dies on its own. The channels cool at
+ * different rates, so white seeds age through yellow and red to black; the seeds are tinted by
+ * the cover. Bass thickens the seeding, the kick flares it.
+ */
+private const val DEMOFIRE_BODY = """
+vec3 shade(vec2 p) {
+    vec2 uv = vPos * 0.5 + 0.5;
+    float wob = sin(uv.y * 40.0 + uTime * PI * 20.0) * uPx.x * 1.5;
+    vec2 src = uv - vec2(wob, uPx.y * 2.0);
+    vec3 c = (prevAt(src) * 2.0
+            + prevAt(src + vec2(uPx.x * 1.5, 0.0))
+            + prevAt(src - vec2(uPx.x * 1.5, 0.0))) * 0.25;
+    // Cooling tuned so flames reach about a third of the way up before dying out.
+    c = c * vec3(0.99, 0.972, 0.935) - 0.003;
+    if (uv.y < 0.02) {
+        float h = hash(vec2(floor(uv.x * 160.0), floor(uTime * 400.0)));
+        float on = step(0.5 - 0.3 * uLow - 0.3 * uKick, h);
+        c = mix(vec3(1.0, 0.95, 0.8), colorAt(0.0) + 0.4, 0.35) * on;
+    }
+    return max(c, 0.0);
+}
+"""
+
+/**
+ * Melt: the previous frame, zoomed in a touch, turned a touch and faded, with the cover drawn
+ * fresh at the centre each frame — so the cover pours outward forever in a spiral of its own
+ * colours. Bass speeds the zoom, mids the twist; a kick rings the cover's edge.
+ */
+private const val MELT_BODY = """
+vec3 shade(vec2 p) {
+    vec2 c = vPos * 0.5;
+    c = rot(0.004 + 0.012 * uMid) * c * (0.985 - 0.012 * uLow);
+    // Multiplying alone stalls in 8-bit (the rounding lands back on the same value), so a
+    // small subtraction carries the fade all the way to black.
+    vec3 col = max(prevAt(c + 0.5) * 0.965 - 0.003, 0.0);
+    vec2 q = vec2(vPos.x * uAspect, vPos.y);
+    float h = 0.2 + 0.04 * uKick;
+    float inside = 1.0 - smoothstep(0.0, 0.01, coverDist(q, h));
+    vec3 cover = texture2D(uTex, vec2(q.x, -q.y) / (2.0 * h) + 0.5).rgb;
+    col = mix(col, cover, inside);
+    col += colorAt(uPhase * 0.5) * exp(-abs(coverDist(q, h)) * 60.0) * (0.2 + 0.9 * uKick);
+    return col;
+}
+"""
+
+/**
+ * Ink in water: the previous frame is carried along a swirling current and fades very slowly,
+ * while three drops of ink in the cover's colours drift around dripping in more — each fed by
+ * one band of the music, all of them by the kick.
+ */
+private const val INK_BODY = """
+vec3 shade(vec2 p) {
+    vec2 uv = vPos * 0.5 + 0.5;
+    vec2 q = vec2(vPos.x * uAspect, vPos.y);
+    float t = uTime * PI * 2.0;
+    vec2 vel = vec2(sin(q.y * 3.0 + t) + 0.5 * sin(q.y * 7.0 - t * 2.0),
+                    cos(q.x * 3.0 - t) + 0.5 * cos(q.x * 5.0 + t * 3.0));
+    // Multiplying alone stalls in 8-bit (0.992 of a mid-grey rounds back to itself), so a small
+    // subtraction carries the fade all the way to black.
+    vec3 col = max(prevAt(uv - vel * uPx * (1.5 + 3.0 * uLow)) * 0.994 - 0.003, 0.0);
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        vec2 pos = vec2(sin(t * (1.0 + fi) + fi * 2.1) * uAspect * 0.55, cos(t * (2.0 + fi) + fi) * 0.6);
+        vec2 d = q - pos;
+        float level = i == 0 ? uLow : (i == 1 ? uMid : uHigh);
+        float amt = exp(-dot(d, d) * 300.0) * (0.15 + 0.6 * level + 0.6 * uKick);
+        col = mix(col, colorAt(fi / 3.0 + uPhase * 0.5), clamp(amt, 0.0, 1.0));
+    }
+    return col;
+}
+"""
+
+/**
+ * Oscilloscope: the live waveform bent into a glowing phosphor ring around the cover, with a
+ * fainter second trace from later in the same capture. The angle is mirrored, so the trace
+ * meets itself at the top instead of showing a seam. Bass swells the trace, mids widen its
+ * glow, the kick lights the cover's edge.
+ */
+private const val OSCILLOSCOPE_BODY = """
+vec3 shade(vec2 p) {
+    // The cover stays dead centre: undo FOOTER's wander.
+    p += uCenter;
+    float h = 0.3 + 0.01 * uKick;
+    float r = length(p);
+    float a = atan(p.y, p.x + 1e-4) / (2.0 * PI) + 0.5;
+    float x = abs(a * 2.0 - 1.0);
+    float base = h * 1.55;
+    float amp = 0.08 + 0.12 * uLow;
+    float d1 = abs(r - (base + wave(x * 0.5) * amp));
+    float d2 = abs(r - (base + 0.13 + wave(0.5 + x * 0.5) * amp * 0.7));
+    vec3 c1 = colorAt(0.05 + uPhase * 0.5);
+    vec3 c2 = colorAt(0.4 + uPhase * 0.5);
+    vec3 col = colorAt(0.66) * 0.03;
+    col += c1 * (exp(-d1 * 220.0) * 1.2 + exp(-d1 * 30.0) * 0.25 * (0.6 + uMid));
+    col += c2 * (exp(-d2 * 260.0) * 0.6 + exp(-d2 * 40.0) * 0.12);
+    col += vec3(1.0) * exp(-d1 * 900.0) * 0.6;
+    col += c1 * exp(-max(coverDist(p, h), 0.0) * 6.0) * (0.1 + 0.5 * uKick);
+    col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * Orbits: three tilted rings of eight particles circling the cover, the middle ring the other
+ * way round. Particles on the near side of their orbit are bigger and brighter. Bass speeds the
+ * orbits (they ride uPhase), highs widen their halos, the kick flashes them.
+ */
+private const val ORBITS_BODY = """
+vec3 shade(vec2 p) {
+    p += uCenter;
+    float h = 0.28 + 0.01 * uKick;
+    vec3 col = colorAt(0.66) * 0.035 * (1.0 - smoothstep(0.0, 1.5, length(p)));
+    for (int ring = 0; ring < 3; ring++) {
+        float fr = float(ring);
+        float rad = h * 1.6 + fr * 0.22;
+        float tilt = 0.35 + 0.18 * fr;
+        float dir = ring == 1 ? -1.0 : 1.0;
+        vec2 q = rot(0.4 * fr + sin(uTime * PI * 2.0 + fr) * 0.15) * p;
+        // The ring's own path, faint.
+        float e = length(vec2(q.x, q.y / tilt)) - rad;
+        col += colorAt(fr / 3.0 + uPhase * 0.5) * exp(-abs(e) * 120.0) * 0.06;
+        for (int k = 0; k < 8; k++) {
+            float fk = float(k);
+            // uPhase * PI * (ring + 1): a whole number of turns over uPhase's wrap.
+            float ang = fk / 8.0 * 2.0 * PI + dir * uPhase * PI * (fr + 1.0);
+            vec2 d = q - vec2(cos(ang) * rad, sin(ang) * rad * tilt);
+            float near = sin(ang) * 0.5 + 0.5;
+            float sz = 0.012 + 0.012 * near + 0.01 * uKick;
+            float dd = dot(d, d) / (sz * sz);
+            vec3 c = colorAt(fr / 3.0 + fk / 24.0 + uPhase * 0.5);
+            col += c * exp(-dd) * (0.6 + 0.6 * near + 0.5 * uKick);
+            col += c * exp(-dd / 9.0) * 0.12 * (0.5 + uHigh);
+        }
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * Neon skyline: a city along the bottom third whose 32 buildings are the spectrum — each one's
+ * height is a band, bass on the left. Lit windows, neon trim on every roof, a starry night sky,
+ * and the whole thing mirrored in a rippling wet street. Mids light more windows, highs
+ * brighten them, the kick flashes the trim.
+ */
+private const val SKYLINE_BODY = """
+// One building column at screen uv: colour, and coverage in a.
+vec4 building(vec2 uv) {
+    float ground = 0.3;
+    float bx = uv.x * 32.0;
+    float bi = floor(bx);
+    float bf = fract(bx);
+    float bh = 0.05 + band(bi * 2.0) * 0.42 + hash(vec2(bi, 3.0)) * 0.08;
+    float top = ground + bh;
+    float walls = step(0.07, bf) * step(bf, 0.93);
+    float inside = walls * step(ground, uv.y) * step(uv.y, top);
+    vec3 neon = colorAt(bi / 32.0 + uPhase * 0.5);
+    float wx = fract(bf * 5.0);
+    float wy = fract((uv.y - ground) * 110.0);
+    float lit = step(0.6 - 0.35 * uMid, hash(vec2(floor(bf * 5.0) + bi * 7.0, floor((uv.y - ground) * 110.0))));
+    float win = step(0.3, wx) * step(wx, 0.7) * step(0.35, wy);
+    vec3 c = vec3(0.015, 0.015, 0.03) + neon * lit * win * (0.55 + 0.4 * uHigh);
+    float edge = exp(-abs(uv.y - top) * 500.0) * walls
+               + (exp(-abs(bf - 0.07) * 120.0) + exp(-abs(bf - 0.93) * 120.0)) * step(ground, uv.y) * step(uv.y, top) * 0.5;
+    c += neon * edge * (0.7 + 0.9 * uKick);
+    return vec4(c, clamp(max(inside, edge), 0.0, 1.0));
+}
+
+vec3 shade(vec2 p) {
+    vec2 uv = vPos * 0.5 + 0.5;
+    float ground = 0.3;
+    vec3 sky = mix(colorAt(0.66) * 0.14, vec3(0.005, 0.005, 0.02), smoothstep(0.3, 1.0, uv.y));
+    float st = hash(floor(uv * vec2(180.0, 100.0)));
+    sky += vec3(0.9) * step(0.993, st) * smoothstep(0.55, 0.8, uv.y) * (0.6 + 0.4 * sin(st * 60.0 + uTime * PI * 8.0));
+    vec3 col;
+    if (uv.y >= ground) {
+        vec4 b = building(uv);
+        col = mix(sky, b.rgb, b.a);
+    } else {
+        // The street: the skyline upside down, stretched and rippling.
+        float ripple = sin(uv.y * 260.0 + uTime * PI * 16.0) * 0.003;
+        vec4 b = building(vec2(uv.x + ripple, ground + (ground - uv.y) * 1.2));
+        col = mix(vec3(0.01, 0.01, 0.025), b.rgb * 0.4, b.a);
+        col += colorAt(0.05) * 0.03;
+    }
+    col += colorAt(0.05) * exp(-abs(uv.y - ground) * 40.0) * (0.15 + 0.3 * uLow);
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Kaleido frame: the cover sits undistorted at the centre while a band around it shows the same
+ * cover folded into mirrored wedges, turning and flowing outward. The wedge count steps every
+ * few bars (uSegments); bass pushes the fold outward, mids brighten it, the kick rings the
+ * cover's edge.
+ */
+private const val KALEIDOFRAME_BODY = """
+vec3 shade(vec2 p) {
+    p += uCenter;
+    float h = 0.28 + 0.012 * uKick;
+    float r = length(p);
+    float a = atan(p.y, p.x + 1e-4) + uSpin * PI;
+    float seg = 2.0 * PI / uSegments;
+    a = mod(a, seg);
+    a = abs(a - seg * 0.5);
+    // uPhase as a mirrored texture coordinate: seamless at its wrap.
+    vec2 q = vec2(cos(a), sin(a)) * r * (0.8 - 0.2 * uLow) + vec2(uPhase, 0.3 * sin(uTime * PI * 2.0));
+    vec3 col = punch(texture2D(uTex, q).rgb) * (0.55 + 0.5 * uMid);
+    // Strongest right around the cover, fading out toward the screen edge.
+    col *= exp(-max(r - h * 1.45, 0.0) * 1.8);
+    col += colorAt(uPhase * 0.5) * exp(-abs(coverDist(p, h) - 0.03) * 50.0) * (0.3 + 1.0 * uKick);
+    col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * The sine scroller: the track title in chrome letters scrolling right to left across the
+ * middle of the screen, each column bobbing on a sine, over copper raster bars, with a faded
+ * mirror of it all on a rippling floor. The scroll rides uPhase, so bass speeds it up; the kick
+ * lifts the letters higher.
+ */
+private const val SCROLLER_BODY = """
+// Bars and text at q (screen units, y up).
+vec3 scrollerScene(vec2 q) {
+    vec3 col = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        float fi = float(i);
+        float cy = 0.55 * sin(uPhase * PI * 2.0 + fi * 0.8);
+        float d = (q.y - cy) / 0.05;
+        if (abs(d) < 1.0) col = max(col, colorAt(fi * 0.25 + uPhase * 0.5) * sqrt(1.0 - d * d) * 0.45);
+    }
+    float textH = 0.34;
+    float textW = max(uTitleAspect, 0.01) * textH;
+    float loopLen = textW + 1.2;
+    // fract(… + uPhase * 0.5): one whole loop over uPhase's wrap, so the scroll never jumps.
+    float u = fract(q.x / loopLen + uPhase * 0.5);
+    float tx = u * loopLen;
+    float y0 = (0.18 + 0.1 * uLow + 0.1 * uKick) * sin(q.x * 2.5 + uTime * PI * 6.0);
+    float v = (q.y - y0) / textH + 0.5;
+    float ink = tx < textW ? titleAt(vec2(tx / textW, v)) : 0.0;
+    // Chrome: bright top, a dark horizon line across the middle, a coloured bottom.
+    vec3 chrome = mix(colorAt(0.05 + uPhase * 0.5), vec3(1.0), smoothstep(0.35, 0.95, v));
+    chrome *= 0.75 + 0.25 * sin(v * PI * 6.0);
+    chrome *= 1.0 - 0.5 * exp(-abs(v - 0.5) * 40.0);
+    return mix(col, chrome, ink);
+}
+
+vec3 shade(vec2 p) {
+    float floorY = -0.55;
+    vec3 col;
+    if (p.y > floorY) {
+        col = scrollerScene(p);
+    } else {
+        float ripple = sin(p.y * 90.0 + uTime * PI * 12.0) * 0.012;
+        col = scrollerScene(vec2(p.x + ripple, 2.0 * floorY - p.y)) * 0.3;
+        col += colorAt(0.66) * 0.03;
+    }
+    col += colorAt(0.66) * 0.03 * (1.0 - smoothstep(0.0, 1.2, abs(p.y)));
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Glenz vector: a translucent octahedron turning in space, the classic Amiga "glenz" object —
+ * its faces in two alternating colours, the far faces showing through the near ones, with
+ * bright edges. It is ray-traced per pixel against the eight planes that bound it. Bass and the
+ * kick swell it, highs brighten the edges, a glow behind it swells into each beat.
+ */
+private const val GLENZ_BODY = """
+vec3 shade(vec2 p) {
+    float s = 1.0 + 0.12 * uKick + 0.08 * uLow;
+    float d = s * 0.57735;
+    // uSpin * PI and uTime * PI * 2: whole turns over their wrap.
+    float ax = uSpin * PI + 0.4;
+    float ay = uTime * PI * 2.0;
+    mat3 rx = mat3(1.0, 0.0, 0.0,  0.0, cos(ax), sin(ax),  0.0, -sin(ax), cos(ax));
+    mat3 ry = mat3(cos(ay), 0.0, -sin(ay),  0.0, 1.0, 0.0,  sin(ay), 0.0, cos(ay));
+    mat3 m = rx * ry;
+    vec3 ro = m * vec3(0.0, 0.0, -3.4);
+    vec3 rd = m * normalize(vec3(p, 1.9));
+
+    float tn = -1e4;
+    float tf = 1e4;
+    vec3 nn = vec3(0.0);
+    vec3 nf = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+        float fi = float(i);
+        vec3 n = vec3(mod(fi, 2.0) * 2.0 - 1.0,
+                      mod(floor(fi / 2.0), 2.0) * 2.0 - 1.0,
+                      mod(floor(fi / 4.0), 2.0) * 2.0 - 1.0) * 0.57735;
+        float den = dot(n, rd);
+        float num = d - dot(n, ro);
+        if (abs(den) < 1e-5) {
+            if (num < 0.0) tn = 1e5;
+            continue;
+        }
+        float t = num / den;
+        if (den < 0.0) {
+            if (t > tn) { tn = t; nn = n; }
+        } else {
+            if (t < tf) { tf = t; nf = n; }
+        }
+    }
+
+    vec3 col = mix(vec3(0.01, 0.01, 0.03), colorAt(0.66) * 0.12, 0.5 + 0.5 * p.y);
+    col += colorAt(0.33) * exp(-length(p) * 2.0) * 0.12 * (0.5 + uBeat);
+    if (tn < tf && tn > 0.0) {
+        vec3 cA = colorAt(0.05 + uPhase * 0.5);
+        vec3 cB = colorAt(0.55 + uPhase * 0.5);
+        vec3 back = (nf.x * nf.y * nf.z > 0.0 ? cA : cB) * (0.35 + 0.4 * abs(dot(nf, rd)));
+        col = mix(col, back, 0.45);
+        vec3 front = (nn.x * nn.y * nn.z > 0.0 ? cA : cB) * (0.45 + 0.55 * abs(dot(nn, rd)));
+        col = mix(col, front, 0.55);
+        // Edges: where the entry point is almost on a second face as well.
+        vec3 hp = ro + rd * tn;
+        float m1 = 1e4;
+        float m2 = 1e4;
+        for (int i = 0; i < 8; i++) {
+            float fi = float(i);
+            vec3 n = vec3(mod(fi, 2.0) * 2.0 - 1.0,
+                          mod(floor(fi / 2.0), 2.0) * 2.0 - 1.0,
+                          mod(floor(fi / 4.0), 2.0) * 2.0 - 1.0) * 0.57735;
+            float v = d - dot(n, hp);
+            if (v < m1) { m2 = m1; m1 = v; } else if (v < m2) { m2 = v; }
+        }
+        col += vec3(1.0) * exp(-m2 * 60.0) * (0.5 + 0.8 * uHigh);
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Dot tunnel: twelve rings of dots flying at the viewer down a winding tunnel, each ring
+ * twisted a little against the last. Each pixel only asks, per ring, which dot on that ring is
+ * nearest in angle — no loop over the dots. Bass is the speed, highs grow the dots, the kick
+ * flashes them; colour runs with depth.
+ */
+private const val DOTTUNNEL_BODY = """
+vec3 shade(vec2 p) {
+    vec3 col = colorAt(0.66) * 0.03;
+    for (int j = 0; j < 12; j++) {
+        float fj = float(j);
+        // fract(… + uPhase * 0.5): whole ring spacings over uPhase's wrap.
+        float z = max(1.0 - fract(fj / 12.0 + uPhase * 0.5), 0.03);
+        vec2 c = vec2(sin(uTime * PI * 2.0 + z * 4.0), cos(uTime * PI * 4.0 + z * 3.0)) * 0.35 * z;
+        vec2 q = p - c;
+        float R = 0.22 / z;
+        float tw = fj * 0.26 + uSpin * PI;
+        float a = atan(q.y, q.x + 1e-4) + tw;
+        float ad = floor(a / (2.0 * PI) * 24.0 + 0.5) / 24.0 * 2.0 * PI - tw;
+        vec2 d = q - vec2(cos(ad), sin(ad)) * R;
+        float size = (0.006 + 0.004 * uHigh) / z * (1.0 + 0.3 * uKick);
+        float dd = dot(d, d) / (size * size);
+        float fog = smoothstep(1.0, 0.55, z);
+        vec3 dc = colorAt(z * 0.6 + fj / 12.0 + uPhase * 0.5);
+        col += dc * (exp(-dd) + exp(-sqrt(dd) * 0.5) * 0.08) * fog * (0.9 + 0.6 * uLow);
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Voxel landscape: a low flight up a valley between rolling hills, Comanche-style, into a
+ * setting sun. The hills nearest the camera rise and fall with the spectrum across the valley
+ * floor; bass is the flying speed. Ray-marched against the heightfield in 40 growing steps,
+ * with contour banding for the voxel look and fog into the sky.
+ */
+private const val VOXEL_BODY = """
+// Terrain height. Every term along z is a whole number of cycles over 20 units, which is how far
+// the camera moves over uPhase's wrap (uPhase * 10), so the flight never jumps.
+float terrain(vec2 xz, float camZ) {
+    float k = PI / 10.0;
+    float h = 0.6 * sin(xz.x * 0.35 + sin(xz.y * k * 2.0) * 1.5) * cos(xz.y * k * 3.0)
+            + 0.35 * sin(xz.x * 0.9 + xz.y * k * 4.0)
+            + 0.15 * sin(xz.x * 2.1 - xz.y * k * 7.0);
+    h += abs(xz.x) * 0.25;
+    h += band(floor(clamp(abs(xz.x) * 5.0, 0.0, 63.0))) * 0.9 * exp(-max(xz.y - camZ, 0.0) * 0.25);
+    return h;
+}
+
+vec3 shade(vec2 p) {
+    float camZ = uPhase * 10.0;
+    vec3 ro = vec3(sin(uTime * PI * 2.0) * 1.0, 2.2 + 0.3 * sin(uTime * PI * 2.0), camZ);
+    vec3 rd = normalize(vec3(p.x, p.y - 0.25, 1.6));
+
+    vec3 sky = mix(colorAt(0.05) * 0.5, colorAt(0.66) * 0.1, smoothstep(-0.1, 0.8, p.y));
+    float sun = exp(-length(p - vec2(0.0, 0.35)) * 7.0);
+    sky += colorAt(0.1) * sun * (0.8 + 0.6 * uBeat);
+
+    vec3 col = sky;
+    float t = 0.3;
+    for (int i = 0; i < 40; i++) {
+        vec3 pos = ro + rd * t;
+        float h = terrain(pos.xz, camZ);
+        if (pos.y < h) {
+            vec3 ground = colorAt(h * 0.3 + 0.1) * (0.35 + 0.25 * h);
+            ground *= 0.8 + 0.2 * step(0.5, fract(h * 6.0));
+            float fog = smoothstep(2.0, 15.0, t);
+            col = mix(ground, sky, fog);
+            break;
+        }
+        t += 0.08 + t * 0.06;
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
 }
 """

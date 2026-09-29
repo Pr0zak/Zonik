@@ -208,6 +208,15 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs -> prefs[TV_AMBIENT_TRANSITION] = kind }
     }
 
+    /** Motion trails on every visualizer effect. */
+    val tvAmbientTrails: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_TRAILS] ?: false
+    }
+
+    suspend fun setTvAmbientTrails(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_TRAILS] = enabled }
+    }
+
     val autoTabOrder: Flow<List<String>> = dataStore.data.map { prefs ->
         val raw = prefs[AUTO_TAB_ORDER]
         if (raw != null) raw.split(",") else listOf("mix", "recent", "library", "playlists")
@@ -246,6 +255,7 @@ class SettingsRepository @Inject constructor(
         private val TV_AMBIENT_ROTATE_SEC = intPreferencesKey("tv_ambient_rotate_sec")
         private val TV_AMBIENT_INFO = stringPreferencesKey("tv_ambient_info")
         private val TV_AMBIENT_TRANSITION = intPreferencesKey("tv_ambient_transition")
+        private val TV_AMBIENT_TRAILS = booleanPreferencesKey("tv_ambient_trails")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_PRESET = intPreferencesKey("eq_preset")
         private val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")

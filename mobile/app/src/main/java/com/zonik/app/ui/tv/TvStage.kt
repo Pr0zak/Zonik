@@ -410,7 +410,8 @@ private fun ActionStrip(
             // Scrolls rather than clipping if a longer label ever pushes it past the screen;
             // focus brings the off-screen end into view by itself.
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            // Inside the scroll, which clips: room for the focused button's glow.
+            .padding(horizontal = 24.dp, vertical = 22.dp)
             .onPreviewKeyEvent { e ->
                 if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown) {
                     onClose()
@@ -481,7 +482,7 @@ private fun BrowseRails(
             .fillMaxHeight(if (fullHeight) 0.84f else 0.82f)
             .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
             .background(PanelFill),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 24.dp),
+        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 12.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         item {

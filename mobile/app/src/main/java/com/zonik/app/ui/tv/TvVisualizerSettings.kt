@@ -44,10 +44,10 @@ private val RowShape = RoundedCornerShape(8.dp)
 private val CardFill = Color(0xFF1E1C2A)
 private val CardFillOff = Color(0xFF1B1A21)
 /**
- * Three rows whatever the effect count, so the page fits one screen without scrolling and each
- * card is wide enough for its name on one line.
+ * Eight to a row: narrower and the longer names ("Kaleidoscope", "Oscilloscope") break
+ * mid-word. The rows are kept short so four of them still fit one screen without scrolling.
  */
-private val CARDS_PER_ROW = (DemoEffect.entries.size + 2) / 3
+private const val CARDS_PER_ROW = 8
 
 /**
  * The visualizer's own settings page: settings on the left, a live preview of the focused
@@ -69,6 +69,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     val rotateSec by viewModel.ambientRotateSec.collectAsState()
     val infoMode by viewModel.ambientInfo.collectAsState()
     val transition by viewModel.ambientTransition.collectAsState()
+    val trails by viewModel.ambientTrails.collectAsState()
     val enabled by viewModel.ambientEffects.collectAsState()
 
     val track by viewModel.currentTrack.collectAsState()
@@ -85,7 +86,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
 
     Column(
         modifier = Modifier.fillMaxSize().padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
@@ -104,7 +105,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 SettingRow(
                     "Visualizer", if (ambientOn) "On" else "Off",
@@ -125,11 +126,17 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
                 SettingRow(
                     "Transitions",
                     DEMO_TRANSITIONS.getOrNull(transition) ?: "Mixed",
+                ) {
+                    viewModel.setAmbientTransition(cycle((-1 until DEMO_TRANSITIONS.size).toList(), transition))
+                }
+                SettingRow(
+                    "Trails",
+                    if (trails) "On" else "Off",
                     // Straight down to the first card, rather than whichever card happens to
                     // sit under this row's centre.
                     modifier = Modifier.focusProperties { down = firstCard }
                 ) {
-                    viewModel.setAmbientTransition(cycle((-1 until DEMO_TRANSITIONS.size).toList(), transition))
+                    viewModel.setAmbientTrails(!trails)
                 }
             }
 
@@ -147,6 +154,8 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
                         cover = art.cover,
                         palette = art.palette,
                         transition = transition,
+                        title = track?.let { "${it.title}  ·  ${it.artist}" } ?: "Zonik",
+                        trails = trails,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -185,7 +194,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
             }
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             DemoEffect.entries.chunked(CARDS_PER_ROW).forEach { rowEffects ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     rowEffects.forEachIndexed { index, effect ->
@@ -223,7 +232,7 @@ private fun SettingRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(34.dp)
+            .height(30.dp)
             .tvFocusLift(RowShape, scale = 1.02f)
             .background(CardFill, RowShape)
             .clickable(onClick = onClick)
@@ -256,7 +265,7 @@ private fun EffectCard(
     }
     Column(
         modifier = modifier
-            .height(44.dp)
+            .height(36.dp)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .tvFocusLift(RowShape)
             .background(fill, RowShape)
@@ -271,7 +280,7 @@ private fun EffectCard(
             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
             color = if (on) Color.White else Color.White.copy(alpha = 0.28f),
             textAlign = TextAlign.Center,
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
         if (effect in COVER_EFFECTS) {

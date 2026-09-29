@@ -24,7 +24,11 @@ data class AmbientPulse(
      * the spectrum itself. Null when there is no capture.
      */
     val spectrum: FloatArray? = null,
+    /** [WAVEFORM_POINTS] samples of the output waveform, 0..1 with 0.5 as silence. */
+    val waveform: FloatArray? = null,
 )
+
+const val WAVEFORM_POINTS = 256
 
 const val SPECTRUM_BANDS = 64
 
