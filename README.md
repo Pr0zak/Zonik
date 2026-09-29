@@ -79,8 +79,12 @@ Left idle, the TV turns into a demo-scene visualizer: 31 GPU shader effects that
 - **Remix discovery** - Find remixes, edits, and versions of library tracks via Last.fm
 - **Track upgrades** - Automatically find and replace low-quality tracks with better versions
 - **Stream transcoding** - On-the-fly ffmpeg transcoding (FLAC to MP3/OGG/Opus)
+- **Music Map** - Your library laid out by key, tempo and sound; explore, plot a journey, find neglected gems, save any selection as a playlist
+- **Duplicates** - Find duplicate files across formats and reclaim the space
+- **Live view** - Real-time now-playing and history across every connected client
 - **Scheduled tasks** - Automated library scan, enrichment, discovery, playlist generation
-- **Modern web UI** - SvelteKit 5 + Tailwind CSS dark theme with 16 routes
+- **Modern web UI** - SvelteKit 5 + Tailwind CSS dark theme, 18 pages, built as an admin console for the library
+- **Native clients** - Android phone (with Android Auto and Chromecast), a Google TV app with a demo-scene music visualizer, and a standalone Pixel Watch player
 
 ## Architecture
 
