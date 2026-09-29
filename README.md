@@ -8,10 +8,12 @@
 </p>
 
 <p align="center">
-  Includes a native Android phone app + Pixel Watch companion under <a href="mobile/"><code>mobile/</code></a>.
+  Includes a native Android app — phone, Android Auto, Google TV and a Pixel Watch companion — under <a href="mobile/"><code>mobile/</code></a>.
 </p>
 
 ## Screenshots
+
+### Web
 
 <p align="center">
   <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="48%">
@@ -24,6 +26,43 @@
 <p align="center">
   <img src="docs/screenshots/downloads.png" alt="Downloads" width="48%">
   <img src="docs/screenshots/stats.png" alt="Stats" width="48%">
+</p>
+
+### Android
+
+<p align="center">
+  <img src="docs/screenshots/phone-home.png" alt="Home" width="23%">
+  <img src="docs/screenshots/phone-nowplaying.png" alt="Now Playing" width="23%">
+  <img src="docs/screenshots/phone-library.png" alt="Library — tracks" width="23%">
+  <img src="docs/screenshots/phone-albums.png" alt="Library — albums" width="23%">
+</p>
+
+### Google TV
+
+Now Playing is the whole screen. UP opens the actions strip, DOWN slides the browse rails up while the music keeps playing.
+
+<p align="center">
+  <img src="docs/screenshots/tv-stage.png" alt="The Stage — Now Playing" width="48%">
+  <img src="docs/screenshots/tv-browse.png" alt="Browse rails" width="48%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/tv-strip.png" alt="UP actions strip" width="48%">
+  <img src="docs/screenshots/tv-visualizer-settings.png" alt="Visualizer settings with live preview" width="48%">
+</p>
+
+Left idle, the TV turns into a demo-scene visualizer: 31 GPU shader effects that react to the music (bass, mids, highs, beats and a 64-band spectrum), coloured from the album art, switching with beat-synced wipes.
+
+<p align="center">
+  <img src="docs/screenshots/tv-fx-sunburst.jpg" alt="Sunburst" width="24%">
+  <img src="docs/screenshots/tv-fx-tunnel.jpg" alt="Tunnel" width="24%">
+  <img src="docs/screenshots/tv-fx-synthwave.jpg" alt="Synthwave" width="24%">
+  <img src="docs/screenshots/tv-fx-shockwaves.jpg" alt="Shockwaves" width="24%">
+</p>
+<p align="center">
+  <img src="docs/screenshots/tv-fx-melt.jpg" alt="Melt" width="24%">
+  <img src="docs/screenshots/tv-fx-fire.jpg" alt="Fire" width="24%">
+  <img src="docs/screenshots/tv-fx-skyline.jpg" alt="Neon skyline" width="24%">
+  <img src="docs/screenshots/tv-fx-crystal.jpg" alt="Crystal" width="24%">
 </p>
 
 ## Features
@@ -113,11 +152,11 @@ Supported endpoints: ping, getLicense, getArtists, getArtist, getAlbum, getSong,
 
 See [API Reference](docs/api.md) for the full list.
 
-## Mobile (Android phone + Pixel Watch)
+## Mobile (Android phone, Google TV + Pixel Watch)
 
 The `mobile/` subdirectory is a Gradle multi-module Kotlin/Compose project:
 
-- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support
+- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support. On a TV it switches to a remote-first UI (the Stage: Now Playing as the root, an UP actions strip, DOWN browse rails) and an idle visualizer of 31 OpenGL ES 2 demo-scene effects — tunnels, plasma, fractals, fire, a sine scroller and more — rendered at 960×540 and driven by the live FFT, the waveform and the server's per-track BPM. Tuned for the Chromecast with Google TV's Mali-G31.
 - **`mobile/wear/`** — Pixel Watch standalone player (browses + streams direct from server)
 - **`mobile/core/`** — shared Subsonic API, models, and auth interceptor used by both
 
@@ -153,7 +192,8 @@ See [mobile/README.md](mobile/README.md) for the full mobile docs — features, 
 | AI | Claude API |
 | Metadata | Last.fm + Spotify + Deezer |
 | Downloads | Native Soulseek P2P client |
-| Mobile (phone + watch) | Kotlin · Jetpack Compose · Wear Compose Material 3 · Media3 ExoPlayer · Retrofit · Hilt |
+| Mobile (phone, TV + watch) | Kotlin · Jetpack Compose · Wear Compose Material 3 · Media3 ExoPlayer · Retrofit · Hilt |
+| TV visualizer | OpenGL ES 2.0 fragment shaders · Android `Visualizer` FFT + waveform |
 
 ## License
 
