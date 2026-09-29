@@ -32,6 +32,8 @@ import kotlin.math.sin
 class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     @Volatile var effect: DemoEffect = initial
+    /** A fixed wipe kind, or -1 to move through them. */
+    @Volatile var transitionStyle: Int = -1
     @Volatile var pulse: AmbientPulse = AmbientPulse()
     @Volatile var beatClock: BeatClock? = null
     @Volatile private var pendingCover: Bitmap? = null
@@ -57,8 +59,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     private val programs = HashMap<DemoEffect, Program>()
     private var current = initial
-    /** 1 while an effect is showing; ramps to 0 and back when [effect] changes. */
+    /** Fade-in from black when the surface first appears. */
     private var fade = 0f
+
+    // The effect being transitioned to, how far along (0..1), which wipe shape, and how long
+    // the switch has been waiting for a kick to land on.
+    private var next: DemoEffect? = null
+    private var transition = 0f
+    private var wipeKind = 0
+    private var waitedForBeat = 0f
     private var texture = 0
     private lateinit var quad: FloatBuffer
     private var aspect = 16f / 9f
@@ -77,6 +86,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var time = 0f
     private var clock = 0.0
 
+    // The Mandelbrot dive: which target, and how deep (natural log of the magnification).
+    private var zoomTarget = MANDEL_TARGETS.random()
+    private var zoomLog = 0f
+
     // Kicks counted so the kaleidoscope can change its wedge count every few bars.
     private var kickCount = 0
     private val balls = FloatArray(15)
@@ -94,6 +107,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             programs[e] = Program(id, locations, GLES20.glGetAttribLocation(id, "aPos"))
         }
         fade = 0f
+        next = null
 
         quad = ByteBuffer.allocateDirect(QUAD.size * 4).order(ByteOrder.nativeOrder())
             .asFloatBuffer().apply { put(QUAD); position(0) }
@@ -131,19 +145,56 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         pendingCover?.let { uploadCover(it) }
         advance(dt)
 
-        val requested = effect
-        if (requested != current) {
-            fade -= dt * FADE_RATE
-            if (fade <= 0f) {
-                fade = 0f
-                current = requested
+        // Only fades in from black when the surface first appears; switching effects uses a
+        // transition instead.
+        fade = (fade + dt * FADE_RATE).coerceAtMost(1f)
+        updateTransition(dt)
+
+        val incoming = next
+        if (incoming == null) {
+            draw(current, wipe = -1f, incomingSide = false)
+        } else {
+            // Each pixel belongs to exactly one of the two effects, so a transition costs the
+            // same as a single effect — a crossfade would draw both everywhere and halve the
+            // frame rate on the Chromecast for its whole length.
+            draw(current, wipe = transition, incomingSide = false)
+            draw(incoming, wipe = transition, incomingSide = true)
+        }
+    }
+
+    /**
+     * Starts a transition when [effect] changes, and runs it. The start waits for the next kick
+     * (up to [BEAT_WAIT_SEC]) so the change lands on the music rather than at an arbitrary
+     * moment.
+     */
+    private fun updateTransition(dt: Float) {
+        val incoming = next
+        if (incoming != null) {
+            transition += dt / TRANSITION_SEC
+            if (transition >= 1f) {
+                current = incoming
+                next = null
                 DebugLog.d("DemoRenderer", "Effect -> ${current.name}")
             }
-        } else {
-            fade = (fade + dt * FADE_RATE).coerceAtMost(1f)
+            return
         }
+        val requested = effect
+        if (requested == current) {
+            waitedForBeat = 0f
+            return
+        }
+        waitedForBeat += dt
+        if (kick > 0.9f || waitedForBeat >= BEAT_WAIT_SEC || fade < 1f) {
+            next = requested
+            transition = 0f
+            waitedForBeat = 0f
+            val style = transitionStyle
+            wipeKind = if (style in 0 until WIPE_KINDS) style else (wipeKind + 1) % WIPE_KINDS
+        }
+    }
 
-        val prog = programs[current] ?: return
+    private fun draw(e: DemoEffect, wipe: Float, incomingSide: Boolean) {
+        val prog = programs[e] ?: return
         uniforms = prog.uniforms
         GLES20.glUseProgram(prog.id)
         val drift = clock * 0.1
@@ -153,6 +204,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uSpin", spin)
         u1("uTime", time)
         u1("uFade", fade)
+        u1("uWipe", wipe)
+        u1("uWipeSide", if (incomingSide) 1f else 0f)
+        u1("uWipeKind", wipeKind.toFloat())
+        uniforms["uZoomCenter"]?.let { if (it >= 0) GLES20.glUniform2f(it, zoomTarget[0], zoomTarget[1]) }
+        u1("uZoomScale", MANDEL_START_SCALE / exp(zoomLog))
+        // Fade in at the top of each dive and out before precision runs out at the bottom.
+        u1("uZoomFade", (zoomLog / MANDEL_FADE_LOG).coerceIn(0f, 1f) *
+            ((MANDEL_MAX_LOG - zoomLog) / MANDEL_FADE_LOG).coerceIn(0f, 1f))
         u1("uSegments", SEGMENTS[(kickCount / KICKS_PER_SEGMENT_CHANGE) % SEGMENTS.size])
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         u1("uTwist", (sin(drift * 1.3) * 0.06).toFloat() + mid * 0.05f)
@@ -210,6 +269,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         time = (time + TIME_RATE * dt) % WRAP
         clock += dt
         moveBalls()
+        // The dive only advances while it is on screen, so it starts from the top each time.
+        if (current == DemoEffect.MANDELBROT || next == DemoEffect.MANDELBROT) {
+            zoomLog += (0.22f + low * 0.35f + kick * 0.3f) * dt
+            if (zoomLog > MANDEL_MAX_LOG) {
+                zoomLog = 0f
+                zoomTarget = MANDEL_TARGETS.filter { it !== zoomTarget }.random()
+            }
+        }
     }
 
     /**
@@ -301,8 +368,33 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         /** uTime's speed: one full cycle of the slow, music-independent drift every 40 s. */
         const val TIME_RATE = 0.05f
         const val FADE_RATE = 4f
+        const val TRANSITION_SEC = 1.6f
+        const val BEAT_WAIT_SEC = 1.5f
+        /** Block dissolve, iris, clock sweep, ragged wipe — see `wipeMask` in DemoEffects. */
+        const val WIPE_KINDS = 4
         const val KICKS_PER_SEGMENT_CHANGE = 16
         val SEGMENTS = floatArrayOf(6f, 8f, 5f, 12f)
+
+        /** Magnification the dive starts at (the whole set on screen) and how deep it goes. */
+        const val MANDEL_START_SCALE = 1.4f
+        val MANDEL_MAX_LOG = kotlin.math.ln(2000f)
+        /** Depth over which each dive fades in and out: about a second each at cruise. */
+        const val MANDEL_FADE_LOG = 0.25f
+
+        /**
+         * Points on the edge of the set that stay detailed all the way down: seahorse and
+         * elephant valleys, spirals, and minibrots on the antenna.
+         */
+        val MANDEL_TARGETS = listOf(
+            floatArrayOf(-0.7436439f, 0.1318259f),
+            floatArrayOf(-0.7746806f, -0.1374169f),
+            floatArrayOf(0.2549870f, -0.0005680f),
+            floatArrayOf(-0.1010964f, 0.9562865f),
+            floatArrayOf(-0.0452407f, 0.9868162f),
+            floatArrayOf(0.0016437f, -0.8224676f),
+            floatArrayOf(-1.2506600f, 0.0201200f),
+            floatArrayOf(-0.1607014f, 1.0375665f),
+        )
         const val CRUISE = 0.12f
         const val ATTACK_RATE = 30f
         const val RELEASE_RATE = 7f
@@ -314,6 +406,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val UNIFORM_NAMES = listOf(
             "uAspect", "uCenter", "uPhase", "uSpin", "uTime", "uTwist",
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
+            "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomFade",
             "uC0", "uC1", "uC2", "uTex",
         )
 

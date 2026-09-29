@@ -3,6 +3,7 @@ package com.zonik.app.ui.tv
 import android.graphics.drawable.BitmapDrawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -64,7 +65,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
@@ -92,6 +93,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -237,11 +239,47 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setTvAmbientBeatReactive(enabled) }
     }
 
-    val ambientEffect: StateFlow<String> = settingsRepository.tvAmbientEffect
-        .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsRepository.TV_AMBIENT_EFFECT_AUTO)
+    /** Effects in the rotation, in the order they rotate. Never empty. */
+    val ambientEffects: StateFlow<List<DemoEffect>> = settingsRepository.tvAmbientEffectsOff
+        .map { off -> DemoEffect.entries.filter { it.name !in off }.ifEmpty { DemoEffect.entries } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, DemoEffect.entries)
 
-    fun setAmbientEffect(effect: String) {
-        viewModelScope.launch { settingsRepository.setTvAmbientEffect(effect) }
+    /** Adds or removes one effect; the last one left cannot be removed. */
+    fun toggleAmbientEffect(effect: DemoEffect) {
+        val current = ambientEffects.value.toSet()
+        val next = if (effect in current) current - effect else current + effect
+        if (next.isEmpty()) return
+        setAmbientEffects(next)
+    }
+
+    fun setAmbientEffects(effects: Set<DemoEffect>) {
+        if (effects.isEmpty()) return
+        viewModelScope.launch {
+            settingsRepository.setTvAmbientEffectsOff(
+                DemoEffect.entries.filter { it !in effects }.map { it.name }.toSet()
+            )
+        }
+    }
+
+    val ambientRotateSec: StateFlow<Int> = settingsRepository.tvAmbientRotateSec
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 60)
+
+    fun setAmbientRotateSec(seconds: Int) {
+        viewModelScope.launch { settingsRepository.setTvAmbientRotateSec(seconds) }
+    }
+
+    val ambientInfo: StateFlow<String> = settingsRepository.tvAmbientInfo
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "FADE")
+
+    fun setAmbientInfo(mode: String) {
+        viewModelScope.launch { settingsRepository.setTvAmbientInfo(mode) }
+    }
+
+    val ambientTransition: StateFlow<Int> = settingsRepository.tvAmbientTransition
+        .stateIn(viewModelScope, SharingStarted.Eagerly, -1)
+
+    fun setAmbientTransition(kind: Int) {
+        viewModelScope.launch { settingsRepository.setTvAmbientTransition(kind) }
     }
 
     private val _pulse = MutableStateFlow(AmbientPulse())
@@ -417,6 +455,9 @@ private enum class TvTab(val label: String) {
 
 private val TvBackground = Color(0xFF151320)
 private val TvCardBackground = Color(0xFF1E1C2A)
+
+/** How long the cover and title stay over the visuals in "Show, then fade" mode. */
+private const val INFO_VISIBLE_MS = 10_000L
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Screen
@@ -615,7 +656,12 @@ fun TvMainScreen(
         // feel dead on the way back; this leaves focus exactly where the user left it.
         val track = currentTrack
         if (ambientActive && track != null) {
-            TvAmbientOverlay(viewModel = viewModel, track = track, isPlaying = isPlaying)
+            TvAmbientOverlay(
+                viewModel = viewModel,
+                track = track,
+                isPlaying = isPlaying,
+                lastKeyAt = lastInteraction
+            )
         }
     }
 }
@@ -630,26 +676,10 @@ private fun TvAmbientOverlay(
     viewModel: TvViewModel,
     track: Track,
     isPlaying: Boolean,
+    lastKeyAt: Long,
 ) {
-    val beatReactive by viewModel.ambientBeatReactive.collectAsState()
     val bpm by viewModel.trackBpm.collectAsState()
-    val context = LocalContext.current
-
-    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) viewModel.startVisualizer() }
-
-    LaunchedEffect(beatReactive) {
-        if (!beatReactive) return@LaunchedEffect
-        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
-            context, android.Manifest.permission.RECORD_AUDIO
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (granted) viewModel.startVisualizer()
-        else permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-    }
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { viewModel.stopVisualizer() }
-    }
+    AudioCaptureEffect(viewModel)
 
     var positionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
@@ -661,52 +691,40 @@ private fun TvAmbientOverlay(
         }
     }
 
-    // "Auto" moves to the next effect on every track change, from a random start so two
-    // sessions do not open on the same one.
-    val effectSetting by viewModel.ambientEffect.collectAsState()
-    var autoIndex by remember { mutableIntStateOf(kotlin.random.Random.nextInt(DemoEffect.entries.size)) }
+    // Rotation: the next enabled effect on every track change and, if set, on a timer within
+    // the track (restarted by each track change). Starts at a random point so two sessions do
+    // not open on the same effect. The renderer holds each switch for the next kick.
+    val enabled by viewModel.ambientEffects.collectAsState()
+    val rotateSec by viewModel.ambientRotateSec.collectAsState()
+    val transition by viewModel.ambientTransition.collectAsState()
+    var autoIndex by remember { mutableIntStateOf(kotlin.random.Random.nextInt(1000)) }
     LaunchedEffect(track.id) { autoIndex++ }
-    val effect = DemoEffect.entries.firstOrNull { it.name == effectSetting }
-        ?: DemoEffect.entries[autoIndex % DemoEffect.entries.size]
+    LaunchedEffect(track.id, rotateSec) {
+        if (rotateSec <= 0) return@LaunchedEffect
+        while (true) {
+            delay(rotateSec * 1000L)
+            autoIndex++
+        }
+    }
+    val effect = enabled[autoIndex.mod(enabled.size)]
+
+    // Cover and title: always, never, or shown on each track change and remote press, then
+    // faded so the effect gets the whole screen.
+    val infoMode by viewModel.ambientInfo.collectAsState()
+    var infoVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(track.id, lastKeyAt, infoMode) {
+        infoVisible = infoMode != "NEVER"
+        if (infoMode == "FADE") {
+            delay(INFO_VISIBLE_MS)
+            infoVisible = false
+        }
+    }
+    val infoAlpha by animateFloatAsState(if (infoVisible) 1f else 0f, tween(1200), label = "info")
 
     // The beat grid, from the server's stored tempo. The visualizer aligns its phase to the
     // onsets it hears and uses it to swell into each beat rather than trailing it.
     val beatClock = remember(track.id, bpm) { BeatClock(bpm) }
-
-    // Colours sampled from the artwork, so a grunge sleeve and a synth sleeve do not produce
-    // the identical field. (The restored version hardcoded three swatches keyed on coverArt,
-    // which meant the key did nothing and every album looked the same.)
-    var palette by remember(track.coverArt) {
-        mutableStateOf(listOf(ZonikColors.gold, Color(0xFF7C4DFF), Color(0xFF534AB7)))
-    }
-    var coverBitmap by remember(track.coverArt) { mutableStateOf<android.graphics.Bitmap?>(null) }
-    LaunchedEffect(track.coverArt) {
-        val coverArtId = track.coverArt ?: return@LaunchedEffect
-        val loaded = kotlinx.coroutines.withContext(Dispatchers.IO) {
-            try {
-                // Small on purpose: it becomes the tunnel's wall texture, and 128px keeps the
-                // whole cover inside the GPU's texture cache.
-                val request = ImageRequest.Builder(context)
-                    .data("http://localhost/rest/getCoverArt.view?id=$coverArtId&size=128")
-                    .allowHardware(false)
-                    .build()
-                val bitmap = ((context.imageLoader.execute(request) as? SuccessResult)?.drawable
-                    as? BitmapDrawable)?.bitmap ?: return@withContext null
-                // Palette runs here, off the main thread, which is also where the media
-                // session dispatches the remote's play/skip commands.
-                bitmap to Palette.from(bitmap).generate()
-            } catch (_: Exception) {
-                null
-            }
-        } ?: return@LaunchedEffect
-        val (bitmap, swatches) = loaded
-        coverBitmap = bitmap
-        palette = listOf(
-            Color(swatches.getVibrantColor(ZonikColors.gold.toArgb())),
-            Color(swatches.getLightMutedColor(0xFF7C4DFF.toInt())),
-            Color(swatches.getMutedColor(0xFF534AB7.toInt())),
-        )
-    }
+    val art = rememberAmbientArt(track.coverArt)
 
     // No background on this Box: the GL surface sits behind the window and shows through a
     // hole in it, so anything opaque drawn here would cover the effect.
@@ -715,14 +733,17 @@ private fun TvAmbientOverlay(
             effect = effect,
             pulse = viewModel.pulse,
             beatClock = beatClock,
-            cover = coverBitmap,
-            palette = palette,
+            cover = art.cover,
+            palette = art.palette,
+            transition = transition,
             modifier = Modifier.fillMaxSize()
         )
         // Keeps the type legible without burying the effect: darkness where the words are.
+        // Alpha is read in the layer block, so the fade redraws without recomposing.
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer { alpha = infoAlpha }
                 .background(
                     Brush.verticalGradient(
                         listOf(Color(0x66000000), Color(0x00000000), Color(0xCC0A0810))
@@ -733,6 +754,7 @@ private fun TvAmbientOverlay(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer { alpha = infoAlpha }
                 .padding(horizontal = 48.dp, vertical = 27.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -1198,6 +1220,25 @@ private fun TvSettingsContent(
     viewModel: TvViewModel,
     onDisconnected: () -> Unit
 ) {
+    // The visualizer page replaces the list rather than stacking over it; returning puts focus
+    // back on the row that opened it instead of dropping it at the top of the list.
+    var showVisualizer by remember { mutableStateOf(false) }
+    var returnFocus by remember { mutableStateOf(false) }
+    val visualizerRow = remember { FocusRequester() }
+    if (showVisualizer) {
+        TvVisualizerSettings(viewModel = viewModel, onBack = {
+            showVisualizer = false
+            returnFocus = true
+        })
+        return
+    }
+    LaunchedEffect(returnFocus) {
+        if (returnFocus) {
+            runCatching { visualizerRow.requestFocus() }
+            returnFocus = false
+        }
+    }
+    val onOpenVisualizer = { showVisualizer = true }
     val context = androidx.compose.ui.platform.LocalContext.current
     val syncState by viewModel.syncState.collectAsState()
     val scrollState = rememberScrollState()
@@ -1232,55 +1273,16 @@ private fun TvSettingsContent(
             isLoading = syncState.isSyncing
         )
 
-        // Visualizer — on/off
+        // Visualizer — its own page, with a live preview and the effect gallery.
         val ambientOn by viewModel.ambientEnabled.collectAsState()
+        val effectCount by viewModel.ambientEffects.collectAsState()
         TvSettingsButton(
             icon = Icons.Default.GraphicEq,
             title = "Visualizer",
-            subtitle = if (ambientOn) "On — press OK to turn off" else "Off — press OK to turn on",
-            onClick = { viewModel.setAmbientEnabled(!ambientOn) }
-        )
-
-        // Visualizer — idle delay. Cycles rather than opening a picker: one row, one button,
-        // no nested focus to get lost in.
-        val ambientDelay by viewModel.ambientDelaySec.collectAsState()
-        TvSettingsButton(
-            icon = Icons.Default.Sync,
-            title = "Start visualizer after",
-            subtitle = when (ambientDelay) {
-                0 -> "Only when I ask for it"
-                else -> "$ambientDelay seconds idle — press OK to change"
-            },
-            onClick = {
-                val steps = listOf(0, 10, 30, 60, 90, 300)
-                val next = steps[(steps.indexOf(ambientDelay).takeIf { it >= 0 }?.plus(1) ?: 1) % steps.size]
-                viewModel.setAmbientDelaySec(next)
-            }
-        )
-
-        // Visualizer — beat reactivity
-        val beatOn by viewModel.ambientBeatReactive.collectAsState()
-        TvSettingsButton(
-            icon = Icons.Default.MusicNote,
-            title = "React to the music",
-            subtitle = if (beatOn) "On — needs microphone permission to read the audio"
-                       else "Off — the visuals drift on their own",
-            onClick = { viewModel.setAmbientBeatReactive(!beatOn) }
-        )
-
-        // Visualizer — effect. Cycles like the delay row: Auto, then each effect in turn.
-        val effectSetting by viewModel.ambientEffect.collectAsState()
-        TvSettingsButton(
-            icon = Icons.Default.GraphicEq,
-            title = "Visualizer effect",
-            subtitle = (DemoEffect.entries.firstOrNull { it.name == effectSetting }?.label
-                ?: "Auto — a different one each track") + " — press OK to change",
-            onClick = {
-                val options = listOf(SettingsRepository.TV_AMBIENT_EFFECT_AUTO) +
-                    DemoEffect.entries.map { it.name }
-                val next = options[(options.indexOf(effectSetting) + 1) % options.size]
-                viewModel.setAmbientEffect(next)
-            }
+            subtitle = if (ambientOn) "On · ${effectCount.size} effects in rotation — press OK to set up"
+                       else "Off — press OK to set up",
+            onClick = onOpenVisualizer,
+            modifier = Modifier.focusRequester(visualizerRow)
         )
 
         // Upload Logs
@@ -1324,10 +1326,11 @@ private fun TvSettingsButton(
     subtitle: String,
     onClick: () -> Unit,
     isLoading: Boolean = false,
-    tint: Color = Color.White
+    tint: Color = Color.White,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(TvCardBackground, ZonikShapes.cardShape)
             .tvFocusHighlight(ZonikShapes.cardShape)

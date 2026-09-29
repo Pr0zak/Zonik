@@ -21,7 +21,18 @@ enum class DemoEffect(val label: String, body: String) {
     STARFIELD("Starfield", STARFIELD_BODY),
     ROTOZOOM("Rotozoomer", ROTOZOOM_BODY),
     KALEIDOSCOPE("Kaleidoscope", KALEIDOSCOPE_BODY),
-    METABALLS("Metaballs", METABALLS_BODY);
+    METABALLS("Metaballs", METABALLS_BODY),
+    COPPER("Copper bars", COPPER_BODY),
+    SYNTHWAVE("Synthwave", SYNTHWAVE_BODY),
+    MOIRE("Moiré", MOIRE_BODY),
+    TWISTER("Twister", TWISTER_BODY),
+    FIRE("Fire", FIRE_BODY),
+    MATRIX("Code rain", MATRIX_BODY),
+    VORONOI("Crystal", VORONOI_BODY),
+    AURORA("Aurora", AURORA_BODY),
+    VECTORBALLS("Vector balls", VECTORBALLS_BODY),
+    JULIA("Julia", JULIA_BODY),
+    MANDELBROT("Mandelbrot zoom", MANDELBROT_BODY);
 
     val fragmentShader: String = HEADER + body + FOOTER
 }
@@ -59,6 +70,12 @@ uniform float uHigh;
 uniform float uKick;
 uniform float uBeat;
 uniform float uFade;
+uniform float uWipe;
+uniform float uWipeSide;
+uniform float uWipeKind;
+uniform vec2 uZoomCenter;
+uniform float uZoomScale;
+uniform float uZoomFade;
 uniform float uSegments;
 uniform vec3 uBalls[5];
 uniform vec3 uC0;
@@ -88,16 +105,50 @@ float hash(vec2 q) {
 // swatches, and a plasma made of them is mud.
 vec3 vivid(vec3 c) { return c / max(max(c.r, c.g), max(c.b, 0.15)); }
 
+// A palette colour for effects drawn from colour alone rather than from the cover image. A
+// black-and-white sleeve gives grey swatches, and no amount of brightening makes grey into a
+// plasma, so the less colour the cover has, the more of the classic rainbow shows through.
+vec3 colorAt(float f) {
+    vec3 fromCover = vivid(pal(f));
+    vec3 rainbow = 0.5 + 0.5 * cos(2.0 * PI * (f + vec3(0.0, 0.33, 0.67)));
+    float sat = max(max(uC0.r, uC0.g), uC0.b) - min(min(uC0.r, uC0.g), uC0.b)
+              + max(max(uC1.r, uC1.g), uC1.b) - min(min(uC1.r, uC1.g), uC1.b);
+    return mix(rainbow, fromCover, clamp(sat * 2.0, 0.3, 1.0));
+}
+
 // Squaring pushes the midtones down, so a pale sleeve still reads as a shape rather than a haze.
 vec3 punch(vec3 c) { return c * c * 1.3; }
 
 mat2 rot(float a) { float c = cos(a); float s = sin(a); return mat2(c, s, -s, c); }
 """
 
+/**
+ * Transitions: during a switch both effects are drawn, and [wipeMask] gives every pixel a value
+ * in 0..1. Pixels below the transition's progress belong to the incoming effect and the rest to
+ * the outgoing one; each draw discards the other's pixels BEFORE shading, so the switch costs
+ * one effect per pixel. A glowing seam in the cover's colour marks the edge, as the old demos did.
+ */
 private const val FOOTER = """
+float wipeMask(vec2 frag, vec2 p) {
+    if (uWipeKind < 0.5) return hash(floor(frag / 12.0));                    // block dissolve
+    if (uWipeKind < 1.5) return length(p) / 2.1;                             // iris from centre
+    if (uWipeKind < 2.5) return fract(atan(p.y, p.x + 1e-4) / (2.0 * PI) + 0.25); // clock sweep
+    return clamp(p.x / uAspect * 0.45 + 0.5, 0.0, 1.0) * 0.85
+         + hash(vec2(floor(frag.y / 10.0), 7.0)) * 0.15;                     // ragged wipe
+}
+
 void main() {
-    vec2 p = vec2(vPos.x * uAspect, vPos.y) - uCenter;
-    gl_FragColor = vec4(shade(p) * uFade, 1.0);
+    vec2 p = vec2(vPos.x * uAspect, vPos.y);
+    float seam = 0.0;
+    if (uWipe >= 0.0) {
+        float m = wipeMask(gl_FragCoord.xy, p);
+        bool isIncoming = m < uWipe;
+        if (isIncoming != (uWipeSide > 0.5)) discard;
+        seam = 1.0 - smoothstep(0.0, 0.035, abs(m - uWipe));
+    }
+    vec3 col = shade(p - uCenter);
+    col += vivid(uC0) * seam * 0.9;
+    gl_FragColor = vec4(col * uFade, 1.0);
 }
 """
 
@@ -161,13 +212,7 @@ vec3 shade(vec2 p) {
     float f = v * 0.125 + 0.5 + uPhase * 0.5 + uKick * 0.15;
     // Banding is the look: 12 steps of palette rather than a smooth gradient.
     f = floor(f * 12.0) / 12.0;
-    // A black-and-white sleeve gives a grey palette, and no amount of brightening makes grey a
-    // plasma, so the less colour the cover has, the more of the classic rainbow shows through.
-    vec3 fromCover = vivid(pal(f));
-    vec3 rainbow = 0.5 + 0.5 * cos(2.0 * PI * (f + vec3(0.0, 0.33, 0.67)));
-    float sat = max(max(uC0.r, uC0.g), uC0.b) - min(min(uC0.r, uC0.g), uC0.b)
-              + max(max(uC1.r, uC1.g), uC1.b) - min(min(uC1.r, uC1.g), uC1.b);
-    vec3 col = mix(rainbow, fromCover, clamp(sat * 2.0, 0.3, 1.0));
+    vec3 col = colorAt(f);
     col *= 0.45 + 0.55 * uLow + 0.25 * uKick;
     // Darken the troughs hard so the field has depth instead of being a flat wash of colour.
     float depth = v * 0.25 + 0.5;
@@ -178,9 +223,13 @@ vec3 shade(vec2 p) {
 """
 
 /**
- * Flying through stars: four layers of hashed cells, each zooming toward the viewer and fading
+ * Flying through stars: three layers of hashed cells, each zooming toward the viewer and fading
  * in from the distance. The kick stretches every star into a hyperspace streak; highs make them
  * twinkle.
+ *
+ * One hash per cell, and everything else — position, size, colour, twinkle — derived from it.
+ * The first version hashed four times a layer and ran at exactly 30 fps on the Chromecast: just
+ * over the frame budget, so every other vsync was missed. It also runs three layers, not four.
  */
 private const val STARFIELD_BODY = """
 vec3 shade(vec2 p) {
@@ -189,9 +238,9 @@ vec3 shade(vec2 p) {
     float stretch = 1.0 + uLow * 2.0 + uKick * 10.0;
     vec3 col = uC2 * 0.06 + uC1 * 0.10 * uBeat * (1.0 - smoothstep(0.0, 1.2, length(p)));
 
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         float fi = float(i);
-        float d = fract(fi * 0.25 + uPhase * 0.5);
+        float d = fract(fi / 3.0 + uPhase * 0.5);
         float scale = mix(24.0, 1.5, d);
         float fade = smoothstep(0.0, 0.35, d) * (1.0 - smoothstep(0.85, 1.0, d));
 
@@ -199,7 +248,10 @@ vec3 shade(vec2 p) {
         vec2 cell = floor(q);
         vec2 f = fract(q) - 0.5;
         float h = hash(cell + fi * 31.7);
-        vec2 off = vec2(hash(cell + 3.1), hash(cell + 7.9)) - 0.5;
+        // Most cells are empty. A cell spans many pixels, so neighbours take the same branch
+        // and the skip is real rather than a divergent-branch cost.
+        if (h < 0.55) continue;
+        vec2 off = fract(vec2(h * 17.0, h * 43.0)) - 0.5;
         vec2 s = f - off * 0.7;
 
         // Squash the star along the direction it is flying, which is away from the centre.
@@ -208,8 +260,8 @@ vec3 shade(vec2 p) {
         float dist = length(vec2(along, across));
 
         float size = 0.03 + 0.07 * h * h;
-        float twinkle = 0.7 + 0.6 * uHigh * hash(cell + floor(uTime * 40.0));
-        float star = smoothstep(size, 0.0, dist) * step(0.55, h) * fade * twinkle;
+        float twinkle = 0.7 + 0.6 * uHigh * (0.5 + 0.5 * sin(h * 50.0 + uTime * PI * 40.0));
+        float star = smoothstep(size, 0.0, dist) * fade * twinkle;
         col += star * mix(vec3(1.0), pal(h), 0.5) * 1.6;
     }
     return col;
@@ -290,6 +342,410 @@ vec3 shade(vec2 p) {
     col = mix(col, body, inside);
     col += uC0 * rim * (0.6 + 1.2 * uKick);
     col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Copper bars, the Amiga cracktro staple: six shaded horizontal bars swinging up and down
+ * through each other. Bass speeds the swing (it rides uPhase); each bar's thickness answers to
+ * one band, and the kick fattens them all.
+ */
+private const val COPPER_BODY = """
+vec3 shade(vec2 p) {
+    // Faint raster lines behind the bars, at the surface's native line pitch.
+    vec3 col = colorAt(0.66) * 0.04 * (0.6 + 0.4 * sin(gl_FragCoord.y * PI));
+    float depthTop = -2.0;
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        float ang = uPhase * PI * 2.0 + fi * 0.75;
+        float cy = 0.72 * sin(ang) * (0.7 + 0.3 * sin(uTime * PI * 2.0 + fi));
+        // Bars at the front of their swing are drawn over the ones behind.
+        float z = cos(ang);
+        float band = i == 0 || i == 3 ? uLow : (i == 1 || i == 4 ? uMid : uHigh);
+        float thick = 0.06 + 0.05 * band + 0.035 * uKick;
+        float d = (p.y - cy) / thick;
+        if (abs(d) < 1.0 && z > depthTop) {
+            depthTop = z;
+            // Cylinder shading plus a hot highlight line: the "metal tube" look.
+            float lit = sqrt(1.0 - d * d);
+            vec3 c = colorAt(fi / 6.0 + uPhase * 0.5) * lit * (0.55 + 0.45 * (z * 0.5 + 0.5));
+            c += vec3(1.0) * pow(lit, 12.0) * 0.35;
+            col = c * (0.8 + 0.4 * uLow);
+        }
+    }
+    col *= clamp(1.3 - 0.3 * abs(p.x) / uAspect, 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Synthwave: a checkerboard floor racing toward the viewer under a striped sun. Bass sets the
+ * speed and swells the sun, the kick lights the grid lines, the horizon glows into each beat.
+ */
+private const val SYNTHWAVE_BODY = """
+vec3 shade(vec2 p) {
+    p = rot(sin(uTime * PI) * 0.06) * p;
+    float horizon = 0.06 + 0.03 * sin(uTime * PI * 2.0);
+    float y = p.y - horizon;
+    vec3 hot = colorAt(0.05);
+    vec3 cool = colorAt(0.55);
+    vec3 col;
+
+    if (y < 0.0) {
+        float z = 0.3 / max(-y, 0.01);
+        vec2 uv = vec2(p.x * z + 0.6 * sin(uTime * PI * 2.0), z + uPhase * 2.0);
+        float chk = mod(floor(uv.x) + floor(uv.y), 2.0);
+        col = mix(cool * 0.10, cool * 0.45, chk);
+        // Grid lines on the cell edges, burning on the kick.
+        vec2 e = abs(fract(uv) - 0.5);
+        float line = smoothstep(0.44, 0.5, max(e.x, e.y));
+        col += hot * line * (0.35 + 1.1 * uKick + 0.4 * uLow);
+        // Distance haze hides the checker aliasing near the horizon.
+        col = mix(col, hot * 0.35, exp(y * 14.0));
+    } else {
+        col = mix(hot * 0.30, vec3(0.0), smoothstep(0.0, 0.9, y));
+        vec2 sp = p - vec2(0.0, horizon + 0.32);
+        float r = 0.30 + 0.05 * uLow + 0.02 * uKick;
+        float sun = 1.0 - smoothstep(r - 0.01, r, length(sp));
+        // The stripes thicken toward the bottom of the sun and scroll down.
+        float stripe = step(0.5 + 0.45 * clamp(-sp.y / r, 0.0, 1.0),
+                            fract(sp.y * 14.0 + uPhase * 2.0));
+        float cut = sp.y < 0.0 ? 1.0 - stripe : 1.0;
+        col = mix(col, mix(hot, colorAt(0.3), clamp(0.5 - sp.y / r * 0.5, 0.0, 1.0)), sun * cut);
+    }
+    col += hot * exp(-abs(y) * 45.0) * (0.5 + 0.8 * uBeat + 0.4 * uLow);
+    return col;
+}
+"""
+
+/**
+ * Moiré: two sets of concentric rings drifting past each other; where they interfere, the
+ * pattern they make is the effect. Mids tighten the rings, bass pushes them outward.
+ */
+private const val MOIRE_BODY = """
+vec3 shade(vec2 p) {
+    vec2 a = vec2(sin(uTime * PI * 2.0) * 0.7, cos(uTime * PI * 4.0) * 0.35);
+    vec2 b = vec2(sin(uTime * PI * 2.0 + 2.4) * 0.7, sin(uTime * PI * 2.0 + 1.1) * 0.35);
+    float freq = 12.0 + 6.0 * uMid;
+    // Clamped sines rather than hard steps, so the rings stay crisp without aliasing.
+    float wa = clamp(sin(2.0 * PI * (length(p - a) * freq - uPhase * 2.0)) * 4.0, -1.0, 1.0);
+    float wb = clamp(sin(2.0 * PI * (length(p - b) * freq - uPhase * 2.0)) * 4.0, -1.0, 1.0);
+    float x = 0.5 - 0.5 * wa * wb;
+    vec3 col = mix(colorAt(uPhase * 0.5) * 0.08, colorAt(uPhase * 0.5 + 0.33), x);
+    col *= 0.55 + 0.5 * uLow;
+    col += colorAt(uPhase * 0.5 + 0.66) * uKick * 0.2 * x;
+    col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * The twister: a square column rotating at a different angle on every line, so it twists like
+ * wrung cloth, and snakes side to side. Each scanline works out which of the four faces it can
+ * see — the same trick the Amiga did one raster line at a time.
+ */
+private const val TWISTER_BODY = """
+vec3 shade(vec2 p) {
+    vec3 col = colorAt(0.8) * 0.05 * (1.0 - smoothstep(0.0, 1.5, length(p)));
+    float w = 0.30 + 0.08 * uLow + 0.05 * uKick;
+    float cx = 0.25 * sin(p.y * 1.6 + uTime * PI * 4.0);
+    float th = uSpin * PI + uPhase * PI + p.y * (1.3 + 1.0 * sin(uTime * PI * 2.0));
+    float x = p.x - cx;
+    for (int k = 0; k < 4; k++) {
+        float fk = float(k);
+        float x0 = sin(th + fk * PI * 0.5) * w;
+        float x1 = sin(th + (fk + 1.0) * PI * 0.5) * w;
+        if (x1 > x0 && x >= x0 && x < x1) {
+            // A face turned toward the viewer is wide and bright; one edge-on is narrow and dark.
+            float lit = (x1 - x0) / (w * 1.4142);
+            float stripe = 0.8 + 0.2 * step(0.5, fract(p.y * 6.0 - uPhase * 4.0));
+            float edge = 1.0 - smoothstep(0.0, 0.012, min(x - x0, x1 - x));
+            col = colorAt(fk * 0.25 + uPhase * 0.5) * lit * stripe * (0.6 + 0.5 * uMid);
+            col += vec3(1.0) * edge * (0.25 + 0.8 * uKick);
+        }
+    }
+    return col;
+}
+"""
+
+/**
+ * Demo fire: four octaves of warped sines (no hashing — value noise would cost four hashes an
+ * octave) scrolled upward, thresholded against height so flames lick up from the bottom. Bass
+ * raises the flames, the kick makes them flare.
+ */
+private const val FIRE_BODY = """
+vec3 shade(vec2 p) {
+    float t = uPhase * PI;
+    mat2 m = rot(0.7);
+    vec2 q = vec2(p.x * 2.4, p.y * 1.8);
+    float n = 0.0;
+    float amp = 0.5;
+    for (int i = 0; i < 4; i++) {
+        float k = 2.0 * float(i + 1);
+        n += amp * (0.5 + 0.5 * sin(q.x + 1.6 * sin(q.y - t * k) - t * 2.0));
+        q = m * q * 1.9;
+        amp *= 0.5;
+    }
+    // Uneven height across the width, so the fire rises in tongues rather than as a flat band.
+    float tongues = 0.8 + 0.2 * sin(p.x * 3.7 + t * 2.0) + 0.12 * sin(p.x * 9.1 - t * 4.0);
+    float height = (0.8 + 0.8 * uLow + 0.35 * uKick) * tongues;
+    float base = 1.0 - (p.y + 1.0) / height;
+    float heat = clamp(base * 1.15 + (n - 0.5) * 1.3, 0.0, 1.0);
+    heat *= 0.9 + 0.3 * uKick;
+
+    // The classic fire ramp — black, deep red, orange, yellow, a white-hot core. The cover only
+    // tints it: taken from a palette, fire stops looking like fire.
+    vec3 col = mix(vec3(0.0), vec3(0.55, 0.03, 0.0), smoothstep(0.05, 0.35, heat));
+    col = mix(col, vec3(1.0, 0.35, 0.02), smoothstep(0.3, 0.6, heat));
+    col = mix(col, vec3(1.0, 0.78, 0.18), smoothstep(0.55, 0.85, heat));
+    col = mix(col, vec3(1.0, 0.97, 0.85), smoothstep(0.85, 1.0, heat) * 0.8);
+    col = mix(col, dot(col, vec3(0.33)) * vivid(uC0) * 1.4, 0.2);
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Code rain: columns of blocky 3x5 glyphs falling at their own speeds, each with a bright head
+ * and a fading trail. The glyphs are bit patterns pulled from a hash, not a font. Highs make them
+ * flicker faster, the kick flashes the heads, bass lifts the trails.
+ */
+private const val MATRIX_BODY = """
+vec3 shade(vec2 p) {
+    // Laid out on the raw screen position so the columns stay put while other effects wander.
+    vec2 g = vec2((vPos.x + 1.0) * uAspect * 20.0, (1.0 - vPos.y) * 15.0);
+    vec2 cell = floor(g);
+    vec2 f = fract(g);
+    float colH = hash(vec2(cell.x, 3.7));
+    // A whole-number rate per column keeps the fall seamless across uPhase's wrap.
+    float rate = 2.0 + floor(colH * 4.0);
+    float cycle = 45.0;
+    float head = fract(uPhase * 0.5 * rate + colH * 7.0) * cycle;
+    float d = head - cell.y;
+    float trailLen = 10.0 + 14.0 * fract(colH * 31.0);
+
+    vec3 col = vec3(0.0);
+    if (d >= 0.0 && d < trailLen) {
+        float gid = hash(cell + vec2(0.0, floor(uTime * (20.0 + 60.0 * uHigh))) * 1.37);
+        float bx = floor(f.x * 4.0);
+        float by = floor(f.y * 6.0);
+        float bit = 0.0;
+        if (bx < 3.0 && by < 5.0) {
+            float idx = by * 3.0 + bx;
+            bit = mod(floor(gid * 32768.0 / exp2(idx)), 2.0);
+        }
+        vec3 tint = colorAt(0.35);
+        float trail = 1.0 - d / trailLen;
+        col = tint * bit * trail * trail * (0.5 + 0.5 * uLow);
+        if (d < 1.0) col = mix(tint, vec3(1.0), 0.7) * bit * (1.0 + 0.8 * uKick);
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Crystal: drifting Voronoi cells, each filled with its own palette colour, split by glowing
+ * seams. One hash per neighbour cell (nine, the ceiling for this budget); mids jitter the seeds,
+ * the kick burns the seams, bass lights the cells.
+ */
+private const val VORONOI_BODY = """
+vec3 shade(vec2 p) {
+    p = rot(uSpin * PI) * p;
+    vec2 g = p * 3.2;
+    vec2 ci = floor(g);
+    vec2 f = fract(g);
+    float d1 = 8.0;
+    float d2 = 8.0;
+    float id = 0.0;
+    for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+            vec2 o = vec2(float(i), float(j));
+            float h = hash(ci + o);
+            float h2 = fract(h * 13.7);
+            vec2 seed = 0.5
+                + 0.38 * vec2(sin(uTime * PI * 2.0 + h * 6.2831), cos(uTime * PI * 4.0 + h2 * 6.2831))
+                + 0.08 * uMid * vec2(sin(uPhase * PI * 4.0 + h * 40.0), cos(uPhase * PI * 4.0 + h2 * 40.0));
+            vec2 r = o + seed - f;
+            float d = dot(r, r);
+            if (d < d1) {
+                d2 = d1;
+                d1 = d;
+                id = h;
+            } else if (d < d2) {
+                d2 = d;
+            }
+        }
+    }
+    // Gap between nearest and second-nearest seed: near zero on a seam.
+    float e = sqrt(d2) - sqrt(d1);
+    float seam = 1.0 - smoothstep(0.0, 0.06 + 0.05 * uKick, e);
+    vec3 col = colorAt(id + uPhase * 0.5) * (0.22 + 0.35 * uLow) * (1.0 - 0.5 * sqrt(d1));
+    col += colorAt(0.1) * seam * (0.5 + 1.3 * uKick + 0.3 * uHigh);
+    col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Aurora: three curtains of light hanging over a starry sky, each a sharp lower edge with rays
+ * fading upward, warped side to side by sines. Mids make the curtains sway, bass brightens them.
+ */
+private const val AURORA_BODY = """
+vec3 shade(vec2 p) {
+    vec3 col = mix(colorAt(0.62) * 0.06, vec3(0.0), smoothstep(-1.0, 1.0, p.y));
+    float sh = hash(floor(gl_FragCoord.xy / 2.0));
+    col += vec3(0.9) * step(0.996, sh) * (0.6 + 0.4 * sin(sh * 80.0 + uTime * PI * 20.0))
+         * smoothstep(-0.2, 0.6, p.y);
+
+    for (int k = 0; k < 3; k++) {
+        float fk = float(k);
+        float wx = p.x * (1.1 + 0.35 * fk)
+                 + 0.35 * sin(p.x * 2.3 + uTime * PI * 2.0 + fk * 1.9)
+                 + (0.15 + 0.35 * uMid) * sin(p.x * 0.8 - uPhase * PI * 2.0 + fk * 2.7);
+        float edge = -0.15 + 0.22 * fk + 0.18 * sin(wx * 1.7 + fk);
+        float v = p.y - edge;
+        float glow = v > 0.0 ? exp(-v * (3.0 + fk)) : exp(v * 22.0);
+        float rays = 0.55 + 0.45 * sin(wx * 23.0 + 3.0 * sin(wx * 4.0));
+        col += colorAt(0.3 + 0.18 * fk + uPhase * 0.5) * glow * rays
+             * (0.28 + 0.55 * uLow + 0.25 * uKick) * (1.0 - 0.25 * fk);
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Vector balls: 24 shaded balls in three rings of eight, a sphere-ish cage turning in 3D. Each
+ * pixel tests every ball with a plain distance check and keeps the nearest in depth — painter's
+ * order without sorting. Ring positions step by a fixed 45° rotation, so the loop has no trig.
+ * Bass spins it faster, the kick swells the balls.
+ */
+private const val VECTORBALLS_BODY = """
+vec3 shade(vec2 p) {
+    float a = uPhase * PI;
+    float b = 0.45 * sin(uTime * PI * 2.0);
+    float ca = cos(a);
+    float sa = sin(a);
+    float cb = cos(b);
+    float sb = sin(b);
+    float bestZ = 99.0;
+    vec2 hitC = vec2(0.0);
+    float hitR = 1.0;
+    float hitRing = 0.0;
+    for (int r = 0; r < 3; r++) {
+        float fr = float(r);
+        float y = (fr - 1.0) * 0.55;
+        float ringR = r == 1 ? 1.0 : 0.72;
+        vec2 v = vec2(ringR, 0.0);
+        if (r == 1) v = rot(PI / 8.0) * v;
+        for (int k = 0; k < 8; k++) {
+            float x1 = v.x * ca - v.y * sa;
+            float z1 = v.x * sa + v.y * ca;
+            float y2 = y * cb - z1 * sb;
+            float z2 = y * sb + z1 * cb;
+            float persp = 1.8 / (3.0 + z2);
+            vec2 sc = vec2(x1, y2) * persp * 0.62;
+            float br = 0.085 * persp * (1.0 + 0.35 * uKick + 0.15 * uLow);
+            vec2 dv = p - sc;
+            if (dot(dv, dv) < br * br && z2 < bestZ) {
+                bestZ = z2;
+                hitC = sc;
+                hitR = br;
+                hitRing = fr;
+            }
+            v = vec2(v.x - v.y, v.x + v.y) * 0.70710678;
+        }
+    }
+
+    vec3 col = colorAt(0.7) * 0.05 * (1.0 - smoothstep(0.0, 1.6, length(p)));
+    col += colorAt(0.1) * 0.12 * uBeat * (1.0 - smoothstep(0.0, 0.8, length(p)));
+    if (bestZ < 98.0) {
+        vec2 n2 = (p - hitC) / hitR;
+        vec3 n = vec3(n2, sqrt(max(1.0 - dot(n2, n2), 0.0)));
+        vec3 light = normalize(vec3(-0.45, 0.55, 0.7));
+        float diff = max(dot(n, light), 0.0);
+        float spec = pow(max(dot(reflect(-light, n), vec3(0.0, 0.0, 1.0)), 0.0), 18.0);
+        float depth = clamp(1.1 - (bestZ + 1.0) * 0.3, 0.35, 1.0);
+        col = colorAt(hitRing / 3.0 + uPhase * 0.5) * (0.18 + 0.82 * diff) * depth
+            + vec3(1.0) * spec * 0.6;
+    }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Julia set: c circles the classic 0.7885 radius, so the fractal melts continuously from one
+ * shape into the next. 24 iterations with smooth escape-time colouring through the palette. Bass
+ * zooms in a touch, the kick shifts the colours.
+ */
+private const val JULIA_BODY = """
+vec3 shade(vec2 p) {
+    float a = uTime * PI * 2.0;
+    vec2 c = 0.7885 * vec2(cos(a), sin(a));
+    vec2 z = rot(uSpin * PI) * p * (1.25 - 0.12 * uLow);
+    float n = 0.0;
+    float m2 = 0.0;
+    for (int i = 0; i < 24; i++) {
+        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        m2 = dot(z, z);
+        if (m2 > 16.0) break;
+        n += 1.0;
+    }
+    vec3 col;
+    if (n >= 24.0) {
+        col = colorAt(0.6 + uPhase * 0.5) * 0.06;
+    } else {
+        // Fractional escape count, so the bands blend instead of stepping.
+        float sn = n + 1.0 - log2(0.5 * log2(m2));
+        float t = clamp(sn / 24.0, 0.0, 1.0);
+        col = colorAt(sn * 0.06 + uPhase * 0.5 + uKick * 0.2) * (0.25 + 1.1 * sqrt(t))
+            * (0.7 + 0.4 * uLow);
+    }
+    col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * An endless dive into the Mandelbrot set. The CPU picks a random point on the set's edge from
+ * a list of places that stay interesting all the way down, zooms toward it exponentially, and
+ * when fp32 runs out of precision (around 2000x) fades out and dives toward another. Bass speeds
+ * the dive, the kick jumps the palette, the interior glows into each beat.
+ *
+ * 32 iterations with early escape: enough to resolve the edge to the depth it reaches, and the
+ * most this GPU can afford — watch its fps line first if the Chromecast stutters.
+ */
+private const val MANDELBROT_BODY = """
+vec3 shade(vec2 p) {
+    // FOOTER shifts p by the centre wander; undo it so the dive stays on its target.
+    vec2 q = rot(uSpin * PI) * (p + uCenter);
+    vec2 c = uZoomCenter + q * uZoomScale;
+    vec2 z = vec2(0.0);
+    float n = 0.0;
+    float m2 = 0.0;
+    for (int i = 0; i < 32; i++) {
+        z = vec2(z.x * z.x - z.y * z.y, 2.0 * z.x * z.y) + c;
+        m2 = dot(z, z);
+        // A large bailout keeps the smooth colouring below free of bands.
+        if (m2 > 64.0) break;
+        n += 1.0;
+    }
+    vec3 col;
+    if (n >= 32.0) {
+        col = colorAt(0.66) * (0.05 + 0.12 * uBeat);
+    } else {
+        float mu = n - log2(log2(m2) * 0.5);
+        // Several trips round the palette across the escape range — bands are what make the
+        // edge's detail legible — and classic palette cycling: the bands flow steadily inward
+        // (uTime * 4 is one cycle every 5 s and whole at the wrap), bass and the kick push them.
+        float f = mu * 0.25 - uTime * 4.0 - uPhase * 0.5 + uKick * 0.12;
+        col = colorAt(f) * (0.3 + 0.7 * sqrt(clamp(mu / 32.0, 0.0, 1.0))) * (0.75 + 0.45 * uLow);
+    }
+    col *= uZoomFade;
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
 """

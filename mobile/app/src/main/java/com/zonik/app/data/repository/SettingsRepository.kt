@@ -169,13 +169,43 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs -> prefs[TV_AMBIENT_BEAT] = enabled }
     }
 
-    /** A `DemoEffect` name for one fixed effect, or [TV_AMBIENT_EFFECT_AUTO] to change each track. */
-    val tvAmbientEffect: Flow<String> = dataStore.data.map { prefs ->
-        prefs[TV_AMBIENT_EFFECT] ?: TV_AMBIENT_EFFECT_AUTO
+    /**
+     * `DemoEffect` names taken OUT of the visualizer's rotation. Stored this way round so an
+     * effect added in a later release joins the rotation without anyone having to switch it on.
+     */
+    val tvAmbientEffectsOff: Flow<Set<String>> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_EFFECTS_OFF]?.split(",")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
     }
 
-    suspend fun setTvAmbientEffect(effect: String) {
-        dataStore.edit { prefs -> prefs[TV_AMBIENT_EFFECT] = effect }
+    suspend fun setTvAmbientEffectsOff(effects: Set<String>) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_EFFECTS_OFF] = effects.joinToString(",") }
+    }
+
+    /** Seconds between effect changes within a track; 0 changes only when the track does. */
+    val tvAmbientRotateSec: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_ROTATE_SEC] ?: 60
+    }
+
+    suspend fun setTvAmbientRotateSec(seconds: Int) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_ROTATE_SEC] = seconds }
+    }
+
+    /** Cover and title over the visuals: `ALWAYS`, `FADE` (show on track change, then hide) or `NEVER`. */
+    val tvAmbientInfo: Flow<String> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_INFO] ?: "FADE"
+    }
+
+    suspend fun setTvAmbientInfo(mode: String) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_INFO] = mode }
+    }
+
+    /** Transition between effects: -1 to vary them, or a fixed wipe (see `DemoTransition`). */
+    val tvAmbientTransition: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_TRANSITION] ?: -1
+    }
+
+    suspend fun setTvAmbientTransition(kind: Int) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_TRANSITION] = kind }
     }
 
     val autoTabOrder: Flow<List<String>> = dataStore.data.map { prefs ->
@@ -212,8 +242,10 @@ class SettingsRepository @Inject constructor(
         private val TV_AMBIENT_ENABLED = booleanPreferencesKey("tv_ambient_enabled")
         private val TV_AMBIENT_DELAY_SEC = intPreferencesKey("tv_ambient_delay_sec")
         private val TV_AMBIENT_BEAT = booleanPreferencesKey("tv_ambient_beat_reactive")
-        private val TV_AMBIENT_EFFECT = stringPreferencesKey("tv_ambient_effect")
-        const val TV_AMBIENT_EFFECT_AUTO = "AUTO"
+        private val TV_AMBIENT_EFFECTS_OFF = stringPreferencesKey("tv_ambient_effects_off")
+        private val TV_AMBIENT_ROTATE_SEC = intPreferencesKey("tv_ambient_rotate_sec")
+        private val TV_AMBIENT_INFO = stringPreferencesKey("tv_ambient_info")
+        private val TV_AMBIENT_TRANSITION = intPreferencesKey("tv_ambient_transition")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_PRESET = intPreferencesKey("eq_preset")
         private val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")
