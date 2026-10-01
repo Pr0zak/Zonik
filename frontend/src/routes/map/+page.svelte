@@ -6,10 +6,12 @@
 	import Explore from '../../components/map/Explore.svelte';
 	import SonicAdventure from '../../components/map/SonicAdventure.svelte';
 	import GemsView from '../../components/map/GemsView.svelte';
+	import ListeningView from '../../components/map/ListeningView.svelte';
 
 	const TABS = [
 		{ id: 'explore', label: 'Explore', subtitle: 'Your library laid out by key, tempo and sound — select tracks and save them as a playlist' },
 		{ id: 'journey', label: 'Journey', subtitle: 'A playlist that moves gradually from one track’s sound to another’s' },
+		{ id: 'listening', label: 'Listening', subtitle: 'How your listening moves: genres over the year, what follows what, and what’s in rotation' },
 		{ id: 'gems', label: 'Gems', subtitle: 'Tracks you own but have never played, closest to your taste first' },
 	];
 
@@ -36,6 +38,8 @@
 		<Explore />
 	{:else if tab.id === 'journey'}
 		<div class="mt-4"><SonicAdventure /></div>
+	{:else if tab.id === 'listening'}
+		<div class="mt-4"><ListeningView /></div>
 	{:else}
 		<div class="mt-4"><GemsView /></div>
 	{/if}

@@ -22,6 +22,41 @@ export const FAMILY_COLORS = {
 };
 export const familyColor = (f) => FAMILY_COLORS[f] || FAMILY_COLORS.Other;
 
+// --- play heat (the "Plays" colour mode) ---
+// A track you skip at least as often as you finish it, with two or more skips.
+export const skipHeavy = (p) => (p.skips || 0) >= 2 && p.skips >= (p.plays || 0);
+// Dot radius grows with the square root of plays so a few heavy rotations
+// don't swamp the map.
+export const heatRadius = (p, base) => (p.plays ? base + Math.min(5, Math.sqrt(p.plays) * 0.7) : base * 0.75);
+// Heavy-rotation tracks get a soft halo drawn under the dots.
+export const HALO_PLAYS = 8;
+
+// Draws the heat extras for one dot: halo pass (when halo=true) or the skip ring.
+export function drawHeat(ctx, p, x, y, r, color, halo) {
+	if (halo) {
+		if (p.plays < HALO_PLAYS) return;
+		ctx.save();
+		ctx.globalAlpha = 0.22;
+		ctx.fillStyle = color;
+		ctx.beginPath(); ctx.arc(x, y, r + 4 + Math.min(10, p.plays / 3), 0, 6.2832); ctx.fill();
+		ctx.restore();
+		return;
+	}
+	if (skipHeavy(p)) {
+		ctx.strokeStyle = '#f87171'; ctx.lineWidth = 1.3;
+		ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0, 6.2832); ctx.stroke();
+	}
+}
+
+export function ago(iso) {
+	if (!iso) return 'never';
+	const s = (Date.now() - new Date(iso).getTime()) / 1000;
+	if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
+	if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+	const d = Math.round(s / 86400);
+	return d < 60 ? `${d}d ago` : `${Math.round(d / 30)}mo ago`;
+}
+
 // --- Camelot ---
 const ENHARM = {
 	'C': 'C', 'B#': 'C', 'C#': 'C#', 'Db': 'C#', 'D': 'D', 'D#': 'D#', 'Eb': 'D#',
@@ -118,3 +153,7 @@ export function pointerPos(canvas, ev) {
 	const r = canvas.getBoundingClientRect();
 	return { x: ev.clientX - r.left, y: ev.clientY - r.top };
 }
+
+// play_history.source is the Subsonic client name (`c=`).
+const SOURCE_LABELS = { ZonikApp: 'Phone / TV', ZonikWear: 'Watch', web: 'Web', subsonic: 'Unlabelled (older plays)' };
+export const sourceLabel = (s) => SOURCE_LABELS[s] || s || 'Unknown';

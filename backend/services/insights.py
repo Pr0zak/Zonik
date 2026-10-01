@@ -201,18 +201,20 @@ async def audio_features(db: AsyncSession) -> dict:
     (key/scale/bpm) and the Tempo×Punch grid (bpm/loudness)."""
     rows = (await db.execute(text(
         "SELECT t.id, t.title, ar.name, t.album_id, a.key, a.scale, a.bpm, "
-        "       a.loudness, a.danceability, a.energy, t.genre, COALESCE(t.play_count, 0) "
+        "       a.loudness, a.danceability, a.energy, t.genre, COALESCE(t.play_count, 0), "
+        "       COALESCE(t.skip_count, 0) "
         "FROM tracks t JOIN track_analysis a ON a.track_id = t.id "
         "LEFT JOIN artists ar ON ar.id = t.artist_id "
         "WHERE a.bpm IS NOT NULL AND a.key IS NOT NULL"
     ))).all()
-    cols = list(zip(*rows)) if rows else [[]] * 12
+    cols = list(zip(*rows)) if rows else [[]] * 13
     return {
         "count": len(rows),
         "ids": list(cols[0]), "title": list(cols[1]), "artist": list(cols[2]), "album_id": list(cols[3]),
         "key": list(cols[4]), "scale": list(cols[5]), "bpm": list(cols[6]),
         "loudness": list(cols[7]), "danceability": list(cols[8]), "energy": list(cols[9]),
         "family": [genre_family(g) for g in cols[10]], "play_count": list(cols[11]),
+        "skip_count": list(cols[12]),
     }
 
 

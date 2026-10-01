@@ -82,6 +82,14 @@ interface SubsonicApi {
         @Field("time") time: Long? = null
     ): ScrobbleResponse
 
+    // Saves what's queued so the server can show "up next" (Music Map trail).
+    @GET("rest/savePlayQueue.view")
+    suspend fun savePlayQueue(
+        @Query("id") ids: List<String>,
+        @Query("current") current: String? = null,
+        @Query("position") positionMs: Long? = null
+    ): StarResponse
+
     @GET("rest/setRating.view")
     suspend fun setRating(
         @Query("id") id: String,

@@ -4,10 +4,10 @@
 	// select everything that mixes harmonically with it, or an empty part of a
 	// key segment to select that whole key.
 	import { onMount, onDestroy } from 'svelte';
-	import { ACCENT, isCompat, rand, fitCanvas, frameScheduler, pointerPos } from './explore.js';
+	import { ACCENT, isCompat, rand, fitCanvas, frameScheduler, pointerPos, heatRadius, drawHeat } from './explore.js';
 	import HoverCard from './HoverCard.svelte';
 
-	let { points, visible, selected, colorOf, onselect } = $props();
+	let { points, visible, selected, colorOf, onselect, onfocus = () => {}, heat = false, weight = 'tracks' } = $props();
 
 	let container, canvas, ctx;
 	let width = $state(0), height = $state(0);
@@ -18,12 +18,18 @@
 	const code = (seg) => seg.num + seg.letter;
 	const sectorAngle = (num) => -Math.PI / 2 + (num - 1) * (Math.PI / 6);
 
-	// Tracks per key among the visible set, for segment shading + hover counts.
-	const counts = $derived.by(() => {
-		const c = {};
-		for (const p of points) if (p.cam && visible[p.i]) c[p.cam.num + p.cam.letter] = (c[p.cam.num + p.cam.letter] || 0) + 1;
-		return c;
+	// Tracks and plays per key among the visible set, for segment shading + hover counts.
+	const tally = $derived.by(() => {
+		const tracks = {}, plays = {};
+		for (const p of points) {
+			if (!p.cam || !visible[p.i]) continue;
+			const k = p.cam.num + p.cam.letter;
+			tracks[k] = (tracks[k] || 0) + 1;
+			plays[k] = (plays[k] || 0) + (p.plays || 0);
+		}
+		return { tracks, plays };
 	});
+	const counts = $derived(weight === 'plays' ? tally.plays : tally.tracks);
 
 	function layout() {
 		cx = width / 2; cy = height / 2;
@@ -106,15 +112,17 @@
 			const sel = selected.has(p.i), hov = p.i === hover.i;
 			ctx.globalAlpha = hov ? 1 : dim ? (sel ? 0.95 : 0.1) : 0.75;
 			ctx.fillStyle = hov ? '#fff' : colorOf(p);
+			const r = heat ? heatRadius(p, 2.3) : 2.3;
 			ctx.beginPath();
-			ctx.arc(x, y, hov ? 4.5 : sel ? 3 : 2.3, 0, 6.2832);
+			ctx.arc(x, y, hov ? r + 2.2 : sel ? r + 0.7 : r, 0, 6.2832);
 			ctx.fill();
+			if (heat && !dim) drawHeat(ctx, p, x, y, r, null, false);
 		}
 		ctx.globalAlpha = 1;
 	}
 
 	const requestDraw = frameScheduler(draw);
-	$effect(() => { points; visible; selected; colorOf; counts; requestDraw(); });
+	$effect(() => { points; visible; selected; colorOf; counts; heat; requestDraw(); });
 	$effect(() => { points; if (width) { layout(); requestDraw(); } });
 
 	function nearest(x, y) {
@@ -149,6 +157,7 @@
 			const { num, letter } = points[i].cam;
 			const idxs = points.filter((p) => visible[p.i] && p.cam && isCompat(p.cam.num, p.cam.letter, num, letter)).map((p) => p.i);
 			onselect(byTempo(idxs), `Harmonic mix · ${num}${letter} (${points[i].title})`, { add });
+			onfocus(i);
 			return;
 		}
 		const seg = segmentAt(x, y);
@@ -174,7 +183,7 @@
 		<HoverCard p={points[hover.i]} x={hover.x} y={hover.y} {width} />
 	{:else if hover.seg}
 		<div class="absolute pointer-events-none z-10 px-2 py-1 rounded bg-black/85 text-white text-xs" style="left:{Math.min(hover.x + 14, width - 140)}px; top:{Math.max(hover.y - 30, 4)}px;">
-			<span class="font-mono text-[#22d3ee]">{code(hover.seg)}</span> · {(counts[code(hover.seg)] || 0).toLocaleString()} tracks
+			<span class="font-mono text-[#22d3ee]">{code(hover.seg)}</span> · {(tally.tracks[code(hover.seg)] || 0).toLocaleString()} tracks · {(tally.plays[code(hover.seg)] || 0).toLocaleString()} plays
 		</div>
 	{/if}
 </div>

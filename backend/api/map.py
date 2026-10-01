@@ -127,3 +127,44 @@ async def health(db: AsyncSession = Depends(get_db)):
     """Gaps in the analysis pipeline that distort the map, each with a fix."""
     from backend.services.map_health import map_health
     return await map_health(db)
+
+
+# --- Listening layers (plays over time, order, rotation) ---
+
+@router.get("/taste-river")
+async def taste_river(weeks: int = Query(52, ge=4, le=156), db: AsyncSession = Depends(get_db)):
+    """Plays per genre family per week."""
+    from backend.services.listening import taste_river as _tr
+    return await _tr(db, weeks=weeks)
+
+
+@router.get("/genre-flow")
+async def genre_flow(days: int = Query(90, ge=7, le=730), db: AsyncSession = Depends(get_db)):
+    """Which genre family you play after each one, within a session."""
+    from backend.services.listening import genre_flow as _gf
+    return await _gf(db, days=days)
+
+
+@router.get("/rotation")
+async def rotation(days: int = Query(30, ge=7, le=180), db: AsyncSession = Depends(get_db)):
+    """Tracks by plays this period against the period before, with trend flags."""
+    from backend.services.listening import rotation as _rot
+    return await _rot(db, days=days)
+
+
+@router.get("/trail")
+async def trail(hours: int = Query(0, ge=0, le=24 * 30), db: AsyncSession = Depends(get_db)):
+    """Plays in order since midnight (hours=0) or the last N hours, plus now playing and the saved queue."""
+    from backend.services.listening import trail as _trail
+    return await _trail(db, hours=hours)
+
+
+@router.get("/track/{track_id}/listening")
+async def track_listening(track_id: str, db: AsyncSession = Depends(get_db)):
+    """One track's plays per month, devices, skips and what you usually play after it."""
+    from fastapi import HTTPException
+    from backend.services.listening import track_listening as _tl
+    r = await _tl(db, track_id)
+    if r is None:
+        raise HTTPException(404, "Track not found")
+    return r

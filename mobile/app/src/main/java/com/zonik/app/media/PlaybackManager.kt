@@ -29,12 +29,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.zonik.core.util.md5
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 import javax.inject.Inject
 import javax.inject.Singleton
+
+// The current track plus at most this many sent to the server as the queue.
+private const val QUEUE_SYNC_MAX = 50
 
 @Singleton
 class PlaybackManager @Inject constructor(
@@ -74,6 +81,29 @@ class PlaybackManager @Inject constructor(
         }
     }
 
+    // Mirrors the current track and what's queued after it to the server
+    // (savePlayQueue), which the web Music Map draws as "up next". Debounced so
+    // a burst of queue edits sends one request; failures are only logged.
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun startQueueSync() {
+        scope.launch {
+            combine(_queue, _currentTrack) { queue, current ->
+                val start = current?.let { c -> queue.indexOfFirst { it.id == c.id } }?.takeIf { it >= 0 } ?: 0
+                current?.id to queue.drop(start).take(QUEUE_SYNC_MAX).map { it.id }
+            }
+                .distinctUntilChanged()
+                .debounce(4_000)
+                .collect { (current, ids) ->
+                    if (ids.isEmpty() || cachedServerConfig == null) return@collect
+                    try {
+                        libraryRepository.savePlayQueue(ids, current, null)
+                    } catch (e: Exception) {
+                        DebugLog.w("Playback", "savePlayQueue failed: ${e.message}")
+                    }
+                }
+        }
+    }
+
     // Set by skipToIndex to prevent onMediaItemTransition from overriding
     // the correct track when manually seeking within the queue.
     private var _manualSeekIndex: Int = -1
@@ -105,6 +135,9 @@ class PlaybackManager @Inject constructor(
 
     private val _queue = MutableStateFlow<List<Track>>(emptyList())
     val queue: StateFlow<List<Track>> = _queue.asStateFlow()
+
+    // After _queue and _currentTrack exist: init blocks run in declaration order.
+    init { startQueueSync() }
 
     private val _recentlyPlayed = MutableStateFlow<List<Track>>(emptyList())
     val recentlyPlayed: StateFlow<List<Track>> = _recentlyPlayed.asStateFlow()

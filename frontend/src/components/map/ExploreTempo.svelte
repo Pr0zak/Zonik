@@ -4,12 +4,14 @@
 	// pinned to the edge as rings. Drag a box to select, click a track to
 	// toggle it.
 	import { onMount, onDestroy } from 'svelte';
-	import { percentile, fitCanvas, frameScheduler, pointerPos } from './explore.js';
+	import { percentile, fitCanvas, frameScheduler, pointerPos, heatRadius, drawHeat } from './explore.js';
 	import HoverCard from './HoverCard.svelte';
 
-	let { points, visible, selected, colorOf, onselect } = $props();
+	let { points, visible, selected, colorOf, onselect, onfocus = () => {}, heat = false } = $props();
 
-	const PAD = { top: 20, right: 20, bottom: 38, left: 52 };
+	// The top band holds a tempo histogram: share of tracks owned against share of plays.
+	const STRIP = 56;
+	const PAD = { top: 20 + STRIP, right: 20, bottom: 38, left: 52 };
 	let container, canvas, ctx;
 	let width = $state(0), height = $state(0);
 	let hover = $state({ i: -1, x: 0, y: 0 });
@@ -34,11 +36,48 @@
 	const sx = (bpm) => PAD.left + clamp01(tx(bpm)) * pw();
 	const sy = (db) => PAD.top + (1 - clamp01(ty(db))) * ph();
 	const plotted = (p) => p.bpm > 0 && p.loudness != null;
+
+	const BINS = 24;
+	const hist = $derived.by(() => {
+		const own = new Array(BINS).fill(0), play = new Array(BINS).fill(0);
+		let no = 0, np = 0;
+		for (const p of points) {
+			if (!visible[p.i] || !(p.bpm > 0)) continue;
+			const b = Math.min(BINS - 1, Math.max(0, Math.floor(clamp01(tx(p.bpm)) * BINS)));
+			own[b]++; no++;
+			play[b] += p.plays || 0; np += p.plays || 0;
+		}
+		return { own: own.map((v) => (no ? v / no : 0)), play: play.map((v) => (np ? v / np : 0)), np };
+	});
+
+	function drawStrip() {
+		const x0 = PAD.left, w = pw() / BINS, base = PAD.top - 14, h = STRIP - 18;
+		const mx = Math.max(0.0001, ...hist.own, ...hist.play);
+		for (let b = 0; b < BINS; b++) {
+			const x = x0 + b * w;
+			ctx.fillStyle = 'rgba(148,163,184,0.35)';
+			const ho = (hist.own[b] / mx) * h;
+			ctx.fillRect(x + 1, base - ho, w / 2 - 1, ho);
+			ctx.fillStyle = 'rgba(34,211,238,0.8)';
+			const hp = (hist.play[b] / mx) * h;
+			ctx.fillRect(x + w / 2, base - hp, w / 2 - 1, hp);
+		}
+		ctx.font = '10px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+		ctx.fillStyle = 'rgba(148,163,184,0.75)';
+		ctx.fillText('Share by tempo:', 8, 6);
+		ctx.fillStyle = 'rgba(148,163,184,0.9)'; ctx.fillRect(92, 8, 8, 8);
+		ctx.fillText('tracks owned', 104, 6);
+		ctx.fillStyle = '#22d3ee'; ctx.fillRect(176, 8, 8, 8);
+		ctx.fillStyle = 'rgba(148,163,184,0.75)';
+		ctx.fillText(hist.np ? 'plays' : 'plays (none yet)', 188, 6);
+		ctx.strokeStyle = 'rgba(148,163,184,0.15)'; ctx.beginPath(); ctx.moveTo(x0, base + 0.5); ctx.lineTo(width - PAD.right, base + 0.5); ctx.stroke();
+	}
 	
 	function draw() {
 		if (!ctx) return;
 		ctx.clearRect(0, 0, width, height);
 		const x0 = PAD.left, x1 = width - PAD.right, y0 = PAD.top, y1 = height - PAD.bottom;
+		drawStrip();
 
 		// grid + ticks
 		ctx.font = '10px Inter, sans-serif';
@@ -82,7 +121,9 @@
 				ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.2832); ctx.stroke();
 			} else {
 				ctx.fillStyle = hov ? '#fff' : colorOf(p);
-				ctx.beginPath(); ctx.arc(x, y, hov ? 4.5 : 2.5, 0, 6.2832); ctx.fill();
+				const r = heat ? heatRadius(p, 2.5) : 2.5;
+				ctx.beginPath(); ctx.arc(x, y, hov ? r + 2 : r, 0, 6.2832); ctx.fill();
+				if (heat && !dim) drawHeat(ctx, p, x, y, r, null, false);
 			}
 		}
 		ctx.globalAlpha = 1;
@@ -96,7 +137,7 @@
 	}
 
 	const requestDraw = frameScheduler(draw);
-	$effect(() => { points; visible; selected; colorOf; ext; requestDraw(); });
+	$effect(() => { points; visible; selected; colorOf; ext; hist; heat; requestDraw(); });
 
 	function nearest(x, y) {
 		let best = -1, bd = 64;
@@ -133,7 +174,7 @@
 			if (idxs.length) onselect(idxs, `${Math.round(inv(xa))}–${Math.round(inv(xb))} BPM`, { add: ev.shiftKey });
 		} else {
 			const i = nearest(x, y);
-			if (i >= 0) onselect([i], points[i].title, { toggle: true });
+			if (i >= 0) { onselect([i], points[i].title, { toggle: true }); onfocus(i); }
 		}
 		drag = null; box = null; requestDraw();
 	}
@@ -149,7 +190,7 @@
 	<canvas bind:this={canvas} onmousedown={onDown} onmousemove={onMove} onmouseup={onUp}
 		onmouseleave={() => { drag = null; box = null; hover = { i: -1, x: 0, y: 0 }; requestDraw(); }}
 		class="block cursor-crosshair select-none"></canvas>
-	<p class="absolute top-2 right-4 text-xs text-[var(--text-muted)] pointer-events-none">
+	<p class="absolute top-1 right-4 text-xs text-[var(--text-muted)] pointer-events-none">
 		Drag to select a region · click a track to toggle it · <span class="text-red-400">○</span> bad loudness reading
 	</p>
 	{#if hover.i >= 0}<HoverCard p={points[hover.i]} x={hover.x} y={hover.y} {width} />{/if}

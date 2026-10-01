@@ -111,7 +111,7 @@ async def get_soundscape(db: AsyncSession) -> dict:
     ))).scalar() or 0
     rows = (await db.execute(text(
         "SELECT p.track_id, p.x, p.y, p.computed_at, t.title, ar.name, t.genre, "
-        "       t.play_count, t.last_played_at, t.album_id, a.energy "
+        "       t.play_count, t.last_played_at, t.album_id, a.energy, COALESCE(t.skip_count, 0) "
         "FROM track_projection p "
         "JOIN tracks t ON t.id = p.track_id "
         "LEFT JOIN artists ar ON ar.id = t.artist_id "
@@ -119,7 +119,7 @@ async def get_soundscape(db: AsyncSession) -> dict:
     ))).all()
 
     now = datetime.now(timezone.utc)
-    ids, xs, ys, title, artist, genre, plays, recency, energy, album = ([] for _ in range(10))
+    ids, xs, ys, title, artist, genre, plays, recency, energy, album, skips = ([] for _ in range(11))
     for r in rows:
         ids.append(r[0]); xs.append(r[1]); ys.append(r[2])
         title.append(r[4]); artist.append(r[5]); genre.append(r[6])
@@ -137,6 +137,7 @@ async def get_soundscape(db: AsyncSession) -> dict:
             recency.append(None)
         album.append(r[9])
         energy.append(round(r[10], 3) if r[10] is not None else None)
+        skips.append(r[11])
 
     return {
         "model_version": MODEL,
@@ -147,7 +148,7 @@ async def get_soundscape(db: AsyncSession) -> dict:
         "embedded": embedded,
         "ids": ids, "x": xs, "y": ys,
         "title": title, "artist": artist, "genre": genre,
-        "play_count": plays, "recency_days": recency, "energy": energy, "album_id": album,
+        "play_count": plays, "skip_count": skips, "recency_days": recency, "energy": energy, "album_id": album,
         "family": [genre_family(g) for g in genre],
     }
 

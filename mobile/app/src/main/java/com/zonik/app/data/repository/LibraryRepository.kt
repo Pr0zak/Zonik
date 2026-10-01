@@ -339,6 +339,9 @@ class LibraryRepository @Inject constructor(
     suspend fun scrobble(id: String, time: Long? = null) { api.scrobble(id, submission = true, time = time) }
     suspend fun scrobbleNowPlaying(id: String) { api.scrobble(id, submission = false) }
     suspend fun setRating(id: String, rating: Int) { api.setRating(id, rating) }
+    suspend fun savePlayQueue(ids: List<String>, current: String?, positionMs: Long?) {
+        api.savePlayQueue(ids, current, positionMs)
+    }
 
     suspend fun getNowPlaying(): List<com.zonik.core.model.NowPlayingEntry> {
         return try {

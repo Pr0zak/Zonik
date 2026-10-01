@@ -12,14 +12,21 @@
 	import ExploreWheel from './ExploreWheel.svelte';
 	import ExploreTempo from './ExploreTempo.svelte';
 	import ExploreAtlas from './ExploreAtlas.svelte';
+	import TrackCard from './TrackCard.svelte';
 	import { camelot, familyColor, FAMILY_COLORS } from './explore.js';
-	import { Search, X, RefreshCw, TriangleAlert, Loader2 } from 'lucide-svelte';
+	import { Search, X, RefreshCw, TriangleAlert, Loader2, Route, Grid3x3 } from 'lucide-svelte';
 
 	const LAYOUTS = [['wheel', 'Key wheel'], ['tempo', 'Tempo × loudness'], ['atlas', 'Sound atlas']];
 
 	let layout = $state(load('zonik.map.layout', 'wheel'));
 	let colorMode = $state(load('zonik.map.color', 'family')); // family | plays
 	let unplayedOnly = $state(false);
+	let weight = $state(load('zonik.map.weight', 'tracks')); // wheel shading: tracks | plays
+	let trailRange = $state(load('zonik.map.trail', 'off')); // off | 0 (today) | 24 | 168
+	let territory = $state(load('zonik.map.territory', '') === '1');
+	let trailData = $state(null);
+	let trailTimer = 0;
+	let focus = $state(null); // track id shown in the track card
 	let hiddenFamilies = $state(new Set());
 
 	let loading = $state(true);
@@ -40,6 +47,9 @@
 	function save(k, v) { try { localStorage.setItem(k, v); } catch {} }
 	$effect(() => save('zonik.map.layout', layout));
 	$effect(() => save('zonik.map.color', colorMode));
+	$effect(() => save('zonik.map.weight', weight));
+	$effect(() => save('zonik.map.trail', trailRange));
+	$effect(() => save('zonik.map.territory', territory ? '1' : ''));
 
 	// --- data ---
 	async function loadAll() {
@@ -53,7 +63,7 @@
 		const byId = new Map();
 		const get = (id) => {
 			let p = byId.get(id);
-			if (!p) { p = { id, cam: null, bpm: null, loudness: null, x: null, y: null, plays: 0, family: 'Unknown' }; byId.set(id, p); }
+			if (!p) { p = { id, cam: null, bpm: null, loudness: null, x: null, y: null, plays: 0, skips: 0, family: 'Unknown' }; byId.set(id, p); }
 			return p;
 		};
 		if (feat) for (let k = 0; k < feat.count; k++) {
@@ -61,14 +71,14 @@
 			Object.assign(p, {
 				title: feat.title[k], artist: feat.artist[k], album_id: feat.album_id[k],
 				cam: camelot(feat.key[k], feat.scale[k]), bpm: feat.bpm[k], loudness: feat.loudness[k],
-				family: feat.family[k], plays: feat.play_count[k] || 0,
+				family: feat.family[k], plays: feat.play_count[k] || 0, skips: feat.skip_count?.[k] || 0,
 			});
 		}
 		if (atlas) for (let k = 0; k < atlas.count; k++) {
 			const p = get(atlas.ids[k]);
 			p.x = atlas.x[k]; p.y = atlas.y[k];
 			p.title ??= atlas.title[k]; p.artist ??= atlas.artist[k]; p.album_id ??= atlas.album_id[k];
-			if (!feat) { p.family = atlas.family[k]; p.plays = atlas.play_count[k] || 0; }
+			if (!feat) { p.family = atlas.family[k]; p.plays = atlas.play_count[k] || 0; p.skips = atlas.skip_count?.[k] || 0; }
 		}
 		const bad = new Set((h?.loudness_outliers || []).map((o) => o.track_id));
 		points = [...byId.values()].map((p, i) => ({ ...p, i, bad: bad.has(p.id) }));
@@ -126,6 +136,7 @@
 	});
 	const visibleCount = $derived(visible.reduce((a, b) => a + b, 0));
 
+	const heat = $derived(colorMode === 'plays');
 	const colorOf = $derived(colorMode === 'plays'
 		? (p) => (p.plays ? `rgba(34,211,238,${Math.min(1, 0.35 + Math.log2(1 + p.plays) / 5).toFixed(2)})` : '#f59e0b')
 		: (p) => familyColor(p.family));
@@ -177,8 +188,62 @@
 	}
 	function clearVibe() { vibe = ''; pin = null; }
 
+	// --- listening trail (atlas) ---
+	const indexById = $derived(new Map(points.map((p) => [p.id, p.i])));
+
+	async function loadTrail() {
+		if (trailRange === 'off') { trailData = null; return; }
+		try { trailData = await api.getTrail(Number(trailRange)); } catch { trailData = null; }
+	}
+	$effect(() => {
+		trailRange;
+		loadTrail();
+		clearInterval(trailTimer);
+		trailTimer = trailRange === 'off' ? 0 : setInterval(loadTrail, 30000);
+		return () => clearInterval(trailTimer);
+	});
+
+	// Trail resolved to point indexes; plays of tracks not on the map are dropped.
+	const trail = $derived.by(() => {
+		if (!trailData || !points.length) return null;
+		const steps = [];
+		for (const pl of trailData.plays || []) {
+			const i = indexById.get(pl.track_id);
+			if (i != null) steps.push({ i, at: pl.played_at, source: pl.source });
+		}
+		const np = trailData.now_playing?.[0];
+		const now = np ? indexById.get(np.track_id) ?? null : null;
+		const next = (trailData.queue?.next || []).map((id) => indexById.get(id)).filter((i) => i != null).slice(0, 8);
+		return { steps, now, next, missing: (trailData.plays?.length || 0) - steps.length, queued: !!trailData.queue };
+	});
+
+	function selectTrail() {
+		if (!trail) return;
+		const seen = new Set(), idxs = [];
+		for (const s of trail.steps) if (!seen.has(s.i)) { seen.add(s.i); idxs.push(s.i); }
+		const label = { 0: 'today', 24: 'last 24 hours', 168: 'last 7 days' }[trailRange] || '';
+		sel = { idxs, name: `Played ${label}` };
+	}
+
+	function onfocus(i) { focus = i >= 0 ? points[i]?.id ?? null : null; }
+
 	onMount(loadAll);
-	onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
+	onDestroy(() => { if (pollTimer) clearInterval(pollTimer); clearInterval(trailTimer); });
+
+	// Owned vs played, by key: the gap the "Plays" shading shows.
+	const keyInsight = $derived.by(() => {
+		const own = new Map(), play = new Map();
+		for (const p of points) {
+			if (!p.cam || !visible[p.i]) continue;
+			const k = p.cam.num + p.cam.letter;
+			own.set(k, (own.get(k) || 0) + 1);
+			play.set(k, (play.get(k) || 0) + (p.plays || 0));
+		}
+		const top = (m) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+		const o = top(own), q = top(play);
+		if (!o || !q) return '';
+		return o === q ? `Most owned and most played: ${o}` : `Most owned: ${o} · most played: ${q}`;
+	});
 
 	// Health items worth a banner, each with a fix.
 	const issues = $derived.by(() => {
@@ -239,6 +304,40 @@
 	</div>
 </div>
 
+{#if layout === 'wheel' || layout === 'atlas'}
+	<div class="flex flex-wrap items-center gap-2 mt-2 text-xs">
+		{#if layout === 'wheel'}
+			<div class="flex rounded-md overflow-hidden border border-[var(--border-subtle)]">
+				<span class="px-2 py-1.5 text-[var(--text-muted)] bg-[var(--surface-lowest)]">Shade keys by</span>
+				{#each [['tracks', 'Tracks owned'], ['plays', 'Plays']] as [m, label]}
+					<button onclick={() => (weight = m)} aria-pressed={weight === m}
+						class="px-2.5 py-1.5 {weight === m ? 'bg-[#22d3ee]/15 text-[#22d3ee] font-medium' : 'bg-[var(--surface-lowest)] text-[var(--text-secondary)] hover:bg-[var(--surface-container-high)]'}">{label}</button>
+				{/each}
+			</div>
+			{#if keyInsight}<span class="text-[var(--text-muted)]">{keyInsight}</span>{/if}
+		{:else}
+			<div class="flex rounded-md overflow-hidden border border-[var(--border-subtle)]">
+				<span class="flex items-center gap-1 px-2 py-1.5 text-[var(--text-muted)] bg-[var(--surface-lowest)]"><Route class="w-3.5 h-3.5" /> Trail</span>
+				{#each [['off', 'Off'], ['0', 'Today'], ['24', '24 h'], ['168', '7 days']] as [v, label]}
+					<button onclick={() => (trailRange = v)} aria-pressed={trailRange === v}
+						class="px-2.5 py-1.5 {trailRange === v ? 'bg-[#22d3ee]/15 text-[#22d3ee] font-medium' : 'bg-[var(--surface-lowest)] text-[var(--text-secondary)] hover:bg-[var(--surface-container-high)]'}">{label}</button>
+				{/each}
+			</div>
+			<button onclick={() => (territory = !territory)} aria-pressed={territory}
+				class="flex items-center gap-1 px-2.5 py-1.5 rounded-md border {territory ? 'border-[#22d3ee]/50 bg-[#22d3ee]/15 text-[#22d3ee] font-medium' : 'border-[var(--border-subtle)] bg-[var(--surface-lowest)] text-[var(--text-secondary)] hover:bg-[var(--surface-container-high)]'}">
+				<Grid3x3 class="w-3.5 h-3.5" /> Explored territory
+			</button>
+			{#if trail}
+				<span class="text-[var(--text-muted)]">
+					{trail.steps.length} {trail.steps.length === 1 ? 'play' : 'plays'} on the map{#if trail.missing}, {trail.missing} not on the atlas{/if}
+					· {trail.queued ? `${trail.next.length} queued next` : 'no queue saved by the phone yet'}
+				</span>
+				{#if trail.steps.length}<button onclick={selectTrail} class="text-[#22d3ee] hover:underline">Select these</button>{/if}
+			{/if}
+		{/if}
+	</div>
+{/if}
+
 <div class="mt-2 min-h-[44px]">
 	{#if selTracks.length}
 		<SelectionBar tracks={selTracks} name={sel.name} onclear={() => (sel = { idxs: [], name: '' })} />
@@ -255,11 +354,15 @@
 			<Loader2 class="w-5 h-5 animate-spin text-[#22d3ee]" /> Loading the map…
 		</div>
 	{:else if layout === 'wheel'}
-		<ExploreWheel {points} {visible} {selected} {colorOf} {onselect} />
+		<ExploreWheel {points} {visible} {selected} {colorOf} {onselect} {onfocus} {heat} {weight} />
 	{:else if layout === 'tempo'}
-		<ExploreTempo {points} {visible} {selected} {colorOf} {onselect} />
+		<ExploreTempo {points} {visible} {selected} {colorOf} {onselect} {onfocus} {heat} />
 	{:else}
-		<ExploreAtlas {points} {visible} {selected} {colorOf} {onselect} {pin} />
+		<ExploreAtlas {points} {visible} {selected} {colorOf} {onselect} {onfocus} {heat} {pin} {trail} {territory} />
+	{/if}
+	{#if focus}
+		<TrackCard id={focus} onclose={() => (focus = null)} onpick={(id) => (focus = id)}
+			onselect={(ids, name) => { const idxs = ids.map((id) => indexById.get(id)).filter((i) => i != null); if (idxs.length) sel = { idxs, name }; }} />
 	{/if}
 </div>
 
@@ -267,7 +370,8 @@
 <div class="flex flex-wrap items-center gap-1.5 mt-3 text-xs">
 	{#if colorMode === 'plays'}
 		<span class="flex items-center gap-1 text-[var(--text-secondary)] mr-2"><span class="w-2.5 h-2.5 rounded-full bg-[#f59e0b]"></span>never played</span>
-		<span class="flex items-center gap-1 text-[var(--text-secondary)] mr-3"><span class="w-2.5 h-2.5 rounded-full bg-[#22d3ee]"></span>played (brighter = more)</span>
+		<span class="flex items-center gap-1 text-[var(--text-secondary)] mr-2"><span class="w-2.5 h-2.5 rounded-full bg-[#22d3ee]"></span>played (bigger, brighter = more)</span>
+		<span class="flex items-center gap-1 text-[var(--text-secondary)] mr-3"><span class="w-2.5 h-2.5 rounded-full border border-[#f87171]"></span>skipped as often as finished</span>
 	{/if}
 	<span class="text-[var(--text-muted)] mr-1">Genres:</span>
 	{#each familyCounts as [f, n] (f)}
