@@ -159,13 +159,21 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var skipZi = 0.0
 
     // The spectrum as drawn: eased toward each capture every frame, uploaded as a 64x1 texture.
+    // Alpha carries each band's peak, which holds for a moment and then falls, for the
+    // peak caps of the LED bars.
     private val spectrum = FloatArray(SPECTRUM_BANDS)
-    private val spectrumBytes = ByteBuffer.allocateDirect(SPECTRUM_BANDS)
+    private val peaks = FloatArray(SPECTRUM_BANDS)
+    private val peakHold = FloatArray(SPECTRUM_BANDS)
+    private val spectrumBytes = ByteBuffer.allocateDirect(SPECTRUM_BANDS * 2)
     private var spectrumTexture = 0
 
     // Shockwave rings: seconds since each was launched by a kick, or -1 when idle.
     private val ringAges = floatArrayOf(-1f, -1f, -1f, -1f)
     private var sinceKick = 0f
+
+    // Where each shockwave ring's kick dropped into the water ripples (x, y per ring, in the
+    // same units as `p`).
+    private val dropPos = FloatArray(8)
 
     // The dot tunnel's rings — centre x, y and depth z each — the same for every pixel, so
     // worked out here once a frame rather than per pixel in the shader.
@@ -229,8 +237,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_NEAREST)
         GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, SPECTRUM_BANDS, 1, 0,
-            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, null
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE_ALPHA, SPECTRUM_BANDS, 1, 0,
+            GLES20.GL_LUMINANCE_ALPHA, GLES20.GL_UNSIGNED_BYTE, null
         )
 
         // A new EGL context has lost any texture uploaded to the old one.
@@ -452,6 +460,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             u2("uZ0", skipZr.toFloat(), skipZi.toFloat())
         }
         u1("uSegments", SEGMENTS[(kickCount / KICKS_PER_SEGMENT_CHANGE) % SEGMENTS.size])
+        u1("uKicks", (kickCount % 256).toFloat())
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         uniforms["uTunnel"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 9, tunnelRings, 0) }
         u1("uTwist", (sin(drift * 1.3) * 0.06).toFloat() + mid * 0.05f)
@@ -485,6 +494,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         }
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         uniforms["uRings"]?.let { if (it >= 0) GLES20.glUniform4f(it, ringAges[0], ringAges[1], ringAges[2], ringAges[3]) }
+        uniforms["uDrops"]?.let { if (it >= 0) GLES20.glUniform2fv(it, 4, dropPos, 0) }
 
         GLES20.glEnableVertexAttribArray(prog.aPos)
         GLES20.glVertexAttribPointer(prog.aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
@@ -645,6 +655,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
                 (level * (0.6f + 0.4f * sin(i * 0.9f + clock.toFloat() * 3f))).coerceIn(0f, 1f)
             }
             spectrum[i] = ease(spectrum[i], goal, dt)
+            if (spectrum[i] >= peaks[i]) {
+                peaks[i] = spectrum[i]
+                peakHold[i] = PEAK_HOLD_SEC
+            } else if (peakHold[i] > 0f) {
+                peakHold[i] -= dt
+            } else {
+                peaks[i] = maxOf(peaks[i] - PEAK_FALL_RATE * dt, spectrum[i])
+            }
         }
     }
 
@@ -665,6 +683,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         var slot = ringAges.indexOfFirst { it < 0f }
         if (slot < 0) slot = ringAges.indices.maxBy { ringAges[it] }
         ringAges[slot] = 0f
+        dropPos[slot * 2] = (kotlin.random.Random.nextFloat() * 2f - 1f) * aspect * 0.75f
+        dropPos[slot * 2 + 1] = (kotlin.random.Random.nextFloat() * 2f - 1f) * 0.75f
     }
 
     /**
@@ -742,13 +762,16 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     private fun uploadSpectrum() {
         spectrumBytes.position(0)
-        for (v in spectrum) spectrumBytes.put((v.coerceIn(0f, 1f) * 255f).toInt().toByte())
+        for (i in 0 until SPECTRUM_BANDS) {
+            spectrumBytes.put((spectrum[i].coerceIn(0f, 1f) * 255f).toInt().toByte())
+            spectrumBytes.put((peaks[i].coerceIn(0f, 1f) * 255f).toInt().toByte())
+        }
         spectrumBytes.position(0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, spectrumTexture)
         GLES20.glTexSubImage2D(
             GLES20.GL_TEXTURE_2D, 0, 0, 0, SPECTRUM_BANDS, 1,
-            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, spectrumBytes
+            GLES20.GL_LUMINANCE_ALPHA, GLES20.GL_UNSIGNED_BYTE, spectrumBytes
         )
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
@@ -877,6 +900,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val TITLE_TEXT_PX = 96f
         const val HEIGHTMAP_SIZE = 256
         const val RING_IDLE_SEC = 2.5f
+        const val PEAK_HOLD_SEC = 0.6f
+        const val PEAK_FALL_RATE = 0.7f
         const val SKIP_TOLERANCE = 1e-3
 
         const val CRUISE = 0.12f
@@ -892,7 +917,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
-            "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow",
+            "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uC0", "uC1", "uC2", "uTex",
         )
 

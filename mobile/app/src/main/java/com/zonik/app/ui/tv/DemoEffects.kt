@@ -67,7 +67,35 @@ enum class DemoEffect(
     SCROLLER("Sine scroller", SCROLLER_BODY),
     GLENZ("Glenz vector", GLENZ_BODY),
     DOTTUNNEL("Dot tunnel", DOTTUNNEL_BODY),
-    VOXEL("Voxel hills", VOXEL_BODY, halfRes = true);
+    VOXEL("Voxel hills", VOXEL_BODY, halfRes = true),
+    LEDBARS("LED bars", LEDBARS_BODY, framesCover = true),
+    SPECTRUMRINGS("Spectrum rings", SPECTRUMRINGS_BODY, framesCover = true),
+    RIPPLES("Water ripples", RIPPLES_BODY, framesCover = true),
+    DEFORM("Deformations", DEFORM_BODY),
+    VHS("VHS glitch", VHS_BODY, framesCover = true),
+    DROSTE("Droste zoom", DROSTE_BODY),
+    MOSAIC("Cover mosaic", MOSAIC_BODY),
+    SQUARETUNNEL("Square tunnel", SQUARETUNNEL_BODY),
+    BENTTUBE("Bent tube", BENTTUBE_BODY),
+    FLYINGCOVERS("Flying covers", FLYINGCOVERS_BODY),
+    HYPERSPACE("Hyperspace", HYPERSPACE_BODY),
+    OCEAN("Ocean flyover", OCEAN_BODY),
+    CITY("City at night", CITY_BODY),
+    CLOUDS("Cloud flight", CLOUDS_BODY, halfRes = true),
+    PLANET("Planet flyby", PLANET_BODY),
+    APOLLONIAN("Apollonian zoom", APOLLONIAN_BODY, halfRes = true),
+    KALISET("Kaliset", KALISET_BODY, halfRes = true),
+    WATERFALL("Waterfall", WATERFALL_BODY, feedback = true),
+    HEXPULSE("Hex pulse", HEXPULSE_BODY),
+    LISSAJOUS("Lissajous", LISSAJOUS_BODY, framesCover = true, feedback = true),
+    BUMP("Bump-mapped", BUMP_BODY),
+    SHADEBOBS("Shadebobs", SHADEBOBS_BODY, feedback = true),
+    CHECKER("Checkerboard", CHECKER_BODY),
+    TRUCHET("Truchet maze", TRUCHET_BODY),
+    TRACKER("Tracker", TRACKER_BODY, framesCover = true),
+    HALFTONE("Halftone", HALFTONE_BODY),
+    ASCII("ASCII", ASCII_BODY),
+    MILKDROP("Milkdrop warp", MILKDROP_BODY, feedback = true);
 
     val fragmentShader: String = HEADER + body + FOOTER
 }
@@ -163,6 +191,9 @@ uniform sampler2D uHeight;
 uniform vec3 uTunnel[9];
 uniform float uRainbow;
 uniform vec2 uPx;
+uniform vec2 uDrops[4];
+// Kicks so far, counting 0..255 and round again; for effects that change state on a kick.
+uniform float uKicks;
 
 const float PI = 3.14159265;
 
@@ -220,6 +251,9 @@ vec3 withCover(vec3 col, vec2 p, float h) {
 
 // One band of the 64-band spectrum, 0..1.
 float band(float i) { return texture2D(uSpectrum, vec2((i + 0.5) / 64.0, 0.5)).r; }
+
+// The held peak of one band, 0..1: jumps up with the band, holds, then falls.
+float peakOf(float i) { return texture2D(uSpectrum, vec2((i + 0.5) / 64.0, 0.5)).a; }
 
 // The audio waveform at x in 0..1 across the capture, as -1..1.
 float wave(float x) { return texture2D(uWave, vec2(x, 0.5)).r * 2.0 - 1.0; }
@@ -1491,6 +1525,221 @@ vec3 shade(vec2 p) {
         }
         t += 0.12 + t * 0.09;
     }
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * LED bars: the spectrum as two banks of dot-matrix LEDs either side of the cover, bass next to
+ * it and treble at the screen edges, each column topped by a peak cap that holds and then falls
+ * (the peaks ride in the spectrum texture's alpha). The banks reflect in a glossy floor below.
+ */
+private const val LEDBARS_BODY = """
+vec3 shade(vec2 p) {
+    p += uCenter;
+    float h = 0.26 + 0.01 * uKick;
+    const float COLS = 18.0;
+    const float ROWS = 22.0;
+    float x0 = h + 0.1;
+    float x1 = uAspect * 0.94;
+    float y0 = -0.5;
+    float y1 = 0.78;
+    // Below the floor line the banks mirror, fading out.
+    float refl = 0.0;
+    vec2 q = vec2(abs(p.x), p.y);
+    if (q.y < y0) { refl = 1.0; q.y = y0 + (y0 - q.y) * 1.6; }
+
+    vec3 col = colorAt(0.66) * 0.03;
+    col += colorAt(0.05) * exp(-max(coverDist(p, h), 0.0) * 5.0) * (0.15 + 0.5 * uKick);
+    vec2 a = (q - vec2(x0, y0)) / vec2(x1 - x0, y1 - y0);
+    if (a.x >= 0.0 && a.x < 1.0 && a.y >= 0.0 && a.y < 1.0) {
+        vec2 cell = floor(a * vec2(COLS, ROWS));
+        vec2 f = fract(a * vec2(COLS, ROWS)) - 0.5;
+        // Bands spread log-ish across the columns: bass gets its own columns.
+        float b = floor(pow(cell.x / COLS, 1.4) * 63.0);
+        float level = band(b);
+        float pk = peakOf(b);
+        float row = (cell.y + 0.5) / ROWS;
+        float lit = step(row, level);
+        float cap = step(abs(floor(pk * ROWS) - cell.y), 0.5) * step(0.03, pk);
+        float led = 1.0 - smoothstep(0.30, 0.40, max(abs(f.x) * 0.9, abs(f.y) * 1.25));
+        vec3 hue = colorAt(row * 0.6 + uPhase * 0.5);
+        vec3 c = hue * 0.07;
+        c = mix(c, hue * (0.8 + 0.6 * level), lit);
+        c = mix(c, mix(hue, vec3(1.0), 0.65), cap);
+        col += c * led;
+        // A soft bloom round the lit LEDs.
+        col += hue * lit * 0.12;
+    }
+    col *= 1.0 - refl * (0.7 + 0.25 * clamp((y0 - p.y) * 3.0, 0.0, 1.0));
+    col += colorAt(0.33) * exp(-abs(p.y - y0) * 90.0) * 0.25;
+    col *= clamp(1.3 - 0.25 * length(p), 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * Spectrum rings: fourteen dashed rings round the cover, like a stack of circular meters. Each
+ * ring is a slice of the spectrum (bass innermost); the louder it is, the further its lit arc
+ * reaches round from the top, with a bright tick at its held peak. Neighbouring rings turn
+ * opposite ways.
+ */
+private const val SPECTRUMRINGS_BODY = """
+vec3 shade(vec2 p) {
+    p += uCenter;
+    float h = 0.27 + 0.01 * uKick;
+    float r = length(p);
+    float inner = h * 1.45;
+    const float SP = 0.048;
+    vec3 col = colorAt(0.66) * 0.03;
+    col += colorAt(0.05) * exp(-max(coverDist(p, h), 0.0) * 5.0) * (0.15 + 0.5 * uKick);
+    float k = floor((r - inner) / SP);
+    if (k >= 0.0 && k < 14.0) {
+        float fr = fract((r - inner) / SP);
+        float b = k * 4.0 + 1.0;
+        float level = max(band(b - 1.0), band(b + 1.0));
+        float pk = max(peakOf(b - 1.0), peakOf(b + 1.0));
+        float dir = mod(k, 2.0) * 2.0 - 1.0;
+        // 0 at the top, 0.5 at the bottom; whole turns of uSpin so the wrap never shows.
+        float a = fract(fastAtan2(p.x, p.y) / (2.0 * PI) + dir * uSpin * 0.5 * (1.0 + mod(k, 3.0)));
+        float reach = abs(a - 0.5) * 2.0;          // 1 at the top, 0 at the bottom
+        float lit = step(1.0 - level, reach);
+        float tick = exp(-abs(reach - (1.0 - pk)) * 140.0) * step(0.03, pk);
+        float segs = 24.0 + k * 4.0;
+        float fd = fract(a * segs);
+        float dash = smoothstep(0.08, 0.18, fd) * (1.0 - smoothstep(0.72, 0.82, fd));
+        float ring = smoothstep(0.12, 0.28, fr) * (1.0 - smoothstep(0.68, 0.84, fr));
+        vec3 hue = colorAt(k / 14.0 * 0.7 + uPhase * 0.5);
+        col += hue * ring * dash * (0.08 + lit * (0.55 + 0.7 * level));
+        col += mix(hue, vec3(1.0), 0.6) * ring * tick * 1.2;
+    }
+    col += colorAt(0.05) * exp(-abs(r - inner + 0.012) * 70.0) * (0.25 + 0.8 * uKick);
+    col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
+    return withCover(col, p, h);
+}
+"""
+
+/**
+ * Water ripples over a pool whose floor is the cover. Every kick drops a stone somewhere (the
+ * shockwave rings' ages in `uRings`, their drop points in `uDrops`) and a train of waves spreads
+ * from it; highs bring a light rain of small drops, one per cell of a grid, each on its own
+ * clock. All closed form: each wave's slope is worked out directly, then bends the view of the
+ * floor and catches a highlight in the cover's colours where it faces the light.
+ */
+private const val RIPPLES_BODY = """
+// The slope a wave train adds at d from its drop point, `age` seconds after it fell.
+vec2 ripple(vec2 d, float age, float speed, float amp) {
+    float r = length(d) + 1e-4;
+    float x = r - age * speed;
+    float env = exp(-x * x * 90.0) * exp(-age * 0.8) * amp / (1.0 + r * 3.0);
+    return d / r * cos(x * 70.0) * env;
+}
+vec3 shade(vec2 p) {
+    p += uCenter;
+    vec2 g = vec2(0.0);
+    for (int i = 0; i < 4; i++) {
+        float age = i == 0 ? uRings.x : (i == 1 ? uRings.y : (i == 2 ? uRings.z : uRings.w));
+        if (age < 0.0) continue;
+        g += ripple(p - uDrops[i], age, 0.55, 1.0 + uLow);
+    }
+    // Rain: one small drop per cell, each falling at its own moment in a 2 s cycle (whole
+    // cycles of uTime, so the wrap never shows); cells sit out so it stays a light shower.
+    const float CELL = 0.3;
+    vec2 cell = floor(p / CELL);
+    float hr = hash(cell + 17.0);
+    float rAge = fract(uTime * 20.0 + hr) * 2.0;
+    vec2 at = (cell + 0.25 + 0.5 * vec2(hash(cell + 3.0), hash(cell + 9.0))) * CELL;
+    if (hr < 0.25 + 0.5 * uHigh) g += ripple(p - at, rAge, 0.12, 0.6);
+
+    vec2 q = p + g * 0.05;
+    float h = 0.3;
+    vec3 pool = punch(texture2D(uTex, q * 0.45 + vec2(uTime, -uTime)).rgb) * (0.14 + 0.1 * uLow);
+    pool = mix(pool, colorAt(0.66) * 0.08, 0.35);
+    vec3 col = withCover(pool, q, h);
+    float spec = max(dot(g, vec2(-0.7, 0.7)), 0.0);
+    col += mix(colorAt(0.05 + uPhase * 0.5), vec3(1.0), 0.5) * spec * spec * 0.9;
+    col += colorAt(0.33) * length(g) * 0.08;
+    col *= clamp(1.3 - 0.25 * length(p), 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * Plane deformations, after the old "deformation" intros: the cover mapped through a different
+ * formula for where each pixel looks, cut to the next one every ~13 s with a flash. The flight
+ * over an endless floor and under a ceiling; a five-petal flower tunnel that breathes with the
+ * mids; and a whirlpool that twists harder with the bass. Bass is the forward speed.
+ */
+private const val DEFORM_BODY = """
+vec3 shade(vec2 p) {
+    float slot = uTime * 1.5;
+    float m = floor(slot);
+    float r = length(p);
+    float a = fastAtan2(p.y, p.x + 1e-4) / PI;   // -1..1; ×whole numbers keeps the seam hidden
+    p *= 1.0 - 0.12 * uKick;
+    vec2 uv;
+    float lightF;
+    if (m < 0.5) {
+        float y = p.y + 0.06 * sin(p.x * 2.0 + uTime * PI * 4.0) * (0.3 + uLow);
+        float ay = abs(y) + 0.02;
+        uv = vec2(p.x / ay * 0.5 + 0.3 * sin(uTime * PI * 2.0), 0.6 / ay + uPhase * 2.0);
+        lightF = clamp(ay * 2.4, 0.0, 1.0);
+    } else if (m < 1.5) {
+        float rr = r * (1.0 + 0.3 * sin(a * PI * 5.0 + uSpin * PI * 5.0) * (0.5 + 0.8 * uMid));
+        uv = vec2(a * 2.0, 0.4 / max(rr, 0.03) + uPhase * 2.0);
+        lightF = clamp(rr * 2.2, 0.0, 1.0);
+    } else {
+        float tw = (2.0 + 1.5 * uLow) / max(r, 0.12) * 0.3;
+        uv = rot(tw + uSpin * PI * 2.0) * p * 0.9 + vec2(uPhase, 0.0);
+        lightF = clamp(r * 1.6, 0.15, 1.0);
+    }
+    vec3 col = punch(texture2D(uTex, uv).rgb) * lightF * (0.65 + 0.5 * uLow);
+    col += uC0 * uKick * 0.1;
+    // A flash on each cut.
+    float edge = fract(slot);
+    col += vivid(uC1) * exp(-edge * 40.0) * 0.8;
+    col *= clamp(1.35 - 0.3 * r, 0.0, 1.0);
+    return col;
+}
+"""
+
+/**
+ * VHS glitch: the cover on a worn tape. Rows tear sideways and blocks jump, more and harder on
+ * each kick; the colour channels split; a tracking band rolls up the screen dragging noise
+ * through the picture; scanlines and grain over everything. The tearing reseeds twelve times a
+ * second, the jerky rate of a real deck.
+ */
+private const val VHS_BODY = """
+vec3 tape(vec2 q, float h) {
+    vec3 bg = mix(colorAt(0.66) * 0.05, colorAt(0.33) * 0.16, 0.5 + 0.5 * sin(q.y * 3.0 + uTime * PI * 2.0));
+    float inside = 1.0 - smoothstep(0.0, 0.006, coverDist(q, h));
+    if (inside <= 0.0) return bg;
+    return mix(bg, texture2D(uTex, vec2(q.x, -q.y) / (2.0 * h) + 0.5).rgb, inside);
+}
+vec3 shade(vec2 p) {
+    p += uCenter;
+    vec2 fc = gl_FragCoord.xy;
+    float seed = floor(uTime * 240.0);
+    float amount = 0.35 + 0.65 * uKick;
+    float row = floor(fc.y / 5.0);
+    float shift = 0.0;
+    if (hash(vec2(row, seed)) > 0.97 - 0.12 * amount) shift = (hash(vec2(row, seed + 7.0)) - 0.5) * 0.3 * amount;
+    vec2 blk = floor(fc / vec2(48.0, 18.0));
+    if (hash(blk + seed * 1.37) > 0.992 - 0.1 * uKick) shift += (hash(blk + 3.1) - 0.5) * 0.35;
+    // The tracking band, rolling up the screen six times a cycle.
+    float ry = fract(vPos.y * 0.5 + 0.5 - uTime * 3.0) - 0.5;
+    float trk = exp(-ry * ry * 900.0);
+    shift += trk * 0.03 * sin(fc.y * 0.9 + seed);
+
+    float h = 0.36 + 0.01 * uKick;
+    float split = 0.004 + 0.022 * uKick + 0.006 * uHigh;
+    vec2 q = vec2(p.x + shift, p.y);
+    vec3 col = vec3(tape(q + vec2(split, 0.0), h).r, tape(q, h).g, tape(q - vec2(split, 0.0), h).b);
+    col = punch(col) * 0.85 + col * 0.25;
+    col += trk * hash(fc * 0.5 + seed) * 0.35;
+    col += (hash(fc + seed * 3.3) - 0.5) * (0.06 + 0.08 * uKick);
+    col *= 0.78 + 0.22 * sin(fc.y * PI);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }

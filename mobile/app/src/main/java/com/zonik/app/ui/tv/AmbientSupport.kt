@@ -33,7 +33,12 @@ val DEMO_TRANSITIONS = listOf(
 )
 
 /** Effects built on the cover image itself; the rest only take its colours. */
-val COVER_EFFECTS = setOf(DemoEffect.TUNNEL, DemoEffect.ROTOZOOM, DemoEffect.KALEIDOSCOPE)
+val COVER_EFFECTS = setOf(
+    DemoEffect.TUNNEL, DemoEffect.ROTOZOOM, DemoEffect.KALEIDOSCOPE,
+    DemoEffect.RIPPLES, DemoEffect.DEFORM, DemoEffect.VHS,
+    DemoEffect.DROSTE, DemoEffect.MOSAIC, DemoEffect.SQUARETUNNEL, DemoEffect.BENTTUBE,
+    DemoEffect.FLYINGCOVERS, DemoEffect.PLANET, DemoEffect.BUMP, DemoEffect.HALFTONE, DemoEffect.ASCII,
+)
 
 /**
  * Loads a track's cover small and samples colours from it, so a grunge sleeve and a synth sleeve
