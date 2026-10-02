@@ -50,10 +50,10 @@ mobile/
 - **The Stage** — Now Playing is the whole screen: big art, title, progress, transport, "Up next"
 - **UP** opens an actions strip (Shuffle mix, Favorites, Recently added, By year, Visualizer, Settings); **DOWN** slides browse rails over the Stage while the music keeps playing (Mixes, Recently played, Recently added albums, Playlists)
 - Lift + glow focus on everything, readable from the couch; every screen checked by D-pad alone
-- **Visualizer** (after an idle delay, or on demand) — 31 OpenGL ES 2 demo-scene effects: tunnel, plasma, starfield, rotozoomer, kaleidoscope, metaballs, copper bars, synthwave, moiré, twister, fire, code rain, crystal, aurora, vector balls, Julia, an endless Mandelbrot dive, shockwaves, god rays, a spectrum sunburst, demo fire, melt, ink, oscilloscope, orbits, neon skyline, kaleido frame, sine scroller, glenz vector, dot tunnel and voxel hills
+- **Visualizer** (after an idle delay, or on demand) — 93 OpenGL ES 2 demo-scene effects that move to the music: tunnels and flights (square, hex, triangle and bent tunnels, wormhole, hyperspace, ocean, clouds, planet flyby), endless zooms and fractals (Droste, Apollonian, Kaliset, Julia, Mandelbrot, kaleidoscopic IFS), spectrum meters (LED bars, spectrum rings, radar, waterfall, hex pulse), beat-driven patterns (hypno spiral, op art, Truchet mazes, pulse grid, flower of life, lightning, laser show) and classics (plasma, fire, metaballs, Milkdrop warp, tracker). See them all animated in [docs/tv-visualizer.md](../docs/tv-visualizer.md)
 - Reacts to the music through the output FFT (three bands, onsets and a 64-band spectrum) and waveform, locked to the server's per-track BPM; coloured from the album art
 - Shuffled rotation on each track and on a timer, with ten beat-synced wipe transitions; optional motion trails
-- Visualizer settings page with a live preview and the effect gallery (Settings → Visualizer)
+- Visualizer settings page with a live preview and the effect gallery (Settings → Visualizer): rotation, change interval, 20 transitions and their speed, colours (album art, random, cycle or mixed per effect), track info centred or in a corner, trails
 - Rendered at 960×540 and scaled up by the display hardware; tuned on a Chromecast with Google TV (Mali-G31), which logs frame rates per effect to **Upload Logs**
 - Pairing code login — type server URL, get 6-digit code, enter on server `/pair` page
 - Install via Downloader — enter `zonik:3000/app`

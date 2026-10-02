@@ -50,20 +50,28 @@ Now Playing is the whole screen. UP opens the actions strip, DOWN slides the bro
   <img src="docs/screenshots/tv-visualizer-settings.png" alt="Visualizer settings with live preview" width="48%">
 </p>
 
-Left idle, the TV turns into a demo-scene visualizer: 31 GPU shader effects that react to the music (bass, mids, highs, beats and a 64-band spectrum), coloured from the album art, switching with beat-synced wipes.
+Left idle, the TV turns into a demo-scene visualizer: 93 GPU shader effects that move to the music (bass, mids, highs, kicks and a 64-band spectrum) — tunnels and flights, endless zooms and fractals, spectrum meters, beat-driven patterns and classic demo effects — switching on the beat through 20 wipes. Colours come from the album art, or random, cycling, or mixed per effect.
 
 <p align="center">
-  <img src="docs/screenshots/tv-fx-sunburst.jpg" alt="Sunburst" width="24%">
-  <img src="docs/screenshots/tv-fx-tunnel.jpg" alt="Tunnel" width="24%">
-  <img src="docs/screenshots/tv-fx-synthwave.jpg" alt="Synthwave" width="24%">
-  <img src="docs/screenshots/tv-fx-shockwaves.jpg" alt="Shockwaves" width="24%">
+  <img src="docs/visualizer/hexpulse.gif" alt="Hex pulse" width="24%">
+  <img src="docs/visualizer/spectrumrings.gif" alt="Spectrum rings" width="24%">
+  <img src="docs/visualizer/apollonian.gif" alt="Apollonian" width="24%">
+  <img src="docs/visualizer/truchet.gif" alt="Truchet maze" width="24%">
 </p>
 <p align="center">
-  <img src="docs/screenshots/tv-fx-melt.jpg" alt="Melt" width="24%">
-  <img src="docs/screenshots/tv-fx-fire.jpg" alt="Fire" width="24%">
-  <img src="docs/screenshots/tv-fx-skyline.jpg" alt="Neon skyline" width="24%">
-  <img src="docs/screenshots/tv-fx-crystal.jpg" alt="Crystal" width="24%">
+  <img src="docs/visualizer/hypno.gif" alt="Hypno spiral" width="24%">
+  <img src="docs/visualizer/milkdrop.gif" alt="Milkdrop warp" width="24%">
+  <img src="docs/visualizer/squaretunnel.gif" alt="Square tunnel" width="24%">
+  <img src="docs/visualizer/kifs.gif" alt="Kaleido fractal" width="24%">
 </p>
+<p align="center">
+  <img src="docs/visualizer/planet.gif" alt="Planet flyby" width="24%">
+  <img src="docs/visualizer/tracker.gif" alt="Tracker" width="24%">
+  <img src="docs/visualizer/wormhole.gif" alt="Wormhole" width="24%">
+  <img src="docs/visualizer/radar.gif" alt="Radar" width="24%">
+</p>
+
+All 93, animated: [docs/tv-visualizer.md](docs/tv-visualizer.md).
 
 ## Features
 
@@ -160,7 +168,7 @@ See [API Reference](docs/api.md) for the full list.
 
 The `mobile/` subdirectory is a Gradle multi-module Kotlin/Compose project:
 
-- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support. On a TV it switches to a remote-first UI (the Stage: Now Playing as the root, an UP actions strip, DOWN browse rails) and an idle visualizer of 31 OpenGL ES 2 demo-scene effects — tunnels, plasma, fractals, fire, a sine scroller and more — rendered at 960×540 and driven by the live FFT, the waveform and the server's per-track BPM. Tuned for the Chromecast with Google TV's Mali-G31.
+- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support. On a TV it switches to a remote-first UI (the Stage: Now Playing as the root, an UP actions strip, DOWN browse rails) and an idle visualizer of 93 OpenGL ES 2 demo-scene effects — tunnels and flights, endless zooms and fractals, spectrum meters, beat-driven patterns and more ([see them all](docs/tv-visualizer.md)) — rendered at 960×540 and driven by the live FFT, the waveform and the server's per-track BPM. Tuned for the Chromecast with Google TV's Mali-G31.
 - **`mobile/wear/`** — Pixel Watch standalone player (browses + streams direct from server)
 - **`mobile/core/`** — shared Subsonic API, models, and auth interceptor used by both
 
