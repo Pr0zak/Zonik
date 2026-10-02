@@ -364,7 +364,47 @@ float wipeMask(vec2 frag, vec2 p) {
     if (uWipeKind < 7.5) return fract(frag.y / 54.0) * 0.8
          + (p.x / uAspect * 0.5 + 0.5) * 0.2;                                // venetian blinds
     if (uWipeKind < 8.5) return abs(p.x) / uAspect;                         // split doors
-    return hash(floor(frag / 24.0)) * 0.45 + length(p) / 2.1 * 0.55;        // radiating dissolve
+    if (uWipeKind < 9.5) return hash(floor(frag / 24.0)) * 0.45 + length(p) / 2.1 * 0.55; // radiating dissolve
+    if (uWipeKind < 10.5)                                                    // melt, as in Doom
+        return (0.5 - vPos.y * 0.5) * 0.75 + hash(vec2(floor(frag.x / 8.0), 3.0)) * 0.25;
+    if (uWipeKind < 11.5) {                                                  // hexagon dissolve
+        vec2 r = vec2(1.0, 1.7320508);
+        vec2 q = p / 0.09;
+        vec2 a = mod(q, r) - r * 0.5;
+        vec2 b = mod(q - r * 0.5, r) - r * 0.5;
+        vec2 g = dot(a, a) < dot(b, b) ? a : b;
+        return hash(floor((q - g) * 2.0 + 0.5));
+    }
+    if (uWipeKind < 12.5) {                                                  // shatter
+        vec2 q = p / 0.16;
+        vec2 sk = vec2(q.x - q.y * 0.57735, q.y * 1.1547);
+        vec2 f = fract(sk);
+        vec2 cell = floor(sk) * 2.0 + (f.x + f.y > 1.0 ? 1.0 : 0.0);
+        return hash(cell) * 0.6 + length(p) / 2.1 * 0.4;
+    }
+    float ang = atan(p.y, p.x + 1e-4);
+    if (uWipeKind < 13.5) return length(p) / (0.75 + 0.25 * cos(ang * 5.0)) / 4.1; // star iris
+    if (uWipeKind < 14.5)                                                    // wavy iris
+        return clamp((length(p) + 0.12 * sin(ang * 8.0 + length(p) * 6.0)) / 2.25, 0.0, 1.0);
+    if (uWipeKind < 15.5) return fract((ang / (2.0 * PI) + 0.5) * 6.0);      // pinwheel
+    if (uWipeKind < 16.5) {                                                  // alternating rings
+        float rr = length(p) * 3.0;
+        return mod(floor(rr), 2.0) * 0.5 + fract(rr) * 0.5;
+    }
+    if (uWipeKind < 17.5)                                                    // interlace
+        return mod(floor(frag.y / 3.0), 2.0) * 0.5 + (vPos.x * 0.5 + 0.5) * 0.5;
+    if (uWipeKind < 18.5) {                                                  // block cascade
+        vec2 cell = floor(frag / 48.0);
+        return clamp((cell.x + cell.y) / 31.0, 0.0, 1.0) * 0.8 + hash(cell) * 0.2;
+    }
+    // burn: smooth value noise, so the incoming effect spreads in from scattered holes
+    vec2 q = p * 2.5;
+    vec2 i = floor(q);
+    vec2 f = fract(q);
+    f = f * f * (3.0 - 2.0 * f);
+    float n = mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
+                  mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+    return n * 0.85 + hash(floor(frag / 3.0)) * 0.15;
 }
 
 void main() {

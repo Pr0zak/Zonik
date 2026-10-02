@@ -30,6 +30,8 @@ private val DEFAULT_AMBIENT_PALETTE = listOf(ZonikColors.gold, Color(0xFF7C4DFF)
 val DEMO_TRANSITIONS = listOf(
     "Block dissolve", "Iris", "Clock sweep", "Ragged wipe", "Checkerboard",
     "Diamond", "Spiral", "Venetian blinds", "Split doors", "Radiating dissolve",
+    "Melt", "Hexagons", "Shatter", "Star iris", "Wavy iris",
+    "Pinwheel", "Rings", "Interlace", "Block cascade", "Burn",
 )
 
 /** Effects built on the cover image itself; the rest only take its colours. */
