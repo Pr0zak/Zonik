@@ -38,6 +38,8 @@ val COVER_EFFECTS = setOf(
     DemoEffect.RIPPLES, DemoEffect.DEFORM, DemoEffect.VHS,
     DemoEffect.DROSTE, DemoEffect.MOSAIC, DemoEffect.SQUARETUNNEL, DemoEffect.BENTTUBE,
     DemoEffect.FLYINGCOVERS, DemoEffect.PLANET, DemoEffect.BUMP, DemoEffect.HALFTONE, DemoEffect.ASCII,
+    DemoEffect.WARPTUNNEL, DemoEffect.KALEIDOZOOM, DemoEffect.DROSTESPIRAL, DemoEffect.TRITUNNEL,
+    DemoEffect.OCTOTUNNEL,
 )
 
 /**

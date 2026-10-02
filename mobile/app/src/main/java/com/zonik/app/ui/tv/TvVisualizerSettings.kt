@@ -46,9 +46,9 @@ private val RowShape = RoundedCornerShape(8.dp)
 private val CardFill = Color(0xFF1E1C2A)
 private val CardFillOff = Color(0xFF1B1A21)
 /**
- * Nine to a row, one line each, so all of the effects (59 of them) fit below the settings in
- * seven rows without scrolling; at ten the longer names ("Spectrum rings", "Apollonian zoom")
- * were cut short. Should the list outgrow seven rows, the grid scrolls to keep the focused card
+ * Nine to a row, one line each, so all of the effects (80 of them) fit below the settings in
+ * nine rows without scrolling; at ten the longer names ("Kaleido fractal", "Triangle tunnel")
+ * are cut short. Should the list outgrow nine rows, the grid scrolls to keep the focused card
  * in view.
  */
 private const val CARDS_PER_ROW = 9
@@ -169,8 +169,8 @@ internal fun TvVisualizerSettingsContent(
     LaunchedEffect(Unit) { runCatching { firstRow.requestFocus() } }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        modifier = Modifier.fillMaxSize().padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
@@ -227,7 +227,7 @@ internal fun TvVisualizerSettingsContent(
                 }
             }
 
-            Column(modifier = Modifier.width(300.dp)) {
+            Column(modifier = Modifier.width(260.dp)) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -274,7 +274,7 @@ internal fun TvVisualizerSettingsContent(
         // Scrolls only if the effects outgrow the space; focusing a card brings it into view.
         Column(
             modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
             DemoEffect.entries.chunked(CARDS_PER_ROW).forEach { rowEffects ->
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -313,7 +313,7 @@ private fun SettingRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(22.dp)
+            .height(20.dp)
             .tvFocusLift(RowShape, scale = 1.02f)
             .background(CardFill, RowShape)
             .clickable(onClick = onClick)
@@ -346,7 +346,7 @@ private fun EffectCard(
     }
     Box(
         modifier = modifier
-            .height(26.dp)
+            .height(22.dp)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .tvFocusLift(RowShape)
             .background(fill, RowShape)

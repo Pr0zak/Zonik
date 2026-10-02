@@ -36,6 +36,12 @@ enum class DemoEffect(
      * engines were chunky anyway. Wipes and fades still happen at full resolution.
      */
     val halfRes: Boolean = false,
+    /**
+     * Which version of a shared body to compile: the body sees it as `VARIANT` and switches
+     * with `#if VARIANT == n`, so one effect's code can give several looks (Warp tunnel,
+     * Acid plasma…) without a copy of it per look. 0 is the original.
+     */
+    variant: Int = 0,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
@@ -46,26 +52,20 @@ enum class DemoEffect(
     COPPER("Copper bars", COPPER_BODY),
     SYNTHWAVE("Synthwave", SYNTHWAVE_BODY),
     MOIRE("Moiré", MOIRE_BODY),
-    TWISTER("Twister", TWISTER_BODY),
     FIRE("Fire", FIRE_BODY),
-    MATRIX("Code rain", MATRIX_BODY),
     VORONOI("Crystal", VORONOI_BODY),
     AURORA("Aurora", AURORA_BODY),
-    VECTORBALLS("Vector balls", VECTORBALLS_BODY),
     JULIA("Julia", JULIA_BODY),
     MANDELBROT("Mandelbrot", MANDELBROT_BODY),
     SHOCKWAVE("Shockwaves", SHOCKWAVE_BODY, framesCover = true),
     GODRAYS("God rays", GODRAYS_BODY, framesCover = true),
     SUNBURST("Sunburst", SUNBURST_BODY, framesCover = true),
-    DEMOFIRE("Demo fire", DEMOFIRE_BODY, feedback = true),
     MELT("Melt", MELT_BODY, framesCover = true, feedback = true),
     INK("Ink", INK_BODY, feedback = true),
     OSCILLOSCOPE("Oscilloscope", OSCILLOSCOPE_BODY, framesCover = true),
     ORBITS("Orbits", ORBITS_BODY, framesCover = true),
     SKYLINE("Neon skyline", SKYLINE_BODY),
     KALEIDOFRAME("Kaleido frame", KALEIDOFRAME_BODY, framesCover = true),
-    SCROLLER("Sine scroller", SCROLLER_BODY),
-    GLENZ("Glenz vector", GLENZ_BODY),
     DOTTUNNEL("Dot tunnel", DOTTUNNEL_BODY),
     VOXEL("Voxel hills", VOXEL_BODY, halfRes = true),
     LEDBARS("LED bars", LEDBARS_BODY, framesCover = true),
@@ -95,9 +95,37 @@ enum class DemoEffect(
     TRACKER("Tracker", TRACKER_BODY, framesCover = true),
     HALFTONE("Halftone", HALFTONE_BODY),
     ASCII("ASCII", ASCII_BODY),
-    MILKDROP("Milkdrop warp", MILKDROP_BODY, feedback = true);
+    MILKDROP("Milkdrop warp", MILKDROP_BODY, feedback = true),
+    HYPNO("Hypno spiral", HYPNO_BODY),
+    KIFS("Kaleido fractal", KIFS_BODY, halfRes = true),
+    BASSLENS("Bass lens", BASSLENS_BODY),
+    OPART("Op art", OPART_BODY),
+    WORMHOLE("Wormhole", WORMHOLE_BODY),
+    MARBLE("Liquid marble", MARBLE_BODY, halfRes = true),
+    HEXTUNNEL("Hex tunnel", HEXTUNNEL_BODY),
+    LASERS("Laser show", LASERS_BODY),
+    ROSE("Rose curves", ROSE_BODY),
+    TILEZOOM("Tile zoom", TILEZOOM_BODY),
+    PULSEGRID("Pulse grid", PULSEGRID_BODY),
+    LIGHTNING("Lightning", LIGHTNING_BODY),
+    SACRED("Flower of life", SACRED_BODY),
+    STROBEKALEIDO("Strobe kaleido", STROBEKALEIDO_BODY),
+    // Variations on the effects above, from the same bodies (see `variant`).
+    WARPTUNNEL("Warp tunnel", TUNNEL_BODY, variant = 1),
+    ACIDPLASMA("Acid plasma", PLASMA_BODY, variant = 1),
+    SMOOTHPLASMA("Smooth plasma", PLASMA_BODY, variant = 2),
+    NEBULA("Nebula stars", STARFIELD_BODY, variant = 1),
+    KALEIDOZOOM("Kaleido zoom", KALEIDOSCOPE_BODY, variant = 1),
+    NIGHTDRIVE("Night drive", SYNTHWAVE_BODY, variant = 1),
+    JULIAPULSE("Julia pulse", JULIA_BODY, variant = 1),
+    DROSTESPIRAL("Droste spiral", DROSTE_BODY, variant = 1),
+    TRITUNNEL("Triangle tunnel", SQUARETUNNEL_BODY, variant = 1),
+    OCTOTUNNEL("Octagon tunnel", SQUARETUNNEL_BODY, variant = 2),
+    RAINBOWWARP("Rainbow warp", HYPERSPACE_BODY, variant = 1),
+    MOONLIGHT("Moonlit ocean", OCEAN_BODY, variant = 1),
+    HYPNORINGS("Hypno rings", HYPNO_BODY, variant = 1);
 
-    val fragmentShader: String = HEADER + body + FOOTER
+    val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
 }
 
 /**
@@ -351,6 +379,10 @@ vec3 shade(vec2 p) {
     // Clamped so depth stays bounded; the fog hides the clamp.
     float r = max(length(p), 0.04);
     float a = atan(p.y, p.x + 1e-4) / (2.0 * PI);
+#if VARIANT == 1
+    // Warp tunnel: the walls bulge in five lobes that ripple down the tunnel with the mids.
+    r *= 1.0 + (0.08 + 0.14 * uMid) * sin(a * PI * 10.0 + r * 9.0 - uTime * PI * 8.0);
+#endif
 
     // The kick punches the walls outward for a moment.
     float depth = 0.32 / r * (1.0 - 0.10 * uKick);
@@ -371,7 +403,11 @@ vec3 shade(vec2 p) {
     float f = fract(v * 4.0);
     float d = min(f, 1.0 - f);
     float ring = 1.0 - smoothstep(0.0, 0.03 + 0.09 * uHigh, d);
+#if VARIANT == 1
+    col += ring * colorAt(floor(v * 4.0) * 0.125) * (0.35 + 0.5 * uLow + 1.1 * uKick);
+#else
     col += ring * uC0 * (0.25 + 0.5 * uLow + 0.9 * uKick);
+#endif
 
     // Fog to black at the vanishing point, which sits behind the cover art on screen; a soft
     // glow there swells into each beat.
@@ -393,19 +429,38 @@ private const val PLASMA_BODY = """
 vec3 shade(vec2 p) {
     float t = uTime * PI;
     float ph = uPhase * PI;
+#if VARIANT == 1
+    float w = 3.4 + uMid * 2.5 + uKick * 1.5;
+#else
     float w = 2.2 + uMid * 1.8;
+#endif
     float v = sin(p.x * w * 1.3 + t * 2.0)
             + sin(p.y * w + ph * 2.0)
             + sin((p.x + p.y) * w * 0.7 + t * 3.0)
             + sin(length(p * w + vec2(sin(t) * 1.5, cos(t * 2.0) * 1.2)) * 2.0 - ph * 4.0);
     float f = v * 0.125 + 0.5 + uPhase * 0.5 + uKick * 0.15;
+#if VARIANT == 1
+    // Acid: four hard bands, flipped on every other kick.
+    f = floor(f * 4.0) / 4.0 + (mod(uKicks, 2.0) > 0.5 ? 0.5 : 0.0);
+#elif VARIANT == 2
+    // Smooth: no banding at all, the bands' edges replaced by soft glowing contours.
+#else
     // Banding is the look: 12 steps of palette rather than a smooth gradient.
     f = floor(f * 12.0) / 12.0;
+#endif
     vec3 col = colorAt(f);
+#if VARIANT == 2
+    col += vec3(1.0) * exp(-abs(fract(v * 2.0) - 0.5) * 14.0) * 0.12 * (1.0 + uKick);
+#endif
     col *= 0.45 + 0.55 * uLow + 0.25 * uKick;
+#if VARIANT == 1
+    // Acid stays flat and saturated: hard poster bands with no shading.
+    col = vivid(col) * (0.8 + 0.4 * uKick);
+#else
     // Darken the troughs hard so the field has depth instead of being a flat wash of colour.
     float depth = v * 0.25 + 0.5;
     col *= 0.2 + 0.8 * depth * depth;
+#endif
     col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
     return col;
 }
@@ -426,6 +481,11 @@ vec3 shade(vec2 p) {
     vec2 dir = normalize(p + 1e-4);
     float stretch = 1.0 + uLow * 2.0 + uKick * 10.0;
     vec3 col = uC2 * 0.06 + uC1 * 0.10 * uBeat * (1.0 - smoothstep(0.0, 1.2, length(p)));
+#if VARIANT == 1
+    // Nebula: slow clouds of the cover's colours behind the stars.
+    float neb = sin(p.x * 2.1 + sin(p.y * 3.3 + uTime * PI * 2.0) * 1.5) * sin(p.y * 1.7 - p.x + uTime * PI * 2.0);
+    col += colorAt(0.3 + neb * 0.3) * (0.08 + 0.12 * neb * neb) * (0.7 + 0.6 * uLow);
+#endif
 
     for (int i = 0; i < 3; i++) {
         float fi = float(i);
@@ -451,7 +511,11 @@ vec3 shade(vec2 p) {
         // (uTime * 20: whole cycles over uTime's wrap.)
         float twinkle = 0.7 + 0.6 * uHigh * fract(h * 7.0 + uTime * 20.0);
         float star = smoothstep(size, 0.0, dist) * fade * twinkle * step(0.55, h);
+#if VARIANT == 1
+        col += star * mix(vec3(1.0), colorAt(h * 3.0), 0.7) * 1.8;
+#else
         col += star * mix(vec3(1.0), mix(uC0, uC1, h), 0.5) * 1.6;
+#endif
     }
     return col;
 }
@@ -493,8 +557,13 @@ vec3 shade(vec2 p) {
     float seg = 2.0 * PI / uSegments;
     a = mod(a, seg);
     a = abs(a - seg * 0.5);
+#if VARIANT == 1
+    // Kaleido zoom: the wedge mapped in log-polar, so the pattern pours out of the centre forever.
+    vec2 q = vec2(a * 1.5, log(max(r, 1e-3)) * 0.7 - uPhase - 0.3 * uKick);
+#else
     vec2 q = vec2(cos(a), sin(a)) * r * (0.9 - 0.25 * uLow);
     q += vec2(uPhase, 0.35 * sin(uTime * PI));
+#endif
 
     vec3 col = punch(texture2D(uTex, q).rgb) * (0.6 + 0.5 * uMid);
 
@@ -595,6 +664,16 @@ vec3 shade(vec2 p) {
     } else {
         col = mix(hot * 0.30, vec3(0.0), smoothstep(0.0, 0.9, y));
         vec2 sp = p - vec2(0.0, horizon + 0.32);
+#if VARIANT == 1
+        // Night drive: stars, and a pale moon in place of the striped sun.
+        col = mix(cool * 0.18, vec3(0.0), smoothstep(0.0, 0.6, y));
+        col += vec3(step(0.996, hash(floor(p * 130.0)))) * smoothstep(0.05, 0.4, y) * (0.5 + 0.5 * uHigh);
+        float mr = 0.16 + 0.01 * uKick;
+        float md = length(sp - vec2(0.55, 0.1));
+        col += vec3(0.95, 0.93, 0.85) * (1.0 - smoothstep(mr - 0.01, mr, md));
+        col += vec3(0.8, 0.85, 1.0) * exp(-max(md - mr, 0.0) * 9.0) * (0.2 + 0.3 * uBeat);
+        if (false) {
+#endif
         float r = 0.30 + 0.05 * uLow + 0.02 * uKick;
         float sun = 1.0 - smoothstep(r - 0.01, r, length(sp));
         // The stripes thicken toward the bottom of the sun and scroll down.
@@ -602,6 +681,9 @@ vec3 shade(vec2 p) {
                             fract(sp.y * 14.0 + uPhase * 2.0));
         float cut = sp.y < 0.0 ? 1.0 - stripe : 1.0;
         col = mix(col, mix(hot, colorAt(0.3), clamp(0.5 - sp.y / r * 0.5, 0.0, 1.0)), sun * cut);
+#if VARIANT == 1
+        }
+#endif
     }
     col += hot * exp(-abs(y) * 45.0) * (0.5 + 0.8 * uBeat + 0.4 * uLow);
     return col;
@@ -625,35 +707,6 @@ vec3 shade(vec2 p) {
     col *= 0.55 + 0.5 * uLow;
     col += colorAt(uPhase * 0.5 + 0.66) * uKick * 0.2 * x;
     col *= clamp(1.3 - 0.35 * length(p), 0.0, 1.0);
-    return col;
-}
-"""
-
-/**
- * The twister: a square column rotating at a different angle on every line, so it twists like
- * wrung cloth, and snakes side to side. Each scanline works out which of the four faces it can
- * see — the same trick the Amiga did one raster line at a time.
- */
-private const val TWISTER_BODY = """
-vec3 shade(vec2 p) {
-    vec3 col = colorAt(0.8) * 0.05 * (1.0 - smoothstep(0.0, 1.5, length(p)));
-    float w = 0.30 + 0.08 * uLow + 0.05 * uKick;
-    float cx = 0.25 * sin(p.y * 1.6 + uTime * PI * 4.0);
-    float th = uSpin * PI + uPhase * PI + p.y * (1.3 + 1.0 * sin(uTime * PI * 2.0));
-    float x = p.x - cx;
-    for (int k = 0; k < 4; k++) {
-        float fk = float(k);
-        float x0 = sin(th + fk * PI * 0.5) * w;
-        float x1 = sin(th + (fk + 1.0) * PI * 0.5) * w;
-        if (x1 > x0 && x >= x0 && x < x1) {
-            // A face turned toward the viewer is wide and bright; one edge-on is narrow and dark.
-            float lit = (x1 - x0) / (w * 1.4142);
-            float stripe = 0.8 + 0.2 * step(0.5, fract(p.y * 6.0 - uPhase * 4.0));
-            float edge = 1.0 - smoothstep(0.0, 0.012, min(x - x0, x1 - x));
-            col = colorAt(fk * 0.25 + uPhase * 0.5) * lit * stripe * (0.6 + 0.5 * uMid);
-            col += vec3(1.0) * edge * (0.25 + 0.8 * uKick);
-        }
-    }
     return col;
 }
 """
@@ -693,45 +746,6 @@ vec3 shade(vec2 p) {
     col = mix(col, body, smoothstep(0.3, 0.6, heat));
     col = mix(col, tip, smoothstep(0.55, 0.85, heat));
     col = mix(col, vec3(1.0, 0.97, 0.9), smoothstep(0.85, 1.0, heat) * 0.7);
-    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
-    return col;
-}
-"""
-
-/**
- * Code rain: columns of blocky 3x5 glyphs falling at their own speeds, each with a bright head
- * and a fading trail. The glyphs are bit patterns pulled from a hash, not a font. Highs make them
- * flicker faster, the kick flashes the heads, bass lifts the trails.
- */
-private const val MATRIX_BODY = """
-vec3 shade(vec2 p) {
-    // Laid out on the raw screen position so the columns stay put while other effects wander.
-    vec2 g = vec2((vPos.x + 1.0) * uAspect * 20.0, (1.0 - vPos.y) * 15.0);
-    vec2 cell = floor(g);
-    vec2 f = fract(g);
-    float colH = hash(vec2(cell.x, 3.7));
-    // A whole-number rate per column keeps the fall seamless across uPhase's wrap.
-    float rate = 2.0 + floor(colH * 4.0);
-    float cycle = 45.0;
-    float head = fract(uPhase * 0.5 * rate + colH * 7.0) * cycle;
-    float d = head - cell.y;
-    float trailLen = 10.0 + 14.0 * fract(colH * 31.0);
-
-    vec3 col = vec3(0.0);
-    if (d >= 0.0 && d < trailLen) {
-        float gid = hash(cell + vec2(0.0, floor(uTime * (20.0 + 60.0 * uHigh))) * 1.37);
-        float bx = floor(f.x * 4.0);
-        float by = floor(f.y * 6.0);
-        float bit = 0.0;
-        if (bx < 3.0 && by < 5.0) {
-            float idx = by * 3.0 + bx;
-            bit = mod(floor(gid * 32768.0 / exp2(idx)), 2.0);
-        }
-        vec3 tint = colorAt(0.35);
-        float trail = 1.0 - d / trailLen;
-        col = tint * bit * trail * trail * (0.5 + 0.5 * uLow);
-        if (d < 1.0) col = mix(tint, vec3(1.0), 0.7) * bit * (1.0 + 0.8 * uKick);
-    }
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
@@ -811,67 +825,6 @@ vec3 shade(vec2 p) {
 """
 
 /**
- * Vector balls: 24 shaded balls in three rings of eight, a sphere-ish cage turning in 3D. Each
- * pixel tests every ball with a plain distance check and keeps the nearest in depth — painter's
- * order without sorting. Ring positions step by a fixed 45° rotation, so the loop has no trig.
- * Bass spins it faster, the kick swells the balls.
- */
-private const val VECTORBALLS_BODY = """
-vec3 shade(vec2 p) {
-    p = roam(p, 0.85);
-    float a = uPhase * PI;
-    float b = 0.45 * sin(uTime * PI * 2.0);
-    float ca = cos(a);
-    float sa = sin(a);
-    float cb = cos(b);
-    float sb = sin(b);
-    float bestZ = 99.0;
-    vec2 hitC = vec2(0.0);
-    float hitR = 1.0;
-    float hitRing = 0.0;
-    for (int r = 0; r < 3; r++) {
-        float fr = float(r);
-        float y = (fr - 1.0) * 0.55;
-        float ringR = r == 1 ? 1.0 : 0.72;
-        vec2 v = vec2(ringR, 0.0);
-        if (r == 1) v = rot(PI / 8.0) * v;
-        for (int k = 0; k < 8; k++) {
-            float x1 = v.x * ca - v.y * sa;
-            float z1 = v.x * sa + v.y * ca;
-            float y2 = y * cb - z1 * sb;
-            float z2 = y * sb + z1 * cb;
-            float persp = 1.8 / (3.0 + z2);
-            vec2 sc = vec2(x1, y2) * persp * 0.62;
-            float br = 0.085 * persp * (1.0 + 0.35 * uKick + 0.15 * uLow);
-            vec2 dv = p - sc;
-            if (dot(dv, dv) < br * br && z2 < bestZ) {
-                bestZ = z2;
-                hitC = sc;
-                hitR = br;
-                hitRing = fr;
-            }
-            v = vec2(v.x - v.y, v.x + v.y) * 0.70710678;
-        }
-    }
-
-    vec3 col = colorAt(0.7) * 0.05 * (1.0 - smoothstep(0.0, 1.6, length(p)));
-    col += colorAt(0.1) * 0.12 * uBeat * (1.0 - smoothstep(0.0, 0.8, length(p)));
-    if (bestZ < 98.0) {
-        vec2 n2 = (p - hitC) / hitR;
-        vec3 n = vec3(n2, sqrt(max(1.0 - dot(n2, n2), 0.0)));
-        vec3 light = normalize(vec3(-0.45, 0.55, 0.7));
-        float diff = max(dot(n, light), 0.0);
-        float spec = pow(max(dot(reflect(-light, n), vec3(0.0, 0.0, 1.0)), 0.0), 18.0);
-        float depth = clamp(1.1 - (bestZ + 1.0) * 0.3, 0.35, 1.0);
-        col = colorAt(hitRing / 3.0 + uPhase * 0.5) * (0.18 + 0.82 * diff) * depth
-            + vec3(1.0) * spec * 0.6;
-    }
-    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
-    return col;
-}
-"""
-
-/**
  * Julia set: c circles the classic 0.7885 radius, so the fractal melts continuously from one
  * shape into the next. 24 iterations with smooth escape-time colouring through the palette. Bass
  * zooms in a touch, the kick shifts the colours.
@@ -879,7 +832,15 @@ vec3 shade(vec2 p) {
 private const val JULIA_BODY = """
 vec3 shade(vec2 p) {
     float a = uTime * PI * 2.0;
+#if VARIANT == 1
+    // Julia pulse: c runs round the edge of the Mandelbrot cardioid, where the shapes are
+    // richest, and each kick shoves it outward for a burst of filaments.
+    vec2 e1 = vec2(cos(a), sin(a));
+    vec2 e2 = vec2(cos(2.0 * a), sin(2.0 * a));
+    vec2 c = (0.5 * e1 - 0.25 * e2) * (1.0 + 0.05 * uKick);
+#else
     vec2 c = 0.7885 * vec2(cos(a), sin(a));
+#endif
     vec2 z = rot(uSpin * PI) * p * (1.25 - 0.12 * uLow);
     float n = 0.0;
     float m2 = 0.0;
@@ -1074,32 +1035,6 @@ vec3 shade(vec2 p) {
     col += hue * exp(-abs(r - inner) * 40.0) * (0.3 + 0.7 * uKick);
     col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
     return withCover(col, p, h);
-}
-"""
-
-/**
- * The demo fire, done the original way: every frame each pixel takes the average of the pixels
- * just below it in the previous frame and cools a little, while the bottom row is re-seeded
- * with random hot spots. Heat rises, spreads and dies on its own. The channels cool at
- * different rates, so white seeds age through yellow and red to black; the seeds are tinted by
- * the cover. Bass thickens the seeding, the kick flares it.
- */
-private const val DEMOFIRE_BODY = """
-vec3 shade(vec2 p) {
-    vec2 uv = vPos * 0.5 + 0.5;
-    float wob = sin(uv.y * 40.0 + uTime * PI * 20.0) * uPx.x * 1.5;
-    vec2 src = uv - vec2(wob, uPx.y * 2.0);
-    vec3 c = (prevAt(src) * 2.0
-            + prevAt(src + vec2(uPx.x * 1.5, 0.0))
-            + prevAt(src - vec2(uPx.x * 1.5, 0.0))) * 0.25;
-    // Cooling tuned so flames reach about a third of the way up before dying out.
-    c = c * vec3(0.99, 0.972, 0.935) - 0.003;
-    if (uv.y < 0.02) {
-        float h = hash(vec2(floor(uv.x * 160.0), floor(uTime * 400.0)));
-        float on = step(0.5 - 0.3 * uLow - 0.3 * uKick, h);
-        c = mix(vec3(1.0, 0.95, 0.8), colorAt(0.0) + 0.4, 0.35) * on;
-    }
-    return max(c, 0.0);
 }
 """
 
@@ -1308,125 +1243,6 @@ vec3 shade(vec2 p) {
     col += colorAt(uPhase * 0.5) * exp(-abs(coverDist(p, h) - 0.03) * 50.0) * (0.3 + 1.0 * uKick);
     col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
     return withCover(col, p, h);
-}
-"""
-
-/**
- * The sine scroller: the track title in chrome letters scrolling right to left across the
- * middle of the screen, each column bobbing on a sine, over copper raster bars, with a faded
- * mirror of it all on a rippling floor. The scroll rides uPhase, so bass speeds it up; the kick
- * lifts the letters higher.
- */
-private const val SCROLLER_BODY = """
-// Bars and text at q (screen units, y up).
-vec3 scrollerScene(vec2 q) {
-    vec3 col = vec3(0.0);
-    for (int i = 0; i < 4; i++) {
-        float fi = float(i);
-        float cy = 0.55 * sin(uPhase * PI * 2.0 + fi * 0.8);
-        float d = (q.y - cy) / 0.05;
-        if (abs(d) < 1.0) col = max(col, colorAt(fi * 0.25 + uPhase * 0.5) * sqrt(1.0 - d * d) * 0.45);
-    }
-    float textH = 0.34;
-    float textW = max(uTitleAspect, 0.01) * textH;
-    float loopLen = textW + 1.2;
-    // fract(… + uPhase * 0.5): one whole loop over uPhase's wrap, so the scroll never jumps.
-    float u = fract(q.x / loopLen + uPhase * 0.5);
-    float tx = u * loopLen;
-    float y0 = (0.18 + 0.1 * uLow + 0.1 * uKick) * sin(q.x * 2.5 + uTime * PI * 6.0);
-    float v = (q.y - y0) / textH + 0.5;
-    float ink = tx < textW ? titleAt(vec2(tx / textW, v)) : 0.0;
-    // Chrome: bright top, a dark horizon line across the middle, a coloured bottom.
-    vec3 chrome = mix(colorAt(0.05 + uPhase * 0.5), vec3(1.0), smoothstep(0.35, 0.95, v));
-    chrome *= 0.75 + 0.25 * sin(v * PI * 6.0);
-    chrome *= 1.0 - 0.5 * exp(-abs(v - 0.5) * 40.0);
-    return mix(col, chrome, ink);
-}
-
-vec3 shade(vec2 p) {
-    float floorY = -0.55;
-    vec3 col;
-    if (p.y > floorY) {
-        col = scrollerScene(p);
-    } else {
-        float ripple = sin(p.y * 90.0 + uTime * PI * 12.0) * 0.012;
-        col = scrollerScene(vec2(p.x + ripple, 2.0 * floorY - p.y)) * 0.3;
-        col += colorAt(0.66) * 0.03;
-    }
-    col += colorAt(0.66) * 0.03 * (1.0 - smoothstep(0.0, 1.2, abs(p.y)));
-    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
-    return col;
-}
-"""
-
-/**
- * Glenz vector: a translucent octahedron turning in space, the classic Amiga "glenz" object —
- * its faces in two alternating colours, the far faces showing through the near ones, with
- * bright edges. It is ray-traced per pixel against the eight planes that bound it. Bass and the
- * kick swell it, highs brighten the edges, a glow behind it swells into each beat.
- */
-private const val GLENZ_BODY = """
-vec3 shade(vec2 p) {
-    p = roam(p, 0.7);
-    float s = 1.0 + 0.12 * uKick + 0.08 * uLow;
-    float d = s * 0.57735;
-    // uSpin * PI and uTime * PI * 2: whole turns over their wrap.
-    float ax = uSpin * PI + 0.4;
-    float ay = uTime * PI * 2.0;
-    mat3 rx = mat3(1.0, 0.0, 0.0,  0.0, cos(ax), sin(ax),  0.0, -sin(ax), cos(ax));
-    mat3 ry = mat3(cos(ay), 0.0, -sin(ay),  0.0, 1.0, 0.0,  sin(ay), 0.0, cos(ay));
-    mat3 m = rx * ry;
-    vec3 ro = m * vec3(0.0, 0.0, -3.4);
-    vec3 rd = m * normalize(vec3(p, 1.9));
-
-    float tn = -1e4;
-    float tf = 1e4;
-    vec3 nn = vec3(0.0);
-    vec3 nf = vec3(0.0);
-    for (int i = 0; i < 8; i++) {
-        float fi = float(i);
-        vec3 n = vec3(mod(fi, 2.0) * 2.0 - 1.0,
-                      mod(floor(fi / 2.0), 2.0) * 2.0 - 1.0,
-                      mod(floor(fi / 4.0), 2.0) * 2.0 - 1.0) * 0.57735;
-        float den = dot(n, rd);
-        float num = d - dot(n, ro);
-        if (abs(den) < 1e-5) {
-            if (num < 0.0) tn = 1e5;
-            continue;
-        }
-        float t = num / den;
-        if (den < 0.0) {
-            if (t > tn) { tn = t; nn = n; }
-        } else {
-            if (t < tf) { tf = t; nf = n; }
-        }
-    }
-
-    vec3 col = mix(vec3(0.01, 0.01, 0.03), colorAt(0.66) * 0.12, 0.5 + 0.5 * p.y);
-    col += colorAt(0.33) * exp(-length(p) * 2.0) * 0.12 * (0.5 + uBeat);
-    if (tn < tf && tn > 0.0) {
-        vec3 cA = colorAt(0.05 + uPhase * 0.5);
-        vec3 cB = colorAt(0.55 + uPhase * 0.5);
-        vec3 back = (nf.x * nf.y * nf.z > 0.0 ? cA : cB) * (0.35 + 0.4 * abs(dot(nf, rd)));
-        col = mix(col, back, 0.45);
-        vec3 front = (nn.x * nn.y * nn.z > 0.0 ? cA : cB) * (0.45 + 0.55 * abs(dot(nn, rd)));
-        col = mix(col, front, 0.55);
-        // Edges: where the entry point is almost on a second face as well.
-        vec3 hp = ro + rd * tn;
-        float m1 = 1e4;
-        float m2 = 1e4;
-        for (int i = 0; i < 8; i++) {
-            float fi = float(i);
-            vec3 n = vec3(mod(fi, 2.0) * 2.0 - 1.0,
-                          mod(floor(fi / 2.0), 2.0) * 2.0 - 1.0,
-                          mod(floor(fi / 4.0), 2.0) * 2.0 - 1.0) * 0.57735;
-            float v = d - dot(n, hp);
-            if (v < m1) { m2 = m1; m1 = v; } else if (v < m2) { m2 = v; }
-        }
-        col += vec3(1.0) * exp(-m2 * 60.0) * (0.5 + 0.8 * uHigh);
-    }
-    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
-    return col;
 }
 """
 

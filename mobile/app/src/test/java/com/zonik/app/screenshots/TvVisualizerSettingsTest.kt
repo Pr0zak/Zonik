@@ -42,7 +42,7 @@ class TvVisualizerSettingsTest {
             Surface(Modifier.fillMaxSize(), color = Color(0xFF0E0D14)) {
                 Box(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 27.dp)) {
                     // A few effects left out, to show the off style.
-                    val off = setOf(DemoEffect.MATRIX, DemoEffect.VORONOI, DemoEffect.CITY, DemoEffect.ASCII)
+                    val off = setOf(DemoEffect.VORONOI, DemoEffect.CITY, DemoEffect.ASCII)
                     TvVisualizerSettingsContent(
                         state = VisualizerSettingsState(
                             ambientOn = true, delaySec = 60, beatOn = true, rotateSec = 60,

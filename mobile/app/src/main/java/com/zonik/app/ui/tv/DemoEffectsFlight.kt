@@ -19,7 +19,11 @@ vec3 shade(vec2 p) {
     float lnS = log(S);
     p *= 1.0 - 0.08 * uKick;
     float half_ = fract(uTime * 0.5);
+#if VARIANT == 1
+    float spiral = 1.0;
+#else
     float spiral = step(0.5, half_);
+#endif
     float alpha = atan(lnS / (2.0 * PI)) * spiral;
     vec2 w = vec2(log(max(length(p), 1e-4)), fastAtan2(p.y, p.x));
     // Complex multiply by e^(i·alpha)·cos(alpha): the identity when alpha is 0.
@@ -77,10 +81,25 @@ vec3 shade(vec2 p) {
 internal const val SQUARETUNNEL_BODY = """
 vec3 shade(vec2 p) {
     vec2 q = rot(uSpin * PI + 0.35 * sin(uTime * PI * 2.0)) * p;
+#if VARIANT == 0
     float m = max(max(abs(q.x), abs(q.y)), 0.03);
-    float depth = 0.3 / m * (1.0 - 0.08 * uKick);
     bool side = abs(q.x) > abs(q.y);
     float u = side ? q.y / m : q.x / m;            // -1..1 across the panel
+#else
+    // Triangle (1) or octagon (2): distance to the nearest side of a regular polygon, and the
+    // position along that side.
+#if VARIANT == 1
+    const float N = 3.0;
+#else
+    const float N = 8.0;
+#endif
+    float th = fastAtan2(q.y, q.x) + PI / 2.0;
+    float sectorA = mod(th, 2.0 * PI / N) - PI / N;
+    float m = max(length(q) * cos(sectorA), 0.03);
+    bool side = mod(floor(th / (2.0 * PI / N)), 2.0) > 0.5;
+    float u = tan(sectorA) / tan(PI / N);
+#endif
+    float depth = 0.3 / m * (1.0 - 0.08 * uKick);
     float v = depth * 0.5 + uPhase;
     vec3 col = punch(texture2D(uTex, vec2(u * 0.5 + 0.5, v)).rgb);
     col *= side ? 0.8 : 1.0;
@@ -176,7 +195,11 @@ vec3 shade(vec2 p) {
     float a = fastAtan2(p.y, p.x) / (2.0 * PI) + 0.5;
     vec3 col = colorAt(0.66) * 0.02;
     for (int l = 0; l < 2; l++) {
+#if VARIANT == 1
+        float n = l == 0 ? 200.0 : 320.0;
+#else
         float n = l == 0 ? 140.0 : 230.0;
+#endif
         float s = floor(a * n);
         float h = hash(vec2(s, float(l) * 9.0));
         float pos = fract(h * 7.0 + uPhase * (1.0 + floor(h * 3.0)));
@@ -184,7 +207,11 @@ vec3 shade(vec2 p) {
         float len = 0.02 + 0.12 * uLow + 1.6 * uKick * uKick;
         float along = smoothstep(head - len, head, r) * step(r, head);
         float across = 1.0 - smoothstep(0.0, 0.35, abs(fract(a * n) - 0.5));
+#if VARIANT == 1
+        vec3 tint = 0.5 + 0.5 * cos(2.0 * PI * (a + uPhase * 0.5 + vec3(0.0, 0.33, 0.67)));
+#else
         vec3 tint = mix(vec3(0.75, 0.85, 1.0), colorAt(h), 0.4);
+#endif
         col += tint * along * across * (0.3 + 0.9 * pos) * (l == 0 ? 1.0 : 0.6);
     }
     col += vec3(0.6, 0.75, 1.0) * exp(-r * 4.0) * (0.15 + 1.2 * uKick);
@@ -200,8 +227,14 @@ vec3 shade(vec2 p) {
  */
 internal const val OCEAN_BODY = """
 vec3 sky(float y) {
+#if VARIANT == 1
+    // Moonlight: a deep blue night, the cover's colour only a hint at the horizon.
+    vec3 top = vec3(0.01, 0.015, 0.04);
+    vec3 low = mix(vec3(0.08, 0.12, 0.25), colorAt(0.05), 0.2);
+#else
     vec3 top = colorAt(0.66) * 0.18;
     vec3 low = mix(colorAt(0.05), vec3(1.0, 0.55, 0.3), 0.4);
+#endif
     return mix(low, top, smoothstep(0.0, 0.7, y));
 }
 vec3 shade(vec2 p) {
@@ -212,7 +245,11 @@ vec3 shade(vec2 p) {
     if (p.y > hz) {
         col = sky(p.y - hz);
         float sd = length(p - sun);
+#if VARIANT == 1
+        col += vec3(0.95, 0.95, 1.0) * (1.0 - smoothstep(0.045, 0.05, sd)) + vec3(0.6, 0.7, 1.0) * exp(-sd * 8.0) * (0.15 + 0.3 * uBeat);
+#else
         col += vivid(uC1) * (exp(-sd * 40.0) * 1.5 + exp(-sd * 5.0) * (0.25 + 0.4 * uBeat));
+#endif
         col += vec3(step(0.997, hash(floor(p * 120.0)))) * smoothstep(0.3, 0.8, p.y) * 0.6;
     } else {
         float dy = hz - p.y;
@@ -231,7 +268,11 @@ vec3 shade(vec2 p) {
         col = sky(refl) * 0.55;
         col *= 0.5 + 0.5 * exp(-d * 0.05);
         float glint = exp(-abs(p.x - sun.x + g.x * 0.6) * (3.0 + d * 0.3)) * exp(-abs(g.y) * 2.0);
+#if VARIANT == 1
+        col += vec3(0.8, 0.85, 1.0) * pow(max(g.y * 4.0 + 0.6, 0.0), 3.0) * glint * 0.5;
+#else
         col += vivid(uC1) * pow(max(g.y * 4.0 + 0.6, 0.0), 3.0) * glint * 0.6;
+#endif
         col = mix(col, sky(0.0), clamp(exp(-dy * 25.0), 0.0, 1.0) * 0.8);
     }
     col *= clamp(1.35 - 0.25 * length(p), 0.0, 1.0);
