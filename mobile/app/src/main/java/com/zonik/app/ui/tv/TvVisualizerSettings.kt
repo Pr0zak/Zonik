@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.zonik.app.ui.theme.ZonikColors
 import com.zonik.app.ui.util.tvFocusLift
 
@@ -46,12 +47,11 @@ private val RowShape = RoundedCornerShape(8.dp)
 private val CardFill = Color(0xFF1E1C2A)
 private val CardFillOff = Color(0xFF1B1A21)
 /**
- * Nine to a row, one line each, so all of the effects (80 of them) fit below the settings in
- * nine rows without scrolling; at ten the longer names ("Kaleido fractal", "Triangle tunnel")
- * are cut short. Should the list outgrow nine rows, the grid scrolls to keep the focused card
- * in view.
+ * Ten to a row, one line each at 10sp, so all of the effects (93 of them) fit below the settings
+ * in ten rows without scrolling. Should the list outgrow that, the grid scrolls to keep the
+ * focused card in view.
  */
-private const val CARDS_PER_ROW = 9
+private const val CARDS_PER_ROW = 10
 
 /**
  * The visualizer's own settings page: settings on the left, a live preview of the focused
@@ -346,7 +346,7 @@ private fun EffectCard(
     }
     Box(
         modifier = modifier
-            .height(22.dp)
+            .height(19.dp)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .tvFocusLift(RowShape)
             .background(fill, RowShape)
@@ -356,7 +356,7 @@ private fun EffectCard(
     ) {
         Text(
             effect.label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
             color = if (on) Color.White else Color.White.copy(alpha = 0.28f),
             textAlign = TextAlign.Center,

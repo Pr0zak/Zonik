@@ -113,7 +113,7 @@ enum class DemoEffect(
     // Variations on the effects above, from the same bodies (see `variant`).
     WARPTUNNEL("Warp tunnel", TUNNEL_BODY, variant = 1),
     ACIDPLASMA("Acid plasma", PLASMA_BODY, variant = 1),
-    SMOOTHPLASMA("Smooth plasma", PLASMA_BODY, variant = 2),
+    SMOOTHPLASMA("Soft plasma", PLASMA_BODY, variant = 2),
     NEBULA("Nebula stars", STARFIELD_BODY, variant = 1),
     KALEIDOZOOM("Kaleido zoom", KALEIDOSCOPE_BODY, variant = 1),
     NIGHTDRIVE("Night drive", SYNTHWAVE_BODY, variant = 1),
@@ -123,7 +123,20 @@ enum class DemoEffect(
     OCTOTUNNEL("Octagon tunnel", SQUARETUNNEL_BODY, variant = 2),
     RAINBOWWARP("Rainbow warp", HYPERSPACE_BODY, variant = 1),
     MOONLIGHT("Moonlit ocean", OCEAN_BODY, variant = 1),
-    HYPNORINGS("Hypno rings", HYPNO_BODY, variant = 1);
+    HYPNORINGS("Hypno rings", HYPNO_BODY, variant = 1),
+    HEXRADAR("Hex radar", HEXPULSE_BODY, variant = 1),
+    TRIPULSE("Triangle pulse", HEXPULSE_BODY, variant = 2),
+    HEXFLIP("Hex flip", HEXPULSE_BODY, variant = 3),
+    CELLPULSE("Cell pulse", HEXPULSE_BODY, variant = 4),
+    SPECTRUMSQUARES("Square meter", SPECTRUMRINGS_BODY, framesCover = true, variant = 1),
+    SPECTRUMSPIRAL("Spiral meter", SPECTRUMRINGS_BODY, framesCover = true, variant = 2),
+    RADAR("Radar", SPECTRUMRINGS_BODY, framesCover = true, variant = 3),
+    APONEON("Neon circles", APOLLONIAN_BODY, variant = 1, halfRes = true),
+    APOPULSE("Circle pulse", APOLLONIAN_BODY, variant = 2, halfRes = true),
+    APOGLASS("Glass circles", APOLLONIAN_BODY, variant = 3, halfRes = true),
+    HEXTRUCHET("Hex Truchet", TRUCHET_BODY, variant = 1),
+    MAZE("Maze", TRUCHET_BODY, variant = 2),
+    TUBES("Truchet tubes", TRUCHET_BODY, variant = 3);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
 }
@@ -1400,28 +1413,53 @@ vec3 shade(vec2 p) {
  * ring is a slice of the spectrum (bass innermost); the louder it is, the further its lit arc
  * reaches round from the top, with a bright tick at its held peak. Neighbouring rings turn
  * opposite ways.
+ *
+ * Variants: 1 Square meter (square rings), 2 Spiral meter (one coiled meter), 3 Radar
+ * (a sweep lights the dashes as it passes).
  */
 private const val SPECTRUMRINGS_BODY = """
 vec3 shade(vec2 p) {
     p += uCenter;
     float h = 0.27 + 0.01 * uKick;
+#if VARIANT == 1
+    // Squares: each ring follows a rounded square instead of a circle.
+    float r = max(abs(p.x), abs(p.y)) * 1.12;
+#else
     float r = length(p);
+#endif
     float inner = h * 1.45;
     const float SP = 0.048;
     vec3 col = colorAt(0.66) * 0.03;
     col += colorAt(0.05) * exp(-max(coverDist(p, h), 0.0) * 5.0) * (0.15 + 0.5 * uKick);
-    float k = floor((r - inner) / SP);
+    float a0 = fastAtan2(p.x, p.y) / (2.0 * PI) + 0.5;      // 0..1 round from the bottom
+#if VARIANT == 2
+    // Spiral: one continuous meter coiling outward, a ring's width further each turn.
+    float rr = (r - inner) / SP - a0;
+#else
+    float rr = (r - inner) / SP;
+#endif
+    float k = floor(rr);
     if (k >= 0.0 && k < 14.0) {
-        float fr = fract((r - inner) / SP);
+        float fr = fract(rr);
         float b = k * 4.0 + 1.0;
         float level = max(band(b - 1.0), band(b + 1.0));
         float pk = max(peakOf(b - 1.0), peakOf(b + 1.0));
         float dir = mod(k, 2.0) * 2.0 - 1.0;
+#if VARIANT == 2
+        float a = a0;
+#else
         // 0 at the top, 0.5 at the bottom; whole turns of uSpin so the wrap never shows.
-        float a = fract(fastAtan2(p.x, p.y) / (2.0 * PI) + dir * uSpin * 0.5 * (1.0 + mod(k, 3.0)));
+        float a = fract(a0 - 0.5 + dir * uSpin * 0.5 * (1.0 + mod(k, 3.0)));
+#endif
         float reach = abs(a - 0.5) * 2.0;          // 1 at the top, 0 at the bottom
         float lit = step(1.0 - level, reach);
         float tick = exp(-abs(reach - (1.0 - pk)) * 140.0) * step(0.03, pk);
+#if VARIANT == 3
+        // Radar: a sweep circles once every two seconds; dashes glow as it passes and fade.
+        float behind = fract(fract(uTime * 10.0) - a0);
+        float glow = exp(-behind * 5.0);
+        lit = max(lit * 0.35, glow * (0.3 + level));
+#endif
         float segs = 24.0 + k * 4.0;
         float fd = fract(a * segs);
         float dash = smoothstep(0.08, 0.18, fd) * (1.0 - smoothstep(0.72, 0.82, fd));
@@ -1430,6 +1468,10 @@ vec3 shade(vec2 p) {
         col += hue * ring * dash * (0.08 + lit * (0.55 + 0.7 * level));
         col += mix(hue, vec3(1.0), 0.6) * ring * tick * 1.2;
     }
+#if VARIANT == 3
+    float sweep = fract(uTime * 10.0 - a0);
+    col += colorAt(0.05) * exp(-min(sweep, 1.0 - sweep) * 120.0) * step(inner, r) * step(r, inner + SP * 14.0) * 0.8;
+#endif
     col += colorAt(0.05) * exp(-abs(r - inner + 0.012) * 70.0) * (0.25 + 0.8 * uKick);
     col *= clamp(1.3 - 0.3 * r, 0.0, 1.0);
     return withCover(col, p, h);

@@ -439,16 +439,25 @@ vec3 shade(vec2 p) {
  * cell and inverted in a circle, seven times over, leaves a distance to the nearest circle edge
  * and the closest approach to the centre. Two copies at zooms four times apart cross-fade so
  * the dive never ends. Drawn at half resolution.
+ *
+ * Variants: 1 Neon circles (edges only), 2 Circle pulse (breathes on the kick, banded),
+ * 3 Glass circles (circles shaded like lenses).
  */
 internal const val APOLLONIAN_BODY = """
 vec2 apo(vec2 q) {
     float scale = 1.0;
     float trap = 1e9;
+#if VARIANT == 2
+    // Pulse: the inversion strength jumps with the kick, so the whole packing breathes.
+    float kk = 1.15 + 0.05 * uLow + 0.14 * uKick;
+#else
+    float kk = 1.15 + 0.05 * uLow;
+#endif
     for (int i = 0; i < 7; i++) {
         q = -1.0 + 2.0 * fract(0.5 * q + 0.5);
         float r2 = dot(q, q);
         trap = min(trap, r2);
-        float k = (1.15 + 0.05 * uLow) / r2;
+        float k = kk / r2;
         q *= k;
         scale *= k;
     }
@@ -459,8 +468,23 @@ vec3 layer(vec2 p, float z) {
     vec2 q = rot(uSpin * PI) * p * zoom * 1.1 + vec2(0.31, 0.27);
     vec2 a = apo(q);
     float d = a.x / zoom;
+#if VARIANT == 1
+    // Neon: black, with only the circle edges glowing, coloured by how deep they sit.
+    vec3 col = colorAt(a.y * 1.5 + uPhase * 0.5) * (exp(-d * 300.0) * 1.3 + exp(-d * 40.0) * 0.12) * (0.8 + 0.7 * uKick);
+#elif VARIANT == 2
+    // Pulse: hard rainbow bands by depth.
+    vec3 col = colorAt(floor(a.y * 6.0) / 6.0 + uPhase * 0.5) * (0.3 + 0.5 * a.y);
+    col += vec3(1.0) * exp(-d * 300.0) * (0.5 + 0.8 * uKick);
+#elif VARIANT == 3
+    // Glass: each circle shaded like a lens, bright in the middle and dark at the rim.
+    float lens = pow(clamp(1.0 - a.y, 0.0, 1.0), 2.0);
+    vec3 col = colorAt(a.y * 0.8 + uPhase * 0.5) * (0.12 + 1.1 * lens);
+    col += vec3(1.0) * pow(lens, 8.0) * 0.5;
+    col *= 1.0 - 0.7 * exp(-d * 200.0);
+#else
     vec3 col = colorAt(a.y * 0.6 + uPhase * 0.5) * (0.25 + 0.35 * a.y);
     col += colorAt(0.05) * exp(-d * 260.0) * (0.8 + 0.6 * uKick);
+#endif
     return col;
 }
 vec3 shade(vec2 p) {

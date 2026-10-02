@@ -76,9 +76,48 @@ vec3 shade(vec2 p) {
  * Hex pulse: a honeycomb filling the screen, each cell lit by the band of the spectrum that
  * belongs to its distance from the centre — bass in the middle, treble at the edges — and every
  * kick's shockwave ring passing through it as a brighter wave.
+ *
+ * Variants: 1 Hex radar (spectrum by angle), 2 Triangle pulse (triangle grid), 3 Hex flip
+ * (tiles turn over as the wave passes), 4 Cell pulse (drifting Voronoi cells).
  */
 internal const val HEXPULSE_BODY = """
 vec3 shade(vec2 p) {
+#if VARIANT == 2
+    // Triangles: skewed coordinates make an equilateral triangle grid; each cell is the lower
+    // or upper half of a rhombus, and the edge measure comes from its smallest barycentric
+    // coordinate (1/3 at the centre, 0 on an edge).
+    const float S = 0.11;
+    vec2 q = p / S;
+    vec2 sk = vec2(q.x - q.y * 0.57735, q.y * 1.1547);
+    vec2 base = floor(sk);
+    vec2 f = fract(sk);
+    bool upper = f.x + f.y > 1.0;
+    vec3 bary = upper ? vec3(1.0 - f.x, 1.0 - f.y, f.x + f.y - 1.0) : vec3(f.x, f.y, 1.0 - f.x - f.y);
+    vec2 cs = base + (upper ? vec2(2.0 / 3.0) : vec2(1.0 / 3.0));
+    vec2 centre = vec2(cs.x + cs.y * 0.5, cs.y * 0.866) * S;
+    float edge = 0.5 - min(min(bary.x, bary.y), bary.z) * 1.5;
+#elif VARIANT == 4
+    // Cells: a Voronoi diagram of drifting seeds; the edge measure is how close the
+    // second-nearest seed is.
+    const float S = 0.16;
+    vec2 q = p / S;
+    vec2 base = floor(q);
+    float d1 = 9.0;
+    float d2 = 9.0;
+    vec2 best = vec2(0.0);
+    for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+            vec2 c = base + vec2(float(i), float(j));
+            float h = hash(c);
+            vec2 seed = c + 0.5 + 0.35 * vec2(sin(uTime * PI * 2.0 * (1.0 + floor(h * 3.0)) + h * 6.3),
+                                              cos(uTime * PI * 2.0 * (1.0 + floor(h * 3.0)) + h * 4.1));
+            float d = length(q - seed);
+            if (d < d1) { d2 = d1; d1 = d; best = seed; } else if (d < d2) { d2 = d; }
+        }
+    }
+    vec2 centre = best * S;
+    float edge = 0.5 - clamp((d2 - d1) * 1.2, 0.0, 0.5);
+#else
     const float S = 0.075;
     vec2 r = vec2(1.0, 1.7320508);
     vec2 q = p / S;
@@ -86,16 +125,37 @@ vec3 shade(vec2 p) {
     vec2 b = mod(q - r * 0.5, r) - r * 0.5;
     vec2 g = dot(a, a) < dot(b, b) ? a : b;
     vec2 centre = (q - g) * S;
-    float edge = max(abs(g.x) * 0.866 + abs(g.y) * 0.5, abs(g.y));   // 0 centre, ~0.5 edge
+#endif
     float dist = length(centre);
-    float level = band(floor(clamp(dist / 1.9, 0.0, 1.0) * 63.0));
     float wave = 0.0;
     for (int i = 0; i < 4; i++) {
         float age = i == 0 ? uRings.x : (i == 1 ? uRings.y : (i == 2 ? uRings.z : uRings.w));
         if (age < 0.0) continue;
         wave += exp(-abs(dist - age * 0.9) * 10.0) * exp(-age * 0.8);
     }
+#if VARIANT == 3
+    // Flip: each hexagon turns over like a tile as the wave passes, showing its other colour.
+    float flip = wave * PI * 1.5;
+    float cf = cos(flip);
+    g.x /= max(abs(cf), 0.06);
+    bool back = cf < 0.0;
+#endif
+#if VARIANT == 0 || VARIANT == 1 || VARIANT == 3
+    float edge = max(abs(g.x) * 0.866 + abs(g.y) * 0.5, abs(g.y));   // 0 centre, ~0.5 edge
+#endif
+#if VARIANT == 1
+    // Radar: the spectrum runs round the honeycomb by angle (bass at the top, mirrored down
+    // both sides), as in the sunburst.
+    float u = abs(fastAtan2(centre.x, centre.y)) / PI;
+    float level = band(floor(u * 63.0));
+    vec3 hue = colorAt(u * 0.5 + uPhase * 0.5);
+#else
+    float level = band(floor(clamp(dist / 1.9, 0.0, 1.0) * 63.0));
     vec3 hue = colorAt(dist * 0.3 + uPhase * 0.5);
+#endif
+#if VARIANT == 3
+    if (back) hue = colorAt(dist * 0.3 + uPhase * 0.5 + 0.5);
+#endif
     float fill = 1.0 - smoothstep(0.38, 0.44, edge);
     float rim = exp(-abs(edge - 0.43) * 40.0);
     vec3 col = hue * fill * (0.04 + 0.85 * level * level + 0.6 * wave);
@@ -236,9 +296,48 @@ vec3 shade(vec2 p) {
  * at random so the arcs join into endless winding paths. Every kick re-turns the tiles, so the
  * maze rewires itself on the beat; light flows along the paths, brighter where the band for
  * that part of the screen is loud.
+ *
+ * Variants: 1 Hex Truchet (three arcs per hexagon), 2 Maze (C64 "10 PRINT" diagonals),
+ * 3 Truchet tubes (fat, shaded paths).
  */
 internal const val TRUCHET_BODY = """
 vec3 shade(vec2 p) {
+    float level = band(floor(clamp(length(p) / 1.9, 0.0, 1.0) * 63.0));
+    vec3 hue = colorAt(length(p) * 0.35 + uPhase * 0.5);
+#if VARIANT == 1
+    // Hex Truchet: each hexagon holds three arcs round alternate corners, joining the middles
+    // of neighbouring sides, so the paths wind in three directions instead of two.
+    const float S = 0.17;
+    vec2 q = rot(0.25 * sin(uTime * PI * 2.0)) * p / S + vec2(uTime * 4.0, 0.0);
+    vec2 r = vec2(1.0, 1.7320508);
+    vec2 a = mod(q, r) - r * 0.5;
+    vec2 b = mod(q - r * 0.5, r) - r * 0.5;
+    vec2 g = dot(a, a) < dot(b, b) ? a : b;
+    vec2 cell = floor((q - g) * 2.0 + 0.5);
+    float flip = step(0.5, hash(cell + vec2(uKicks * 1.37, uKicks * 0.71)));
+    float d = 9.0;
+    float along = 0.0;
+    for (int k = 0; k < 3; k++) {
+        float ang = PI / 6.0 + (float(k) * 2.0 + flip) * PI / 3.0;
+        vec2 v = 0.57735 * vec2(cos(ang), sin(ang));
+        vec2 rel = g - v;
+        float dk = abs(length(rel) - 0.288675);
+        if (dk < d) { d = dk; along = fastAtan2(rel.y, rel.x) / (PI / 1.5) + float(k); }
+    }
+    d *= 0.95;
+    float lineW = 0.055;
+#elif VARIANT == 2
+    // Maze: the "10 PRINT" diagonals of the Commodore 64, one slash or backslash per cell,
+    // rewired on every kick.
+    const float S = 0.1;
+    vec2 q = rot(0.25 * sin(uTime * PI * 2.0)) * p / S + vec2(uTime * 4.0, 0.0);
+    vec2 cell = floor(q);
+    vec2 f = fract(q);
+    float flip = step(0.5, hash(cell + vec2(uKicks * 1.37, uKicks * 0.71)));
+    float d = (flip > 0.5 ? abs(f.x - f.y) : abs(f.x + f.y - 1.0)) * 0.7071;
+    float along = (flip > 0.5 ? f.x + f.y : f.x - f.y + 1.0) * 0.5 + mod(cell.x + cell.y, 2.0);
+    float lineW = 0.07;
+#else
     const float S = 0.14;
     vec2 q = rot(0.25 * sin(uTime * PI * 2.0)) * p / S + vec2(uTime * 4.0, 0.0);
     vec2 cell = floor(q);
@@ -250,13 +349,26 @@ vec3 shade(vec2 p) {
     float d = min(d1, d2);
     // Position along the arc, so light can run along the path.
     vec2 rel = d1 < d2 ? f : 1.0 - f;
-    float along = atan(rel.y, rel.x + 1e-4) / (0.5 * PI);
-    float level = band(floor(clamp(length(p) / 1.9, 0.0, 1.0) * 63.0));
-    vec3 hue = colorAt(length(p) * 0.35 + uPhase * 0.5);
-    float line = 1.0 - smoothstep(0.06, 0.1, d);
-    float flow = 0.5 + 0.5 * sin((along + mod(cell.x + cell.y, 2.0)) * PI * 2.0 - uPhase * PI * 4.0);
+    float along = atan(rel.y, rel.x + 1e-4) / (0.5 * PI) + mod(cell.x + cell.y, 2.0);
+#if VARIANT == 3
+    float lineW = 0.17;
+#else
+    float lineW = 0.06;
+#endif
+#endif
+    float flow = 0.5 + 0.5 * sin(along * PI * 2.0 - uPhase * PI * 4.0);
+#if VARIANT == 3
+    // Tubes: fat paths shaded as if round, lit from the top left, with a moving band of light.
+    float hgt = sqrt(max(1.0 - (d / lineW) * (d / lineW), 0.0));
+    float inside = step(d, lineW);
+    vec3 col = hue * inside * (0.12 + 0.75 * hgt) * (0.6 + 0.8 * level);
+    col += vec3(1.0) * inside * pow(hgt, 12.0) * 0.35;
+    col += hue * inside * flow * hgt * (0.2 + 0.6 * uKick);
+#else
+    float line = 1.0 - smoothstep(lineW, lineW + 0.04, d);
     vec3 col = hue * line * (0.15 + (0.5 + 0.8 * level) * flow);
     col += hue * exp(-d * 18.0) * (0.06 + 0.3 * uKick);
+#endif
     col *= clamp(1.35 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
