@@ -41,6 +41,26 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     @Volatile var transitionStyle: Int = -1
     /** How long a switch between effects takes; set from the TV Visualizer page. */
     @Volatile var transitionSec: Float = 1.6f
+    /**
+     * Where the effects' colours come from: "ALBUM" (the cover's palette), "RANDOM" (a fresh
+     * vivid palette at every effect change), "CYCLE" (a vivid palette turning slowly round the
+     * colour wheel) or "MIXED" (one of those three, picked at random for each effect). The
+     * setting's own value, so the view passes it straight through.
+     */
+    @Volatile var colorMode: String = "ALBUM"
+    private val cyclePalette = FloatArray(9)
+
+    /** The colours one effect on screen is wearing: its resolved mode and, for RANDOM, its palette. */
+    private class Look(val mode: String, val random: FloatArray)
+    private var lookCurrent = Look("ALBUM", randomVividPalette())
+    private var lookNext = lookCurrent
+    /** Set while drawing the incoming effect of a transition, so it gets [lookNext]. */
+    private var drawingIncoming = false
+
+    private fun newLook(): Look {
+        val mode = if (colorMode == "MIXED") LOOK_MODES[kotlin.random.Random.nextInt(LOOK_MODES.size)] else colorMode
+        return Look(mode, randomVividPalette())
+    }
     @Volatile var pulse: AmbientPulse = AmbientPulse()
     @Volatile var beatClock: BeatClock? = null
     @Volatile private var pendingCover: Bitmap? = null
@@ -358,6 +378,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             transition += dt / transitionSec.coerceAtLeast(0.1f)
             if (transition >= 1f) {
                 current = incoming
+                lookCurrent = lookNext
                 next = null
                 // The incoming effect's feedback becomes the current one's.
                 val done = slotNext
@@ -376,6 +397,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         if (kick > 0.9f || waitedForBeat >= BEAT_WAIT_SEC || fade < 1f) {
             next = requested
             transition = 0f
+            lookNext = newLook()
             waitedForBeat = 0f
             // A feedback effect coming in starts from black, not from the last one's leftovers.
             slotNext?.let { clearTarget(it.prev); clearTarget(it.next) }
@@ -388,6 +410,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     }
 
     private fun draw(e: DemoEffect, wipe: Float, incomingSide: Boolean) {
+        drawingIncoming = incomingSide
         val prog = programs[e] ?: return
         val slot = if (incomingSide) slotNext else slotCurrent
         val pass = scratch
@@ -440,7 +463,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uWipe", wipe)
         u2("uPx", 1f / surfaceWidth, 1f / surfaceHeight)
         u1("uBlitScale", blitScale)
-        u1("uRainbow", rainbow)
+        val look = if (drawingIncoming) lookNext else lookCurrent
+        u1("uRainbow", if (look.mode == "ALBUM") rainbow else 0f)
         u1("uTitleAspect", titleAspect)
         u1("uWipeSide", if (incomingSide) 1f else 0f)
         u1("uWipeKind", wipeKind.toFloat())
@@ -471,7 +495,11 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uHigh", high)
         u1("uKick", kick)
         u1("uBeat", beatClock?.anticipation(System.currentTimeMillis()) ?: 0f)
-        val c = palette
+        val c = when (look.mode) {
+            "RANDOM" -> look.random
+            "CYCLE" -> cyclePalette
+            else -> palette
+        }
         uniforms["uC0"]?.let { GLES20.glUniform3f(it, c[0], c[1], c[2]) }
         uniforms["uC1"]?.let { GLES20.glUniform3f(it, c[3], c[4], c[5]) }
         uniforms["uC2"]?.let { GLES20.glUniform3f(it, c[6], c[7], c[8]) }
@@ -540,6 +568,13 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         clock += dt
         moveBalls()
         moveTunnel()
+        // The setting changed while nothing was switching: apply it straight away (a MIXED
+        // setting keeps whatever the effect on screen already wears).
+        if (next == null && colorMode != "MIXED" && lookCurrent.mode != colorMode) {
+            lookCurrent = newLook()
+            lookNext = lookCurrent
+        }
+        if (lookCurrent.mode == "CYCLE" || lookNext.mode == "CYCLE") fillCyclePalette()
         advanceSpectrum(target, dt)
         advanceRings(dt)
         advanceDive(dt)
@@ -778,6 +813,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
+    /** Three vivid colours a third of the wheel apart, turning once every [CYCLE_SEC]. */
+    private fun fillCyclePalette() {
+        val base = ((clock / CYCLE_SEC) % 1.0).toFloat() * 360f
+        for (i in 0 until 3) {
+            hsvInto(cyclePalette, i * 3, (base + i * 120f + if (i == 2) -60f else 0f) % 360f, 0.85f, 1f)
+        }
+    }
+
     private fun moveTunnel() {
         val t = time * Math.PI
         for (j in 0 until 9) {
@@ -902,6 +945,39 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val HEIGHTMAP_SIZE = 256
         const val RING_IDLE_SEC = 2.5f
         const val PEAK_HOLD_SEC = 0.6f
+        val LOOK_MODES = arrayOf("ALBUM", "RANDOM", "CYCLE")
+        /** One full turn of the colour wheel in Cycle mode. */
+        const val CYCLE_SEC = 40.0
+
+        private val hsvScratch = FloatArray(3)
+
+        /** Writes the HSV colour as 0..1 RGB into [out] at [offset]. */
+        fun hsvInto(out: FloatArray, offset: Int, hue: Float, sat: Float, value: Float) {
+            hsvScratch[0] = hue; hsvScratch[1] = sat; hsvScratch[2] = value
+            val c = android.graphics.Color.HSVToColor(hsvScratch)
+            out[offset] = android.graphics.Color.red(c) / 255f
+            out[offset + 1] = android.graphics.Color.green(c) / 255f
+            out[offset + 2] = android.graphics.Color.blue(c) / 255f
+        }
+
+        /**
+         * Three vivid colours from a random scheme: a base hue plus either its neighbours
+         * (analogous), its opposite, or a triad — so a random palette still looks chosen.
+         */
+        fun randomVividPalette(): FloatArray {
+            val rnd = kotlin.random.Random
+            val base = rnd.nextFloat() * 360f
+            val offsets = when (rnd.nextInt(3)) {
+                0 -> floatArrayOf(0f, 35f, -35f)
+                1 -> floatArrayOf(0f, 180f, 150f)
+                else -> floatArrayOf(0f, 120f, 240f)
+            }
+            val out = FloatArray(9)
+            for (i in 0 until 3) {
+                hsvInto(out, i * 3, (base + offsets[i] + 360f) % 360f, 0.7f + rnd.nextFloat() * 0.3f, 0.85f + rnd.nextFloat() * 0.15f)
+            }
+            return out
+        }
         const val PEAK_FALL_RATE = 0.7f
         const val SKIP_TOLERANCE = 1e-3
 

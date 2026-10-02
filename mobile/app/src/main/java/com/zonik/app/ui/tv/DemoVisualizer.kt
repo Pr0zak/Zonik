@@ -36,6 +36,8 @@ fun DemoVisualizer(
     transition: Int = -1,
     /** How long a switch between effects takes. */
     transitionMs: Int = 1600,
+    /** "ALBUM", "RANDOM" or "CYCLE": where the effects' colours come from. */
+    colors: String = "ALBUM",
     /** Shown by the sine scroller. */
     title: String = "",
     /** Motion trails on every effect. */
@@ -47,6 +49,7 @@ fun DemoVisualizer(
     LaunchedEffect(renderer, effect) { renderer.effect = effect }
     LaunchedEffect(renderer, transition) { renderer.transitionStyle = transition }
     LaunchedEffect(renderer, transitionMs) { renderer.transitionSec = transitionMs / 1000f }
+    LaunchedEffect(renderer, colors) { renderer.colorMode = colors }
     LaunchedEffect(renderer, title) { renderer.setTitle(title) }
     LaunchedEffect(renderer, trails) { renderer.trails = trails }
 

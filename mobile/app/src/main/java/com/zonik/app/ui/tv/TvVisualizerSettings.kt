@@ -73,6 +73,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     val infoMode by viewModel.ambientInfo.collectAsState()
     val transition by viewModel.ambientTransition.collectAsState()
     val transitionMs by viewModel.ambientTransitionMs.collectAsState()
+    val colors by viewModel.ambientColors.collectAsState()
     val trails by viewModel.ambientTrails.collectAsState()
     val enabled by viewModel.ambientEffects.collectAsState()
 
@@ -86,7 +87,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     TvVisualizerSettingsContent(
         state = VisualizerSettingsState(
             ambientOn = ambientOn, delaySec = delaySec, beatOn = beatOn, rotateSec = rotateSec,
-            infoMode = infoMode, transition = transition, transitionMs = transitionMs,
+            infoMode = infoMode, transition = transition, transitionMs = transitionMs, colors = colors,
             trails = trails, enabled = enabled,
             isPlaying = isPlaying,
         ),
@@ -98,6 +99,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
             setInfo = viewModel::setAmbientInfo,
             setTransition = viewModel::setAmbientTransition,
             setTransitionMs = viewModel::setAmbientTransitionMs,
+            setColors = viewModel::setAmbientColors,
             setTrails = viewModel::setAmbientTrails,
             setEffects = viewModel::setAmbientEffects,
             toggleEffect = viewModel::toggleAmbientEffect,
@@ -111,6 +113,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
             palette = art.palette,
             transition = transition,
             transitionMs = transitionMs,
+            colors = colors,
             title = track?.let { "${it.title}  ·  ${it.artist}" } ?: "Zonik",
             trails = trails,
             modifier = Modifier.fillMaxSize()
@@ -127,6 +130,7 @@ internal data class VisualizerSettingsState(
     val infoMode: String,
     val transition: Int,
     val transitionMs: Int,
+    val colors: String,
     val trails: Boolean,
     val enabled: List<DemoEffect>,
     val isPlaying: Boolean,
@@ -140,6 +144,7 @@ internal class VisualizerSettingsActions(
     val setInfo: (String) -> Unit,
     val setTransition: (Int) -> Unit,
     val setTransitionMs: (Int) -> Unit,
+    val setColors: (String) -> Unit,
     val setTrails: (Boolean) -> Unit,
     val setEffects: (Set<DemoEffect>) -> Unit,
     val toggleEffect: (DemoEffect) -> Unit,
@@ -160,6 +165,7 @@ internal fun TvVisualizerSettingsContent(
     val infoMode = state.infoMode
     val transition = state.transition
     val transitionMs = state.transitionMs
+    val colors = state.colors
     val trails = state.trails
     val enabled = state.enabled
     val isPlaying = state.isPlaying
@@ -216,6 +222,9 @@ internal fun TvVisualizerSettingsContent(
                 SettingRow("Transition speed", TRANSITION_SPEEDS[transitionMs] ?: "${transitionMs} ms") {
                     actions.setTransitionMs(cycle(TRANSITION_SPEEDS.keys.toList(), transitionMs))
                 }
+                SettingRow("Colours", COLOR_LABELS[colors] ?: "Album art") {
+                    actions.setColors(cycle(COLOR_LABELS.keys.toList(), colors))
+                }
                 SettingRow(
                     "Trails",
                     if (trails) "On" else "Off",
@@ -240,7 +249,15 @@ internal fun TvVisualizerSettingsContent(
                 Text(
                     buildString {
                         append(previewEffect.label)
-                        append(if (previewEffect in COVER_EFFECTS) " · built from the cover" else " · cover colours")
+                        append(
+                            when {
+                                previewEffect in COVER_EFFECTS -> " · built from the cover"
+                                colors == "RANDOM" -> " · random colours"
+                                colors == "CYCLE" -> " · cycling colours"
+                                colors == "MIXED" -> " · mixed colours"
+                                else -> " · cover colours"
+                            }
+                        )
                         if (!isPlaying) append(" · play something to see it react")
                     },
                     style = MaterialTheme.typography.labelMedium,
@@ -274,7 +291,7 @@ internal fun TvVisualizerSettingsContent(
         // Scrolls only if the effects outgrow the space; focusing a card brings it into view.
         Column(
             modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             DemoEffect.entries.chunked(CARDS_PER_ROW).forEach { rowEffects ->
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -346,7 +363,7 @@ private fun EffectCard(
     }
     Box(
         modifier = modifier
-            .height(19.dp)
+            .height(18.dp)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .tvFocusLift(RowShape)
             .background(fill, RowShape)
@@ -394,6 +411,13 @@ private fun ChipButton(label: String, onClick: () -> Unit) {
 
 private val DELAY_STEPS = listOf(0, 10, 30, 60, 90, 300)
 private val ROTATE_STEPS = listOf(0, 30, 60, 120, 300)
+private val COLOR_LABELS = linkedMapOf(
+    "ALBUM" to "Album art",
+    "RANDOM" to "Random",
+    "CYCLE" to "Cycle",
+    "MIXED" to "Mixed",
+)
+
 /** Transition length in ms, and its label. */
 private val TRANSITION_SPEEDS = linkedMapOf(
     600 to "Fast",

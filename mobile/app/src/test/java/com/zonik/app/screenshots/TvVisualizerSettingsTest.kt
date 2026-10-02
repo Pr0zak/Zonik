@@ -46,10 +46,10 @@ class TvVisualizerSettingsTest {
                     TvVisualizerSettingsContent(
                         state = VisualizerSettingsState(
                             ambientOn = true, delaySec = 60, beatOn = true, rotateSec = 60,
-                            infoMode = "FADE", transition = -1, transitionMs = 1600, trails = false,
+                            infoMode = "FADE", transition = -1, transitionMs = 1600, colors = "ALBUM", trails = false,
                             enabled = DemoEffect.entries.filter { it !in off }, isPlaying = true,
                         ),
-                        actions = VisualizerSettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}),
+                        actions = VisualizerSettingsActions({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}),
                     ) {
                         // GL does not render here; a gradient stands in for the live preview.
                         Box(

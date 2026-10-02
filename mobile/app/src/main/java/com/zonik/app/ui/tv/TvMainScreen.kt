@@ -332,6 +332,13 @@ class TvViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setTvAmbientTransitionMs(ms) }
     }
 
+    val ambientColors: StateFlow<String> = settingsRepository.tvAmbientColors
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "ALBUM")
+
+    fun setAmbientColors(mode: String) {
+        viewModelScope.launch { settingsRepository.setTvAmbientColors(mode) }
+    }
+
     val ambientTrails: StateFlow<Boolean> = settingsRepository.tvAmbientTrails
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -767,6 +774,7 @@ private fun TvAmbientOverlay(
     val rotateSec by viewModel.ambientRotateSec.collectAsState()
     val transition by viewModel.ambientTransition.collectAsState()
     val transitionMs by viewModel.ambientTransitionMs.collectAsState()
+    val colors by viewModel.ambientColors.collectAsState()
     val trails by viewModel.ambientTrails.collectAsState()
     var deck by remember(enabled) { mutableStateOf(enabled.shuffled()) }
     var deckIndex by remember(enabled) { mutableIntStateOf(0) }
@@ -823,6 +831,7 @@ private fun TvAmbientOverlay(
             palette = art.palette,
             transition = transition,
             transitionMs = transitionMs,
+            colors = colors,
             title = "${track.title}  ·  ${track.artist}",
             trails = trails,
             modifier = Modifier.fillMaxSize()
