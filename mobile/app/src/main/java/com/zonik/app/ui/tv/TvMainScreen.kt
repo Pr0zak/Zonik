@@ -797,12 +797,15 @@ private fun TvAmbientOverlay(
     var infoVisible by remember { mutableStateOf(true) }
     LaunchedEffect(track.id, lastKeyAt, infoMode) {
         infoVisible = infoMode != "NEVER"
-        if (infoMode == "FADE") {
+        if (infoMode.endsWith("FADE")) {
             delay(INFO_VISIBLE_MS)
             infoVisible = false
         }
     }
     val infoAlpha by animateFloatAsState(if (infoVisible) 1f else 0f, tween(1200), label = "info")
+    // CORNER_FADE / CORNER_ALWAYS: a small card in the bottom-left corner instead of the big
+    // centred cover, so the effect keeps the whole screen.
+    val infoInCorner = infoMode.startsWith("CORNER")
 
     // The beat grid, from the server's stored tempo. The visualizer aligns its phase to the
     // onsets it hears and uses it to swell into each beat rather than trailing it.
@@ -831,13 +834,28 @@ private fun TvAmbientOverlay(
                 .fillMaxSize()
                 .graphicsLayer { alpha = infoAlpha }
                 .background(
-                    Brush.verticalGradient(
+                    if (infoInCorner) Brush.verticalGradient(
+                        0.7f to Color(0x00000000), 1f to Color(0xAA0A0810)
+                    ) else Brush.verticalGradient(
                         listOf(Color(0x66000000), Color(0x00000000), Color(0xCC0A0810))
                     )
                 )
         )
 
-        Column(
+        if (infoInCorner) {
+            CornerTrackInfo(
+                title = track.title,
+                artist = track.artist,
+                // An effect that frames the cover already draws it in the middle.
+                coverArt = if (effect.framesCover) null else track.coverArt,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .graphicsLayer { alpha = infoAlpha }
+                    .padding(horizontal = 48.dp, vertical = 27.dp)
+            )
+        } else Column(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer { alpha = infoAlpha }
@@ -905,6 +923,66 @@ private fun TvAmbientOverlay(
 }
 
 
+
+/**
+ * The ambient screen's track info as a compact card for the bottom-left corner: a small cover
+ * (left out when the effect draws the cover itself), title, artist and progress.
+ */
+@Composable
+private fun CornerTrackInfo(
+    title: String,
+    artist: String,
+    coverArt: String?,
+    positionMs: Long,
+    durationMs: Long,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (coverArt != null) {
+            CoverArt(
+                coverArtId = coverArt,
+                contentDescription = title,
+                modifier = Modifier
+                    .size(112.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                size = 300
+            )
+            Spacer(modifier = Modifier.width(20.dp))
+        }
+        Column(modifier = Modifier.width(380.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = artist,
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.White.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            LinearProgressIndicator(
+                progress = { if (durationMs > 0) positionMs.toFloat() / durationMs else 0f },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = ZonikColors.gold,
+                trackColor = Color.White.copy(alpha = 0.12f)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = formatDurationMs(positionMs) + "  /  " + (if (durationMs > 0) formatDurationMs(durationMs) else "--:--"),
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.5f)
+            )
+        }
+    }
+}
 
 @Composable
 private fun TvSettingsContent(

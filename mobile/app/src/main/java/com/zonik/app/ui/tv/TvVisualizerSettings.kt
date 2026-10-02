@@ -204,7 +204,7 @@ internal fun TvVisualizerSettingsContent(
                 SettingRow("Change effect", rotateLabel(rotateSec)) {
                     actions.setRotateSec(cycle(ROTATE_STEPS, rotateSec))
                 }
-                SettingRow("Track info", INFO_LABELS[infoMode] ?: "Show, then fade") {
+                SettingRow("Track info", INFO_LABELS[infoMode] ?: "Centre, then fade") {
                     actions.setInfo(cycle(INFO_LABELS.keys.toList(), infoMode))
                 }
                 SettingRow(
@@ -402,8 +402,10 @@ private val TRANSITION_SPEEDS = linkedMapOf(
     5000 to "Very slow",
 )
 private val INFO_LABELS = linkedMapOf(
-    "FADE" to "Show, then fade",
-    "ALWAYS" to "Always",
+    "FADE" to "Centre, then fade",
+    "ALWAYS" to "Centre, always",
+    "CORNER_FADE" to "Corner, then fade",
+    "CORNER_ALWAYS" to "Corner, always",
     "NEVER" to "Never",
 )
 
