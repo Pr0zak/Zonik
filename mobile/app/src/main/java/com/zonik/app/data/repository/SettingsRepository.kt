@@ -242,6 +242,15 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs -> prefs[TV_AMBIENT_TRANSITION] = kind }
     }
 
+    /** How long a switch between visualizer effects takes, in milliseconds. */
+    val tvAmbientTransitionMs: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[TV_AMBIENT_TRANSITION_MS] ?: 1600
+    }
+
+    suspend fun setTvAmbientTransitionMs(ms: Int) {
+        dataStore.edit { prefs -> prefs[TV_AMBIENT_TRANSITION_MS] = ms }
+    }
+
     /** Motion trails on every visualizer effect. */
     val tvAmbientTrails: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[TV_AMBIENT_TRAILS] ?: false
@@ -289,6 +298,7 @@ class SettingsRepository @Inject constructor(
         private val TV_AMBIENT_ROTATE_SEC = intPreferencesKey("tv_ambient_rotate_sec")
         private val TV_AMBIENT_INFO = stringPreferencesKey("tv_ambient_info")
         private val TV_AMBIENT_TRANSITION = intPreferencesKey("tv_ambient_transition")
+        private val TV_AMBIENT_TRANSITION_MS = intPreferencesKey("tv_ambient_transition_ms")
         private val TV_AMBIENT_TRAILS = booleanPreferencesKey("tv_ambient_trails")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_PRESET = intPreferencesKey("eq_preset")

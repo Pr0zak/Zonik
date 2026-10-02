@@ -83,7 +83,7 @@ enum class DemoEffect(
     CITY("City at night", CITY_BODY),
     CLOUDS("Cloud flight", CLOUDS_BODY, halfRes = true),
     PLANET("Planet flyby", PLANET_BODY),
-    APOLLONIAN("Apollonian zoom", APOLLONIAN_BODY, halfRes = true),
+    APOLLONIAN("Apollonian", APOLLONIAN_BODY, halfRes = true),
     KALISET("Kaliset", KALISET_BODY, halfRes = true),
     WATERFALL("Waterfall", WATERFALL_BODY, feedback = true),
     HEXPULSE("Hex pulse", HEXPULSE_BODY),

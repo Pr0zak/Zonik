@@ -39,6 +39,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     @Volatile private var titleText = ""
     /** A fixed wipe kind, or -1 to move through them. */
     @Volatile var transitionStyle: Int = -1
+    /** How long a switch between effects takes; set from the TV Visualizer page. */
+    @Volatile var transitionSec: Float = 1.6f
     @Volatile var pulse: AmbientPulse = AmbientPulse()
     @Volatile var beatClock: BeatClock? = null
     @Volatile private var pendingCover: Bitmap? = null
@@ -353,7 +355,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private fun updateTransition(dt: Float) {
         val incoming = next
         if (incoming != null) {
-            transition += dt / TRANSITION_SEC
+            transition += dt / transitionSec.coerceAtLeast(0.1f)
             if (transition >= 1f) {
                 current = incoming
                 next = null
@@ -878,7 +880,6 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         /** uTime's speed: one full cycle of the slow, music-independent drift every 40 s. */
         const val TIME_RATE = 0.05f
         const val FADE_RATE = 4f
-        const val TRANSITION_SEC = 1.6f
         const val BEAT_WAIT_SEC = 1.5f
         /** How many wipes `wipeMask` in DemoEffects knows; names in [DEMO_TRANSITIONS]. */
         val WIPE_KINDS = DEMO_TRANSITIONS.size

@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -44,10 +46,12 @@ private val RowShape = RoundedCornerShape(8.dp)
 private val CardFill = Color(0xFF1E1C2A)
 private val CardFillOff = Color(0xFF1B1A21)
 /**
- * Eight to a row: narrower and the longer names ("Kaleidoscope", "Oscilloscope") break
- * mid-word. The rows are kept short so four of them still fit one screen without scrolling.
+ * Nine to a row, one line each, so all of the effects (59 of them) fit below the settings in
+ * seven rows without scrolling; at ten the longer names ("Spectrum rings", "Apollonian zoom")
+ * were cut short. Should the list outgrow seven rows, the grid scrolls to keep the focused card
+ * in view.
  */
-private const val CARDS_PER_ROW = 8
+private const val CARDS_PER_ROW = 9
 
 /**
  * The visualizer's own settings page: settings on the left, a live preview of the focused
@@ -58,7 +62,6 @@ private const val CARDS_PER_ROW = 8
  * while the remote is moving through the cards. Every row cycles on OK rather than opening a
  * picker — one row, one button, no nested focus to get lost in.
  */
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class) // FocusRequester.Cancel
 @Composable
 fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
@@ -69,6 +72,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     val rotateSec by viewModel.ambientRotateSec.collectAsState()
     val infoMode by viewModel.ambientInfo.collectAsState()
     val transition by viewModel.ambientTransition.collectAsState()
+    val transitionMs by viewModel.ambientTransitionMs.collectAsState()
     val trails by viewModel.ambientTrails.collectAsState()
     val enabled by viewModel.ambientEffects.collectAsState()
 
@@ -79,7 +83,87 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     val beatClock = remember(track?.id, bpm) { BeatClock(bpm) }
     if (isPlaying) AudioCaptureEffect(viewModel)
 
-    var previewEffect by remember { mutableStateOf(enabled.first()) }
+    TvVisualizerSettingsContent(
+        state = VisualizerSettingsState(
+            ambientOn = ambientOn, delaySec = delaySec, beatOn = beatOn, rotateSec = rotateSec,
+            infoMode = infoMode, transition = transition, transitionMs = transitionMs,
+            trails = trails, enabled = enabled,
+            isPlaying = isPlaying,
+        ),
+        actions = VisualizerSettingsActions(
+            setAmbientEnabled = viewModel::setAmbientEnabled,
+            setDelaySec = viewModel::setAmbientDelaySec,
+            setBeatReactive = viewModel::setAmbientBeatReactive,
+            setRotateSec = viewModel::setAmbientRotateSec,
+            setInfo = viewModel::setAmbientInfo,
+            setTransition = viewModel::setAmbientTransition,
+            setTransitionMs = viewModel::setAmbientTransitionMs,
+            setTrails = viewModel::setAmbientTrails,
+            setEffects = viewModel::setAmbientEffects,
+            toggleEffect = viewModel::toggleAmbientEffect,
+        ),
+    ) { effect ->
+        DemoVisualizer(
+            effect = effect,
+            pulse = viewModel.pulse,
+            beatClock = beatClock,
+            cover = art.cover,
+            palette = art.palette,
+            transition = transition,
+            transitionMs = transitionMs,
+            title = track?.let { "${it.title}  ·  ${it.artist}" } ?: "Zonik",
+            trails = trails,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
+
+/** What the visualizer page shows, so its body can be drawn without a view model (screenshots). */
+internal data class VisualizerSettingsState(
+    val ambientOn: Boolean,
+    val delaySec: Int,
+    val beatOn: Boolean,
+    val rotateSec: Int,
+    val infoMode: String,
+    val transition: Int,
+    val transitionMs: Int,
+    val trails: Boolean,
+    val enabled: List<DemoEffect>,
+    val isPlaying: Boolean,
+)
+
+internal class VisualizerSettingsActions(
+    val setAmbientEnabled: (Boolean) -> Unit,
+    val setDelaySec: (Int) -> Unit,
+    val setBeatReactive: (Boolean) -> Unit,
+    val setRotateSec: (Int) -> Unit,
+    val setInfo: (String) -> Unit,
+    val setTransition: (Int) -> Unit,
+    val setTransitionMs: (Int) -> Unit,
+    val setTrails: (Boolean) -> Unit,
+    val setEffects: (Set<DemoEffect>) -> Unit,
+    val toggleEffect: (DemoEffect) -> Unit,
+)
+
+/** The page itself; [preview] draws the live effect into the preview box. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class) // FocusRequester.Cancel
+@Composable
+internal fun TvVisualizerSettingsContent(
+    state: VisualizerSettingsState,
+    actions: VisualizerSettingsActions,
+    preview: @Composable (DemoEffect) -> Unit,
+) {
+    val ambientOn = state.ambientOn
+    val delaySec = state.delaySec
+    val beatOn = state.beatOn
+    val rotateSec = state.rotateSec
+    val infoMode = state.infoMode
+    val transition = state.transition
+    val transitionMs = state.transitionMs
+    val trails = state.trails
+    val enabled = state.enabled
+    val isPlaying = state.isPlaying
+    var previewEffect by remember { mutableStateOf(enabled.firstOrNull() ?: DemoEffect.entries.first()) }
     val firstRow = remember { FocusRequester() }
     val firstCard = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { firstRow.requestFocus() } }
@@ -105,29 +189,32 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 SettingRow(
                     "Visualizer", if (ambientOn) "On" else "Off",
                     modifier = Modifier.focusRequester(firstRow)
-                ) { viewModel.setAmbientEnabled(!ambientOn) }
+                ) { actions.setAmbientEnabled(!ambientOn) }
                 SettingRow("Start after", delayLabel(delaySec)) {
-                    viewModel.setAmbientDelaySec(cycle(DELAY_STEPS, delaySec))
+                    actions.setDelaySec(cycle(DELAY_STEPS, delaySec))
                 }
                 SettingRow("React to music", if (beatOn) "On" else "Off") {
-                    viewModel.setAmbientBeatReactive(!beatOn)
+                    actions.setBeatReactive(!beatOn)
                 }
                 SettingRow("Change effect", rotateLabel(rotateSec)) {
-                    viewModel.setAmbientRotateSec(cycle(ROTATE_STEPS, rotateSec))
+                    actions.setRotateSec(cycle(ROTATE_STEPS, rotateSec))
                 }
                 SettingRow("Track info", INFO_LABELS[infoMode] ?: "Show, then fade") {
-                    viewModel.setAmbientInfo(cycle(INFO_LABELS.keys.toList(), infoMode))
+                    actions.setInfo(cycle(INFO_LABELS.keys.toList(), infoMode))
                 }
                 SettingRow(
                     "Transitions",
                     DEMO_TRANSITIONS.getOrNull(transition) ?: "Mixed",
                 ) {
-                    viewModel.setAmbientTransition(cycle((-1 until DEMO_TRANSITIONS.size).toList(), transition))
+                    actions.setTransition(cycle((-1 until DEMO_TRANSITIONS.size).toList(), transition))
+                }
+                SettingRow("Transition speed", TRANSITION_SPEEDS[transitionMs] ?: "${transitionMs} ms") {
+                    actions.setTransitionMs(cycle(TRANSITION_SPEEDS.keys.toList(), transitionMs))
                 }
                 SettingRow(
                     "Trails",
@@ -136,28 +223,18 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
                     // sit under this row's centre.
                     modifier = Modifier.focusProperties { down = firstCard }
                 ) {
-                    viewModel.setAmbientTrails(!trails)
+                    actions.setTrails(!trails)
                 }
             }
 
-            Column(modifier = Modifier.width(360.dp)) {
+            Column(modifier = Modifier.width(300.dp)) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)
                         .border(1.dp, Color.White.copy(alpha = 0.15f))
                 ) {
-                    DemoVisualizer(
-                        effect = previewEffect,
-                        pulse = viewModel.pulse,
-                        beatClock = beatClock,
-                        cover = art.cover,
-                        palette = art.palette,
-                        transition = transition,
-                        title = track?.let { "${it.title}  ·  ${it.artist}" } ?: "Zonik",
-                        trails = trails,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    preview(previewEffect)
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
@@ -187,22 +264,26 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
                 color = Color.White.copy(alpha = 0.45f),
                 modifier = Modifier.weight(1f)
             )
-            ChipButton("All") { viewModel.setAmbientEffects(DemoEffect.entries.toSet()) }
+            ChipButton("All") { actions.setEffects(DemoEffect.entries.toSet()) }
             Spacer(Modifier.width(8.dp))
             ChipButton("No cover art") {
-                viewModel.setAmbientEffects(DemoEffect.entries.toSet() - COVER_EFFECTS)
+                actions.setEffects(DemoEffect.entries.toSet() - COVER_EFFECTS)
             }
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // Scrolls only if the effects outgrow the space; focusing a card brings it into view.
+        Column(
+            modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
             DemoEffect.entries.chunked(CARDS_PER_ROW).forEach { rowEffects ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     rowEffects.forEachIndexed { index, effect ->
                         EffectCard(
                             effect = effect,
                             on = effect in enabled,
                             onFocused = { previewEffect = effect },
-                            onClick = { viewModel.toggleAmbientEffect(effect) },
+                            onClick = { actions.toggleEffect(effect) },
                             modifier = Modifier
                                 .weight(1f)
                                 .then(if (effect.ordinal == 0) Modifier.focusRequester(firstCard) else Modifier)
@@ -232,15 +313,15 @@ private fun SettingRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .height(30.dp)
+            .height(22.dp)
             .tvFocusLift(RowShape, scale = 1.02f)
             .background(CardFill, RowShape)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White, modifier = Modifier.weight(1f))
-        Text(value, style = MaterialTheme.typography.labelLarge, color = ZonikColors.gold)
+        Text(title, style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.labelMedium, color = ZonikColors.gold)
     }
 }
 
@@ -263,31 +344,35 @@ private fun EffectCard(
     } else {
         Brush.horizontalGradient(listOf(CardFillOff, CardFillOff))
     }
-    Column(
+    Box(
         modifier = modifier
-            .height(36.dp)
+            .height(26.dp)
             .onFocusChanged { if (it.isFocused) onFocused() }
             .tvFocusLift(RowShape)
             .background(fill, RowShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            .padding(horizontal = 3.dp),
+        contentAlignment = Alignment.Center
     ) {
         Text(
             effect.label,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
             color = if (on) Color.White else Color.White.copy(alpha = 0.28f),
             textAlign = TextAlign.Center,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+        // Built from the cover image (rather than only its colours): a small gold mark in the
+        // corner, since a second "cover art" line no longer fits the one-line cards.
         if (effect in COVER_EFFECTS) {
-            Text(
-                "cover art",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = if (on) 0.7f else 0.2f)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 3.dp)
+                    .width(4.dp)
+                    .height(4.dp)
+                    .background(ZonikColors.gold.copy(alpha = if (on) 0.9f else 0.3f), RoundedCornerShape(50))
             )
         }
     }
@@ -309,6 +394,13 @@ private fun ChipButton(label: String, onClick: () -> Unit) {
 
 private val DELAY_STEPS = listOf(0, 10, 30, 60, 90, 300)
 private val ROTATE_STEPS = listOf(0, 30, 60, 120, 300)
+/** Transition length in ms, and its label. */
+private val TRANSITION_SPEEDS = linkedMapOf(
+    600 to "Fast",
+    1600 to "Normal",
+    3000 to "Slow",
+    5000 to "Very slow",
+)
 private val INFO_LABELS = linkedMapOf(
     "FADE" to "Show, then fade",
     "ALWAYS" to "Always",

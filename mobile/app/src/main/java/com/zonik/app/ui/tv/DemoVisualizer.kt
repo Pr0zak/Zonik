@@ -34,6 +34,8 @@ fun DemoVisualizer(
     modifier: Modifier = Modifier,
     /** A fixed wipe from [DEMO_TRANSITIONS], or -1 to vary them. */
     transition: Int = -1,
+    /** How long a switch between effects takes. */
+    transitionMs: Int = 1600,
     /** Shown by the sine scroller. */
     title: String = "",
     /** Motion trails on every effect. */
@@ -44,6 +46,7 @@ fun DemoVisualizer(
     val renderer = remember { DemoRenderer(effect) }
     LaunchedEffect(renderer, effect) { renderer.effect = effect }
     LaunchedEffect(renderer, transition) { renderer.transitionStyle = transition }
+    LaunchedEffect(renderer, transitionMs) { renderer.transitionSec = transitionMs / 1000f }
     LaunchedEffect(renderer, title) { renderer.setTitle(title) }
     LaunchedEffect(renderer, trails) { renderer.trails = trails }
 
