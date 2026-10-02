@@ -1,7 +1,7 @@
 <script>
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { formatSize, formatDuration, formatLongDuration, formatRelativeTime, parseUTC } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle, SkipForward, ChevronDown, ChevronRight } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle, SkipForward, ChevronDown, ChevronRight, Trash2 } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -48,7 +48,7 @@
 		{ key: 'skip_count', label: 'Skips', sortable: true, align: 'right' },
 		{ key: 'play_count', label: 'Plays', sortable: true, align: 'right', headerClass: 'hidden sm:table-cell' },
 		{ key: 'last_skipped_at', label: 'Last skipped', sortable: true, align: 'right' },
-		{ key: 'actions', label: '', width: '44px' },
+		{ key: 'actions', label: '', width: '80px' },
 	];
 
 	// Sorting is client-side: the drill-down pulls every skipped track (capped at 500) once.
@@ -103,6 +103,23 @@
 		} catch (e) {
 			addToast('Failed to clear skips', 'error');
 		}
+	}
+
+	async function deleteSkippedTrack(row) {
+		if (!window.confirm(`Delete "${row.title}"? This cannot be undone.`)) return;
+		try {
+			await api.deleteTrack(row.track_id);
+			skipRows = skipRows.filter(r => r.track_id !== row.track_id);
+			addToast(`Deleted: ${row.title}`, 'success');
+			loadSkipSummary();
+		} catch (e) {
+			addToast('Delete failed: ' + e.message, 'error');
+		}
+	}
+
+	// Library search is FTS over title + artist + album, so this lands on the track.
+	function skipTrackHref(row) {
+		return `/library?search=${encodeURIComponent([row.artist, row.title].filter(Boolean).join(' '))}`;
 	}
 
 	let aiUsage = $state(null);
@@ -1175,18 +1192,24 @@
 							>
 								{#snippet row(r)}
 									<td class="px-3 py-2 max-w-0 w-1/2">
-										<p class="truncate text-[var(--text-body)]">{r.title}</p>
+										<a href={skipTrackHref(r)} onclick={(e) => e.stopPropagation()}
+											class="block truncate text-[var(--text-body)] hover:text-cyan-400 hover:underline" title="Open in library">{r.title}</a>
 										<p class="truncate text-xs text-[var(--text-muted)]">{r.artist || 'Unknown'}</p>
 									</td>
 									<td class="px-3 py-2 hidden md:table-cell max-w-0 truncate text-[var(--text-secondary)]">{r.album || '—'}</td>
 									<td class="px-3 py-2 text-right font-mono text-cyan-400">{r.skip_count}</td>
 									<td class="px-3 py-2 text-right font-mono text-[var(--text-secondary)] hidden sm:table-cell">{r.play_count}</td>
 									<td class="px-3 py-2 text-right text-xs text-[var(--text-muted)] whitespace-nowrap">{formatRelativeTime(r.last_skipped_at)}</td>
-									<td class="px-1 py-1 text-right">
+									<td class="px-1 py-1 text-right whitespace-nowrap">
 										<button onclick={(e) => { e.stopPropagation(); clearTrackSkips(r); }}
 											class="p-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
 											title="Clear skips">
 											<RotateCcw class="w-3.5 h-3.5" />
+										</button>
+										<button onclick={(e) => { e.stopPropagation(); deleteSkippedTrack(r); }}
+											class="p-2 text-[var(--text-muted)] hover:text-red-400 transition-colors"
+											title="Delete track">
+											<Trash2 class="w-3.5 h-3.5" />
 										</button>
 									</td>
 								{/snippet}
