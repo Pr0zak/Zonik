@@ -50,7 +50,7 @@ Now Playing is the whole screen. UP opens the actions strip, DOWN slides the bro
   <img src="docs/screenshots/tv-visualizer-settings.png" alt="Visualizer settings with live preview" width="48%">
 </p>
 
-Left idle, the TV turns into a demo-scene visualizer: 105 GPU shader effects that move to the music (bass, mids, highs, kicks and a 64-band spectrum) — tunnels and flights, endless zooms and fractals, spectrum meters, beat-driven patterns and classic demo effects — switching on the beat through 20 wipes. Colours come from the album art, or random, cycling, or mixed per effect.
+Left idle, the TV turns into a demo-scene visualizer: 103 GPU shader effects that move to the music (bass, mids, highs, kicks and a 64-band spectrum) — tunnels and flights, endless zooms and fractals, spectrum meters, beat-driven patterns and classic demo effects — switching on the beat through 20 wipes. Colours come from the album art, or random, cycling, or mixed per effect.
 
 <p align="center">
   <img src="docs/visualizer/hexpulse.gif" alt="Hex pulse" width="24%">
@@ -71,7 +71,7 @@ Left idle, the TV turns into a demo-scene visualizer: 105 GPU shader effects tha
   <img src="docs/visualizer/radar.gif" alt="Radar" width="24%">
 </p>
 
-All 105, animated: [docs/tv-visualizer.md](docs/tv-visualizer.md).
+All 103, animated: [docs/tv-visualizer.md](docs/tv-visualizer.md).
 
 ## Features
 
@@ -168,7 +168,7 @@ See [API Reference](docs/api.md) for the full list.
 
 The `mobile/` subdirectory is a Gradle multi-module Kotlin/Compose project:
 
-- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support. On a TV it switches to a remote-first UI (the Stage: Now Playing as the root, an UP actions strip, DOWN browse rails) and an idle visualizer of 105 OpenGL ES 2 demo-scene effects — tunnels and flights, endless zooms and fractals, spectrum meters, beat-driven patterns and more ([see them all](docs/tv-visualizer.md)) — rendered at 960×540 and driven by the live FFT, the waveform and the server's per-track BPM. Tuned for the Chromecast with Google TV's Mali-G31.
+- **`mobile/app/`** — phone app with Android Auto + Google TV + Chromecast support. On a TV it switches to a remote-first UI (the Stage: Now Playing as the root, an UP actions strip, DOWN browse rails) and an idle visualizer of 103 OpenGL ES 2 demo-scene effects — tunnels and flights, endless zooms and fractals, spectrum meters, beat-driven patterns and more ([see them all](docs/tv-visualizer.md)) — rendered at 960×540 and driven by the live FFT, the waveform and the server's per-track BPM. Tuned for the Chromecast with Google TV's Mali-G31.
 - **`mobile/wear/`** — Pixel Watch standalone player (browses + streams direct from server)
 - **`mobile/core/`** — shared Subsonic API, models, and auth interceptor used by both
 

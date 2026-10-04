@@ -146,13 +146,11 @@ enum class DemoEffect(
     FIREWORKS("Fireworks", FIREWORKS_BODY),
     DISCOBALL("Disco ball", DISCOBALL_BODY, floats = true),
     HYPERCUBE("Hypercube", HYPERCUBE_BODY, halfRes = true, floats = true),
-    TWISTER("Twister", TWISTER_BODY),
     SINEDOTS("Sine dots", SINEDOTS_BODY),
     SPIROGRAPH("Spirograph", SPIROGRAPH_BODY, feedback = true),
     GALAXY("Galaxy", GALAXY_BODY, floats = true),
     PULSAR("Ridgelines", PULSAR_BODY),
     BUBBLES("Bubbles", BUBBLES_BODY),
-    DIGITALRAIN("Digital rain", DIGITALRAIN_BODY),
     COVERBOUNCE("Bouncing cover", COVERBOUNCE_BODY, feedback = true),
     RIBBONS("Ribbons", RIBBONS_BODY);
 

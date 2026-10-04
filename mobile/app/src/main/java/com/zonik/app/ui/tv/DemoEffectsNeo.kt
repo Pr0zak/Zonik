@@ -136,39 +136,6 @@ vec3 shade(vec2 p) {
 """
 
 /**
- * Twister: the Amiga classic — a square column of the album cover, twisting down the screen as
- * it spins. Only the faces turned toward you are drawn, lit by how square-on they are; the bass
- * winds the twist tighter and each kick swells it.
- */
-internal const val TWISTER_BODY = """
-vec4 twistFace(float x, float a, float b, float v, float w) {
-    if (b <= a || x < a || x > b) return vec4(0.0);
-    float u = (x - a) / (b - a);
-    float light = (b - a) / (w * 1.4142);
-    vec3 c = texture2D(uTex, vec2(u, v)).rgb * (0.25 + 0.85 * light);
-    c += vec3(0.7) * exp(-min(u, 1.0 - u) * 40.0) * 0.25;
-    return vec4(c, 1.0);
-}
-vec3 shade(vec2 p) {
-    p += uCenter;
-    vec3 col = colorAt(0.66 + p.y * 0.1) * 0.06 * (0.6 + 0.4 * sin(p.y * 40.0 + uPhase * PI * 4.0));
-    float w = 0.32 * (1.0 + 0.08 * uKick);
-    float ang = uPhase * PI + p.y * (1.0 + 1.6 * uLow) + 0.6 * sin(p.y * 2.0 + uTime * PI * 2.0);
-    float x0 = w * sin(ang);
-    float x1 = w * sin(ang + PI * 0.5);
-    float x2 = w * sin(ang + PI);
-    float x3 = w * sin(ang + PI * 1.5);
-    float v = fract(p.y * 0.5);
-    col *= 1.0 - 0.5 * smoothstep(w * 1.8, w, abs(p.x));
-    vec4 f = twistFace(p.x, x0, x1, v, w);
-    if (f.a < 0.5) f = twistFace(p.x, x1, x2, v, w);
-    if (f.a < 0.5) f = twistFace(p.x, x2, x3, v, w);
-    if (f.a < 0.5) f = twistFace(p.x, x3, x0, v, w);
-    return f.a > 0.5 ? f.rgb : col;
-}
-"""
-
-/**
  * Sine dots: a field of dots riding sine waves, the depth of each one setting its size and
  * brightness so the field reads as a ribbon turning in space. The spectrum sets how high each
  * column swings.
@@ -328,34 +295,6 @@ vec3 shade(vec2 p) {
             col = col * (1.0 - body * 0.25) + hue * (rim * 0.6 + body * 0.06) + vec3(1.0) * shine * body * 0.9;
         }
     }
-    return col;
-}
-"""
-
-/**
- * Digital rain: columns of glyphs streaming down the screen, a bright head on each with a
- * fading tail behind it, the characters flickering as they fall. The bass sets the pace and
- * each kick flashes the heads.
- */
-internal const val DIGITALRAIN_BODY = GLYPHS + """
-vec3 shade(vec2 p) {
-    p += uCenter;
-    const float CW = 0.045;
-    const float CH = 0.063;
-    vec2 g = vec2(p.x / CW, p.y / CH);
-    vec2 cell = floor(g);
-    vec2 f = fract(g);
-    float seed = hash(vec2(cell.x, 4.2));
-    float m = 0.5 + floor(seed * 3.0) * 0.5;
-    float head = 1.15 - 2.6 * fract(uPhase * m + seed);
-    float headRow = floor(head / CH);
-    float dy = (cell.y - headRow) * CH;
-    vec3 tint = mix(colorAt(0.33 + seed * 0.2), vec3(0.35, 1.0, 0.5), 0.45);
-    float c = floor(hash(cell + floor(uTime * 200.0 * (0.5 + seed))) * 25.0);
-    float on = glyph(c, f);
-    vec3 col = vec3(0.0);
-    if (dy >= 0.0) col = tint * on * exp(-dy * 3.5) * (0.35 + 0.65 * seed);
-    if (dy == 0.0) col = mix(tint, vec3(1.0), 0.7) * on * (1.0 + 0.8 * uKick);
     return col;
 }
 """

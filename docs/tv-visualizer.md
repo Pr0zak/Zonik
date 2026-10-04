@@ -1,6 +1,6 @@
 # Google TV visualizer
 
-Left idle (or opened from the actions strip), the Google TV app becomes a demo-scene music visualizer: 105 OpenGL ES 2 fragment-shader effects driven by the live FFT, the waveform, a 64-band spectrum and the server's per-track BPM. Each clip below is the real shader running against a simulated 120 bpm beat, with a stand-in cover.
+Left idle (or opened from the actions strip), the Google TV app becomes a demo-scene music visualizer: 103 OpenGL ES 2 fragment-shader effects driven by the live FFT, the waveform, a 64-band spectrum and the server's per-track BPM. Each clip below is the real shader running against a simulated 120 bpm beat, with a stand-in cover.
 
 Settings → Visualizer picks which effects rotate, how often they change, the transition (20 wipes, or Mixed) and its speed, where the colours come from (album art, random, cycling, or mixed per effect), and whether track info sits in the centre or a corner.
 
@@ -64,8 +64,7 @@ Settings → Visualizer picks which effects rotate, how often they change, the t
 <tr><td align="center"><img src="visualizer/metaballs.gif" alt="Metaballs" width="240"><br><sub>Metaballs</sub></td><td align="center"><img src="visualizer/copper.gif" alt="Copper bars" width="240"><br><sub>Copper bars</sub></td><td align="center"><img src="visualizer/moire.gif" alt="Moiré" width="240"><br><sub>Moiré</sub></td></tr>
 <tr><td align="center"><img src="visualizer/fire.gif" alt="Fire" width="240"><br><sub>Fire</sub></td><td align="center"><img src="visualizer/voronoi.gif" alt="Crystal" width="240"><br><sub>Crystal</sub></td><td align="center"><img src="visualizer/aurora.gif" alt="Aurora" width="240"><br><sub>Aurora</sub></td></tr>
 <tr><td align="center"><img src="visualizer/shadebobs.gif" alt="Shadebobs" width="240"><br><sub>Shadebobs</sub></td><td align="center"><img src="visualizer/orbits.gif" alt="Orbits" width="240"><br><sub>Orbits</sub></td><td align="center"><img src="visualizer/hypercube.gif" alt="Hypercube" width="240"><br><sub>Hypercube</sub></td></tr>
-<tr><td align="center"><img src="visualizer/twister.gif" alt="Twister" width="240"><br><sub>Twister</sub></td><td align="center"><img src="visualizer/sinedots.gif" alt="Sine dots" width="240"><br><sub>Sine dots</sub></td><td align="center"><img src="visualizer/bubbles.gif" alt="Bubbles" width="240"><br><sub>Bubbles</sub></td></tr>
-<tr><td align="center"><img src="visualizer/digitalrain.gif" alt="Digital rain" width="240"><br><sub>Digital rain</sub></td></tr>
+<tr><td align="center"><img src="visualizer/sinedots.gif" alt="Sine dots" width="240"><br><sub>Sine dots</sub></td><td align="center"><img src="visualizer/bubbles.gif" alt="Bubbles" width="240"><br><sub>Bubbles</sub></td></tr>
 </table>
 
 ## Cover treatments and feedback
