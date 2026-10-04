@@ -18,7 +18,7 @@ from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
 from backend.models.job import Job
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer
 from backend.subsonic import router as subsonic_router
 
 
@@ -298,6 +298,7 @@ app.include_router(catalog_api.router, prefix="/api/search", tags=["catalog"])
 app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
 app.include_router(playlist_import.router, prefix="/api/playlists/import", tags=["playlist-import"])
 app.include_router(app_logs.router, prefix="/api/logs", tags=["logs"])
+app.include_router(tv_visualizer.router, prefix="/api/tv/visualizer", tags=["tv-visualizer"])
 app.include_router(pair.router, prefix="/api/pair", tags=["pair"])
 app.include_router(live.router, prefix="/api/live", tags=["live"])
 app.include_router(attention.router, prefix="/api/attention", tags=["attention"])

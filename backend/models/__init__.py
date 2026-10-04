@@ -18,11 +18,12 @@ from backend.models.taste_profile import TasteProfile
 from backend.models.upgrade import TrackUpgrade
 from backend.models.app_log import AppLog
 from backend.models.ai_usage import AIUsage
+from backend.models.tv_visualizer import TvVisualizerConfig, TvEffectStat
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
     "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User",
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
     "SoulseekSnapshot", "PlayHistory", "Recommendation", "TasteProfile",
-    "TrackUpgrade", "AppLog", "AIUsage",
+    "TrackUpgrade", "AppLog", "AIUsage", "TvVisualizerConfig", "TvEffectStat",
 ]

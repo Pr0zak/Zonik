@@ -22,6 +22,11 @@ function buildUrl(path, params = {}) {
 }
 
 export const api = {
+	// TV visualizer (Google TV app): shared settings and per-effect stats
+	getTvVisualizerConfig: () => request('/tv/visualizer/config'),
+	putTvVisualizerConfig: (body) => request('/tv/visualizer/config', { method: 'PUT', body: JSON.stringify(body) }),
+	getTvVisualizerStats: (days = 30) => request(`/tv/visualizer/stats?days=${days}`),
+
 	// Library
 	getStats: () => request('/library/stats'),
 	scanLibrary: () => request('/library/scan', { method: 'POST' }),
