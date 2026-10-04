@@ -30,6 +30,17 @@ class LibraryRepository @Inject constructor(
         return Triple(envelope.version, envelope.serverVersion, envelope.type)
     }
 
+    /**
+     * The server's fingerprint of the library, or null when it cannot say — an older server
+     * without the endpoint, or no connection. Null always means "sync to be safe".
+     */
+    suspend fun getLibraryVersion(): String? = try {
+        api.getLibraryVersion().response.libraryVersion?.version
+    } catch (e: Exception) {
+        com.zonik.app.data.DebugLog.d("Sync", "Library version unavailable: ${e.message}")
+        null
+    }
+
     fun getArtists(): Flow<List<Artist>> =
         database.artistDao().getAll().map { entities ->
             entities.map { it.toDomain() }

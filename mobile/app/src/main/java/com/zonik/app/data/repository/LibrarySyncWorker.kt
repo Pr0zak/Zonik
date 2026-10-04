@@ -27,7 +27,7 @@ class LibrarySyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         if (!settingsRepository.isLoggedIn.first()) return Result.success()
         DebugLog.d("Sync", "Scheduled sync starting")
-        return if (syncManager.fullSync(background = true)) Result.success() else Result.retry()
+        return if (syncManager.fullSync(background = true, onlyIfChanged = true)) Result.success() else Result.retry()
     }
 
     companion object {

@@ -306,7 +306,7 @@ class TvViewModel @Inject constructor(
     }
 
     val ambientRotateSec: StateFlow<Int> = settingsRepository.tvAmbientRotateSec
-        .stateIn(viewModelScope, SharingStarted.Eagerly, 60)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, 45)
 
     fun setAmbientRotateSec(seconds: Int) {
         viewModelScope.launch { settingsRepository.setTvAmbientRotateSec(seconds) }
@@ -506,8 +506,9 @@ class TvViewModel @Inject constructor(
     init {
         // A TV box sits idle for days between sessions, so the library is refreshed every time
         // the app opens rather than waiting on the background worker. A foreground sync, so
-        // the Stage can show its progress; fullSync() bails if one is already running.
-        viewModelScope.launch { syncManager.fullSync() }
+        // the Stage can show its progress; fullSync() bails if one is already running, and
+        // skips the work when the server says nothing has changed since the last sync.
+        viewModelScope.launch { syncManager.fullSync(onlyIfChanged = true) }
     }
 
     fun syncNow() {
@@ -1021,10 +1022,12 @@ private fun TvSyncStatus(viewModel: TvViewModel, modifier: Modifier = Modifier) 
         }
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.widthIn(max = 520.dp)) {
+            val upToDate = syncState.lastSyncResult == "Library up to date"
             Text(
                 text = when {
                     syncState.isSyncing -> syncState.phase.ifEmpty { "Syncing library..." }
                     failed -> "Library sync failed"
+                    upToDate -> "Library up to date"
                     else -> "Library synced"
                 },
                 style = MaterialTheme.typography.titleSmall,
@@ -1035,6 +1038,7 @@ private fun TvSyncStatus(viewModel: TvViewModel, modifier: Modifier = Modifier) 
             val detail = when {
                 syncState.isSyncing -> syncState.detail
                 failed -> syncState.error.orEmpty()
+                upToDate -> ""
                 else -> syncState.lastSyncResult.orEmpty().removePrefix("Sync complete: ")
             }
             if (detail.isNotEmpty()) {

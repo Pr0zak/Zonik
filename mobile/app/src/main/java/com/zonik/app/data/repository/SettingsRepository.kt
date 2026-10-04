@@ -103,6 +103,21 @@ class SettingsRepository @Inject constructor(
         }
     }
 
+    /**
+     * The library fingerprint from the last completed sync, tagged with the server it came
+     * from so pointing the app at another server never reads as "nothing changed".
+     */
+    val lastSyncedLibraryVersion: Flow<String?> = dataStore.data.map { prefs ->
+        prefs[LAST_SYNC_LIBRARY_VERSION]
+    }
+
+    suspend fun setLastSyncedLibraryVersion(version: String?) {
+        dataStore.edit { prefs ->
+            if (version == null) prefs.remove(LAST_SYNC_LIBRARY_VERSION)
+            else prefs[LAST_SYNC_LIBRARY_VERSION] = version
+        }
+    }
+
     suspend fun updateLastSyncTime(time: Long) {
         dataStore.edit { prefs -> prefs[LAST_SYNC] = time }
     }
@@ -217,7 +232,7 @@ class SettingsRepository @Inject constructor(
 
     /** Seconds between effect changes within a track; 0 changes only when the track does. */
     val tvAmbientRotateSec: Flow<Int> = dataStore.data.map { prefs ->
-        prefs[TV_AMBIENT_ROTATE_SEC] ?: 60
+        prefs[TV_AMBIENT_ROTATE_SEC] ?: 45
     }
 
     suspend fun setTvAmbientRotateSec(seconds: Int) {
@@ -289,6 +304,7 @@ class SettingsRepository @Inject constructor(
         private val WIFI_BITRATE = intPreferencesKey("wifi_bitrate")
         private val CELLULAR_BITRATE = intPreferencesKey("cellular_bitrate")
         private val LAST_SYNC = longPreferencesKey("last_sync")
+        private val LAST_SYNC_LIBRARY_VERSION = stringPreferencesKey("last_sync_library_version")
         private val SYNC_INTERVAL = intPreferencesKey("sync_interval")
         private val WIFI_ONLY = booleanPreferencesKey("wifi_only")
         private val SCROBBLING_ENABLED = booleanPreferencesKey("scrobbling_enabled")

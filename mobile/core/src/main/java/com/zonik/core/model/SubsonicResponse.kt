@@ -34,6 +34,24 @@ data class PingResponse(
 )
 
 @Serializable
+data class LibraryVersionResponse(
+    @SerialName("subsonic-response")
+    val response: LibraryVersionEnvelope
+)
+
+@Serializable
+data class LibraryVersionEnvelope(
+    val status: String,
+    val version: String,
+    val libraryVersion: LibraryVersion? = null
+)
+
+@Serializable
+data class LibraryVersion(
+    val version: String
+)
+
+@Serializable
 data class ArtistsResponse(
     @SerialName("subsonic-response")
     val response: ArtistsEnvelope

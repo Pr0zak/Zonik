@@ -31,11 +31,18 @@ class SyncManager @Inject constructor(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     /**
-     * Returns true when the sync completed. [background] syncs (the scheduled worker) run
-     * silently: no "Sync complete" banner, and a failure is logged rather than shown as an
-     * error on screen, since nobody asked for it and the worker will retry.
+     * Returns true when the sync completed (or was skipped as unnecessary). [background] syncs
+     * (the scheduled worker) run silently: no "Sync complete" banner, and a failure is logged
+     * rather than shown as an error on screen, since nobody asked for it and the worker will
+     * retry.
+     *
+     * With [onlyIfChanged], the server's library fingerprint is checked first and the sync is
+     * skipped when it matches the one from the last completed sync — a few hundred bytes
+     * instead of ~20 s of paging through the whole library. A manual "Sync now" leaves it off
+     * and always syncs. Play counts are not in the fingerprint (they change every song), so a
+     * sync still runs at least once every [MAX_SKIP_AGE_MS] to bring those up to date.
      */
-    suspend fun fullSync(background: Boolean = false): Boolean {
+    suspend fun fullSync(background: Boolean = false, onlyIfChanged: Boolean = false): Boolean {
         // Atomically claim the sync slot: only the caller that flips isSyncing
         // false -> true proceeds; concurrent callers see it already running and bail.
         var claimed = false
@@ -48,6 +55,29 @@ class SyncManager @Inject constructor(
             }
         }
         if (!claimed) return false
+
+        var serverVersion: String? = null
+        if (onlyIfChanged) {
+            _syncState.value = _syncState.value.copy(phase = "Checking for changes...")
+            serverVersion = libraryRepository.getLibraryVersion()
+            val tag = serverVersion?.let { "${serverTag()}|$it" }
+            val lastTag = settingsRepository.lastSyncedLibraryVersion.first()
+            val lastSync = settingsRepository.lastSyncTime.first()
+            val fresh = System.currentTimeMillis() - lastSync < MAX_SKIP_AGE_MS
+            if (tag != null && tag == lastTag && fresh) {
+                DebugLog.d("Sync", "Library unchanged since last sync; skipping")
+                _syncState.value = _syncState.value.copy(
+                    isSyncing = false,
+                    phase = "",
+                    detail = "",
+                    lastSyncResult = if (background) null else "Library up to date"
+                )
+                return true
+            }
+        } else {
+            serverVersion = libraryRepository.getLibraryVersion()
+        }
+        _syncState.value = _syncState.value.copy(phase = "Syncing artists...")
 
         DebugLog.d("Sync", "Starting full sync (search3 method)")
 
@@ -93,6 +123,9 @@ class SyncManager @Inject constructor(
             DebugLog.d("Sync", "Playlists synced: $playlistCount")
 
             settingsRepository.updateLastSyncTime(System.currentTimeMillis())
+            // Taken BEFORE the sync started, so a change that lands mid-sync shows up as a
+            // different fingerprint next time rather than being marked as already fetched.
+            settingsRepository.setLastSyncedLibraryVersion(serverVersion?.let { "${serverTag()}|$it" })
 
             // Auto-cache favorites for offline if enabled
             try {
@@ -139,7 +172,15 @@ class SyncManager @Inject constructor(
         }
     }
 
+    private suspend fun serverTag(): String =
+        settingsRepository.serverConfig.first()?.let { "${it.url}#${it.username}" } ?: ""
+
     fun clearError() {
         _syncState.value = _syncState.value.copy(error = null)
+    }
+
+    private companion object {
+        /** However unchanged the library looks, sync at least this often (play counts). */
+        const val MAX_SKIP_AGE_MS = 24L * 60 * 60 * 1000
     }
 }

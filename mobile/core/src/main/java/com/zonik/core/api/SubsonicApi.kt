@@ -111,4 +111,8 @@ interface SubsonicApi {
 
     @GET("rest/getNowPlaying.view")
     suspend fun getNowPlaying(): NowPlayingResponse
+
+    /** Zonik extension: a fingerprint of everything a full sync fetches. */
+    @GET("rest/getLibraryVersion.view")
+    suspend fun getLibraryVersion(): LibraryVersionResponse
 }

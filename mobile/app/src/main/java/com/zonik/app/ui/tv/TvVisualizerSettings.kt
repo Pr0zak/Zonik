@@ -410,7 +410,7 @@ private fun ChipButton(label: String, onClick: () -> Unit) {
 }
 
 private val DELAY_STEPS = listOf(0, 10, 30, 60, 90, 300)
-private val ROTATE_STEPS = listOf(0, 30, 60, 120, 300)
+private val ROTATE_STEPS = listOf(0, 30, 45, 60, 120, 300)
 private val COLOR_LABELS = linkedMapOf(
     "ALBUM" to "Album art",
     "RANDOM" to "Random",
