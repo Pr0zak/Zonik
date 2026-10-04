@@ -397,6 +397,12 @@ class TvViewModel @Inject constructor(
                 // 344 Hz wide, so "bass" actually meant vocals and guitars and the kick fell in a
                 // bin that was skipped entirely.
                 viz.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
+                // The default NORMALIZED mode rescales every capture to fill the 8-bit range from
+                // that buffer's own peak, which is an AGC working at 20 Hz: the gap between kicks
+                // is boosted to match the kick, and the dynamics the visuals should follow are
+                // gone before they reach us. PulseAnalyzer already normalises against a rolling
+                // peak, so take the audio as played.
+                viz.scalingMode = android.media.audiofx.Visualizer.SCALING_MODE_AS_PLAYED
                 val pulseAnalyzer = PulseAnalyzer(viz.samplingRate / 1000)
                 analyzer = pulseAnalyzer
                 viz.setDataCaptureListener(
@@ -437,17 +443,29 @@ class TvViewModel @Inject constructor(
 
     @Volatile private var latestWave: FloatArray? = null
 
-    /** 8-bit unsigned PCM (128 = silence) averaged down to [WAVEFORM_POINTS] values in 0..1. */
+    /** Rolling peak swing of the waveform, so the scope keeps its size now captures are as-played. */
+    private var wavePeak = 0.05f
+
+    /**
+     * 8-bit unsigned PCM (128 = silence) averaged down to [WAVEFORM_POINTS] values in 0..1,
+     * scaled against a slowly decaying peak so quiet audio still fills the oscilloscope.
+     */
     private fun downsampleWave(pcm: ByteArray): FloatArray {
         val out = FloatArray(WAVEFORM_POINTS)
         val per = maxOf(1, pcm.size / WAVEFORM_POINTS)
+        var swing = 0f
         for (i in 0 until WAVEFORM_POINTS) {
             var sum = 0
             val start = i * per
             val end = minOf(pcm.size, start + per)
             for (j in start until end) sum += pcm[j].toInt() and 0xFF
-            out[i] = if (end > start) sum / (end - start) / 255f else 0.5f
+            val v = if (end > start) sum / (end - start) / 255f - 0.5f else 0f
+            out[i] = v
+            swing = maxOf(swing, kotlin.math.abs(v))
         }
+        wavePeak = if (swing > wavePeak) swing else maxOf(wavePeak * 0.995f, 0.05f)
+        val gain = 0.45f / wavePeak
+        for (i in out.indices) out[i] = (0.5f + out[i] * gain).coerceIn(0f, 1f)
         return out
     }
 
@@ -460,6 +478,7 @@ class TvViewModel @Inject constructor(
         analyzer?.reset()
         analyzer = null
         latestWave = null
+        wavePeak = 0.05f
         _pulse.value = AmbientPulse()
     }
 

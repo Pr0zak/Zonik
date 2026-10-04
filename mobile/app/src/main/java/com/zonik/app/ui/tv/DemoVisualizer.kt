@@ -54,11 +54,13 @@ fun DemoVisualizer(
     LaunchedEffect(renderer, trails) { renderer.trails = trails }
 
     LaunchedEffect(renderer, pulse, beatClock) {
+        var lastOnset = 0f
         pulse.collect { p ->
             renderer.pulse = p
-            // The server knows the tempo but not where the downbeat falls, so a detected
-            // onset snaps the grid's phase into place.
-            if (beatClock.hasTempo && p.onset > 0.9f) beatClock.alignTo(System.currentTimeMillis())
+            // The server knows the tempo but not where the downbeat falls, so detected onsets
+            // pull the grid's phase into place.
+            if (p.onset > 0.9f && lastOnset <= 0.9f) beatClock.onOnset(System.currentTimeMillis())
+            lastOnset = p.onset
         }
     }
     LaunchedEffect(renderer, beatClock) { renderer.beatClock = beatClock }

@@ -203,6 +203,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     // Kicks counted so the kaleidoscope can change its wedge count every few bars.
     private var kickCount = 0
+    /** Kicks since the last fps line, so a log shows whether the music is actually landing. */
+    private var kicksLogged = 0
     private val balls = FloatArray(15)
 
     private var lastFrameNs = 0L
@@ -553,8 +555,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         // An onset is an event, so trigger on its rising edge and let it decay here at frame
         // rate rather than following the analyser's 20 Hz steps down.
         if (target.onset > 0.9f && lastOnset <= 0.9f) {
-            kick = 1f
+            kick = maxOf(kick, 0.5f + 0.5f * target.strength)
             kickCount++
+            kicksLogged++
             launchRing()
         }
         lastOnset = target.onset
@@ -872,7 +875,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         if (elapsed >= FPS_LOG_INTERVAL_NS) {
             val fps = fpsFrames * 1e9f / elapsed
             val extra = if (current == DemoEffect.MANDELBROT) " (skip $skipCount, |λ| %.1f)".format(zoomTarget.lambdaMag) else ""
-            DebugLog.d("DemoRenderer", "${current.name} %.1f fps$extra".format(fps))
+            DebugLog.d("DemoRenderer", "${current.name} %.1f fps, %d kicks$extra".format(fps, kicksLogged))
+            kicksLogged = 0
             fpsWindowStartNs = now
             fpsFrames = 0
         }
@@ -983,7 +987,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
         const val CRUISE = 0.12f
         const val ATTACK_RATE = 30f
-        const val RELEASE_RATE = 7f
+        const val RELEASE_RATE = 11f
         const val KICK_DECAY = 6f
         const val FPS_LOG_INTERVAL_NS = 10_000_000_000L
 
