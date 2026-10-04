@@ -459,13 +459,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uAspect", aspect)
         u2("uCenter", (sin(drift * 3.7) * 0.12).toFloat(), (sin(drift * 2.9 + 1.3) * 0.08).toFloat())
         if (e.floats) {
-            // A slow figure-eight with a second, slower term so the path never quite repeats:
-            // about 50 s across and back. Wide but short, since the title and progress sit
-            // along the bottom of the screen and a framed cover must not drift under them.
+            // A slow, gentle figure-eight with a second, slower term so the path never quite
+            // repeats: about 90 s across and back, and never more than about a sixth of the
+            // screen off centre. Wider than tall, since the title and progress sit along the
+            // bottom and a framed cover must not drift under them.
             u2(
                 "uFloat",
-                (sin(clock * 0.13) * 0.62 + sin(clock * 0.051 + 2.0) * 0.1).toFloat(),
-                (sin(clock * 0.097 + 1.1) * 0.24).toFloat()
+                (sin(clock * 0.07) * 0.3 + sin(clock * 0.029 + 2.0) * 0.05).toFloat(),
+                (sin(clock * 0.053 + 1.1) * 0.12).toFloat()
             )
         } else {
             u2("uFloat", 0f, 0f)
