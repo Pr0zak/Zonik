@@ -6,6 +6,7 @@ TVs also report how each effect ran (time on screen, frame rate, kicks) for the 
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -15,12 +16,26 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
+from backend.database import async_session, get_db
 from backend.models.tv_visualizer import TvEffectStat, TvVisualizerConfig
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Set (and replaced) whenever the config is saved, to wake TVs waiting in a long poll. In memory
+# is enough: the server runs as one uvicorn process.
+_changed = asyncio.Event()
+
+# Longest a long poll is held. Short enough that a restart is not held up for long by a TV
+# that is waiting, long enough that an idle TV costs a request every half minute or so.
+MAX_WAIT_SEC = 25
+
+
+def _notify_changed() -> None:
+    global _changed
+    old, _changed = _changed, asyncio.Event()
+    old.set()
 
 # The app's own defaults, so a key missing from the stored config means the same thing on the
 # server as on the TV. Keep in step with SettingsRepository's TV_AMBIENT_* defaults.
@@ -109,8 +124,23 @@ def _payload(row: TvVisualizerConfig | None) -> dict:
 
 
 @router.get("/config")
-async def get_config(db: AsyncSession = Depends(get_db)):
-    return _payload(await _load(db))
+async def get_config(wait: int = 0, since: str | None = None):
+    """The current config. With `wait` and `since` (the `updated_at` the caller already has),
+    a long poll: if nothing has changed, hold the request until a save or `wait` seconds
+    (at most MAX_WAIT_SEC), so a TV applies a change from the web within a second instead of
+    on its next poll.
+    """
+    async with async_session() as db:
+        payload = _payload(await _load(db))
+    if wait <= 0 or since is None or payload["updated_at"] != since:
+        return payload
+    event = _changed
+    try:
+        await asyncio.wait_for(event.wait(), timeout=min(wait, MAX_WAIT_SEC))
+    except asyncio.TimeoutError:
+        return payload
+    async with async_session() as db:
+        return _payload(await _load(db))
 
 
 class ConfigUpdate(BaseModel):
@@ -133,6 +163,7 @@ async def put_config(body: ConfigUpdate, db: AsyncSession = Depends(get_db)):
     row.updated_at = datetime.utcnow()
     row.updated_by = (body.updated_by or "web")[:80]
     await db.commit()
+    _notify_changed()
     log.info("TV visualizer config updated by %s: %s", row.updated_by, merged)
     return _payload(row)
 

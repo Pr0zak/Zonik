@@ -181,7 +181,7 @@
 			<h2 class="text-sm font-semibold text-[var(--text-primary)]">Settings</h2>
 			<p class="text-xs text-[var(--text-muted)] flex items-center gap-1.5 whitespace-nowrap">
 				{#if saving}<Loader2 class="w-3 h-3 animate-spin" />Saving…
-				{:else if savedAt}<Check class="w-3 h-3 text-[var(--color-success)]" />Saved · TVs pick it up within 5 min
+				{:else if savedAt}<Check class="w-3 h-3 text-[var(--color-success)]" />Saved · open TVs apply it within a second
 				{:else if cfg.updated_at}Last changed {fmtAgo(cfg.updated_at)} from {cfg.updated_by === 'web' ? 'the web' : cfg.updated_by}
 				{:else}Using the app's defaults{/if}
 			</p>
