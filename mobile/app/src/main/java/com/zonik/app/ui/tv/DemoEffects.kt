@@ -142,7 +142,19 @@ enum class DemoEffect(
     APOGLASS("Glass circles", APOLLONIAN_BODY, variant = 3, halfRes = true),
     HEXTRUCHET("Hex Truchet", TRUCHET_BODY, variant = 1),
     MAZE("Maze", TRUCHET_BODY, variant = 2),
-    TUBES("Truchet tubes", TRUCHET_BODY, variant = 3);
+    TUBES("Truchet tubes", TRUCHET_BODY, variant = 3),
+    FIREWORKS("Fireworks", FIREWORKS_BODY),
+    DISCOBALL("Disco ball", DISCOBALL_BODY, floats = true),
+    HYPERCUBE("Hypercube", HYPERCUBE_BODY, halfRes = true, floats = true),
+    TWISTER("Twister", TWISTER_BODY),
+    SINEDOTS("Sine dots", SINEDOTS_BODY),
+    SPIROGRAPH("Spirograph", SPIROGRAPH_BODY, feedback = true),
+    GALAXY("Galaxy", GALAXY_BODY, floats = true),
+    PULSAR("Ridgelines", PULSAR_BODY),
+    BUBBLES("Bubbles", BUBBLES_BODY),
+    DIGITALRAIN("Digital rain", DIGITALRAIN_BODY),
+    COVERBOUNCE("Bouncing cover", COVERBOUNCE_BODY, feedback = true),
+    RIBBONS("Ribbons", RIBBONS_BODY);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
 }

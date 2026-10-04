@@ -12,7 +12,7 @@ package com.zonik.app.ui.tv
  * bit `row * 3 + column` from the top left, which needs highp to stay exact (the header asks
  * for it).
  */
-private const val GLYPHS = """
+internal const val GLYPHS = """
 float glyphMask(float c) {
     if (c < 0.5) return 31599.0;
     if (c < 1.5) return 29850.0;
