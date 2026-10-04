@@ -1,8 +1,10 @@
 """Subsonic system endpoints: ping, getLicense, getOpenSubsonicExtensions, getLyrics."""
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +23,45 @@ def _get_format(request: Request) -> str:
 @router.get("/ping.view")
 async def ping(request: Request):
     return subsonic_response({}, _get_format(request))
+
+
+# Everything a client's full library sync downloads, as cheap column lists. Play and skip
+# counts are left out on purpose, and so is tracks.updated_at, which a scrobble bumps: they
+# change on every song, and folding them in would make the library look "changed" the whole
+# time a client is playing, which defeats the check.
+_LIBRARY_VERSION_QUERIES = (
+    "SELECT id, title, artist_id, album_id, track_number, disc_number, duration_seconds,"
+    " file_size, format, bitrate, genre, year, cover_art_path, rating"
+    " FROM tracks ORDER BY id",
+    "SELECT id, title, artist_id, year, genre, cover_art_path, track_count, is_compilation"
+    " FROM albums ORDER BY id",
+    "SELECT id, name, sort_name, image_url FROM artists ORDER BY id",
+    "SELECT track_id, bpm FROM track_analysis ORDER BY track_id",
+    "SELECT id, track_id, album_id, artist_id FROM favorites ORDER BY id",
+    "SELECT id, name, comment, is_public, updated_at FROM playlists ORDER BY id",
+    "SELECT playlist_id, track_id, position FROM playlist_tracks ORDER BY playlist_id, position",
+)
+
+
+@router.get("/getLibraryVersion")
+@router.get("/getLibraryVersion.view")
+async def get_library_version(request: Request, db: AsyncSession = Depends(get_db)):
+    """Zonik extension: a fingerprint of the library a client syncs.
+
+    It changes whenever anything a full sync would fetch changes (tracks, albums, artists,
+    tempo, stars, playlists), so a client can compare it with the one from its last sync and
+    skip the sync when they match. Hashing the ~30k narrow rows takes about a tenth of a
+    second, against the ~20 s and dozens of requests a full sync costs.
+    """
+    digest = hashlib.sha1()
+    for query in _LIBRARY_VERSION_QUERIES:
+        result = await db.execute(text(query))
+        for row in result:
+            digest.update(repr(tuple(row)).encode())
+        digest.update(b"|")
+    return subsonic_response(
+        {"libraryVersion": {"version": digest.hexdigest()}}, _get_format(request)
+    )
 
 
 @router.get("/getLicense")
