@@ -110,7 +110,7 @@ class PulseAnalyzer(private val sampleRate: Int) {
     /**
      * An onset is a sharp RISE in low-band energy, not a high level, so a sustained bass note
      * does not fire the drum trigger over and over. The rise has to stand out from the last
-     * ~1.5 s of rises (mean plus 1.5 standard deviations), which lets a quiet acoustic track
+     * ~1.5 s of rises (mean plus 1.25 standard deviations), which lets a quiet acoustic track
      * register its kicks and stops a dense electronic one from firing on everything.
      */
     private fun detectOnset(lowRaw: Float) {
@@ -221,7 +221,7 @@ class PulseAnalyzer(private val sampleRate: Int) {
         /** ~1.5 s of captures at 20 Hz. */
         const val FLUX_HISTORY = 30
         const val FLUX_WARMUP = 8
-        const val ONSET_SIGMA = 1.5f
+        const val ONSET_SIGMA = 1.25f
         const val ONSET_MIN_FLUX = 0.08f
         /** Captures (50 ms each) before another onset may fire: caps it near 400 BPM. */
         const val ONSET_REFRACTORY = 3
