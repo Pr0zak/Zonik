@@ -519,11 +519,14 @@ class TvViewModel @Inject constructor(
         // skips the work when the server says nothing has changed since the last sync.
         viewModelScope.launch { syncManager.fullSync(onlyIfChanged = true) }
         // Visualizer settings live on the server (the web UI's TV Visualizer page edits them).
-        // Pull them now and every few minutes, and report effect stats on the same beat.
+        // Pull them now, then hold a long poll so a change on the web applies within a second.
+        viewModelScope.launch {
+            visualizerSync.pull()
+            visualizerSync.watch()
+        }
         viewModelScope.launch {
             while (true) {
-                visualizerSync.pull()
-                kotlinx.coroutines.delay(VISUALIZER_SYNC_MS)
+                kotlinx.coroutines.delay(VISUALIZER_STATS_MS)
                 visualizerSync.uploadStats()
             }
         }
@@ -587,8 +590,8 @@ private val TvCardBackground = Color(0xFF1E1C2A)
 /** How long the cover and title stay over the visuals in "Show, then fade" mode. */
 private const val INFO_VISIBLE_MS = 10_000L
 
-/** How often the TV pulls visualizer settings from the server and uploads effect stats. */
-private const val VISUALIZER_SYNC_MS = 5 * 60_000L
+/** How often the TV uploads visualizer effect stats. */
+private const val VISUALIZER_STATS_MS = 5 * 60_000L
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Screen

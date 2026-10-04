@@ -43,6 +43,8 @@ class TvVisualizerSync @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lock = Mutex()
     private var pending: TvVisualizerConfig? = null
+    /** The server's `updated_at` for the config this TV last saw, for the long poll. */
+    @Volatile private var seenUpdatedAt: String? = null
 
     val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
 
@@ -58,6 +60,7 @@ class TvVisualizerSync @Inject constructor(
         try {
             pending?.let { sendLocked(it) }
             val remote = api.getTvVisualizerConfig()
+            seenUpdatedAt = remote.updatedAt
             if (remote.updatedAt == null) {
                 DebugLog.d("TvSync", "Server has no visualizer settings yet; seeding from this TV")
                 sendLocked(current())
@@ -66,6 +69,46 @@ class TvVisualizerSync @Inject constructor(
             apply(remote.config)
         } catch (e: Exception) {
             DebugLog.d("TvSync", "Visualizer settings pull failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Applies changes made on the server as they happen, for as long as the caller's scope
+     * lives: a long poll that the server answers the moment the config is saved (or after
+     * ~25 s with nothing new), so a change on the web page reaches the TV in about a second.
+     * Call after [pull], which records where the server's config stood.
+     */
+    suspend fun watch() {
+        while (true) {
+            val since = seenUpdatedAt
+            if (since == null) {
+                // Nothing saved on the server yet, so nothing to wait on; check back now and then.
+                kotlinx.coroutines.delay(IDLE_RECHECK_MS)
+                pull()
+                continue
+            }
+            val started = System.currentTimeMillis()
+            try {
+                val remote = api.getTvVisualizerConfig(wait = LONG_POLL_SEC, since = since)
+                if (remote.updatedAt != since) {
+                    lock.withLock {
+                        seenUpdatedAt = remote.updatedAt
+                        // A change of our own that has not reached the server yet wins; it is
+                        // sent before the next pull.
+                        if (pending == null) apply(remote.config)
+                    }
+                } else if (System.currentTimeMillis() - started < 1_000) {
+                    // Answered at once with nothing new: a server too old to hold the request.
+                    // Fall back to polling rather than spinning.
+                    kotlinx.coroutines.delay(IDLE_RECHECK_MS)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DebugLog.d("TvSync", "Settings watch failed, retrying: ${e.message}")
+                kotlinx.coroutines.delay(RETRY_MS)
+                pull()
+            }
         }
     }
 
@@ -84,7 +127,9 @@ class TvVisualizerSync @Inject constructor(
 
     /** Sends [change] and clears what was pending. Caller holds [lock]. */
     private suspend fun sendLocked(change: TvVisualizerConfig) {
-        api.putTvVisualizerConfig(TvVisualizerConfigUpdate(change, updatedBy = deviceName))
+        val saved = api.putTvVisualizerConfig(TvVisualizerConfigUpdate(change, updatedBy = deviceName))
+        // Our own save: note it as seen so the long poll does not wake for it.
+        seenUpdatedAt = saved.updatedAt
         pending = null
     }
 
@@ -137,6 +182,12 @@ class TvVisualizerSync @Inject constructor(
         set(c.colors, now.colors) { settings.setTvAmbientColors(it) }
         set(c.trails, now.trails) { settings.setTvAmbientTrails(it) }
         if (changed > 0) DebugLog.d("TvSync", "Applied $changed visualizer settings from the server")
+    }
+
+    private companion object {
+        const val LONG_POLL_SEC = 25
+        const val IDLE_RECHECK_MS = 30_000L
+        const val RETRY_MS = 15_000L
     }
 
     private fun merge(a: TvVisualizerConfig?, b: TvVisualizerConfig) = if (a == null) b else TvVisualizerConfig(

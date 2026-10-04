@@ -95,8 +95,12 @@ interface ZonikApi {
 
     // --- TV visualizer: settings shared with the web UI, and per-effect stats ---
 
+    /** With [wait] and [since], a long poll: the server answers when the config changes. */
     @GET("api/tv/visualizer/config")
-    suspend fun getTvVisualizerConfig(): TvVisualizerConfigResponse
+    suspend fun getTvVisualizerConfig(
+        @Query("wait") wait: Int? = null,
+        @Query("since") since: String? = null,
+    ): TvVisualizerConfigResponse
 
     @PUT("api/tv/visualizer/config")
     suspend fun putTvVisualizerConfig(@Body body: TvVisualizerConfigUpdate): TvVisualizerConfigResponse
