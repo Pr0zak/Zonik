@@ -458,6 +458,18 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val drift = clock * 0.1
         u1("uAspect", aspect)
         u2("uCenter", (sin(drift * 3.7) * 0.12).toFloat(), (sin(drift * 2.9 + 1.3) * 0.08).toFloat())
+        if (e.floats) {
+            // A slow figure-eight with a second, slower term so the path never quite repeats:
+            // about 50 s across and back. Wide but short, since the title and progress sit
+            // along the bottom of the screen and a framed cover must not drift under them.
+            u2(
+                "uFloat",
+                (sin(clock * 0.13) * 0.62 + sin(clock * 0.051 + 2.0) * 0.1).toFloat(),
+                (sin(clock * 0.097 + 1.1) * 0.24).toFloat()
+            )
+        } else {
+            u2("uFloat", 0f, 0f)
+        }
         u1("uPhase", phase)
         u1("uSpin", spin)
         u1("uTime", time)
@@ -994,7 +1006,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val QUAD = floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f)
 
         val UNIFORM_NAMES = listOf(
-            "uAspect", "uCenter", "uPhase", "uSpin", "uTime", "uTwist",
+            "uAspect", "uCenter", "uFloat", "uPhase", "uSpin", "uTime", "uTwist",
             "uLow", "uMid", "uHigh", "uKick", "uBeat", "uFade", "uSegments", "uBalls",
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",

@@ -42,12 +42,18 @@ enum class DemoEffect(
      * Acid plasma…) without a copy of it per look. 0 is the original.
      */
     variant: Int = 0,
+    /**
+     * The effect is built around one centre point — a framed cover with rings, a spiral, a
+     * kaleidoscope — and would sit dead centre forever. It floats instead: the renderer moves
+     * the whole composition slowly around the screen through `uFloat`.
+     */
+    val floats: Boolean = false,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
     STARFIELD("Starfield", STARFIELD_BODY),
     ROTOZOOM("Rotozoomer", ROTOZOOM_BODY),
-    KALEIDOSCOPE("Kaleidoscope", KALEIDOSCOPE_BODY),
+    KALEIDOSCOPE("Kaleidoscope", KALEIDOSCOPE_BODY, floats = true),
     METABALLS("Metaballs", METABALLS_BODY),
     COPPER("Copper bars", COPPER_BODY),
     SYNTHWAVE("Synthwave", SYNTHWAVE_BODY),
@@ -57,20 +63,20 @@ enum class DemoEffect(
     AURORA("Aurora", AURORA_BODY),
     JULIA("Julia", JULIA_BODY),
     MANDELBROT("Mandelbrot", MANDELBROT_BODY),
-    SHOCKWAVE("Shockwaves", SHOCKWAVE_BODY, framesCover = true),
-    GODRAYS("God rays", GODRAYS_BODY, framesCover = true),
-    SUNBURST("Sunburst", SUNBURST_BODY, framesCover = true),
+    SHOCKWAVE("Shockwaves", SHOCKWAVE_BODY, framesCover = true, floats = true),
+    GODRAYS("God rays", GODRAYS_BODY, framesCover = true, floats = true),
+    SUNBURST("Sunburst", SUNBURST_BODY, framesCover = true, floats = true),
     MELT("Melt", MELT_BODY, framesCover = true, feedback = true),
     INK("Ink", INK_BODY, feedback = true),
-    OSCILLOSCOPE("Oscilloscope", OSCILLOSCOPE_BODY, framesCover = true),
-    ORBITS("Orbits", ORBITS_BODY, framesCover = true),
+    OSCILLOSCOPE("Oscilloscope", OSCILLOSCOPE_BODY, framesCover = true, floats = true),
+    ORBITS("Orbits", ORBITS_BODY, framesCover = true, floats = true),
     SKYLINE("Neon skyline", SKYLINE_BODY),
-    KALEIDOFRAME("Kaleido frame", KALEIDOFRAME_BODY, framesCover = true),
+    KALEIDOFRAME("Kaleido frame", KALEIDOFRAME_BODY, framesCover = true, floats = true),
     DOTTUNNEL("Dot tunnel", DOTTUNNEL_BODY),
     VOXEL("Voxel hills", VOXEL_BODY, halfRes = true),
-    LEDBARS("LED bars", LEDBARS_BODY, framesCover = true),
-    SPECTRUMRINGS("Spectrum rings", SPECTRUMRINGS_BODY, framesCover = true),
-    RIPPLES("Water ripples", RIPPLES_BODY, framesCover = true),
+    LEDBARS("LED bars", LEDBARS_BODY, framesCover = true, floats = true),
+    SPECTRUMRINGS("Spectrum rings", SPECTRUMRINGS_BODY, framesCover = true, floats = true),
+    RIPPLES("Water ripples", RIPPLES_BODY, framesCover = true, floats = true),
     DEFORM("Deformations", DEFORM_BODY),
     VHS("VHS glitch", VHS_BODY, framesCover = true),
     DROSTE("Droste zoom", DROSTE_BODY),
@@ -96,26 +102,26 @@ enum class DemoEffect(
     HALFTONE("Halftone", HALFTONE_BODY),
     ASCII("ASCII", ASCII_BODY),
     MILKDROP("Milkdrop warp", MILKDROP_BODY, feedback = true),
-    HYPNO("Hypno spiral", HYPNO_BODY),
+    HYPNO("Hypno spiral", HYPNO_BODY, floats = true),
     KIFS("Kaleido fractal", KIFS_BODY, halfRes = true),
-    BASSLENS("Bass lens", BASSLENS_BODY),
+    BASSLENS("Bass lens", BASSLENS_BODY, floats = true),
     OPART("Op art", OPART_BODY),
     WORMHOLE("Wormhole", WORMHOLE_BODY),
     MARBLE("Liquid marble", MARBLE_BODY, halfRes = true),
     HEXTUNNEL("Hex tunnel", HEXTUNNEL_BODY),
     LASERS("Laser show", LASERS_BODY),
-    ROSE("Rose curves", ROSE_BODY),
+    ROSE("Rose curves", ROSE_BODY, floats = true),
     TILEZOOM("Tile zoom", TILEZOOM_BODY),
     PULSEGRID("Pulse grid", PULSEGRID_BODY),
     LIGHTNING("Lightning", LIGHTNING_BODY),
     SACRED("Flower of life", SACRED_BODY),
-    STROBEKALEIDO("Strobe kaleido", STROBEKALEIDO_BODY),
+    STROBEKALEIDO("Strobe kaleido", STROBEKALEIDO_BODY, floats = true),
     // Variations on the effects above, from the same bodies (see `variant`).
     WARPTUNNEL("Warp tunnel", TUNNEL_BODY, variant = 1),
     ACIDPLASMA("Acid plasma", PLASMA_BODY, variant = 1),
     SMOOTHPLASMA("Soft plasma", PLASMA_BODY, variant = 2),
     NEBULA("Nebula stars", STARFIELD_BODY, variant = 1),
-    KALEIDOZOOM("Kaleido zoom", KALEIDOSCOPE_BODY, variant = 1),
+    KALEIDOZOOM("Kaleido zoom", KALEIDOSCOPE_BODY, variant = 1, floats = true),
     NIGHTDRIVE("Night drive", SYNTHWAVE_BODY, variant = 1),
     JULIAPULSE("Julia pulse", JULIA_BODY, variant = 1),
     DROSTESPIRAL("Droste spiral", DROSTE_BODY, variant = 1),
@@ -123,14 +129,14 @@ enum class DemoEffect(
     OCTOTUNNEL("Octagon tunnel", SQUARETUNNEL_BODY, variant = 2),
     RAINBOWWARP("Rainbow warp", HYPERSPACE_BODY, variant = 1),
     MOONLIGHT("Moonlit ocean", OCEAN_BODY, variant = 1),
-    HYPNORINGS("Hypno rings", HYPNO_BODY, variant = 1),
+    HYPNORINGS("Hypno rings", HYPNO_BODY, variant = 1, floats = true),
     HEXRADAR("Hex radar", HEXPULSE_BODY, variant = 1),
     TRIPULSE("Triangle pulse", HEXPULSE_BODY, variant = 2),
     HEXFLIP("Hex flip", HEXPULSE_BODY, variant = 3),
     CELLPULSE("Cell pulse", HEXPULSE_BODY, variant = 4),
-    SPECTRUMSQUARES("Square meter", SPECTRUMRINGS_BODY, framesCover = true, variant = 1),
-    SPECTRUMSPIRAL("Spiral meter", SPECTRUMRINGS_BODY, framesCover = true, variant = 2),
-    RADAR("Radar", SPECTRUMRINGS_BODY, framesCover = true, variant = 3),
+    SPECTRUMSQUARES("Square meter", SPECTRUMRINGS_BODY, framesCover = true, variant = 1, floats = true),
+    SPECTRUMSPIRAL("Spiral meter", SPECTRUMRINGS_BODY, framesCover = true, variant = 2, floats = true),
+    RADAR("Radar", SPECTRUMRINGS_BODY, framesCover = true, variant = 3, floats = true),
     APONEON("Neon circles", APOLLONIAN_BODY, variant = 1, halfRes = true),
     APOPULSE("Circle pulse", APOLLONIAN_BODY, variant = 2, halfRes = true),
     APOGLASS("Glass circles", APOLLONIAN_BODY, variant = 3, halfRes = true),
@@ -191,6 +197,7 @@ varying vec2 vPos;
 
 uniform float uAspect;
 uniform vec2 uCenter;
+uniform vec2 uFloat;
 uniform float uPhase;
 uniform float uSpin;
 uniform float uTime;
@@ -416,7 +423,7 @@ void main() {
         if (isIncoming != (uWipeSide > 0.5)) discard;
         seam = 1.0 - smoothstep(0.0, 0.035, abs(m - uWipe));
     }
-    vec3 col = shade(p - uCenter);
+    vec3 col = shade(p - uCenter - uFloat);
     col += vivid(uC0) * seam * 0.9;
     gl_FragColor = vec4(col * uFade, 1.0);
 }
@@ -999,7 +1006,7 @@ vec3 shade(vec2 p) {
  */
 private const val SHOCKWAVE_BODY = """
 vec3 shade(vec2 p) {
-    // The cover stays dead centre: undo FOOTER's wander.
+    // Undo FOOTER's small wander; the cover moves only with uFloat, when the effect floats.
     p += uCenter;
     float h = 0.3 + 0.012 * uKick;
     float r = length(p);
@@ -1148,7 +1155,7 @@ vec3 shade(vec2 p) {
  */
 private const val OSCILLOSCOPE_BODY = """
 vec3 shade(vec2 p) {
-    // The cover stays dead centre: undo FOOTER's wander.
+    // Undo FOOTER's small wander; the cover moves only with uFloat, when the effect floats.
     p += uCenter;
     float h = 0.3 + 0.01 * uKick;
     float r = length(p);
