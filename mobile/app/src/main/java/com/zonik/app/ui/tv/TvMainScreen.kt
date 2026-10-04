@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -483,6 +484,13 @@ class TvViewModel @Inject constructor(
 
     val syncState = syncManager.syncState
 
+    init {
+        // A TV box sits idle for days between sessions, so the library is refreshed every time
+        // the app opens rather than waiting on the background worker. A foreground sync, so
+        // the Stage can show its progress; fullSync() bails if one is already running.
+        viewModelScope.launch { syncManager.fullSync() }
+    }
+
     fun syncNow() {
         viewModelScope.launch { syncManager.fullSync() }
     }
@@ -723,6 +731,10 @@ fun TvMainScreen(
                         showSettings = true
                     },
                 )
+                TvSyncStatus(
+                    viewModel = viewModel,
+                    modifier = Modifier.align(Alignment.TopEnd)
+                )
             }
         }
 
@@ -937,6 +949,82 @@ private fun TvAmbientOverlay(
  * The ambient screen's track info as a compact card for the bottom-left corner: a small cover
  * (left out when the effect draws the cover itself), title, artist and progress.
  */
+/**
+ * Library sync progress, top-right of the Stage. Shown while a sync runs, then the result
+ * lingers a few seconds (longer for a failure) and fades. Never focusable — it is a status
+ * line, not something the D-pad should land on.
+ */
+@Composable
+private fun TvSyncStatus(viewModel: TvViewModel, modifier: Modifier = Modifier) {
+    val syncState by viewModel.syncState.collectAsState()
+    var resultVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(syncState.isSyncing, syncState.lastSyncResult, syncState.error) {
+        if (syncState.isSyncing || syncState.lastSyncResult == null) {
+            resultVisible = false
+            return@LaunchedEffect
+        }
+        resultVisible = true
+        delay(if (syncState.error != null) 10_000L else 4_000L)
+        resultVisible = false
+    }
+    val visible = syncState.isSyncing || resultVisible
+    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(400), label = "syncStatus")
+    if (alpha == 0f) return
+
+    val failed = !syncState.isSyncing && syncState.error != null
+    Row(
+        modifier = modifier
+            .graphicsLayer { this.alpha = alpha }
+            .clip(RoundedCornerShape(24.dp))
+            .background(TvCardBackground.copy(alpha = 0.85f))
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (syncState.isSyncing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                color = ZonikColors.gold,
+                strokeWidth = 2.dp
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.Sync,
+                contentDescription = null,
+                tint = if (failed) MaterialTheme.colorScheme.error else ZonikColors.gold,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.widthIn(max = 520.dp)) {
+            Text(
+                text = when {
+                    syncState.isSyncing -> syncState.phase.ifEmpty { "Syncing library..." }
+                    failed -> "Library sync failed"
+                    else -> "Library synced"
+                },
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            val detail = when {
+                syncState.isSyncing -> syncState.detail
+                failed -> syncState.error.orEmpty()
+                else -> syncState.lastSyncResult.orEmpty().removePrefix("Sync complete: ")
+            }
+            if (detail.isNotEmpty()) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun CornerTrackInfo(
     title: String,
