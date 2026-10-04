@@ -110,7 +110,8 @@ class TvViewModel @Inject constructor(
     private val syncManager: com.zonik.app.data.repository.SyncManager,
     private val logUploader: com.zonik.app.data.api.LogUploader,
     private val updateChecker: com.zonik.app.data.api.UpdateChecker,
-    private val settingsRepository: com.zonik.app.data.repository.SettingsRepository
+    private val settingsRepository: com.zonik.app.data.repository.SettingsRepository,
+    private val visualizerSync: com.zonik.app.data.repository.TvVisualizerSync
 ) : ViewModel() {
 
     // Playback state (delegated from PlaybackManager)
@@ -273,14 +274,17 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientEnabled(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setTvAmbientEnabled(enabled) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(enabled = enabled))
     }
 
     fun setAmbientDelaySec(seconds: Int) {
         viewModelScope.launch { settingsRepository.setTvAmbientDelaySec(seconds) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(delaySec = seconds))
     }
 
     fun setAmbientBeatReactive(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setTvAmbientBeatReactive(enabled) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(beatReactive = enabled))
     }
 
     /** Effects in the rotation, in the order they rotate. Never empty. */
@@ -298,11 +302,9 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientEffects(effects: Set<DemoEffect>) {
         if (effects.isEmpty()) return
-        viewModelScope.launch {
-            settingsRepository.setTvAmbientEffectsOff(
-                DemoEffect.entries.filter { it !in effects }.map { it.name }.toSet()
-            )
-        }
+        val off = DemoEffect.entries.filter { it !in effects }.map { it.name }.toSet()
+        viewModelScope.launch { settingsRepository.setTvAmbientEffectsOff(off) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(effectsOff = off.sorted()))
     }
 
     val ambientRotateSec: StateFlow<Int> = settingsRepository.tvAmbientRotateSec
@@ -310,6 +312,7 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientRotateSec(seconds: Int) {
         viewModelScope.launch { settingsRepository.setTvAmbientRotateSec(seconds) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(rotateSec = seconds))
     }
 
     val ambientInfo: StateFlow<String> = settingsRepository.tvAmbientInfo
@@ -317,6 +320,7 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientInfo(mode: String) {
         viewModelScope.launch { settingsRepository.setTvAmbientInfo(mode) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(info = mode))
     }
 
     val ambientTransition: StateFlow<Int> = settingsRepository.tvAmbientTransition
@@ -324,6 +328,7 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientTransition(kind: Int) {
         viewModelScope.launch { settingsRepository.setTvAmbientTransition(kind) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(transition = kind))
     }
 
     val ambientTransitionMs: StateFlow<Int> = settingsRepository.tvAmbientTransitionMs
@@ -331,6 +336,7 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientTransitionMs(ms: Int) {
         viewModelScope.launch { settingsRepository.setTvAmbientTransitionMs(ms) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(transitionMs = ms))
     }
 
     val ambientColors: StateFlow<String> = settingsRepository.tvAmbientColors
@@ -338,6 +344,7 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientColors(mode: String) {
         viewModelScope.launch { settingsRepository.setTvAmbientColors(mode) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(colors = mode))
     }
 
     val ambientTrails: StateFlow<Boolean> = settingsRepository.tvAmbientTrails
@@ -345,6 +352,7 @@ class TvViewModel @Inject constructor(
 
     fun setAmbientTrails(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setTvAmbientTrails(enabled) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(trails = enabled))
     }
 
     private val _pulse = MutableStateFlow(AmbientPulse())
@@ -485,6 +493,7 @@ class TvViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         stopVisualizer()
+        visualizerSync.uploadStats()
     }
 
     fun toggleStar() {
@@ -509,6 +518,15 @@ class TvViewModel @Inject constructor(
         // the Stage can show its progress; fullSync() bails if one is already running, and
         // skips the work when the server says nothing has changed since the last sync.
         viewModelScope.launch { syncManager.fullSync(onlyIfChanged = true) }
+        // Visualizer settings live on the server (the web UI's TV Visualizer page edits them).
+        // Pull them now and every few minutes, and report effect stats on the same beat.
+        viewModelScope.launch {
+            while (true) {
+                visualizerSync.pull()
+                kotlinx.coroutines.delay(VISUALIZER_SYNC_MS)
+                visualizerSync.uploadStats()
+            }
+        }
     }
 
     fun syncNow() {
@@ -568,6 +586,9 @@ private val TvCardBackground = Color(0xFF1E1C2A)
 
 /** How long the cover and title stay over the visuals in "Show, then fade" mode. */
 private const val INFO_VISIBLE_MS = 10_000L
+
+/** How often the TV pulls visualizer settings from the server and uploads effect stats. */
+private const val VISUALIZER_SYNC_MS = 5 * 60_000L
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Main Screen

@@ -205,6 +205,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var kickCount = 0
     /** Kicks since the last fps line, so a log shows whether the music is actually landing. */
     private var kicksLogged = 0
+    /** The effect last counted as shown in [TvEffectStats]. */
+    private var statsShown: DemoEffect? = null
     private val balls = FloatArray(15)
 
     private var lastFrameNs = 0L
@@ -358,7 +360,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         updateTransition(dt)
 
         val incoming = next
+        if (current != statsShown) {
+            statsShown = current
+            TvEffectStats.shown(current)
+        }
         if (incoming == null) {
+            TvEffectStats.frame(current, dt)
             draw(current, wipe = -1f, incomingSide = false)
         } else {
             // Each pixel belongs to exactly one of the two effects, so a transition costs the
@@ -571,6 +578,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             kick = maxOf(kick, 0.5f + 0.5f * target.strength)
             kickCount++
             kicksLogged++
+            TvEffectStats.kick(current)
             launchRing()
         }
         lastOnset = target.onset

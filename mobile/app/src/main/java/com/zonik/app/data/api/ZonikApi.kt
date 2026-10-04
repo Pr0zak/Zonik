@@ -92,7 +92,67 @@ interface ZonikApi {
 
     @GET("api/analysis/track/{trackId}")
     suspend fun getTrackAnalysis(@retrofit2.http.Path("trackId") trackId: String): TrackAnalysisResponse
+
+    // --- TV visualizer: settings shared with the web UI, and per-effect stats ---
+
+    @GET("api/tv/visualizer/config")
+    suspend fun getTvVisualizerConfig(): TvVisualizerConfigResponse
+
+    @PUT("api/tv/visualizer/config")
+    suspend fun putTvVisualizerConfig(@Body body: TvVisualizerConfigUpdate): TvVisualizerConfigResponse
+
+    @POST("api/tv/visualizer/stats")
+    suspend fun postTvVisualizerStats(@Body body: TvVisualizerStatsReport)
 }
+
+/**
+ * The TV visualizer's settings as the server stores them. Every field is nullable so the same
+ * class serves a partial update: a null field is left out of the JSON (encodeDefaults is off)
+ * and the server leaves that setting alone.
+ */
+@Serializable
+data class TvVisualizerConfig(
+    val enabled: Boolean? = null,
+    @SerialName("delay_sec") val delaySec: Int? = null,
+    @SerialName("beat_reactive") val beatReactive: Boolean? = null,
+    @SerialName("effects_off") val effectsOff: List<String>? = null,
+    @SerialName("rotate_sec") val rotateSec: Int? = null,
+    val info: String? = null,
+    val transition: Int? = null,
+    @SerialName("transition_ms") val transitionMs: Int? = null,
+    val colors: String? = null,
+    val trails: Boolean? = null,
+)
+
+@Serializable
+data class TvVisualizerConfigResponse(
+    val config: TvVisualizerConfig,
+    /** Null until anyone has saved settings on the server. */
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("updated_by") val updatedBy: String? = null,
+)
+
+@Serializable
+data class TvVisualizerConfigUpdate(
+    val config: TvVisualizerConfig,
+    @SerialName("updated_by") val updatedBy: String,
+)
+
+@Serializable
+data class TvEffectReport(
+    val effect: String,
+    val seconds: Float,
+    val frames: Int,
+    val kicks: Int,
+    val shows: Int,
+)
+
+@Serializable
+data class TvVisualizerStatsReport(
+    @SerialName("device_id") val deviceId: String,
+    @SerialName("device_name") val deviceName: String,
+    val effects: List<TvEffectReport>,
+)
 
 /** Server-side audio analysis. Every field is optional — the endpoint answers with an `error`
  *  key instead when a track was never analysed. */
