@@ -959,15 +959,21 @@ private fun TvAmbientOverlay(
                 )
             }
         }
+
+        // Which effect is up, small and faint in the corner the track info never uses. Not
+        // tied to the info fade: it is quiet enough to stay, and it is what you want to read
+        // when an effect catches your eye minutes after the last remote press.
+        Text(
+            text = effect.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White.copy(alpha = 0.4f),
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(horizontal = 48.dp, vertical = 27.dp)
+        )
     }
 }
 
-
-
-/**
- * The ambient screen's track info as a compact card for the bottom-left corner: a small cover
- * (left out when the effect draws the cover itself), title, artist and progress.
- */
 /**
  * Library sync progress, top-right of the Stage. Shown while a sync runs, then the result
  * lingers a few seconds (longer for a failure) and fades. Never focusable — it is a status
@@ -1044,6 +1050,10 @@ private fun TvSyncStatus(viewModel: TvViewModel, modifier: Modifier = Modifier) 
     }
 }
 
+/**
+ * The ambient screen's track info as a compact card for the bottom-left corner: a small cover
+ * (left out when the effect draws the cover itself), title, artist and progress.
+ */
 @Composable
 private fun CornerTrackInfo(
     title: String,
