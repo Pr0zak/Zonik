@@ -262,7 +262,11 @@ _UUID = re.compile(r"\s*[\[\(\{]\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 def _underscores(s: str) -> str:
     """Underscores used for punctuation or spaces: "World_ Music" was a colon, "A _ B" a slash."""
     s = re.sub(r"(?<=\w)\s+_\s+|(?<=\w)_\s+", " - ", s)
-    return re.sub(r"(?<=\w)_(?=\w)", " ", s)   # a leading "_" (_Unmatched) is deliberate
+    s = re.sub(r"(?<=\w)_+$", "", s)           # "Gone_" was "Gone?"
+    # With spaces in the name, underscores separate fields ("Bad Wolves_Disobey_04_Zombie");
+    # without any, they stand in for spaces ("killswitch_engage-i_feel_alive_again").
+    sep = " - " if " " in s else " "
+    return re.sub(r"(?<=\w)_+(?=\w)", sep, s)   # a leading "_" (_Unmatched) is deliberate
 
 
 def _has_name(s: str) -> bool:

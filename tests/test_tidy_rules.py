@@ -245,3 +245,13 @@ def test_fix_names_renames_symbol_only_folders_from_tags():
     t = tags(title="Duvet", artist="boa", album="Twilight", track=1)
     assert fix_path("･ﾟ✧(=✪ ᅆ ✪=)-･ﾟ✧/Duvet.flac", t, opts=FIX) == "Twilight/Duvet.flac"
     assert fix_path("･ﾟ✧(=✪ ᅆ ✪=)-･ﾟ✧/Album/Duvet.flac", t, opts=FIX) == "boa/Album/Duvet.flac"
+
+
+def test_fix_names_underscores_between_fields_and_at_the_end():
+    t = tags(title="Zombie", artist="Bad Wolves", album="Disobey", track=4)
+    assert fix_path("Bad Wolves/Bad Wolves_Disobey_04_Zombie.flac", t, opts=FIX) == "Bad Wolves/Bad Wolves - Disobey - 04 - Zombie.flac"
+    t = tags(title="What Will I Say When You're Gone?", artist="Erasure", track=3)
+    assert fix_path("Erasure/103 - What Will I Say When You\u2019re Gone_.flac", t, opts=FIX) == "Erasure/103 - What Will I Say When You're Gone.flac"
+    t = tags(title="I Feel Alive Again", artist="Killswitch Engage", track=5)
+    assert fix_path("Killswitch Engage/05-killswitch_engage-i_feel_alive_again.flac", t, opts=FIX) == \
+        "Killswitch Engage/05-killswitch engage-i feel alive again.flac"
