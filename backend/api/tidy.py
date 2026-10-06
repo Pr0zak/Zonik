@@ -4,9 +4,10 @@ Moving files is not here yet; it comes as a journalled job (plans/library-tidy.m
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 
-from backend.services import tidy
+from backend.services import tidy, tidy_backup
 
 router = APIRouter()
 
@@ -44,3 +45,38 @@ async def get_plan(status: str | None = None, rule: str | None = None, q: str | 
         moves = [m for m in moves if ql in m["from"].lower() or ql in m["to"].lower()]
     limit = max(1, min(limit, 1000))
     return {"summary": plan["summary"], "total": len(moves), "moves": moves[offset:offset + limit]}
+
+
+@router.get("/settings")
+async def get_settings_():
+    from backend.services.tidy_rules import TidyOptions
+    return {"settings": tidy.load_options().to_dict(), "defaults": TidyOptions().to_dict()}
+
+
+@router.put("/settings")
+async def put_settings(body: dict):
+    """Merge the given settings; unknown keys and bad values fall back to defaults. Rebuild
+    the plan afterwards to see their effect."""
+    return {"settings": tidy.save_options(body.get("settings", body)).to_dict()}
+
+
+@router.get("/backups")
+async def backups():
+    return {"backups": tidy_backup.list_backups(), "state": tidy_backup.state,
+            "dir": str(tidy_backup.backups_dir())}
+
+
+@router.post("/backups")
+async def take_backup():
+    name = tidy_backup.start()
+    if name is None:
+        raise HTTPException(409, "A backup is already running")
+    return {"name": name, "state": tidy_backup.state}
+
+
+@router.get("/backups/{name}/{filename}")
+async def backup_file(name: str, filename: str):
+    p = tidy_backup.file_path(name, filename)
+    if p is None:
+        raise HTTPException(404, "No such backup file")
+    return FileResponse(p, filename=f"{name}-{filename}")

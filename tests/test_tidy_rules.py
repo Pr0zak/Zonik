@@ -126,3 +126,55 @@ def test_untagged_keeps_its_original_path_under_untagged():
 def test_extension_is_lowercased():
     t = tags(title="Song", artist="A")
     assert target_path(t, ".FLAC", "x", None)[0] == "A/Singles/Song.flac"
+
+
+# --- Settings (TidyOptions) ---
+
+from backend.services.tidy_rules import TidyOptions, folder_artist  # noqa: E402
+
+
+def test_album_artist_is_cleaned_like_a_track_artist():
+    t = tags(title="Bones", artist="Imagine Dragons", albumartist="Imagine Dragons feat. Baker Boy", album="Mercury", track=1)
+    assert folder_artist(t, set(), TidyOptions()) == "Imagine Dragons"
+    t = tags(title="x", artist="Stray Kids", albumartist="Arcane; League of Legends", album="Arcane", track=1)
+    assert folder_artist(t, set(), TidyOptions()) == "Arcane"
+
+
+def test_split_artist_lists_setting():
+    assert main_artist("Queen, Megan Thee Stallion", set()) == "Queen, Megan Thee Stallion"
+    assert main_artist("Queen, Megan Thee Stallion", set(), TidyOptions(split_artist_lists="always")) == "Queen"
+    assert main_artist("Crystal Rock; Pule", set(), TidyOptions(split_artist_lists="never")) == "Crystal Rock; Pule"
+
+
+def test_year_and_disc_folder_settings():
+    t = tags(title="Sharks", artist="Imagine Dragons", album="Mercury", track=3, disc=2, year=2022)
+    two = AlbumInfo(tracks_in_library=32, discs=2, compilation=False)
+    o = TidyOptions(album_year=True, disc_style="folder")
+    assert target_path(t, ".flac", "x", two, opts=o)[0] == "Imagine Dragons/Mercury (2022)/Disc 2/03 - Sharks.flac"
+
+
+def test_untagged_modes():
+    t = tags(title=None)
+    rel = "Nelly Furtado/06 Nelly Furtado - Say It Right.wav"
+    assert target_path(t, ".wav", rel, None, opts=TidyOptions(untagged_mode="filename"))[0] == "Nelly Furtado/Singles/Say It Right.wav"
+    assert target_path(t, ".wav", rel, None, opts=TidyOptions(untagged_mode="leave")) == (rel, "untagged")
+    assert target_path(t, ".wav", rel, None, opts=TidyOptions(untagged_folder="Unsorted"))[0] == "Unsorted/" + rel
+
+
+def test_excluded_folders_stay_put():
+    t = tags(title="Song", artist="A", album="B", track=1)
+    o = TidyOptions(exclude_folders=["Audiobooks", "Live/"])
+    assert target_path(t, ".mp3", "Audiobooks/x/1.mp3", ALBUM, opts=o) == ("Audiobooks/x/1.mp3", "excluded")
+    assert target_path(t, ".mp3", "Live/1.mp3", ALBUM, opts=TidyOptions.from_dict(o.to_dict())) == ("Live/1.mp3", "excluded")
+
+
+def test_punctuation_and_clutter_can_be_kept():
+    o = TidyOptions(ascii_punctuation=False, strip_video_clutter=False)
+    assert clean_segment("Who’s Next", opts=o) == "Who’s Next"
+    assert clean_segment("Weak (Official Video)", title=True, opts=o) == "Weak (Official Video)"
+
+
+def test_options_from_dict_rejects_bad_values():
+    o = TidyOptions.from_dict({"disc_style": "nonsense", "max_name_length": 5, "singles_folder": "a/b:c",
+                               "album_year": "yes", "unknown": 1})
+    assert o.disc_style == "prefix" and o.max_name_length == 40 and o.singles_folder == "abc" and o.album_year is False
