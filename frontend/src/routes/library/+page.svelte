@@ -11,7 +11,7 @@
 		Search, ScanLine, Download, Music, Users, Disc3,
 		Play, ChevronLeft, Grid3x3, List, Trash2, CheckSquare, Heart,
 		MoreVertical, Pencil, AudioWaveform, ShieldBan, Clock, Columns3,
-		Copy, FolderTree, Eye, Loader2, AlertTriangle, X, Check, RotateCcw,
+		Eye, Loader2, X, Check, RotateCcw,
 		ChevronDown, ChevronUp, Sparkles
 	} from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -129,80 +129,6 @@
 		(name, val) => { schedTasks[name] = val; },
 		addToast
 	);
-
-	// Cleanup state
-	let cleanupTab = $state(null); // 'organize'
-	let cleanupLoading = $state(false);
-	let cleanupPreview = $state(null);
-	let cleanupExecuting = $state(false);
-	let dedupSelected = $state(new Set()); // track IDs selected for removal
-	let organizeSelected = $state(new Set()); // track IDs selected for organize
-
-	async function previewCleanup(type) {
-		cleanupTab = type;
-		cleanupLoading = true;
-		cleanupPreview = null;
-		dedupSelected = new Set();
-		organizeSelected = new Set();
-		try {
-			const res = await fetch(`/api/library/cleanup/${type}/preview`, { method: 'POST' });
-			cleanupPreview = await res.json();
-			if (type === 'duplicates' && cleanupPreview?.groups) {
-				dedupSelected = new Set(cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id)));
-			}
-			if (type === 'organize' && cleanupPreview?.moves) {
-				organizeSelected = new Set(cleanupPreview.moves.map(m => m.track_id));
-			}
-		} catch (e) {
-			addToast('Preview failed', 'error');
-		} finally {
-			cleanupLoading = false;
-		}
-	}
-
-	function toggleDedupTrack(id) {
-		const s = new Set(dedupSelected);
-		if (s.has(id)) s.delete(id); else s.add(id);
-		dedupSelected = s;
-	}
-
-	function toggleDedupAll() {
-		if (!cleanupPreview?.groups) return;
-		const allIds = cleanupPreview.groups.flatMap(g => g.remove.map(r => r.id));
-		dedupSelected = dedupSelected.size === allIds.length ? new Set() : new Set(allIds);
-	}
-
-	function toggleOrganizeTrack(id) {
-		const s = new Set(organizeSelected);
-		if (s.has(id)) s.delete(id); else s.add(id);
-		organizeSelected = s;
-	}
-
-	function toggleOrganizeAll() {
-		if (!cleanupPreview?.moves) return;
-		const allIds = cleanupPreview.moves.map(m => m.track_id);
-		organizeSelected = organizeSelected.size === allIds.length ? new Set() : new Set(allIds);
-	}
-
-
-	async function executeDuplicates(deleteFiles = false) {
-		const removeIds = [...dedupSelected];
-		if (!removeIds.length) return;
-		cleanupExecuting = true;
-		try {
-			const res = await fetch('/api/library/cleanup/duplicates', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ remove_ids: removeIds, delete_files: deleteFiles }),
-			});
-			const result = await res.json();
-			addToast(`Removed ${result.removed} duplicates${deleteFiles ? `, deleted ${result.files_deleted} files` : ''}`, 'success');
-			cleanupPreview = null;
-			cleanupTab = null;
-			loadData();
-		} catch { addToast('Dedup failed', 'error'); }
-		finally { cleanupExecuting = false; }
-	}
 
 	// Select mode (tracks only)
 	let selectMode = $state(false);
@@ -1416,79 +1342,6 @@
 	{/if}
 
 	<Pagination total={currentTotal} {offset} {limit} limitOptions={limitOptions} onchange={handlePageChange} />
-
-	<!-- Library Cleanup Tools — Danger Zone -->
-	<Card padding="p-4" class="mt-4 border border-amber-500/20">
-		<div class="flex items-center gap-2 mb-1">
-			<AlertTriangle class="w-4 h-4 text-amber-400" />
-			<span class="text-xs text-amber-400/80 font-mono uppercase tracking-wider">Danger Zone</span>
-		</div>
-		<p class="text-xs text-[var(--text-disabled)] mb-3">These tools modify or delete files and database entries. Always preview before executing.</p>
-		<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-			<a href="/duplicates" class="text-left p-3 rounded-lg border transition-colors border-amber-500/20 bg-[var(--surface-base)] hover:bg-amber-500/5">
-				<div class="flex items-center gap-2 mb-1">
-					<Copy class="w-4 h-4 text-amber-400" />
-					<span class="text-sm font-medium text-[var(--text-primary)]">Deduplication</span>
-					<span class="text-xs px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-400 font-mono">OPEN</span>
-				</div>
-				<p class="text-xs text-[var(--text-muted)]">Manage duplicate tracks with full details — format, quality, play count, ratings.</p>
-			</a>
-			<button class="text-left p-3 rounded-lg border transition-colors {cleanupTab === 'organize' ? 'border-amber-500/50 bg-amber-500/10' : 'border-amber-500/20 bg-[var(--surface-base)] hover:bg-amber-500/5'}" onclick={() => previewCleanup('organize')}>
-				<div class="flex items-center gap-2 mb-1">
-					<FolderTree class="w-4 h-4 text-amber-400" />
-					<span class="text-sm font-medium text-[var(--text-primary)]">Rename & Sort</span>
-					<span class="text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-mono">CAUTION</span>
-				</div>
-				<p class="text-xs text-[var(--text-muted)]">Move and rename files into Artist/Album/Track folder structure.</p>
-			</button>
-		</div>
-
-		{#if cleanupLoading}
-			<div class="flex items-center gap-2 p-4 text-[var(--text-muted)]">
-				<Loader2 class="w-4 h-4 animate-spin" />
-				<span class="text-sm">Scanning library...</span>
-			</div>
-		{:else if cleanupTab === 'organize' && cleanupPreview}
-			<div class="bg-[var(--surface-container-high)] rounded-lg p-3">
-				<div class="flex items-center justify-between mb-2">
-					<div class="flex items-center gap-3">
-						<span class="text-sm font-medium text-[var(--text-primary)]">
-							{cleanupPreview.count} file{cleanupPreview.count !== 1 ? 's' : ''} to reorganize
-						</span>
-						{#if cleanupPreview.count > 0}
-							<button onclick={toggleOrganizeAll} class="text-xs text-[var(--color-accent)] hover:underline">
-								{organizeSelected.size === cleanupPreview.moves.length ? 'Deselect All' : 'Select All'}
-							</button>
-						{/if}
-					</div>
-					<!-- Apply is disabled server-side: it changed track IDs and lost favorites.
-					     Moves will go through the Library tidy job (plans/library-tidy.md). -->
-				</div>
-				{#if cleanupPreview.count > 0}
-					<div class="flex items-center gap-2 mb-2 p-2 rounded bg-amber-500/10 border border-amber-500/30">
-						<AlertTriangle class="w-4 h-4 text-amber-400 flex-shrink-0" />
-						<span class="text-xs text-amber-300">Preview only. Moving files from here is disabled because it lost favorites and play history; a safe Library tidy tool is on the way.</span>
-					</div>
-				{/if}
-				{#if cleanupPreview.moves?.length}
-					<div class="max-h-80 overflow-y-auto space-y-1">
-						{#each cleanupPreview.moves as move}
-							<div class="flex items-start gap-2 text-xs py-1.5 {organizeSelected.has(move.track_id) ? '' : 'opacity-40'}">
-								<input type="checkbox" checked={organizeSelected.has(move.track_id)} onchange={() => toggleOrganizeTrack(move.track_id)}
-									class="w-3.5 h-3.5 mt-0.5 rounded accent-blue-500 cursor-pointer flex-shrink-0" />
-								<div class="min-w-0 flex-1">
-									<div class="text-red-400 font-mono truncate">- {move.current_path}</div>
-									<div class="text-emerald-400 font-mono truncate">+ {move.target_path}</div>
-								</div>
-							</div>
-						{/each}
-					</div>
-				{:else}
-					<p class="text-sm text-emerald-400">All files are already properly organized.</p>
-				{/if}
-			</div>
-		{/if}
-	</Card>
 </div>
 
 <!-- Track Action Menu -->
