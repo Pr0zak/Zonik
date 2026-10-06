@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import logging
 import uuid
 from datetime import datetime
@@ -55,6 +56,30 @@ FORMAT_MAP = {
 def _stable_id(path: str) -> str:
     """Generate a stable ID from the file path."""
     return hashlib.md5(path.encode()).hexdigest()
+
+
+async def _new_track_id(db: AsyncSession, rel_path: str) -> str:
+    """The ID for a track being added at `rel_path`.
+
+    A track's ID is born from its first path (md5) but is not tied to it afterwards: a move
+    keeps the ID and only changes `file_path`, so favorites, playlists, history and the apps'
+    caches stay attached. That means a moved track can still hold the md5 of a path a new file
+    now lands on, in which case the new track gets a random ID instead.
+    """
+    candidate = _stable_id(rel_path)
+    if await db.get(Track, candidate) is None:
+        return candidate
+    return uuid.uuid4().hex
+
+
+def _norm_title(s: str | None) -> str:
+    return re.sub(r"\W+", "", (s or "").lower())
+
+
+# A scan that finds more tracks missing than this deletes none of them: that many vanishing
+# at once means an unmounted share or a mass rename, not deleted music.
+ORPHAN_GUARD_MIN = 50
+ORPHAN_GUARD_FRACTION = 0.02
 
 
 def _get_tag(audio, keys: list[str], default=None):
@@ -296,6 +321,20 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
     result = await db.execute(select(Track.file_path))
     existing_paths = {row[0] for row in result.all()}
 
+    # Tracks whose file is gone, indexed by size, so a file that turns up at a new path can be
+    # recognised as the same recording moved or renamed rather than a new track. A rename does
+    # not change the bytes: identical size, the same duration and the same title tag together
+    # are a reliable match without reading the old file (which no longer exists).
+    on_disk = {str(f.relative_to(music_dir)) for f in audio_files}
+    missing_by_size: dict[int, list[Track]] = {}
+    missing_paths = existing_paths - on_disk
+    if missing_paths:
+        rows = (await db.execute(select(Track).where(Track.file_path.in_(missing_paths)))).scalars().all()
+        for row in rows:
+            if row.file_size:
+                missing_by_size.setdefault(row.file_size, []).append(row)
+    stats["moved"] = 0
+
     fts_batch: list[tuple] = []
 
     for file_path in audio_files:
@@ -306,7 +345,7 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
             continue
 
         rel_path = parsed["file_path"]
-        track_id = _stable_id(rel_path)
+        track_id = None
 
         # Get or create artist
         artist = None
@@ -325,34 +364,55 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
         if cover_path and album and not album.cover_art_path:
             album.cover_art_path = cover_path
 
+        track = None
+        moved_from = None
         if rel_path in existing_paths:
-            # Update existing track
             result = await db.execute(select(Track).where(Track.file_path == rel_path))
             track = result.scalar_one_or_none()
-            if track:
-                track.title = parsed["title"]
-                track.artist_id = artist.id if artist else None
-                track.album_id = album.id if album else None
-                track.track_number = parsed["track_number"]
-                track.disc_number = parsed["disc_number"]
-                track.duration_seconds = parsed["duration_seconds"]
-                track.file_size = parsed["file_size"]
-                track.format = parsed["format"]
-                track.bitrate = parsed["bitrate"]
-                track.sample_rate = parsed["sample_rate"]
-                track.bit_depth = parsed["bit_depth"]
-                track.mime_type = parsed["mime_type"]
-                track.genre = parsed["genre"]
-                track.year = parsed["year"]
-                track.musicbrainz_id = parsed["musicbrainz_id"]
-                track.replay_gain_track = parsed["replay_gain_track"]
-                track.replay_gain_album = parsed["replay_gain_album"]
-                if cover_path:
-                    track.cover_art_path = cover_path
+        else:
+            # A file at a new path: is it a missing track that was moved or renamed?
+            candidates = [
+                t for t in missing_by_size.get(parsed["file_size"] or -1, [])
+                if t.duration_seconds is not None and parsed["duration_seconds"] is not None
+                and abs(t.duration_seconds - parsed["duration_seconds"]) <= 0.5
+                and _norm_title(t.title) == _norm_title(parsed["title"])
+            ]
+            if len(candidates) == 1:
+                track = candidates[0]
+                missing_by_size[parsed["file_size"]].remove(track)
+                moved_from = track.file_path
+                existing_paths.discard(moved_from)
+                track.file_path = rel_path
+                stats["moved"] += 1
+                log.info(f"Moved: {moved_from} -> {rel_path} (kept track {track.id})")
+
+        if track is not None:
+            track_id = track.id
+            track.title = parsed["title"]
+            track.artist_id = artist.id if artist else None
+            track.album_id = album.id if album else None
+            track.track_number = parsed["track_number"]
+            track.disc_number = parsed["disc_number"]
+            track.duration_seconds = parsed["duration_seconds"]
+            track.file_size = parsed["file_size"]
+            track.format = parsed["format"]
+            track.bitrate = parsed["bitrate"]
+            track.sample_rate = parsed["sample_rate"]
+            track.bit_depth = parsed["bit_depth"]
+            track.mime_type = parsed["mime_type"]
+            track.genre = parsed["genre"]
+            track.year = parsed["year"]
+            track.musicbrainz_id = parsed["musicbrainz_id"]
+            track.replay_gain_track = parsed["replay_gain_track"]
+            track.replay_gain_album = parsed["replay_gain_album"]
+            if cover_path:
+                track.cover_art_path = cover_path
+            if moved_from is None:
                 stats["updated"] += 1
             existing_paths.discard(rel_path)
         else:
             # New track
+            track_id = await _new_track_id(db, rel_path)
             track = Track(
                 id=track_id,
                 title=parsed["title"],
@@ -402,7 +462,15 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
 
     # Remove orphaned tracks (DB entries whose files no longer exist)
     stats["orphans_removed"] = 0
-    if existing_paths:
+    guard = max(ORPHAN_GUARD_MIN, int(len(on_disk) * ORPHAN_GUARD_FRACTION))
+    if len(existing_paths) > guard:
+        stats["orphans_skipped"] = len(existing_paths)
+        log.warning(
+            f"{len(existing_paths)} tracks are missing from disk (more than {guard}); not deleting "
+            "any — an unmounted share or a mass rename looks like this. Their favorites, playlists "
+            "and history are kept; a scan after the files are back (or matched as moves) settles it."
+        )
+    elif existing_paths:
         orphan_result = await db.execute(
             select(Track.id).where(Track.file_path.in_(existing_paths))
         )
@@ -686,6 +754,9 @@ async def import_downloaded_file(
                 return None
             rel_path = parsed["file_path"]
             new_track_id = _stable_id(rel_path)
+            if new_track_id != existing_id and await db.get(Track, new_track_id) is not None:
+                # A moved track still holds this path's md5; take a fresh ID instead.
+                new_track_id = uuid.uuid4().hex
 
             try:
                 if new_track_id != existing_id:
@@ -840,7 +911,7 @@ async def import_downloaded_file(
         return None
 
     rel_path = parsed["file_path"]
-    track_id = _stable_id(rel_path)
+    track_id = await _new_track_id(db, rel_path)
 
     artist = None
     if parsed["artist_name"]:

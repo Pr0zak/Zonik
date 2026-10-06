@@ -204,26 +204,6 @@
 		finally { cleanupExecuting = false; }
 	}
 
-	async function executeOrganize() {
-		const moveIds = [...organizeSelected];
-		if (!moveIds.length) return;
-		cleanupExecuting = true;
-		try {
-			const res = await fetch('/api/library/cleanup/organize', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ move_ids: moveIds }),
-			});
-			const result = await res.json();
-			addToast(`Organized ${result.moved} files${result.errors ? `, ${result.errors} errors` : ''}`, 'success');
-			cleanupPreview = null;
-			cleanupTab = null;
-			loadData();
-		} catch { addToast('Organize failed', 'error'); }
-		finally { cleanupExecuting = false; }
-	}
-
-
 	// Select mode (tracks only)
 	let selectMode = $state(false);
 	let selected = $state(new Set());
@@ -1481,20 +1461,13 @@
 							</button>
 						{/if}
 					</div>
-					{#if organizeSelected.size > 0}
-						<div class="flex items-center gap-2">
-							<span class="text-xs text-[var(--text-muted)]">{organizeSelected.size} selected</span>
-							<Button variant="primary" size="sm" disabled={cleanupExecuting} onclick={executeOrganize}>
-								{#if cleanupExecuting}<Loader2 class="w-3 h-3 animate-spin mr-1" />{/if}
-								Organize Selected
-							</Button>
-						</div>
-					{/if}
+					<!-- Apply is disabled server-side: it changed track IDs and lost favorites.
+					     Moves will go through the Library tidy job (plans/library-tidy.md). -->
 				</div>
 				{#if cleanupPreview.count > 0}
 					<div class="flex items-center gap-2 mb-2 p-2 rounded bg-amber-500/10 border border-amber-500/30">
 						<AlertTriangle class="w-4 h-4 text-amber-400 flex-shrink-0" />
-						<span class="text-xs text-amber-300">This will move files on disk. A library scan is required afterwards.</span>
+						<span class="text-xs text-amber-300">Preview only. Moving files from here is disabled because it lost favorites and play history; a safe Library tidy tool is on the way.</span>
 					</div>
 				{/if}
 				{#if cleanupPreview.moves?.length}

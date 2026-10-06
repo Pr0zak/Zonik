@@ -104,10 +104,16 @@ async def organize_files(
     request: OrganizeRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Execute file rename/sort. Optional body: {move_ids: [...]}"""
-    from backend.services.cleanup import execute_organize
-    move_ids = request.move_ids if request else None
-    return await execute_organize(db, move_ids)
+    """Disabled: moving a file this way gave the track a new ID (an md5 of the new path), which
+    cut it off from its favorite, playlist entries, play history and analysis. Moves will go
+    through the Library tidy job, which keeps IDs and journals every move (plans/library-tidy.md).
+    """
+    from fastapi import HTTPException
+    raise HTTPException(
+        409,
+        "Organize is disabled: it lost favorites and play history for moved tracks. "
+        "Use the Library tidy tool instead.",
+    )
 
 
 @router.post("/upgrades/scan")

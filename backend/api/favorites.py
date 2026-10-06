@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import uuid
 from datetime import datetime
 
@@ -163,10 +162,9 @@ async def import_favorites(req: ImportRequest, user_id: str = "admin", db: Async
 
         # Try file_path match first (most reliable)
         if item.get("file_path"):
-            file_path = item["file_path"]
-            # Generate the same MD5 ID that Zonik uses
-            track_id = hashlib.md5(file_path.encode()).hexdigest()
-            track = await db.get(Track, track_id)
+            # By stored path, not md5(path): a track keeps its ID when its file moves.
+            result = await db.execute(select(Track).where(Track.file_path == item["file_path"]))
+            track = result.scalar_one_or_none()
 
         # Fallback: title + artist match
         if not track and item.get("title") and item.get("artist"):

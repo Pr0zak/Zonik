@@ -1,7 +1,6 @@
 """Library cleanup services: orphan removal, deduplication, file organization."""
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import re
@@ -433,10 +432,9 @@ async def execute_organize(db: AsyncSession, move_ids: list[str] | None = None) 
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(src), str(dst))
 
-            # Update DB: file_path and track ID (MD5 of path)
-            new_id = hashlib.md5(target_path.encode()).hexdigest()
+            # Only the path changes: the ID stays, so favorites, playlists and history stay
+            # attached (IDs are born from the first path but not tied to it).
             track.file_path = target_path
-            track.id = new_id
             moved += 1
 
             # Clean up empty source directories
