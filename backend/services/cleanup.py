@@ -370,6 +370,15 @@ def _build_target_path(track: Track, scheme: str) -> str:
     return '/'.join(parts) + ext
 
 
+def _exists(path: Path) -> bool:
+    """exists() that treats a path the filesystem rejects (a segment over 255 bytes) as absent
+    instead of raising, so one over-long name cannot fail the whole preview."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 async def preview_organize(db: AsyncSession) -> list[dict]:
     """Preview what file renames/moves would happen."""
     settings = get_settings()
@@ -394,7 +403,7 @@ async def preview_organize(db: AsyncSession) -> list[dict]:
                 "artist": artist_name,
                 "current_path": current_path,
                 "target_path": target_path,
-                "exists": (music_dir / target_path).exists(),
+                "exists": _exists(music_dir / target_path),
             })
 
     return moves
