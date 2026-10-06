@@ -35,7 +35,7 @@
 	let backupDir = $state('');
 	let backupPoll = null;
 
-	const RULES = { album: 'Album', single: 'Singles', compilation: 'Compilation', untagged: 'Untagged', unreadable: 'Unreadable' };
+	const RULES = { album: 'Album', single: 'Singles', compilation: 'Compilation', untagged: 'Untagged', fixed: 'Name fix', excluded: 'Excluded', unreadable: 'Unreadable' };
 	const NOTES = { conflict: 'Conflict', skip: 'Skipped', unchanged: 'Already right' };
 
 	let summary = $derived(status?.summary);
@@ -142,7 +142,9 @@
 		untagged_mode: [['folder', 'Move to the untagged folder'], ['filename', 'Guess artist and title from the file name'], ['leave', 'Leave where they are']],
 		split_artist_lists: [['known', 'Only at an artist the library knows'], ['always', 'Always (first name)'], ['never', 'Never']],
 		disc_style: [['prefix', '2-03 - Title'], ['folder', 'Disc 2/03 - Title']],
+		album_year_style: [['none', 'No year: Album'], ['suffix', 'After: Album (2022)'], ['prefix', 'Before: 2022 - Album']],
 	};
+	let fixOnly = $derived(opts?.mode === 'fix_names');
 
 	function fmtTime(iso) {
 		return iso ? new Date(iso).toLocaleString() : '';
@@ -175,17 +177,30 @@
 			<ChevronDown class="w-4 h-4 text-[var(--text-muted)] transition-transform {settingsOpen ? 'rotate-180' : ''}" />
 		</button>
 		{#if settingsOpen}
-			<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-x-8 gap-y-5 mt-4 text-xs">
-				<div class="space-y-2">
+			<div class="mt-4 text-xs">
+				<p class="font-semibold text-[var(--text-secondary)] uppercase tracking-wider text-[10px] mb-2">Mode</p>
+				<div class="grid sm:grid-cols-2 gap-2">
+					{#each [['reorganise', 'Reorganise', 'Move every file into the layout below: Artist/Album/NN - Title, Singles, compilations.'], ['fix_names', 'Just fix bad names', 'Keep your folder structure. Only repair names that are wrong: odd or reserved characters, underscores, release junk and IDs, symbol-only folders.']] as [v, label, desc]}
+						<button class="text-left rounded-lg border p-3 transition-colors {opts.mode === v ? 'border-[var(--color-tidy)] bg-[var(--surface-container-high)]' : 'border-[var(--border-subtle)] hover:bg-[var(--surface-container-high)]'}" onclick={() => (opts.mode = v)}>
+							<div class="text-sm font-medium text-[var(--text-primary)]">{label}</div>
+							<div class="text-[var(--text-muted)] mt-0.5">{desc}</div>
+						</button>
+					{/each}
+				</div>
+			</div>
+			<div class="grid md:grid-cols-2 xl:grid-cols-3 gap-x-8 gap-y-5 mt-5 text-xs">
+				<div class="space-y-2 {fixOnly ? 'opacity-40 pointer-events-none' : ''}" title={fixOnly ? 'Not used when only fixing names' : ''}>
 					<p class="font-semibold text-[var(--text-secondary)] uppercase tracking-wider text-[10px]">Layout</p>
 					<label class="block text-[var(--text-muted)]">Singles folder<input class="{inputClass} mt-1" bind:value={opts.singles_folder} /></label>
 					<label class="block text-[var(--text-muted)]">Compilations folder<input class="{inputClass} mt-1" bind:value={opts.various_folder} /></label>
 					<label class="block text-[var(--text-muted)]">Untagged folder<input class="{inputClass} mt-1" bind:value={opts.untagged_folder} /></label>
 					<label class="block text-[var(--text-muted)]">Multi-disc albums
 						<select class="{inputClass} mt-1" bind:value={opts.disc_style}>{#each SELECTS.disc_style as [v, l]}<option value={v}>{l}</option>{/each}</select></label>
-					<Toggle label="Year in album folder: Album (2021)" checked={opts.album_year} color={COLOR} onchange={(v) => (opts.album_year = v)} />
+					<label class="block text-[var(--text-muted)]">Year in album folders
+						<select class="{inputClass} mt-1" bind:value={opts.album_year_style}>{#each SELECTS.album_year_style as [v, l]}<option value={v}>{l}</option>{/each}</select></label>
+					<Toggle label="Keep file names that are already fine (06 Dreams stays 06 Dreams)" checked={opts.keep_clean_filenames} color={COLOR} onchange={(v) => (opts.keep_clean_filenames = v)} />
 				</div>
-				<div class="space-y-2">
+				<div class="space-y-2 {fixOnly ? 'opacity-40 pointer-events-none' : ''}">
 					<p class="font-semibold text-[var(--text-secondary)] uppercase tracking-wider text-[10px]">Rules</p>
 					<Toggle label="A single tagged as an album of its own name goes to Singles" checked={opts.singles_from_same_name_album} color={COLOR} onchange={(v) => (opts.singles_from_same_name_album = v)} />
 					<Toggle label="Keep compilations together" checked={opts.detect_compilations} color={COLOR} onchange={(v) => (opts.detect_compilations = v)} />

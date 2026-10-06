@@ -149,7 +149,7 @@ def test_split_artist_lists_setting():
 def test_year_and_disc_folder_settings():
     t = tags(title="Sharks", artist="Imagine Dragons", album="Mercury", track=3, disc=2, year=2022)
     two = AlbumInfo(tracks_in_library=32, discs=2, compilation=False)
-    o = TidyOptions(album_year=True, disc_style="folder")
+    o = TidyOptions(album_year_style="suffix", disc_style="folder")
     assert target_path(t, ".flac", "x", two, opts=o)[0] == "Imagine Dragons/Mercury (2022)/Disc 2/03 - Sharks.flac"
 
 
@@ -176,5 +176,72 @@ def test_punctuation_and_clutter_can_be_kept():
 
 def test_options_from_dict_rejects_bad_values():
     o = TidyOptions.from_dict({"disc_style": "nonsense", "max_name_length": 5, "singles_folder": "a/b:c",
-                               "album_year": "yes", "unknown": 1})
-    assert o.disc_style == "prefix" and o.max_name_length == 40 and o.singles_folder == "abc" and o.album_year is False
+                               "album_year_style": "sideways", "unknown": 1})
+    assert o.disc_style == "prefix" and o.max_name_length == 40 and o.singles_folder == "abc" and o.album_year_style == "none"
+
+
+def test_year_prefix_matches_the_existing_folder_style():
+    t = tags(title="Haunted Ink", artist="Alex Vede", album="Haunted Ink: Original Artbook Soundtrack", track=1, year=2022)
+    o = TidyOptions(album_year_style="prefix")
+    assert target_path(t, ".opus", "x", ALBUM, opts=o)[0] == "Alex Vede/2022 - Haunted Ink - Original Artbook Soundtrack/01 - Haunted Ink.opus"
+    t = tags(title="Africa", artist="Crystal Rock", album="Africa", track=1, year=None)
+    assert target_path(t, ".opus", "x", ALBUM, opts=o)[0] == "Crystal Rock/Africa/01 - Africa.opus"
+
+
+def test_old_album_year_setting_carries_over():
+    assert TidyOptions.from_dict({"album_year": True}).album_year_style == "suffix"
+    assert TidyOptions.from_dict({"album_year": False}).album_year_style == "none"
+
+
+def test_filename_is_clean():
+    from backend.services.tidy_rules import filename_is_clean
+    assert filename_is_clean("06 Dreams.flac", "Dreams")
+    assert filename_is_clean("I Don't Wanna Wait.flac", "I Don't Wanna Wait")
+    assert filename_is_clean("002. Cars (Remix).flac", "Cars (Remix)")
+    assert not filename_is_clean("NF_The Search_02_Leave Me Alone.flac", "Leave Me Alone")
+    assert not filename_is_clean("It’s Just Forever.flac", "It's Just Forever")
+    assert not filename_is_clean("Weak (Official Video).flac", "Weak")
+    assert not filename_is_clean("Track 07.flac", "Shadows")
+    assert not filename_is_clean("06 Dreams.FLAC", "Dreams")
+
+
+# --- Mode "fix_names": repair bad names in place ---
+
+from backend.services.tidy_rules import fix_path  # noqa: E402
+
+FIX = TidyOptions(mode="fix_names")
+
+
+def test_fix_names_keeps_the_structure_and_good_names():
+    t = tags(title="Dreams", artist="Beck", album="Colors", track=6)
+    assert fix_path("Beck/Colors/06 Dreams.flac", t, opts=FIX) == "Beck/Colors/06 Dreams.flac"
+    t = tags(title="Slow It Down", artist="Benson Boone", album="Fireworks & Rollerblades", track=3)
+    assert fix_path("Benson Boone/03 - Slow It Down.flac", t, opts=FIX) == "Benson Boone/03 - Slow It Down.flac"
+    t = tags(title="Africa", artist="Crystal Rock", album="Africa", track=1)
+    assert fix_path("Crystal Rock/2022 - Africa/01 - Africa.opus", t, opts=FIX) == "Crystal Rock/2022 - Africa/01 - Africa.opus"
+
+
+def test_fix_names_repairs_bad_ones():
+    t = tags(title="The DJ Is Crying for Help", artist="AJR", album="The Maybe Man", track=8)
+    assert fix_path("AJR/AJR-The_Maybe_Man-24BIT-44KHZ-WEB-FLAC-2023-OBZEN/08-ajr-the_dj_is_crying_for_help.flac", t, opts=FIX) == \
+        "AJR/The Maybe Man/08-ajr-the dj is crying for help.flac"
+    t = tags(title="party 4 u", artist="Charli xcx", album="how i’m feeling now", track=9)
+    assert fix_path("Charli xcx/(2020) how i’m feeling now [e6f8d52b-3b24-4546-b86d-99d79b0df209}]/09 party 4 u.flac", t, opts=FIX) == \
+        "Charli xcx/(2020) how i'm feeling now/09 party 4 u.flac"
+    t = tags(title="Earrings", artist="Malcolm Todd", album="Sweet Boy", track=1)
+    assert fix_path("Music/Sweet Boy [Web, FLAC, 48-23, 44-23]/01. Malcolm Todd - Earrings.flac", t, opts=FIX) == \
+        "Music/Sweet Boy/01. Malcolm Todd - Earrings.flac"
+    t = tags(title="Keeping Secrets", artist="Digits")
+    assert fix_path("Digits/Keeping_Secrets_by_Digits.mp3", t, opts=FIX) == "Digits/Keeping Secrets by Digits.mp3"
+    t = tags(title="Ballroom Blitz", artist="Tia Carrere", album="Wayne's World: Music From the Motion Picture", track=8)
+    assert fix_path("Various Artists/Wayne’s World_ Music From the Motion Picture/08 Tia Carrere - Ballroom Blitz.flac", t, opts=FIX) == \
+        "Various Artists/Wayne's World - Music From the Motion Picture/08 Tia Carrere - Ballroom Blitz.flac"
+    t = tags(title="ELEZO remix", artist="ELEZO")
+    assert fix_path("_Unmatched/ELEZO - The XX Intro - ELEZO remix ( Official video ) [N_ljGGiKe4A].opus", t, opts=FIX) == \
+        "_Unmatched/ELEZO - The XX Intro - ELEZO remix.opus"
+
+
+def test_fix_names_renames_symbol_only_folders_from_tags():
+    t = tags(title="Duvet", artist="boa", album="Twilight", track=1)
+    assert fix_path("･ﾟ✧(=✪ ᅆ ✪=)-･ﾟ✧/Duvet.flac", t, opts=FIX) == "Twilight/Duvet.flac"
+    assert fix_path("･ﾟ✧(=✪ ᅆ ✪=)-･ﾟ✧/Album/Duvet.flac", t, opts=FIX) == "boa/Album/Duvet.flac"

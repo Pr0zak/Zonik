@@ -31,10 +31,11 @@ MAX_SEGMENT = 120  # characters; well under the 255-byte limit even for multi-by
 class TidyOptions:
     """Everything the Library Tidy page lets you change. Defaults are the decisions of
     2026-10-05 (plans/library-tidy.md)."""
+    mode: str = "reorganise"                 # "reorganise" into the layout, or "fix_names" in place
     singles_folder: str = SINGLES
     various_folder: str = VARIOUS
     untagged_folder: str = UNTAGGED
-    album_year: bool = False                 # "Album (2021)"
+    album_year_style: str = "none"           # "none": Album; "suffix": Album (2021); "prefix": 2021 - Album
     disc_style: str = "prefix"               # "prefix": 2-03 - Title; "folder": Disc 2/03 - Title
     singles_from_same_name_album: bool = True
     detect_compilations: bool = True
@@ -46,16 +47,23 @@ class TidyOptions:
     ascii_punctuation: bool = True
     strip_video_clutter: bool = True
     max_name_length: int = MAX_SEGMENT
+    keep_clean_filenames: bool = False       # a file already in its folder keeps a name with nothing wrong
     exclude_folders: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "TidyOptions":
         """Known keys of the right type; anything else falls back to its default."""
         out = cls()
+        if d and "album_year_style" not in d and d.get("album_year") is True:
+            d = {**d, "album_year_style": "suffix"}  # the setting before 0.35.0
         for f in fields(cls):
             if d and f.name in d and isinstance(d[f.name], type(getattr(out, f.name))):
                 setattr(out, f.name, d[f.name])
         out.max_name_length = max(40, min(out.max_name_length, 200))
+        if out.mode not in ("reorganise", "fix_names"):
+            out.mode = "reorganise"
+        if out.album_year_style not in ("none", "suffix", "prefix"):
+            out.album_year_style = "none"
         if out.disc_style not in ("prefix", "folder"):
             out.disc_style = "prefix"
         if out.untagged_mode not in ("folder", "filename", "leave"):
@@ -222,7 +230,7 @@ def target_path(t: TrackTags, ext: str, rel_path: str, album: AlbumInfo | None,
 
     title = seg(t.title or rel_path.rsplit("/", 1)[-1].rsplit(".", 1)[0], True)
     album_name = clean_album(t.album)
-    album_dir = seg(album_name + (f" ({t.year})" if o.album_year and t.year else "")) if album_name else None
+    album_dir = seg(_with_year(album_name, t.year, o.album_year_style)) if album_name else None
 
     if album_name and album and album.compilation and o.detect_compilations:
         num, disc_dir = _number(t, album, o)
@@ -242,6 +250,101 @@ def target_path(t: TrackTags, ext: str, rel_path: str, album: AlbumInfo | None,
     num, disc_dir = _number(t, album, o)
     name = f"{num} - {title}" if num else title
     return "/".join([artist_dir, album_dir] + disc_dir + [name + ext]), "album"
+
+
+# Release-group names: "AJR-The_Maybe_Man-24BIT-44KHZ-WEB-FLAC-2023-OBZEN",
+# "Garbage-Garbage-(BMGCAT514DCD)-Remastered_Deluxe_Edition-2CD-FLAC-2021-WRE".
+_SCENE = re.compile(r"-(?:\d+CD-)?(?:WEB|CD|VINYL|FLAC|\d{2}BIT)\b.*-(?:19|20)\d\d-[A-Za-z0-9]+$", re.I)
+# MusicBrainz and other IDs pasted into folder names, with whatever bracket was used.
+_UUID = re.compile(r"\s*[\[\(\{]\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s*[\]\)\}]*", re.I)
+
+
+def _underscores(s: str) -> str:
+    """Underscores used for punctuation or spaces: "World_ Music" was a colon, "A _ B" a slash."""
+    s = re.sub(r"(?<=\w)\s+_\s+|(?<=\w)_\s+", " - ", s)
+    return re.sub(r"(?<=\w)_(?=\w)", " ", s)   # a leading "_" (_Unmatched) is deliberate
+
+
+def _has_name(s: str) -> bool:
+    """At least two real letters or digits: "･ﾟ✧(=✪ ᆺ ✪=)-･ﾟ✧" has one stray jamo and a
+    sound mark, which Python counts as letters, and is still not a name."""
+    return sum(1 for ch in s if ch.isalnum() and unicodedata.category(ch) != "Lm") >= 2
+
+
+def fix_segment(seg: str, *, is_file: bool, fallback: str | None, opts: TidyOptions | None = None) -> str:
+    """One folder or file name repaired in place: same name, minus what is wrong with it."""
+    o = opts or TidyOptions()
+    if is_file:
+        stem, dot, ext = seg.rpartition(".")
+        if not dot:
+            stem, ext = seg, ""
+    else:
+        stem, ext = seg, ""
+    if not is_file and _SCENE.search(stem) and fallback:
+        stem = fallback                       # a release-group name: the album tag says it better
+    stem = _UUID.sub("", stem)
+    if is_file and o.strip_video_clutter:
+        stem = _YT_ID.sub("", stem)           # before underscores: IDs contain them
+    if not is_file:
+        stem = _FORMAT_NOISE.sub("", stem)
+    stem = _underscores(stem)
+    stem = clean_segment(stem, title=is_file, opts=o)
+    if stem == "Unknown" or not _has_name(stem):
+        # Nothing but symbols ("･ﾟ✧(=✪ ᆺ ✪=)-･ﾟ✧"): name it from the tags if they can.
+        stem = clean_segment(fallback, title=is_file, opts=o) if fallback else (stem if stem != "Unknown" else seg)
+    return stem + ("." + ext.lower() if ext else "")
+
+
+def fix_path(rel_path: str, t: TrackTags, known: set[str] | None = None,
+             opts: TidyOptions | None = None) -> str:
+    """The same path with each bad name repaired, for mode "fix_names": nothing changes folder.
+    Fallbacks for unusable names come from the tags: the artist for a top folder, the album for
+    the folder a file sits in, the title for the file."""
+    o = opts or TidyOptions()
+    parts = rel_path.split("/")
+    artist = folder_artist(t, known, o) if (t.artist or t.albumartist) else None
+    album = clean_album(t.album)
+    out = []
+    for i, p in enumerate(parts):
+        last = i == len(parts) - 1
+        if last:
+            fb = None
+            if t.title:
+                fb = f"{t.track:02d} - {t.title}" if t.track else t.title
+        elif i == 0 and len(parts) > 2:
+            fb = artist
+        elif i == len(parts) - 2:
+            fb = album or (artist if i == 0 else None)
+        else:
+            fb = None
+        out.append(fix_segment(p, is_file=last, fallback=fb, opts=o))
+    return "/".join(out)
+
+
+def _with_year(album: str, year: int | None, style: str) -> str:
+    if not year or style == "none":
+        return album
+    return f"{year} - {album}" if style == "prefix" else f"{album} ({year})"
+
+
+def filename_is_clean(name: str, title: str | None, opts: TidyOptions | None = None) -> bool:
+    """Whether a file name can stay as it is: nothing the rules would change in it (reserved or
+    typographic characters, spacing, video clutter), not built from underscores, and it
+    contains the track's title. For keep_clean_filenames, which leaves "06 Dreams.flac" alone
+    rather than renaming it "06 - Dreams.flac"."""
+    o = opts or TidyOptions()
+    stem, dot, ext = name.rpartition(".")
+    if not dot or ext != ext.lower():
+        return False
+    if "_" in stem:
+        return False
+    if clean_segment(stem, title=True, opts=o) != stem:
+        return False
+    return bool(title) and _norm(title) in _norm(stem)
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\W+", "", fold(s).lower())
 
 
 def _guess_from_filename(rel_path: str) -> tuple[str, str] | None:

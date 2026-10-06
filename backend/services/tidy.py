@@ -25,7 +25,8 @@ from backend.models.favorite import Favorite
 from backend.models.playlist import PlaylistTrack
 from backend.models.track import Track
 from backend.services.tidy_rules import (
-    AlbumInfo, TidyOptions, TrackTags, clean_album, folder_artist, is_various, main_artist, target_path,
+    AlbumInfo, TidyOptions, TrackTags, clean_album, filename_is_clean, fix_path, folder_artist, is_various,
+    main_artist, target_path,
 )
 
 # Bump when read_tags returns something new, so cached tags from an older reader are re-read.
@@ -232,7 +233,11 @@ async def build_plan() -> dict:
             moves.append(dict(r, to=r["rel"], rule="unreadable", status="skip",
                               note="tags could not be read; left where it is"))
             continue
-        to, rule = target_path(r["tags"], ext, r["rel"], infos.get(r["id"]), known, opts)
+        if opts.mode == "fix_names":
+            excluded = any(r["rel"] == x or r["rel"].startswith(x + "/") for x in opts.exclude_folders)
+            to, rule = (r["rel"], "excluded") if excluded else (fix_path(r["rel"], r["tags"], known, opts), "fixed")
+        else:
+            to, rule = target_path(r["tags"], ext, r["rel"], infos.get(r["id"]), known, opts)
         if rule == "excluded":
             moves.append(dict(r, to=r["rel"], rule=rule, status="skip", note="in an excluded folder"))
             continue
@@ -250,6 +255,16 @@ async def build_plan() -> dict:
             best = spellings[head.lower()].most_common(1)[0][0]
             if best != head:
                 m["to"] = f"{best}/{rest}"
+
+    # A file already in the folder it belongs in keeps a name that has nothing wrong with it.
+    if opts.keep_clean_filenames:
+        for m in moves:
+            if m["status"] != "move":
+                continue
+            cur_dir, _, cur_name = m["rel"].rpartition("/")
+            new_dir = m["to"].rpartition("/")[0]
+            if cur_dir == new_dir and filename_is_clean(cur_name, m["tags"].title, opts):
+                m["to"] = m["rel"]
 
     # Conflicts: two tracks heading for one name, or a file already there that is not moving.
     current = {m["rel"].lower() for m in moves}
