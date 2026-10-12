@@ -147,6 +147,8 @@ export const api = {
 
 	// Config
 	getServices: () => request('/config/services'),
+	getShuffleSettings: () => request('/config/shuffle'),
+	putShuffleSettings: (body) => request('/config/shuffle', { method: 'PUT', body: JSON.stringify(body) }),
 	saveServices: (data) => request('/config/services', { method: 'PUT', body: JSON.stringify(data) }),
 	getVersion: () => request('/config/version'),
 	checkUpdates: () => request('/config/updates'),

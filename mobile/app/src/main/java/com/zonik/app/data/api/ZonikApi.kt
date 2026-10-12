@@ -107,7 +107,41 @@ interface ZonikApi {
 
     @POST("api/tv/visualizer/stats")
     suspend fun postTvVisualizerStats(@Body body: TvVisualizerStatsReport)
+
+    // --- Shuffle Mix: how the server picks random songs, shared with the web UI ---
+
+    @GET("api/config/shuffle")
+    suspend fun getShuffleSettings(): ShuffleSettings
+
+    /** Partial update: null fields are left out of the JSON and keep their value. */
+    @PUT("api/config/shuffle")
+    suspend fun putShuffleSettings(@Body body: ShuffleSettings): ShuffleSettings
 }
+
+/**
+ * The server's Shuffle Mix settings (they apply to every getRandomSongs call, so to every
+ * app). Every field is nullable so the same class serves a partial update.
+ */
+@Serializable
+data class ShuffleSettings(
+    @SerialName("shuffle_new_arrival_percent") val newArrivalPercent: Int? = null,
+    @SerialName("shuffle_new_arrival_days") val newArrivalDays: Int? = null,
+    @SerialName("shuffle_unplayed_percent") val unplayedPercent: Int? = null,
+    @SerialName("shuffle_cooldown_days") val cooldownDays: Int? = null,
+    @SerialName("shuffle_max_per_artist") val maxPerArtist: Int? = null,
+    @SerialName("shuffle_one_per_album") val onePerAlbum: Boolean? = null,
+    @SerialName("shuffle_artist_gap") val artistGap: Int? = null,
+    /** Only in responses: library counts shown beside the settings. */
+    val library: ShuffleLibraryCounts? = null,
+)
+
+@Serializable
+data class ShuffleLibraryCounts(
+    val tracks: Int = 0,
+    @SerialName("never_played") val neverPlayed: Int = 0,
+    val new: Int = 0,
+    @SerialName("in_cooldown") val inCooldown: Int = 0,
+)
 
 /**
  * The TV visualizer's settings as the server stores them. Every field is nullable so the same

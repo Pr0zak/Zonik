@@ -4,7 +4,7 @@
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast } from '$lib/stores.js';
 	import { inputClass, formatDateTime } from '$lib/utils.js';
-	import { Settings, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform, Tv, Smartphone } from 'lucide-svelte';
+	import { Settings, Shuffle, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform, Tv, Smartphone } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -32,8 +32,6 @@
 		download_dir: '',
 		cover_cache_dir: '',
 		naming_scheme: '{artist}/{album}/{track_number} - {title}',
-		shuffle_new_arrival_percent: 0,
-		shuffle_new_arrival_days: 30,
 		slsk_username: '',
 		slsk_password: '',
 		slsk_listen_port: 2234,
@@ -62,6 +60,29 @@
 		ai_playlist_curator: true,
 	});
 	let aiUsage = $state(null);
+	// --- Shuffle Mix: saved on its own, straight away (the phone app edits the same settings) ---
+	let shuffle = $state(null);
+	const SHUFFLE_OPTIONS = {
+		shuffle_new_arrival_percent: [[0, 'Off'], [5, '5%'], [10, '10%'], [20, '20%'], [30, '30%'], [50, '50%']],
+		shuffle_new_arrival_days: [[7, '7 days'], [14, '14 days'], [30, '30 days'], [60, '60 days'], [90, '90 days'], [180, '6 months'], [365, '1 year']],
+		shuffle_unplayed_percent: [[0, 'Off'], [10, '10%'], [25, '25%'], [50, '50%'], [75, '75%'], [100, '100%']],
+		shuffle_cooldown_days: [[0, 'Off'], [1, '1 day'], [3, '3 days'], [7, '7 days'], [14, '14 days'], [30, '30 days'], [90, '90 days']],
+		shuffle_max_per_artist: [[1, '1 song'], [2, '2 songs'], [3, '3 songs'], [5, '5 songs'], [0, 'No limit']],
+		shuffle_artist_gap: [[0, 'Off'], [3, '3 songs'], [5, '5 songs'], [10, '10 songs'], [15, '15 songs']],
+	};
+	/** The choices for a setting, plus its current value if that isn't one of them. */
+	function shuffleChoices(key) {
+		const list = SHUFFLE_OPTIONS[key];
+		const v = shuffle?.[key];
+		return v == null || list.some(([x]) => x === v) ? list : [...list, [v, String(v)]];
+	}
+	async function saveShuffle(key, value) {
+		try {
+			shuffle = await api.putShuffleSettings({ [key]: value });
+		} catch {
+			addToast("Couldn't save the shuffle setting", 'error');
+		}
+	}
 	let saving = $state(false);
 	let dirty = $state(false);
 
@@ -70,6 +91,7 @@
 	const SECTIONS = [
 		{ key: 'library', label: 'Library & storage', group: 'Library' },
 		{ key: 'analysis', label: 'Audio analysis', group: 'Library' },
+		{ key: 'shuffle', label: 'Shuffle Mix', group: 'Library' },
 		{ key: 'soulseek', label: 'Soulseek', group: 'Sources' },
 		{ key: 'lastfm', label: 'Last.fm', group: 'Sources' },
 		{ key: 'spotify', label: 'Spotify', group: 'Sources' },
@@ -177,6 +199,7 @@
 		// Load each section independently so one failure doesn't block the page
 		api.getStats().then(d => stats = d).catch(() => {});
 		api.getServices().then(applyServices).catch(() => {});
+		api.getShuffleSettings().then(d => shuffle = d).catch(() => {});
 		api.getVersion().then(d => versionInfo = d).catch(() => {});
 		api.getUsers().then(d => users = d).catch(() => {});
 		api.getBackups().then(d => backups = d).catch(() => {});
@@ -581,18 +604,6 @@
 				/>
 			</div>
 
-			<div class="mt-4">
-				<label class="text-sm text-[var(--text-secondary)]">New arrivals in Shuffle Mix (%)</label>
-				<p class="text-xs text-[var(--text-disabled)]">Always mix in this share of recently-ADDED tracks so fresh downloads surface. 0 = off, max 50%.</p>
-				<input type="number" min="0" max="50" bind:value={services.shuffle_new_arrival_percent} oninput={markDirty} class={inputClass} />
-			</div>
-			{#if services.shuffle_new_arrival_percent > 0}
-				<div class="mt-3">
-					<label class="text-sm text-[var(--text-secondary)]">"New" = added in the last (days)</label>
-					<p class="text-xs text-[var(--text-disabled)]">How recently a track must have been added to count as a new arrival.</p>
-					<input type="number" min="1" max="3650" bind:value={services.shuffle_new_arrival_days} oninput={markDirty} class={inputClass} />
-				</div>
-			{/if}
 		</Card>
 
 		</div>
@@ -1092,6 +1103,53 @@
 			</div>
 		</Card>
 
+		</div>
+
+		<div id="sec-shuffle" class={activeSection === 'shuffle' ? 'space-y-6' : 'hidden'}>
+		<Card padding="p-4">
+			<div class="flex items-center gap-3 mb-1">
+				<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-library) 15%, transparent)">
+					<Shuffle class="w-4 h-4" style="color: var(--color-library)" />
+				</div>
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Shuffle Mix</h2>
+			</div>
+			<p class="text-xs text-[var(--text-disabled)] mb-4">
+				How random mixes are picked — Shuffle Mix, genre mixes and anything else that asks for random songs, on every app.
+				Changes save straight away and are the same settings as in the phone app.
+				{#if shuffle?.library}
+					Library: {shuffle.library.tracks.toLocaleString()} tracks, {shuffle.library.never_played.toLocaleString()} never played,
+					{shuffle.library.new.toLocaleString()} new{#if shuffle.shuffle_cooldown_days > 0}, {shuffle.library.in_cooldown.toLocaleString()} cooling down{/if}.
+				{/if}
+			</p>
+			{#if !shuffle}
+				<p class="text-sm text-[var(--text-muted)]">Loading…</p>
+			{:else}
+				{#snippet pick(key, label, hint)}
+					<div>
+						<label class="text-sm text-[var(--text-secondary)]" for={key}>{label}</label>
+						<p class="text-xs text-[var(--text-disabled)] mb-1">{hint}</p>
+						<select id={key} value={shuffle[key]} onchange={(e) => saveShuffle(key, Number(e.currentTarget.value))} class={inputClass}>
+							{#each shuffleChoices(key) as [v, l]}<option value={v}>{l}</option>{/each}
+						</select>
+					</div>
+				{/snippet}
+				<div class="grid gap-4 sm:grid-cols-2">
+					{@render pick('shuffle_new_arrival_percent', 'New arrivals', 'Share of each mix taken from recently added songs, so new downloads come up.')}
+					{@render pick('shuffle_new_arrival_days', 'Counts as new for', 'How long after it was added a song still counts as new.')}
+					{@render pick('shuffle_unplayed_percent', 'Never played', "Share of each mix taken from songs you haven't played yet.")}
+					{@render pick('shuffle_cooldown_days', 'Rest recently played', 'Leave out songs played within this time. Used anyway if nothing else is left.')}
+					{@render pick('shuffle_max_per_artist', 'Songs per artist', 'Most songs from one artist in each batch of the mix.')}
+					{@render pick('shuffle_artist_gap', 'Space out artists', "An artist doesn't come back until this many other songs have played.")}
+				</div>
+				<div class="mt-4 flex items-center justify-between">
+					<div>
+						<span class="text-sm text-[var(--text-secondary)]">One song per album</span>
+						<p class="text-xs text-[var(--text-disabled)]">Don't take two songs from the same album in one batch.</p>
+					</div>
+					<Toggle checked={shuffle.shuffle_one_per_album} onchange={(v) => saveShuffle('shuffle_one_per_album', v)} />
+				</div>
+			{/if}
+		</Card>
 		</div>
 
 		<div id="sec-analysis" class={activeSection === 'analysis' ? 'space-y-6' : 'hidden'}>

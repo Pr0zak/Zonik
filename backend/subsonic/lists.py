@@ -4,7 +4,7 @@ from __future__ import annotations
 import random as _random
 
 from fastapi import APIRouter, Request, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -107,12 +107,15 @@ def _album_key(t: Track) -> str:
     return t.album_id or f"track:{t.id}"
 
 
-def _cap_artists_albums(candidates: list, size: int) -> list:
+def _cap_artists_albums(candidates: list, size: int, per_artist: int = 2,
+                        one_per_album: bool = True) -> list:
     """Take `size` tracks from `candidates` (already in random order), allowing at
-    most one track per album and a couple per artist, so one prolific artist can't
-    fill the mix. If the library is too small to honour the caps, the remainder is
-    filled from what was passed over rather than returning a short list."""
-    per_artist = max(2, -(-size // 50))
+    most `per_artist` tracks per artist (0 = no limit) and, with `one_per_album`, one
+    per album, so one prolific artist can't fill the mix. If the library is too small
+    to honour the caps, the remainder is filled from what was passed over rather than
+    returning a short list."""
+    if per_artist > 0:
+        per_artist = max(per_artist, -(-size // 50))
     artist_n: dict[str, int] = {}
     albums: set[str] = set()
     picked: list = []
@@ -121,7 +124,7 @@ def _cap_artists_albums(candidates: list, size: int) -> list:
         if len(picked) >= size:
             break
         a, al = _artist_key(t), _album_key(t)
-        if artist_n.get(a, 0) >= per_artist or al in albums:
+        if (per_artist > 0 and artist_n.get(a, 0) >= per_artist) or (one_per_album and al in albums):
             passed.append(t)
             continue
         artist_n[a] = artist_n.get(a, 0) + 1
@@ -169,31 +172,57 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
 
     # Uniform random order. Skips are tracked for the Stats page but deliberately
     # don't weigh on the mix: skipping a track usually means "not right now", not
-    # "never", so it keeps the same odds as everything else.
-    def _random_order(q):
-        return q.order_by(func.random())
+    # "never", so it keeps the same odds as everything else. The shuffle settings
+    # (Settings > Shuffle Mix, also on the phone) only add quotas and filters on top.
+    taken: set[str] = set()
 
-    # New-arrivals quota: pull a guaranteed slice of the mix from tracks ADDED in the
+    async def _draw(q, n: int) -> list:
+        if n <= 0:
+            return []
+        if taken:
+            q = q.where(Track.id.notin_(taken))
+        rows = list((await db.execute(q.order_by(func.random()).limit(n))).scalars().all())
+        taken.update(t.id for t in rows)
+        return rows
+
+    def _quota(pct: int) -> int:
+        return min(size, round(size * pct / 100.0)) if pct and pct > 0 else 0
+
+    # Cooldown: leave out anything played in the last N days.
+    fresh = query
+    cooldown = cfg.shuffle_cooldown_days or 0
+    if cooldown > 0:
+        fresh = query.where(or_(
+            Track.last_played_at.is_(None),
+            Track.last_played_at < func.datetime("now", f"-{cooldown} days"),
+        ))
+
+    # New-arrivals quota: a guaranteed slice of the mix from tracks ADDED in the
     # last N days (by created_at), so fresh downloads always surface.
-    new_tracks: list = []
-    new_pct = cfg.shuffle_new_arrival_percent or 0
-    if new_pct > 0:
-        new_count = min(size, round(size * new_pct / 100.0))
-        if new_count > 0:
-            ndays = max(1, cfg.shuffle_new_arrival_days or 1)
-            nq = _random_order(
-                query.where(Track.created_at >= func.datetime("now", f"-{ndays} days"))
-            ).limit(new_count)
-            new_tracks = list((await db.execute(nq)).scalars().all())
+    ndays = max(1, cfg.shuffle_new_arrival_days or 1)
+    new_tracks = await _draw(
+        fresh.where(Track.created_at >= func.datetime("now", f"-{ndays} days")),
+        _quota(cfg.shuffle_new_arrival_percent),
+    )
+    # Unplayed quota: a slice from tracks that have never been played.
+    unplayed = await _draw(
+        fresh.where(or_(Track.play_count == 0, Track.play_count.is_(None))),
+        min(_quota(cfg.shuffle_unplayed_percent), size - len(new_tracks)),
+    )
 
     # Over-fetch so the artist/album caps below have something to choose from.
-    pool_q = query
-    if new_tracks:
-        pool_q = pool_q.where(Track.id.notin_([t.id for t in new_tracks]))
-    pool_q = _random_order(pool_q).limit(min(size * 4, 2000))
-    pool = list((await db.execute(pool_q)).scalars().all())
+    pool = await _draw(fresh, min(size * 4, 2000))
+    # The cooldown can leave too little to fill the mix (a small genre, say): top up
+    # from the recently played tracks rather than returning a short list.
+    if cooldown > 0 and len(new_tracks) + len(unplayed) + len(pool) < size:
+        pool += await _draw(query, size * 4)
 
-    tracks = _space_artists(_cap_artists_albums(new_tracks + pool, size))
+    tracks = _cap_artists_albums(
+        new_tracks + unplayed + pool, size,
+        per_artist=max(0, cfg.shuffle_max_per_artist),
+        one_per_album=cfg.shuffle_one_per_album,
+    )
+    tracks = _space_artists(tracks, gap=max(0, cfg.shuffle_artist_gap))
 
     return subsonic_response({
         "randomSongs": {

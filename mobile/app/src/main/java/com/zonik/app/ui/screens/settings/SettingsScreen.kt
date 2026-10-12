@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zonik.app.data.DebugLog
+import com.zonik.app.data.api.ShuffleSettings
 import com.zonik.app.ui.theme.ZonikShapes
 import com.zonik.app.ui.util.formatLargeDuration
 import com.zonik.app.ui.util.formatLargeFileSize
@@ -88,6 +89,9 @@ fun SettingsScreen(
             }
             SettingsGroup("Playback") {
                 PlaybackSection(viewModel, uiState)
+            }
+            SettingsGroup("Shuffle Mix") {
+                ShuffleSection(viewModel)
             }
             SettingsGroup("Equalizer") {
                 EqualizerSection(viewModel, uiState)
@@ -360,6 +364,111 @@ private fun PlaybackSection(viewModel: SettingsViewModel, uiState: SettingsUiSta
         onCheckedChange = viewModel::setKeepScreenOn
     )
 }
+
+@Composable
+private fun ShuffleSection(viewModel: SettingsViewModel) {
+    val shuffle by viewModel.shuffleSettings.collectAsStateWithLifecycle()
+    val error by viewModel.shuffleError.collectAsStateWithLifecycle()
+    val s = shuffle
+    if (s == null) {
+        SettingRow(
+            title = error ?: "Loading…",
+            summary = "These settings are kept on the server",
+            icon = Icons.Default.Shuffle,
+            onClick = if (error != null) viewModel::loadShuffleSettings else null,
+            trailing = if (error != null) { { TextButton(onClick = viewModel::loadShuffleSettings) { Text("Retry") } } } else null,
+        )
+        return
+    }
+    s.library?.let { lib ->
+        SettingRow(
+            title = "Applies to every app",
+            summary = buildString {
+                append("Shuffle Mix, genre mixes and the web player. ")
+                append("%,d tracks, %,d never played, %,d new".format(lib.tracks, lib.neverPlayed, lib.new))
+                if ((s.cooldownDays ?: 0) > 0) append(", %,d resting".format(lib.inCooldown))
+                append(".")
+                error?.let { append("\n$it") }
+            },
+            icon = Icons.Default.Shuffle,
+        )
+        GroupDivider()
+    }
+    ChoiceRow(
+        title = "New arrivals",
+        hint = "Share of each mix taken from recently added songs",
+        icon = Icons.Default.NewReleases,
+        options = withCurrent(SHUFFLE_NEW_PERCENT, s.newArrivalPercent, "%"),
+        selected = s.newArrivalPercent ?: 0,
+        onSelect = { viewModel.updateShuffle(ShuffleSettings(newArrivalPercent = it)) }
+    )
+    GroupDivider()
+    ChoiceRow(
+        title = "Counts as new for",
+        hint = "How long after it was added a song still counts as new",
+        icon = Icons.Default.Schedule,
+        options = withCurrent(SHUFFLE_NEW_DAYS, s.newArrivalDays, " days"),
+        selected = s.newArrivalDays ?: 30,
+        onSelect = { viewModel.updateShuffle(ShuffleSettings(newArrivalDays = it)) },
+        enabled = (s.newArrivalPercent ?: 0) > 0
+    )
+    GroupDivider()
+    ChoiceRow(
+        title = "Never played",
+        hint = "Share of each mix taken from songs you haven't played yet",
+        icon = Icons.Default.FiberNew,
+        options = withCurrent(SHUFFLE_UNPLAYED_PERCENT, s.unplayedPercent, "%"),
+        selected = s.unplayedPercent ?: 0,
+        onSelect = { viewModel.updateShuffle(ShuffleSettings(unplayedPercent = it)) }
+    )
+    GroupDivider()
+    ChoiceRow(
+        title = "Rest recently played",
+        hint = "Leave out songs played within this time (used anyway if nothing else is left)",
+        icon = Icons.Default.History,
+        options = withCurrent(SHUFFLE_COOLDOWN_DAYS, s.cooldownDays, " days"),
+        selected = s.cooldownDays ?: 0,
+        onSelect = { viewModel.updateShuffle(ShuffleSettings(cooldownDays = it)) }
+    )
+    GroupDivider()
+    ChoiceRow(
+        title = "Songs per artist",
+        hint = "Most songs from one artist in each batch of the mix",
+        icon = Icons.Default.Person,
+        options = withCurrent(SHUFFLE_PER_ARTIST, s.maxPerArtist, " songs"),
+        selected = s.maxPerArtist ?: 2,
+        onSelect = { viewModel.updateShuffle(ShuffleSettings(maxPerArtist = it)) }
+    )
+    GroupDivider()
+    ChoiceRow(
+        title = "Space out artists",
+        hint = "An artist doesn't come back until this many other songs have played",
+        icon = Icons.Default.SpaceBar,
+        options = withCurrent(SHUFFLE_ARTIST_GAP, s.artistGap, " songs"),
+        selected = s.artistGap ?: 5,
+        onSelect = { viewModel.updateShuffle(ShuffleSettings(artistGap = it)) }
+    )
+    GroupDivider()
+    SwitchRow(
+        title = "One song per album",
+        summary = "Don't take two songs from the same album in one batch",
+        icon = Icons.Default.Album,
+        checked = s.onePerAlbum ?: true,
+        onCheckedChange = { viewModel.updateShuffle(ShuffleSettings(onePerAlbum = it)) }
+    )
+}
+
+/** [options] plus the server's current value if it was set to something not on the list. */
+private fun withCurrent(options: List<Pair<Int, String>>, current: Int?, unit: String): List<Pair<Int, String>> =
+    if (current == null || options.any { it.first == current }) options
+    else (options + (current to "$current$unit")).sortedBy { it.first }
+
+private val SHUFFLE_NEW_PERCENT = listOf(0 to "Off", 5 to "5%", 10 to "10%", 20 to "20%", 30 to "30%", 50 to "50%")
+private val SHUFFLE_NEW_DAYS = listOf(7 to "7 days", 14 to "14 days", 30 to "30 days", 60 to "60 days", 90 to "90 days", 180 to "6 months", 365 to "1 year")
+private val SHUFFLE_UNPLAYED_PERCENT = listOf(0 to "Off", 10 to "10%", 25 to "25%", 50 to "50%", 75 to "75%", 100 to "100%")
+private val SHUFFLE_COOLDOWN_DAYS = listOf(0 to "Off", 1 to "1 day", 3 to "3 days", 7 to "7 days", 14 to "14 days", 30 to "30 days", 90 to "90 days")
+private val SHUFFLE_PER_ARTIST = listOf(1 to "1 song", 2 to "2 songs", 3 to "3 songs", 5 to "5 songs", 0 to "No limit")
+private val SHUFFLE_ARTIST_GAP = listOf(0 to "Off", 3 to "3 songs", 5 to "5 songs", 10 to "10 songs", 15 to "15 songs")
 
 private val BITRATE_OPTIONS = listOf(
     0 to "Original (no limit)",

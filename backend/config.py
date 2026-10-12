@@ -107,6 +107,16 @@ class SubsonicConfig(BaseModel):
     # defines how recent "new" means.
     shuffle_new_arrival_percent: int = 0
     shuffle_new_arrival_days: int = 30
+    # Unplayed quota: this % of each mix is drawn from tracks never played. 0 = off.
+    shuffle_unplayed_percent: int = 0
+    # Cooldown: leave out tracks played in the last N days (0 = off). Falls back to
+    # them only when the rest of the library can't fill the mix.
+    shuffle_cooldown_days: int = 0
+    # Variety caps per mix. max_per_artist 0 = no limit.
+    shuffle_max_per_artist: int = 2
+    shuffle_one_per_album: bool = True
+    # The same artist doesn't come back within this many tracks (0 = off).
+    shuffle_artist_gap: int = 5
 
 
 class AssistantConfig(BaseModel):

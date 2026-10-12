@@ -96,9 +96,6 @@ class ServiceConfig(BaseModel):
     download_dir: str = ""
     cover_cache_dir: str = ""
     naming_scheme: str = "{artist}/{album}/{track_number} - {title}"
-    # Shuffle Mix new-arrivals quota (subsonic getRandomSongs)
-    shuffle_new_arrival_percent: int = 0
-    shuffle_new_arrival_days: int = 30
     # Soulseek (native only)
     slsk_username: str = ""
     slsk_password: str = ""
@@ -152,8 +149,6 @@ async def get_service_config():
         "download_dir": settings.soulseek.download_dir,
         "cover_cache_dir": settings.library.cover_cache_dir,
         "naming_scheme": settings.library.naming_scheme,
-        "shuffle_new_arrival_percent": settings.subsonic.shuffle_new_arrival_percent,
-        "shuffle_new_arrival_days": settings.subsonic.shuffle_new_arrival_days,
         "slsk_username": settings.soulseek.username,
         "slsk_password": "",
         "has_slsk_password": bool(settings.soulseek.password),
@@ -271,16 +266,6 @@ async def update_service_config(req: ServiceConfig):
         assistant[toggle] = getattr(req, toggle)
     raw["assistant"] = {**settings.assistant.model_dump(), **assistant}
 
-    # Subsonic / Shuffle Mix
-    subsonic = raw.get("subsonic", {})
-    # The play-recency weighting was removed; drop its keys from existing configs.
-    subsonic.pop("shuffle_recency_weight", None)
-    subsonic.pop("shuffle_recency_days", None)
-    # New-arrivals quota: 0 = off, capped at 50% so the mix never becomes all-new.
-    subsonic["shuffle_new_arrival_percent"] = max(0, min(req.shuffle_new_arrival_percent, 50))
-    subsonic["shuffle_new_arrival_days"] = max(1, min(req.shuffle_new_arrival_days, 3650))
-    raw["subsonic"] = {**settings.subsonic.model_dump(), **subsonic}
-
     # Preserve other sections
     for section in ["server", "database", "redis", "analysis", "subsonic"]:
         if section not in raw:
@@ -288,6 +273,85 @@ async def update_service_config(req: ServiceConfig):
 
     _write_config(raw)
     return {"status": "ok"}
+
+
+# Shuffle Mix settings (subsonic getRandomSongs), with the bounds each is clamped to.
+# Kept out of /services so the web form and the phone app can each change them without
+# one overwriting the other with a stale copy.
+_SHUFFLE_BOUNDS: dict[str, tuple[int, int]] = {
+    "shuffle_new_arrival_percent": (0, 50),
+    "shuffle_new_arrival_days": (1, 3650),
+    "shuffle_unplayed_percent": (0, 100),
+    "shuffle_cooldown_days": (0, 365),
+    "shuffle_max_per_artist": (0, 20),
+    "shuffle_artist_gap": (0, 20),
+}
+
+
+class ShuffleSettings(BaseModel):
+    """A partial update: fields left out (None) keep their current value."""
+    shuffle_new_arrival_percent: int | None = None
+    shuffle_new_arrival_days: int | None = None
+    shuffle_unplayed_percent: int | None = None
+    shuffle_cooldown_days: int | None = None
+    shuffle_max_per_artist: int | None = None
+    shuffle_one_per_album: bool | None = None
+    shuffle_artist_gap: int | None = None
+
+
+async def _shuffle_response(db: AsyncSession) -> dict:
+    from sqlalchemy import func, or_
+    from backend.models.track import Track
+
+    sub = get_settings().subsonic
+    out = {k: getattr(sub, k) for k in ShuffleSettings.model_fields}
+    # Library counts shown beside the settings so the numbers mean something.
+    out["library"] = {
+        "tracks": await db.scalar(select(func.count()).select_from(Track)) or 0,
+        "never_played": await db.scalar(
+            select(func.count()).select_from(Track)
+            .where(or_(Track.play_count == 0, Track.play_count.is_(None)))
+        ) or 0,
+        "new": await db.scalar(
+            select(func.count()).select_from(Track)
+            .where(Track.created_at >= func.datetime("now", f"-{max(1, sub.shuffle_new_arrival_days)} days"))
+        ) or 0,
+        "in_cooldown": 0,
+    }
+    if sub.shuffle_cooldown_days > 0:
+        out["library"]["in_cooldown"] = await db.scalar(
+            select(func.count()).select_from(Track)
+            .where(Track.last_played_at >= func.datetime("now", f"-{sub.shuffle_cooldown_days} days"))
+        ) or 0
+    return out
+
+
+@router.get("/shuffle")
+async def get_shuffle_settings(db: AsyncSession = Depends(get_db)):
+    """Shuffle Mix settings, plus library counts for context."""
+    return await _shuffle_response(db)
+
+
+@router.put("/shuffle")
+async def update_shuffle_settings(req: ShuffleSettings, db: AsyncSession = Depends(get_db)):
+    """Change some or all Shuffle Mix settings. Out-of-range numbers are clamped."""
+    raw = _read_raw_config()
+    settings = get_settings()
+    subsonic = {**settings.subsonic.model_dump(), **raw.get("subsonic", {})}
+    # The old play-recency weighting was never wired up; drop its keys from existing configs.
+    subsonic.pop("shuffle_recency_weight", None)
+    subsonic.pop("shuffle_recency_days", None)
+    for key, value in req.model_dump(exclude_none=True).items():
+        if key in _SHUFFLE_BOUNDS:
+            lo, hi = _SHUFFLE_BOUNDS[key]
+            value = max(lo, min(int(value), hi))
+        subsonic[key] = value
+    raw["subsonic"] = subsonic
+    for section in ["server", "database", "redis", "analysis"]:
+        if section not in raw:
+            raw[section] = getattr(settings, section).model_dump()
+    _write_config(raw)
+    return await _shuffle_response(db)
 
 
 @router.post("/test/{service}")

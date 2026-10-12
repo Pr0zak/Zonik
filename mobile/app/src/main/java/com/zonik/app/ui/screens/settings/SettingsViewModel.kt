@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.zonik.app.data.api.AppUpdate
 import com.zonik.app.data.api.LogUploader
+import com.zonik.app.data.api.ShuffleSettings
+import com.zonik.app.data.api.ZonikApi
 import com.zonik.app.data.api.UpdateChecker
 import com.zonik.app.data.repository.LibraryRepository
 import com.zonik.app.data.repository.SettingsRepository
@@ -68,7 +70,8 @@ class SettingsViewModel @Inject constructor(
     private val logUploader: LogUploader,
     private val simpleCache: SimpleCache,
     private val playbackManager: PlaybackManager,
-    private val offlineCacheManager: com.zonik.app.media.OfflineCacheManager
+    private val offlineCacheManager: com.zonik.app.media.OfflineCacheManager,
+    private val zonikApi: ZonikApi,
 ) : ViewModel() {
 
     private val _wearPairStatus = MutableStateFlow<String?>(null)
@@ -185,6 +188,41 @@ class SettingsViewModel @Inject constructor(
         checkForUpdate()
         fetchServerInfo()
         refreshCacheSize()
+        loadShuffleSettings()
+    }
+
+    // Shuffle Mix settings live on the server (shared with the web UI and every client),
+    // so they are fetched and saved directly rather than kept in SettingsRepository.
+    private val _shuffleSettings = MutableStateFlow<ShuffleSettings?>(null)
+    /** Null while loading or when the server can't be reached. */
+    val shuffleSettings: StateFlow<ShuffleSettings?> = _shuffleSettings.asStateFlow()
+
+    private val _shuffleError = MutableStateFlow<String?>(null)
+    val shuffleError: StateFlow<String?> = _shuffleError.asStateFlow()
+
+    fun loadShuffleSettings() {
+        viewModelScope.launch {
+            try {
+                _shuffleSettings.value = zonikApi.getShuffleSettings()
+                _shuffleError.value = null
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.w("Settings", "getShuffleSettings failed: ${e.message}")
+                _shuffleError.value = "Couldn't load from the server"
+            }
+        }
+    }
+
+    /** Saves one changed setting; [change] carries only that field. */
+    fun updateShuffle(change: ShuffleSettings) {
+        viewModelScope.launch {
+            try {
+                _shuffleSettings.value = zonikApi.putShuffleSettings(change)
+                _shuffleError.value = null
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.w("Settings", "putShuffleSettings failed: ${e.message}")
+                _shuffleError.value = "Couldn't save — check the server connection"
+            }
+        }
     }
 
     private fun refreshCacheSize() {
