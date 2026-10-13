@@ -122,10 +122,10 @@ class SubsonicConfig(BaseModel):
 class AssistantConfig(BaseModel):
     enabled: bool = True
     claude_api_key: str = ""
-    claude_model: str = "claude-sonnet-5"
+    claude_model: str = "claude-sonnet-5-5"
     # Small, latency-sensitive calls (resolving "that song from ..." into
     # artist/title candidates) use a cheaper model.
-    claude_fast_model: str = "claude-haiku-4-5"
+    claude_fast_model: str = "claude-haiku-5-5"
     max_suggestions_per_call: int = 20
     w_artist_affinity: float = 0.25
     w_genre_match: float = 0.20

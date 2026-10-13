@@ -14,9 +14,9 @@
 	// Claude models offered for the AI features, newest generation. Prices are per 1M
 	// input / output tokens, so the cost of a switch is visible where it is made.
 	const CLAUDE_MODELS = [
-		{ id: 'claude-sonnet-5', label: 'Claude Sonnet 5 — recommended ($2 / $10)' },
-		{ id: 'claude-opus-5', label: 'Claude Opus 5 — more capable ($5 / $25)' },
-		{ id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 — fastest, cheapest ($1 / $5)' },
+		{ id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 — recommended ($2 / $10)' },
+		{ id: 'claude-opus-5-5', label: 'Claude Opus 5.5 — more capable ($4 / $20)' },
+		{ id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 — fastest, cheapest ($0.10 / $0.50)' },
 		{ id: 'claude-fable-5-1', label: 'Claude Fable 5.1 — most capable ($10 / $50)' },
 	];
 	import Toggle from '../../components/ui/Toggle.svelte';

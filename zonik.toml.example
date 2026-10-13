@@ -57,16 +57,16 @@ server_name = "Zonik"
 
 [assistant]
 claude_api_key = ""
-claude_model = "claude-sonnet-5"
-# claude_fast_model = "claude-haiku-4-5"   # cheap model for resolving vague song searches
+claude_model = "claude-sonnet-5-5"
+# claude_fast_model = "claude-haiku-5-5"   # cheap model for resolving vague song searches
 # Record one ai_usage row per Claude API call (powers the AI usage dashboard)
 track_ai_usage = true
 
 # Optional: override the built-in pricing snapshot in
 # backend/services/ai/pricing.py. model-id -> [input, output] USD per 1M tokens.
 # [assistant.model_pricing]
-# "claude-sonnet-5" = [2.00, 10.00]
-# "claude-haiku-4-5" = [1.00, 5.00]
+# "claude-sonnet-5-5" = [2.00, 10.00]
+# "claude-haiku-5-5" = [0.10, 0.50]
 
 [kimahub]
 db_url = ""  # postgresql://kima:pass@host:5432/kima

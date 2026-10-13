@@ -12,7 +12,7 @@ To correct or add a rate without touching code, set ``model_pricing`` under
 ``[assistant]`` in ``zonik.toml``::
 
     [assistant.model_pricing]
-    "claude-sonnet-5" = [2.00, 10.00]   # [input, output] USD per 1M tokens
+    "claude-sonnet-5-5" = [2.00, 10.00]   # [input, output] USD per 1M tokens
 
 Config entries are consulted before ``DEFAULT_PRICING`` and win outright.
 
@@ -28,7 +28,7 @@ import re
 log = logging.getLogger(__name__)
 
 #: The date these rates were last verified against Anthropic's published pricing.
-PRICING_AS_OF: str = "2026-09-29"
+PRICING_AS_OF: str = "2026-10-06"
 
 #: model id -> (input $/1M tokens, output $/1M tokens)
 DEFAULT_PRICING: dict[str, tuple[float, float]] = {
@@ -43,9 +43,13 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-4-7": (5.00, 25.00),
     "claude-opus-4-6": (5.00, 25.00),
     "claude-opus-4-5": (5.00, 25.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
     "claude-sonnet-5": (2.00, 10.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-4-5": (3.00, 15.00),
+    # Haiku 5.5: prompts up to 100K tokens; longer ones bill at 0.50 / 2.50, which
+    # Zonik's short prompts never reach.
+    "claude-haiku-5-5": (0.10, 0.50),
     "claude-haiku-4-5": (1.00, 5.00),
     # Deprecated / retired families — kept so historical ai_usage rows still price
     # correctly rather than silently dropping to the fallback estimate.
@@ -57,11 +61,18 @@ DEFAULT_PRICING: dict[str, tuple[float, float]] = {
 
 #: Used when a model id isn't recognised. Mid-tier rates, so the estimate lands in the
 #: right order of magnitude instead of reading as free.
-FALLBACK_RATES: tuple[float, float] = DEFAULT_PRICING["claude-sonnet-5"]
+FALLBACK_RATES: tuple[float, float] = DEFAULT_PRICING["claude-sonnet-5-5"]
 
 #: Cache reads bill at 10% of the input rate; 5-minute cache writes at 125%.
 CACHE_READ_MULTIPLIER: float = 0.10
 CACHE_WRITE_MULTIPLIER: float = 1.25
+
+#: Models whose cache-read price isn't 10% of input: $ per 1M cached tokens read.
+CACHE_READ_RATES: dict[str, float] = {
+    "claude-fable-5-1": 0.25,
+    "claude-opus-5-5": 0.20,
+    "claude-sonnet-5-5": 0.20,
+}
 
 _DATE_SUFFIX_RE = re.compile(r"-\d{8}$")
 
@@ -134,8 +145,8 @@ def estimate_cost(
 ) -> float:
     """Estimated USD cost of one call. Never raises — returns 0.0 on garbage input.
 
-    Zonik's default model is ``claude-sonnet-5`` (2.00 / 10.00), so
-    ``estimate_cost("claude-sonnet-5", 10_000, 2_000)`` == 0.04.
+    Zonik's default model is ``claude-sonnet-5-5`` (2.00 / 10.00), so
+    ``estimate_cost("claude-sonnet-5-5", 10_000, 2_000)`` == 0.04.
     """
     try:
         rate_in, rate_out = get_rates(model)
@@ -143,13 +154,14 @@ def estimate_cost(
         tokens_out = max(int(output_tokens or 0), 0)
         tokens_cache_read = max(int(cache_read_tokens or 0), 0)
         tokens_cache_write = max(int(cache_write_tokens or 0), 0)
+        rate_cache_read = CACHE_READ_RATES.get(normalize_model(model), rate_in * CACHE_READ_MULTIPLIER)
     except Exception:
         return 0.0
 
     total = (
         tokens_in * rate_in
         + tokens_out * rate_out
-        + tokens_cache_read * rate_in * CACHE_READ_MULTIPLIER
+        + tokens_cache_read * rate_cache_read
         + tokens_cache_write * rate_in * CACHE_WRITE_MULTIPLIER
     ) / 1_000_000.0
     # 10dp, not 2 — a single Haiku call costs a small fraction of a cent and would

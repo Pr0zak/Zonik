@@ -119,7 +119,7 @@ class ServiceConfig(BaseModel):
     apple_music_developer_token: str = ""
     # AI Assistant
     claude_api_key: str = ""
-    claude_model: str = "claude-sonnet-5"
+    claude_model: str = "claude-sonnet-5-5"
     # AI feature toggles
     ai_reranking: bool = True
     ai_search: bool = True

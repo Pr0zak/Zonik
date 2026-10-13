@@ -118,11 +118,16 @@ async def _record_usage(
 # use. Matched by prefix so dated ids (claude-sonnet-5-2026...) are covered.
 _NO_SAMPLING_PREFIXES = (
     "claude-sonnet-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8",
-    "claude-fable", "claude-mythos",
+    "claude-haiku-5", "claude-fable", "claude-mythos",
 )
+# Sonnet 5.5 rejects "disabled"; "between_tools" is its thinking-off mode. It takes
+# no other thinking field and is only accepted at effort high or below (the default).
+# Checked before _THINKING_OPTIONAL_PREFIXES, whose "claude-sonnet-5" also matches it.
+_BETWEEN_TOOLS_PREFIXES = ("claude-sonnet-5-5",)
 # Thinking can be switched off on these; the callers here are short JSON
 # extraction tasks that ran without thinking on the models they were written for.
-_THINKING_OPTIONAL_PREFIXES = ("claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8")
+# Haiku 5.5 accepts "disabled" at its default effort (medium).
+_THINKING_OPTIONAL_PREFIXES = ("claude-sonnet-5", "claude-haiku-5", "claude-opus-4-7", "claude-opus-4-8")
 # Thinking stays on for these, kept brief with low effort. Opus 5.5, Fable and Mythos
 # refuse to disable it; Opus 5 accepts "disabled" but then can write a tool call or
 # <thinking> tags into its visible text, so low effort is the safer way to keep it short.
@@ -130,7 +135,8 @@ _LOW_EFFORT_PREFIXES = ("claude-opus-5", "claude-fable", "claude-mythos")
 # Models that take the server-side refusal fallback: if a safety classifier declines the
 # request, the API re-runs it on a fallback model inside the same call rather than
 # returning an empty refusal. "default" lets the API pick the fallback by category.
-_REFUSAL_FALLBACK_MODELS = ("claude-opus-5", "claude-fable-5-1")
+# Haiku has no server-side fallback.
+_REFUSAL_FALLBACK_MODELS = ("claude-opus-5", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1")
 _REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 
@@ -144,6 +150,8 @@ def _model_params(model: str, max_tokens: int, temperature: float | None) -> dic
         # Thinking on, kept brief, with room left for the answer.
         out["output_config"] = {"effort": "low"}
         out["max_tokens"] = max_tokens + 4096
+    elif model.startswith(_BETWEEN_TOOLS_PREFIXES):
+        out["thinking"] = {"type": "between_tools"}
     elif model.startswith(_THINKING_OPTIONAL_PREFIXES):
         out["thinking"] = {"type": "disabled"}
     if model in _REFUSAL_FALLBACK_MODELS:

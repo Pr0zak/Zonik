@@ -91,8 +91,8 @@ shuffle_new_arrival_days = 30         # How recent "recently added" means (UI ra
 [assistant]
 enabled = true                        # Master switch for the AI track resolver
 claude_api_key = ""                   # Anthropic API key; AI features are inactive without it
-claude_model = "claude-sonnet-5"      # Model for most AI features
-claude_fast_model = "claude-haiku-4-5"  # Cheaper model for resolving vague song searches
+claude_model = "claude-sonnet-5-5"    # Model for most AI features
+claude_fast_model = "claude-haiku-5-5"  # Cheaper model for resolving vague song searches
 track_ai_usage = true                 # Record one ai_usage row per Claude call (AI usage dashboard)
 # Feature toggles
 ai_reranking = true           # Claude re-ranking of recommendations
@@ -119,7 +119,7 @@ w_novelty = 0.05
 # model-id -> [input, output] USD per 1M tokens. Checked before the built-in
 # table in backend/services/ai/pricing.py.
 # [assistant.model_pricing]
-# "claude-haiku-4-5" = [1.00, 5.00]
+# "claude-haiku-5-5" = [0.10, 0.50]
 ```
 
 ## Web UI Settings
