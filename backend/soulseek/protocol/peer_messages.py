@@ -53,6 +53,43 @@ def build_upload_denied(filename: str, reason: str) -> bytes:
     return MessageBuilder().uint32(PeerMessageCode.UPLOAD_DENIED).string(filename).string(reason).build()
 
 
+def build_transfer_request(direction: int, token: bytes, filename: str, size: int = 0) -> bytes:
+    """TransferRequest (code 40): uint32 direction, 4-byte token, string filename,
+    then uint64 file size only when direction is UPLOAD (we are the uploader)."""
+    b = (
+        MessageBuilder()
+        .uint32(PeerMessageCode.TRANSFER_REQUEST)
+        .uint32(direction)
+        .raw(token)
+        .string(filename)
+    )
+    if direction == TransferDirection.UPLOAD:
+        b.uint64(size)
+    return b.build()
+
+
+def build_place_in_queue_response(filename: str, place: int) -> bytes:
+    """PlaceInQueueResponse (code 44): string filename, uint32 place."""
+    return (
+        MessageBuilder()
+        .uint32(PeerMessageCode.PLACE_IN_QUEUE_RESPONSE)
+        .string(filename)
+        .uint32(place)
+        .build()
+    )
+
+
+def build_upload_failed(filename: str) -> bytes:
+    """UploadFailed (code 46): string filename — sent by the uploader."""
+    return MessageBuilder().uint32(PeerMessageCode.UPLOAD_FAILED).string(filename).build()
+
+
+def build_file_transfer_init(token: bytes) -> bytes:
+    """FileTransferInit: the bare 4-byte transfer token, first thing the uploader
+    sends on an F connection (no length prefix, no code)."""
+    return bytes(token)
+
+
 def build_pierce_firewall_raw(token: bytes) -> bytes:
     """Build pierce firewall for file transfer connection (no length prefix wrapping)."""
     return MessageBuilder().uint8(PeerInitCode.PIERCE_FIREWALL).raw(token).build()
@@ -103,9 +140,14 @@ def parse_peer_message(data: bytes) -> dict | None:
     elif code == PeerMessageCode.TRANSFER_RESPONSE:
         token = msg.raw(4)
         allowed = msg.uint8()
+        # Both tails are optional (Nicotine+ TransferResponse.parse_network_message):
+        # a refusal carries a reason string, an acceptance of a download request
+        # may carry the uint64 file size.
         if allowed == 0:
-            reason = msg.string()
+            reason = msg.string() if msg.has_remaining() else ""
             return {"kind": "transfer_response", "token": token, "allowed": False, "reason": reason}
+        if msg.has_remaining():
+            return {"kind": "transfer_response", "token": token, "allowed": True, "size": msg.uint64()}
         return {"kind": "transfer_response", "token": token, "allowed": True}
 
     elif code == PeerMessageCode.PLACE_IN_QUEUE_RESPONSE:

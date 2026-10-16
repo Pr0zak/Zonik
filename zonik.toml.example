@@ -40,6 +40,15 @@ listen_port = 2234
 server_host = "server.slsknet.org"
 server_port = 2242
 use_native = false
+# Sharing. With share_library on, peers can browse the library (the list is built
+# from the track table at startup and every 6 h) and download from it; off, we
+# report empty shares and deny every request.
+share_library = true
+# Files uploaded at once (never more than one per peer; the rest queue, and
+# peers are told their place in the queue).
+upload_slots = 2
+# Total upload rate across all uploads, in KB/s. 0 = unlimited.
+upload_speed_limit_kbps = 1024
 
 [lidarr]
 enabled = false

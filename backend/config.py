@@ -68,6 +68,11 @@ class SoulseekConfig(BaseModel):
     parallel_sources: int = 1  # How many peers to download from simultaneously (1 = sequential)
     source_strategy: str = "first"  # "first" = keep first completed, "best" = wait for all and keep best quality
     share_library: bool = True  # Share real library with peers (false = report empty shares)
+    # Serving uploads (only when share_library is on): files sent at once (never
+    # more than one per peer; the rest wait in a queue), and a cap on the total
+    # upload rate across all of them in KB/s (0 = unlimited).
+    upload_slots: int = 2
+    upload_speed_limit_kbps: int = 1024
 
 
 class LidarrConfig(BaseModel):
