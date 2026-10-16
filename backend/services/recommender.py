@@ -23,6 +23,8 @@ from backend.models.embedding import TrackEmbedding
 from backend.models.blacklist import DownloadBlacklist
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
+from backend.services.library_match import norm_artist, norm_title, batch_library_match
+from backend.services.download_attempts import keys_in_backoff
 
 log = logging.getLogger(__name__)
 
@@ -238,7 +240,9 @@ async def _get_library_keys(db: AsyncSession) -> set[str]:
         select(Artist.name, Track.title)
         .join(Track, Track.artist_id == Artist.id)
     )
-    return {f"{_normalize(a)}::{_normalize(t)}" for a, t in result.all()}
+    # Same normaliser as library_match so sourcing and the download paths agree on
+    # what "already owned" means ("Song (Remastered)" == "Song", "A feat. B" == "A").
+    return {f"{norm_artist(a)}::{norm_title(t)}" for a, t in result.all()}
 
 
 async def _get_blacklisted(db: AsyncSession) -> tuple[set[str], set[str]]:
@@ -329,6 +333,8 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
 
     library_keys = await _get_library_keys(db)
     bl_artists, bl_tracks = await _get_blacklisted(db)
+    # Tracks whose automatic download failed recently shouldn't take up a top-100 slot.
+    backoff_keys = await keys_in_backoff(db)
 
     # Recently rejected recommendations (last 7 days)
     week_ago = datetime.utcnow() - timedelta(days=7)
@@ -337,15 +343,17 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
         .where(Recommendation.feedback == "thumbs_down", Recommendation.created_at > week_ago)
     )
     rejected_keys = {
-        f"{_normalize(a)}::{_normalize(t)}" for a, t in rejected_result.all()
+        f"{norm_artist(a)}::{norm_title(t)}" for a, t in rejected_result.all()
     }
 
     candidates: dict[str, dict] = {}  # key -> candidate
 
     def add_candidate(artist: str, track: str, source: str, source_detail: str = "",
                       listeners: int = 0, match: float = 0.0):
-        key = f"{_normalize(artist)}::{_normalize(track)}"
+        key = f"{norm_artist(artist)}::{norm_title(track)}"
         if key in library_keys:
+            return
+        if key in backoff_keys:
             return
         if _normalize(artist) in bl_artists:
             return

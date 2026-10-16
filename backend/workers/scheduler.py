@@ -18,6 +18,7 @@ from backend.models.artist import Artist
 from backend.models.favorite import Favorite
 from backend.models.playlist import Playlist, PlaylistTrack
 from backend.api.websocket import broadcast_job_update
+from backend.services.library_match import batch_library_match
 from backend.services.download_attempts import in_backoff, record_outcome, keys_in_backoff, attempt_key
 
 log = logging.getLogger(__name__)
@@ -580,19 +581,13 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
     """Pull Last.fm top chart, find missing tracks, store list for download."""
     from backend.services.lastfm import get_top_tracks
     chart = await get_top_tracks(limit=count)
-    missing = []
-    in_library = 0
-    for t in chart:
-        result = await db.execute(
-            select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                Track.title.ilike(t["name"]),
-                Artist.name.ilike(t["artist"]),
-            ).limit(1)
-        )
-        if result.scalar_one_or_none():
-            in_library += 1
-        else:
-            missing.append({"artist": t["artist"], "track": t["name"], "status": "missing"})
+    # Shared library matcher (same rule as the trigger API and recommender sourcing).
+    await batch_library_match(db, chart, name_key="name", artist_key="artist")
+    in_library = sum(1 for t in chart if t.get("in_library"))
+    missing = [
+        {"artist": t["artist"], "track": t["name"], "status": "missing"}
+        for t in chart if not t.get("in_library")
+    ]
 
     job.total = len(chart)
     job.progress = in_library
@@ -615,6 +610,7 @@ async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
     )).scalars().all()
 
     missing = []
+    found: list[dict] = []
     in_library = 0
     seen: set[str] = set()
 
@@ -628,19 +624,20 @@ async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
                 continue
             seen.add(key)
 
-            result = await db.execute(
-                select(Track).join(Artist, Track.artist_id == Artist.id).where(
-                    Track.title.ilike(t["name"]),
-                    Artist.name.ilike(t["artist"]),
-                ).limit(1)
-            )
-            if result.scalar_one_or_none():
-                in_library += 1
-            else:
-                missing.append({
-                    "artist": t["artist"], "track": t["name"], "status": "missing",
-                    "source": f"{fav.track.artist.name} — {fav.track.title}",
-                })
+            found.append({
+                "artist": t["artist"], "name": t["name"],
+                "source": f"{fav.track.artist.name} — {fav.track.title}",
+            })
+
+    await batch_library_match(db, found, name_key="name", artist_key="artist")
+    for t in found:
+        if t["in_library"]:
+            in_library += 1
+        else:
+            missing.append({
+                "artist": t["artist"], "track": t["name"], "status": "missing",
+                "source": t["source"],
+            })
 
     job.total = len(seen)
     job.progress = in_library
@@ -953,6 +950,7 @@ async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, conf
 
     sem = asyncio.Semaphore(3)
     all_remixes = []
+    remix_candidates: list[dict] = []
     seen: set[str] = set()
 
     async def scan_one(t):
@@ -972,23 +970,24 @@ async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, conf
             if key in seen:
                 continue
             seen.add(key)
-            # Check if in library
-            lib_match = await db.execute(
-                select(Track.id).join(Artist, Track.artist_id == Artist.id).where(
-                    Track.title.ilike(r["name"]),
-                    Artist.name.ilike(r["artist"]),
-                ).limit(1)
-            )
-            in_library = lib_match.scalar_one_or_none() is not None
-            if not in_library:
-                all_remixes.append({
-                    "artist": r["artist"],
-                    "track": r["name"],
-                    "status": "missing",
-                    "version_type": r.get("version_type", "remix"),
-                    "source_track": t.title,
-                    "source_artist": t.artist.name if t.artist else "",
-                })
+            remix_candidates.append({
+                "artist": r["artist"], "name": r["name"],
+                "version_type": r.get("version_type", "remix"),
+                "source_track": t.title,
+                "source_artist": t.artist.name if t.artist else "",
+            })
+
+    await batch_library_match(db, remix_candidates, name_key="name", artist_key="artist")
+    for r in remix_candidates:
+        if not r["in_library"]:
+            all_remixes.append({
+                "artist": r["artist"],
+                "track": r["name"],
+                "status": "missing",
+                "version_type": r["version_type"],
+                "source_track": r["source_track"],
+                "source_artist": r["source_artist"],
+            })
 
     job.total = len(source_tracks)
     job.progress = len(source_tracks)
