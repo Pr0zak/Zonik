@@ -1,4 +1,4 @@
-import { activeJobs, activeTransfers } from './stores.js';
+import { activeJobs, activeTransfers, activeUploads } from './stores.js';
 
 let ws = null;
 let reconnectDelay = 1000;
@@ -53,6 +53,8 @@ export function connectWebSocket() {
 				const transfers = data.transfers || [];
 				activeTransfers.set(transfers);
 				syncJobsFromTransfers(transfers);
+			} else if (data.type === 'upload_progress') {
+				activeUploads.set(data.uploads || []);
 			} else if (data.type === 'job_update') {
 				const job = data.job;
 				activeJobs.update(jobs => {

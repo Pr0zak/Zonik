@@ -8,6 +8,8 @@ export const toasts = writable([]);
 export const updateAvailable = writable(false);
 export const showShortcuts = writable(false);
 export const activeTransfers = writable([]);
+// Uploads we are serving to Soulseek peers (WebSocket `upload_progress`, kept apart from downloads).
+export const activeUploads = writable([]);
 export const trackQueue = writable([]);
 export const queueIndex = writable(-1);
 export const discoverTrackStatus = writable({});

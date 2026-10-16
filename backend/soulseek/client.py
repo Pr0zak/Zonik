@@ -744,11 +744,11 @@ class SoulseekClient:
         return result
 
     async def _on_upload_change(self, force: bool = False) -> None:
-        """Upload state changed (force) or bytes moved (already throttled and
-        coalesced by the UploadManager). The transfer broadcast carries downloads
-        only, so there is nothing to push yet; this is the hook for wiring upload
-        progress into the UI."""
-        return None
+        """Upload state changed (force) or bytes moved. The UploadManager already
+        throttles progress ticks (CHANGE_THROTTLE) and coalesces forced changes, so
+        every call here is worth a push. Uploads go out as their own `upload_progress`
+        message; the download `transfer_progress` broadcast never carries them."""
+        await self._broadcast_uploads()
 
     def _start_file_task(self, transfer: Transfer | None, coro) -> asyncio.Task:
         """Run a file-connection handler as a task the client keeps a reference to,
@@ -810,6 +810,14 @@ class SoulseekClient:
             await broadcast_transfer_progress(self.transfers.get_all_transfers())
         except Exception as e:
             log.debug("Transfer broadcast failed: %s", e)
+
+    async def _broadcast_uploads(self) -> None:
+        """Broadcast the current uploads to all WebSocket clients."""
+        try:
+            from backend.api.websocket import broadcast_upload_progress
+            await broadcast_upload_progress(self.transfers.get_all_uploads())
+        except Exception as e:
+            log.debug("Upload broadcast failed: %s", e)
 
     async def _peer_cleanup_loop(self) -> None:
         """Close idle peer connections to prevent fd leaks."""

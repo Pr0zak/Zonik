@@ -1,7 +1,7 @@
 <script>
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { formatSize, formatDuration, formatLongDuration, formatRelativeTime, parseUTC } from '$lib/utils.js';
-	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle, SkipForward, ChevronDown, ChevronRight, Trash2 } from 'lucide-svelte';
+	import { BarChart3, Wifi, Users, Share2, Download, ArrowUpDown, ArrowUp, RotateCcw, Search, Clock, Radio, HardDrive, Zap, ShieldCheck, ShieldAlert, TrendingUp, Activity, Layers, Database, Server, Sparkles, AlertTriangle, SkipForward, ChevronDown, ChevronRight, Trash2 } from 'lucide-svelte';
 	import { api } from '$lib/api.js';
 	import { addToast } from '$lib/stores.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
@@ -1686,6 +1686,36 @@
 						<p class="text-xs text-[var(--text-muted)] mt-0.5">aggregate</p>
 					</div>
 				</div>
+
+				<!-- Uploads (files peers pull from our shared library) -->
+				{#if slsk.uploads}
+					<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+						<div class="bg-[var(--surface-container)] rounded-lg p-4">
+							<div class="flex items-center gap-2 mb-2">
+								<ArrowUp class="w-4 h-4 text-[var(--color-discover)]" />
+								<span class="text-xs text-[var(--text-muted)]">Uploads</span>
+							</div>
+							<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.uploads.active} active</p>
+							<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.uploads.queued} queued</p>
+						</div>
+						<div class="bg-[var(--surface-container)] rounded-lg p-4">
+							<div class="flex items-center gap-2 mb-2">
+								<HardDrive class="w-4 h-4 text-[var(--color-stats)]" />
+								<span class="text-xs text-[var(--text-muted)]">Sent</span>
+							</div>
+							<p class="text-lg font-bold text-[var(--text-primary)]">{formatSize(slsk.uploads.bytes_sent)}</p>
+							<p class="text-xs text-[var(--text-muted)] mt-0.5">{slsk.uploads.completed} done · {slsk.uploads.failed} failed</p>
+						</div>
+						<div class="bg-[var(--surface-container)] rounded-lg p-4">
+							<div class="flex items-center gap-2 mb-2">
+								<Zap class="w-4 h-4 text-amber-400" />
+								<span class="text-xs text-[var(--text-muted)]">Upload Speed</span>
+							</div>
+							<p class="text-lg font-bold text-[var(--text-primary)]">{slsk.uploads.speed > 0 ? formatSpeed(slsk.uploads.speed) : '—'}</p>
+							<p class="text-xs text-[var(--text-muted)] mt-0.5">aggregate</p>
+						</div>
+					</div>
+				{/if}
 
 				<!-- Peer Reputation -->
 				{#if slsk.reputation?.tracked_peers > 0}

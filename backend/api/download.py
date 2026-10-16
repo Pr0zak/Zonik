@@ -1269,7 +1269,7 @@ async def download_status():
             "uploads": client.transfers.get_all_uploads(),
             "logged_in": client.logged_in,
         }
-    return {"downloads": [], "logged_in": False}
+    return {"downloads": [], "uploads": [], "logged_in": False}
 
 
 @router.get("/soulseek-stats")
