@@ -353,12 +353,27 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     missing = [{"artist": r.artist, "track": r.track, "rec_id": r.id} for r in recs]
     log.info(f"Auto-downloading {len(missing)} recommendations (score >= {min_score})")
 
-    await _auto_download_missing(missing, "recommendation_refresh")
+    outcomes = await _auto_download_missing(missing, "recommendation_refresh")
+    by_key = {attempt_key(o["artist"], o["track"]): o for o in outcomes}
 
-    # Mark downloaded recommendations
+    # Only recs whose download actually succeeded are "downloaded"; failures become "failed"
+    # (error kept on source_detail) so they stop looking like library additions. Recs with no
+    # outcome (backend down, skipped) stay pending and are retried by the next run.
+    n_ok = n_failed = 0
     for r in recs:
-        r.status = "downloaded"
+        o = by_key.get(attempt_key(r.artist, r.track))
+        if o is None:
+            continue
+        if o["ok"]:
+            r.status = "downloaded"
+            n_ok += 1
+        else:
+            r.status = "failed"
+            r.source_detail = ((r.source_detail or "") + f" | download failed: {o['error'] or 'unknown'}")[:2000]
+            n_failed += 1
     await db.commit()
+    log.info(f"Auto-download recommendations: {n_ok} downloaded, {n_failed} failed, "
+             f"{len(recs) - n_ok - n_failed} left pending")
 
 
 async def _download_backend_ready() -> bool:
@@ -416,7 +431,7 @@ async def _download_job_outcome(job_id: str | None) -> tuple[bool | None, str | 
     return False, str(err)[:500]
 
 
-async def _auto_download_missing(missing: list[dict], source: str):
+async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]:
     """Trigger individual download jobs for each missing track via enqueue_download.
     Uses enqueue_download which has short-lived DB sessions to avoid pool exhaustion.
 
@@ -424,6 +439,11 @@ async def _auto_download_missing(missing: list[dict], source: str):
     attach the download job_id to the TrackUpgrade row, bump `attempts`, and on
     job failure mark the row as `failed` so it doesn't sit at `pending` forever.
     Successful uploads are marked `completed` by the scanner during import.
+
+    Returns one outcome per attempted track: [{artist, track, job_id, ok, error}].
+    Tracks skipped for backoff, or the whole batch when the Soulseek backend is down,
+    produce no outcome (callers must leave those untouched). A job still running when
+    we look is reported ok=True with no error. Upgrade entries return no outcomes.
     """
     import asyncio
     import uuid as _uuid
@@ -439,7 +459,7 @@ async def _auto_download_missing(missing: list[dict], source: str):
     # hundreds of identical 'connection failed' rows). Leave the queue for next run.
     if not await _download_backend_ready():
         log.warning(f"[auto-download] Soulseek backend not ready — skipping {total} downloads from {source}")
-        return
+        return []
 
     # Map scheduler source to download source label
     dl_source = {"lastfm_top_tracks": "discovery", "discover_similar": "similar", "remix_discovery": "remix", "recommendation_refresh": "recommendation", "upgrade_scan": "upgrade"}.get(source, "discovery")
@@ -447,7 +467,7 @@ async def _auto_download_missing(missing: list[dict], source: str):
     sem = asyncio.Semaphore(4)  # limit concurrency of enqueue calls
     skipped_backoff = 0
 
-    async def download_one(t: dict):
+    async def download_one(t: dict) -> dict | None:
         nonlocal skipped_backoff
         artist = t.get("artist", "")
         track = t.get("track", "")
@@ -532,6 +552,10 @@ async def _auto_download_missing(missing: list[dict], source: str):
                         await record_outcome(rec_db, artist, track, dl_source, ok, err, returned_job_id)
                 except Exception as e:
                     log.debug(f"[auto-download] could not record outcome for {artist} — {track}: {e}")
+            return {
+                "artist": artist, "track": track, "job_id": returned_job_id,
+                "ok": ok is not False, "error": err if ok is False else None,
+            }
 
         # If this was an upgrade row that's STILL `downloading`, the scanner never
         # called _mark_upgrade_completed (download failed or imported file wasn't
@@ -573,8 +597,9 @@ async def _auto_download_missing(missing: list[dict], source: str):
                 log.debug(f"[auto-download] Could not finalize upgrade {upgrade_id}: {e}")
 
     tasks = [asyncio.create_task(download_one(t)) for t in missing]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     log.info(f"[auto-download] {source}: {total} candidates, skipped_backoff={skipped_backoff}")
+    return [r for r in results if isinstance(r, dict)]
 
 
 async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
@@ -606,7 +631,7 @@ async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
     favorites = (await db.execute(
         select(Favorite).options(
             selectinload(Favorite.track).selectinload(Track.artist)
-        ).where(Favorite.track_id.isnot(None)).limit(count)
+        ).where(Favorite.track_id.isnot(None)).order_by(func.random()).limit(count)
     )).scalars().all()
 
     missing = []
