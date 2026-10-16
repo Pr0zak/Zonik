@@ -120,6 +120,7 @@ class DownloadRequest(BaseModel):
     source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
     target_track_id: str | None = None  # the existing track this download should upgrade/replace
     exclude_users: list[str] = []  # peers to skip — "try another source" after these failed
+    expected_duration: int | None = None  # seconds; rejects candidates of a different length
 
 
 class BulkDownloadRequest(BaseModel):
@@ -475,20 +476,28 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         # this the best available MP3 was downloaded and then thrown away as "not
         # higher quality" (266 upgrades failed that way).
         better_than = None
+        # Candidates whose reported length differs from the track's by more than a
+        # few seconds are a different song (74 upgrades a week were fetched and then
+        # discarded as "not the track being upgraded").
+        target_duration = req.expected_duration
         if req.target_track_id:
             async with async_session() as q_sess:
                 cur = (await q_sess.execute(
-                    select(Track.format, Track.file_size).where(Track.id == req.target_track_id)
+                    select(Track.format, Track.file_size, Track.duration_seconds)
+                    .where(Track.id == req.target_track_id)
                 )).first()
             if cur:
                 better_than = (cur[0] or "", cur[1] or 0)
+                if cur[2]:
+                    target_duration = int(round(cur[2]))
 
         if req.username and req.filename and native_ready:
             # Direct download — try requested source first, then fall back to search
             candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
             try:
                 from backend.soulseek.search import search_multi_strategy_native
-                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than)
+                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
+                                                               target_duration=target_duration)
                 # Add fallbacks excluding the already-requested source
                 for fb in fallbacks:
                     if fb["username"] != req.username:
@@ -499,7 +508,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         elif native_ready:
             # Auto-download — get candidates from search
             from backend.soulseek.search import search_multi_strategy_native
-            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than)
+            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
+                                                            target_duration=target_duration)
         elif native_client:
             # Native client exists but never reconnected — fail fast with a
             # clear, recognizable error instead of falling through to slskd.
@@ -794,7 +804,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         except Exception as e:
             log.debug(f"[download] Staging cleanup skipped for {job_id}: {e}")
 
-async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None) -> str:
+async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None,
+                                     expected_duration: int | None = None) -> str:
     """Delegate a download to the web process, which owns the native Soulseek
     client, and wait for it to finish. The arq worker has no native client of its
     own (it can only bind the listen port in one process), so any download it
@@ -815,7 +826,8 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 url, json={"artist": artist, "track": track, "job_id": job_id,
-                           "source": source, "target_track_id": target_track_id}
+                           "source": source, "target_track_id": target_track_id,
+                           "expected_duration": expected_duration}
             )
             if resp.status_code == 200:
                 return resp.json().get("job_id", job_id)
@@ -876,7 +888,8 @@ async def _already_have_lossless(artist: str, track: str) -> bool:
     return same_title and (existing.format or "").lower() in _LOSSLESS
 
 
-async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None) -> str | None:
+async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
+                           *, expected_duration: int | None = None) -> str | None:
     """Create an individual download job with semaphore queuing. Returns job_id, or
     None when an automatic download was skipped because the library already has it."""
     # Dedup: skip if same artist+track already pending/running
@@ -898,11 +911,13 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     # If this process can't download natively, delegate to the web and wait for it.
     from backend.soulseek import get_client
     if get_client() is None:
-        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id)
+        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
+                                               expected_duration=expected_duration)
 
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
-    dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id)
+    dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id,
+                             expected_duration=expected_duration)
     sem = _get_semaphore()
 
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
@@ -938,6 +953,7 @@ class InternalDownloadRequest(BaseModel):
     job_id: str | None = None
     source: str | None = None
     target_track_id: str | None = None
+    expected_duration: int | None = None
 
 
 @router.post("/internal-run")
@@ -946,7 +962,8 @@ async def internal_run_download(req: InternalDownloadRequest):
     native Soulseek client. Called by the arq worker (via _delegate_download_to_web)
     to perform downloads it cannot run itself. Localhost-only by deployment."""
     jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
-                                 target_track_id=req.target_track_id)
+                                 target_track_id=req.target_track_id,
+                                 expected_duration=req.expected_duration)
     return {"job_id": jid}
 
 

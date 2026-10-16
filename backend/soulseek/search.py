@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+DURATION_TOLERANCE = 3  # seconds a candidate's reported duration may differ from the target
+
 
 def beats_quality(ext: str, size: int, current: tuple[str, int]) -> bool:
     """Would a file with this extension and size be an upgrade over `current`
@@ -35,17 +37,25 @@ async def pick_best_results_native(
     track: str,
     reputation=None,
     better_than: tuple[str, int] | None = None,
+    target_duration: int | None = None,
 ) -> list[dict]:
     """Score and rank search results from native client. Returns flat file list.
 
     better_than=(format, file_size) keeps only files that would upgrade that copy,
-    so an upgrade never downloads something the importer will throw away."""
+    so an upgrade never downloads something the importer will throw away.
+
+    target_duration (seconds) rejects files whose reported duration is more than
+    DURATION_TOLERANCE off — a different song that shares enough title words to
+    pass the title gate. Files that report no duration are kept; a matching
+    duration earns a bonus."""
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
     scored = []
     rejected_title = 0
     rejected_quality = 0
+    rejected_duration = 0
+    want_duration = int(target_duration) if target_duration and target_duration > 0 else None
     for search_result in results:
         for file_info in search_result.files:
             filename = file_info.filename
@@ -73,7 +83,16 @@ async def pick_best_results_native(
                 rejected_title += 1
                 continue
 
+            duration_match = False
+            if want_duration is not None and file_info.duration > 0:
+                if abs(file_info.duration - want_duration) > DURATION_TOLERANCE:
+                    rejected_duration += 1
+                    continue
+                duration_match = True
+
             score = 0
+            if duration_match:
+                score += 6
             # Artist match — strong signal, not required (often only in the path).
             if words_match(clean_artist_name(artist), filename) or words_match(artist, filename):
                 score += 12
@@ -141,12 +160,16 @@ async def pick_best_results_native(
                     "bitRate": bitrate,
                     "slots_free": search_result.slots_free,
                     "avg_speed": search_result.avg_speed,
+                    "duration": file_info.duration,
                 }))
 
     if rejected_title:
         log.info(f"[native] title gate skipped {rejected_title} file(s) not matching '{track}'")
     if rejected_quality:
         log.info(f"[native] upgrade gate skipped {rejected_quality} file(s) no better than {better_than[0]}")
+    if rejected_duration:
+        log.info(f"[native] duration gate skipped {rejected_duration} file(s) not within "
+                 f"{DURATION_TOLERANCE}s of {want_duration}s")
 
     if not scored:
         return []
@@ -171,6 +194,7 @@ async def search_multi_strategy_native(
     artist: str,
     track: str,
     better_than: tuple[str, int] | None = None,
+    target_duration: int | None = None,
 ) -> list[dict]:
     """Try multiple search strategies using native client. Returns best candidates."""
     queries = [f"{artist} {track}"]
@@ -194,7 +218,7 @@ async def search_multi_strategy_native(
         results = await client.search(q)
         if results:
             candidates = await pick_best_results_native(results, artist, track, reputation=client.reputation,
-                                                        better_than=better_than)
+                                                        better_than=better_than, target_duration=target_duration)
             if candidates:
                 return candidates
 
