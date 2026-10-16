@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 
 MAX_QUERY_VARIANTS = 4
 DURATION_TOLERANCE = 3  # seconds a candidate's reported duration may differ from the target
+# A soft target (an outside length, e.g. Last.fm's, which may be another version's)
+# only penalises a candidate this far off; it never rejects one.
+SOFT_DURATION_MISS = 10
 
 
 def beats_quality(ext: str, size: int, current: tuple[str, int]) -> bool:
@@ -41,6 +44,7 @@ async def pick_best_results_native(
     reputation=None,
     better_than: tuple[str, int] | None = None,
     target_duration: int | None = None,
+    strict_duration: bool = True,
 ) -> list[dict]:
     """Score and rank search results from native client. Returns flat file list.
 
@@ -50,7 +54,10 @@ async def pick_best_results_native(
     target_duration (seconds) rejects files whose reported duration is more than
     DURATION_TOLERANCE off — a different song that shares enough title words to
     pass the title gate. Files that report no duration are kept; a matching
-    duration earns a bonus."""
+    duration earns a bonus. With strict_duration=False (a length from outside the
+    library, which may be another version's) nothing is rejected: a match within
+    DURATION_TOLERANCE still earns the bonus, one more than SOFT_DURATION_MISS off
+    loses a little."""
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
@@ -87,15 +94,22 @@ async def pick_best_results_native(
                 continue
 
             duration_match = False
+            duration_miss = False
             if want_duration is not None and file_info.duration > 0:
-                if abs(file_info.duration - want_duration) > DURATION_TOLERANCE:
+                off = abs(file_info.duration - want_duration)
+                if off <= DURATION_TOLERANCE:
+                    duration_match = True
+                elif strict_duration:
                     rejected_duration += 1
                     continue
-                duration_match = True
+                elif off > SOFT_DURATION_MISS:
+                    duration_miss = True
 
             score = 0
             if duration_match:
                 score += 6
+            elif duration_miss:
+                score -= 4
             # Artist match — strong signal, not required (often only in the path).
             if words_match(clean_artist_name(artist), filename) or words_match(artist, filename):
                 score += 12
@@ -242,6 +256,7 @@ async def search_multi_strategy_native(
     track: str,
     better_than: tuple[str, int] | None = None,
     target_duration: int | None = None,
+    strict_duration: bool = True,
 ) -> list[dict]:
     """Search the most specific query first; only if it gives no usable
     candidate, search the remaining variants at once, merge everything and rank
@@ -269,7 +284,8 @@ async def search_multi_strategy_native(
         if not merged:
             return []
         return await pick_best_results_native(merged, artist, track, reputation=client.reputation,
-                                              better_than=better_than, target_duration=target_duration)
+                                              better_than=better_than, target_duration=target_duration,
+                                              strict_duration=strict_duration)
 
     first = await run(queries[:1])
     candidates = await rank(first)

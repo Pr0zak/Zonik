@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, func
@@ -424,6 +426,22 @@ AUTO_DOWNLOAD_MAX_OUTSTANDING = 25
 # Seconds between two looks at the outstanding job rows.
 AUTO_DOWNLOAD_POLL_SECONDS = 10
 
+# One arq job (run_scheduled_tasks) runs every due task in turn, all inside the same
+# 60-minute job_timeout. It sets this deadline when it starts (start + 50 min);
+# every auto-download batch in that tick stops by it, and a batch that would start
+# after it doesn't start at all. None outside a scheduler tick (e.g. "run now").
+TICK_MINUTES = 50
+_tick_deadline: ContextVar[float | None] = ContextVar("zonik_tick_deadline", default=None)
+
+
+def start_tick() -> None:
+    """Mark the start of a scheduler tick (called by run_scheduled_tasks)."""
+    _tick_deadline.set(time.monotonic() + TICK_MINUTES * 60)
+
+
+def tick_deadline() -> float | None:
+    return _tick_deadline.get()
+
 
 async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]:
     """Download each missing track through the tracked path (backoff, duration gate,
@@ -447,13 +465,22 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
     recorded in download_attempts. Upgrade entries return no outcomes.
     """
     import asyncio
-    import time
     import uuid as _uuid
     from backend.services.auto_download import (
-        submit_tracked, finish_tracked, finalize_upgrade, unsettled_jobs,
+        submit_tracked, finish_tracked, finalize_upgrade, unsettled_jobs, submission_outcome,
     )
 
     total = len(missing)
+    # The batch's own deadline starts now (submissions count against it), capped by
+    # the scheduler tick's: several tasks share one 60-minute arq job.
+    deadline = time.monotonic() + AUTO_DOWNLOAD_BATCH_MINUTES * 60
+    tick = tick_deadline()
+    if tick is not None:
+        if time.monotonic() >= tick:
+            log.warning(f"[auto-download] {source}: scheduler tick deadline passed — leaving "
+                        f"{total} tracks for the next run")
+            return []
+        deadline = min(deadline, tick)
     log.info(f"Auto-downloading {total} missing tracks from {source}")
 
     # Circuit-breaker: if the Soulseek download backend is down, skip the whole
@@ -480,7 +507,6 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
         missing = unique
 
     queue = [t for t in missing if t.get("artist") and t.get("track")]
-    deadline = time.monotonic() + AUTO_DOWNLOAD_BATCH_MINUTES * 60
     outcomes: list[dict] = []
     outstanding: list[dict] = []  # submitted, job not settled: {artist, track, job_id, upgrade_id, error}
     skipped_backoff = 0
@@ -507,17 +533,15 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
             skipped_backoff += 1
             return None
         return {"artist": artist, "track": track, "job_id": sub["job_id"],
-                "upgrade_id": upgrade_id, "error": sub["error"]}
+                "upgrade_id": upgrade_id, "error": sub["error"], "deduped": sub["deduped"]}
 
     async def finish(item: dict) -> None:
         if item["upgrade_id"]:
-            ok, err = await download_job_outcome(item["job_id"])
-            if ok is None and item["error"]:
-                ok, err = (None if is_infra_error(item["error"]) else False), item["error"]
+            ok, err = await submission_outcome(item["job_id"], item["error"])
             await finalize_upgrade(item["upgrade_id"], ok, err)
             return
         outcomes.append(await finish_tracked(item["job_id"], item["artist"], item["track"], dl_source,
-                                             enqueue_error=item["error"]))
+                                             enqueue_error=item["error"], deduped=item["deduped"]))
 
     while True:
         # Top up the in-flight set while there is time left.
@@ -554,7 +578,7 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
 
     if outstanding:
         log.warning(
-            f"[auto-download] {source}: batch deadline ({AUTO_DOWNLOAD_BATCH_MINUTES} min) reached with "
+            f"[auto-download] {source}: batch deadline reached with "
             f"{len(outstanding)} download(s) still running — outcome unknown, left to finish in the web: "
             + ", ".join(f"{i['artist']} — {i['track']}" for i in outstanding[:10])
         )

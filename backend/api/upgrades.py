@@ -170,19 +170,11 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
     result = await db.execute(query)
     upgrades = result.scalars().all()
 
-    # Skip the tracks the scheduled upgrade scan would skip: retired after
-    # max_attempts failed rows, or still in backoff after a recent failure.
-    from backend.services.download_attempts import upgrade_skip_ids
-    retired_ids, backoff_ids = await upgrade_skip_ids(db)
-
-    # Collect upgrade info for the single background processor
+    # Collect upgrade info for the single background processor. A user clicking Start
+    # overrides the scan's retired/backoff skips; each outcome still settles its row.
     upgrade_queue = []
-    skipped = 0
     for u in upgrades:
         if u.attempts >= u.max_attempts:
-            continue
-        if u.track_id in retired_ids or u.track_id in backoff_ids:
-            skipped += 1
             continue
         artist_name = u.track.artist.name if u.track and u.track.artist else (u.track_artist or "Unknown")
         track_title = u.track.title if u.track else (u.track_title or "Unknown")
@@ -197,7 +189,7 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
     if upgrade_queue:
         background_tasks.add_task(_process_upgrade_queue, upgrade_queue)
 
-    return {"started": len(upgrade_queue), "skipped": skipped}
+    return {"started": len(upgrade_queue)}
 
 
 async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):

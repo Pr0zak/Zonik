@@ -445,7 +445,7 @@
 				await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: r.artist, track: r.name, source: 'remix' }),
+					body: JSON.stringify({ artist: r.artist, track: r.name, source: 'remix', bulk: true }),
 					signal: _abortCtrl.signal,
 				});
 				trackStatus[`${r.artist}::${r.name}`.toLowerCase()] = 'downloading';
@@ -544,7 +544,7 @@
 				await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery' }),
+					body: JSON.stringify({ artist: t.artist, track: t.name, source: 'discovery', bulk: true }),
 					signal: _abortCtrl.signal,
 				});
 				trackStatus[trackKey(t)] = 'downloading';

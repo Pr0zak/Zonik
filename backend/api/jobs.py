@@ -159,10 +159,45 @@ async def failure_summary(type: str | None = None, db: AsyncSession = Depends(ge
 
 
 async def _retry_downloads(items: list[dict]) -> None:
-    """Re-run failed downloads through the tracked path, a few at a time, recording
-    each outcome. Backoff is not consulted: the user asked for these retries."""
+    """Re-run failed downloads, a few at a time. Backoff is not consulted: the user
+    asked for these retries.
+
+    Each item is {artist, track, source, job_id (the failed job)}. An upgrade whose
+    failed job still has its TrackUpgrade row goes back through the upgrades path
+    (target track, row settled by finalize_upgrade); everything else goes through
+    download_tracked, which records the outcome and looks up a length only for
+    discovery-style sources (manual and upgrade retries get neither)."""
+    from backend.database import async_session
+    from backend.models.upgrade import TrackUpgrade
     from backend.services.auto_download import download_tracked_many
-    await download_tracked_many(items, skip_in_backoff=False)
+
+    upgrade_queue: list[tuple[str, str, str]] = []
+    plain: list[dict] = []
+    for it in items:
+        if it.get("source") == "upgrade" and it.get("job_id"):
+            try:
+                async with async_session() as db:
+                    row = (await db.execute(
+                        select(TrackUpgrade).where(TrackUpgrade.job_id == it["job_id"])
+                        .order_by(TrackUpgrade.created_at.desc()).limit(1)
+                    )).scalar_one_or_none()
+                    if row is not None and row.status not in ("completed", "queued", "downloading"):
+                        row.status = "queued"
+                        row.attempts = (row.attempts or 0) + 1
+                        row.error_message = None
+                        row.updated_at = datetime.utcnow()
+                        await db.commit()
+                        upgrade_queue.append((row.id, it["artist"], it["track"]))
+                        continue
+            except Exception:
+                pass
+        plain.append(it)
+
+    if upgrade_queue:
+        from backend.api.upgrades import _process_upgrade_queue
+        await _process_upgrade_queue(upgrade_queue)
+    if plain:
+        await download_tracked_many(plain, skip_in_backoff=False)
 
 
 @router.post("/retry-failed")
@@ -195,7 +230,7 @@ async def retry_failed(background_tasks: BackgroundTasks, type: str | None = Non
         if not wanted:
             continue
         for t in wanted:
-            retry_items.append({"artist": t["artist"], "track": t["track"], "source": source})
+            retry_items.append({"artist": t["artist"], "track": t["track"], "source": source, "job_id": job.id})
             queued += 1
         await db.delete(job)
         retried_jobs += 1
@@ -397,7 +432,7 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
     # Preserve original source from job card (e.g. "dl:upgrade" → "upgrade")
     source = job.card.split(":", 1)[1] if job.card and ":" in job.card else None
 
-    items = [{"artist": t.get("artist", ""), "track": t.get("track", ""), "source": source}
+    items = [{"artist": t.get("artist", ""), "track": t.get("track", ""), "source": source, "job_id": job.id}
              for t in retryable_tracks if t.get("artist") and t.get("track")]
     if items:
         background_tasks.add_task(_retry_downloads, items)

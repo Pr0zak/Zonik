@@ -125,7 +125,7 @@
 				const res = await fetch('/api/download/trigger', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ artist: t.artist, track: t.track, source }),
+					body: JSON.stringify({ artist: t.artist, track: t.track, source, bulk: true }),
 				});
 				const data = await res.json();
 				if (data.error) { trackStatus[trackKey(t)] = 'failed'; continue; }

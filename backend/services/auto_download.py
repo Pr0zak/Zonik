@@ -10,8 +10,9 @@ and retry routes, playlist import, quality upgrades) goes through here so that
 The manual single-track /api/download/trigger stays outside: a user picking a
 song by hand is never refused because an automatic run failed to find it.
 
-Upgrades (source "upgrade") keep their own per-track accounting in track_upgrades,
-so they neither consult nor feed download_attempts.
+Only discovery-style sources (TRACKED_SOURCES) consult and feed download_attempts
+and get the Last.fm length. Upgrades keep their own per-track accounting in
+track_upgrades; manual downloads (no source, "manual", "library") are never refused.
 
 Two ways to use it:
 - download_tracked(): submit, wait for the job to finish, read and record the outcome.
@@ -33,8 +34,13 @@ from backend.services.download_attempts import attempt_key, in_backoff, record_o
 
 log = logging.getLogger(__name__)
 
-# Sources whose attempts are tracked elsewhere (track_upgrades), not in download_attempts.
-UNTRACKED_SOURCES = {"upgrade"}
+# Sources that consult and feed download_attempts and get the (soft) Last.fm length.
+# Everything else (no source, "manual", "library", "upgrade", ...) is untracked.
+TRACKED_SOURCES = {"weekly-radar", "radar", "discovery", "similar", "recommendation",
+                   "playlist", "remix", "worker"}
+
+# Seconds a Last.fm length lookup may take before the download goes ahead without one.
+DURATION_LOOKUP_TIMEOUT = 5
 
 # Job statuses that mean the download has not finished yet.
 RUNNING_STATUSES = ("pending", "running", "queued", "downloading")
@@ -58,14 +64,18 @@ def is_infra_error(err: str | None) -> bool:
         e.startswith("Soulseek download backend unreachable")
         or e.startswith("Soulseek server not connected")
         or e == "Cancelled by user"
+        or e.startswith("Interrupted by restart")  # reaped by the boot / stuck-job reaper
+        or e.startswith("Internal error:")  # our own exception, e.g. "database is locked"
     )
 
 
 async def download_job_outcome(job_id: str | None, *, session_factory=None) -> tuple[bool | None, str | None]:
     """Read a download job. Returns (ok, error): ok=True when it completed (or enqueue
     skipped it because the library already has it), False when the search/transfer failed,
-    None when the outcome is unknown: still pending/running, or an infrastructure failure
-    (backend unreachable / not connected / cancelled) that must not count against the track."""
+    None when the outcome is unknown: still pending/running, a missing row, a failed row
+    with no result (a reaper's doing, not the download's), or an infrastructure failure
+    (backend unreachable / not connected / cancelled / interrupted / internal error)
+    that must not count against the track."""
     if job_id is None:
         return True, None  # enqueue_download: library already has it
     factory = session_factory or async_session
@@ -75,7 +85,7 @@ async def download_job_outcome(job_id: str | None, *, session_factory=None) -> t
     except Exception as e:
         return None, f"could not read job: {e}"
     if row is None:
-        return False, "download job not found"
+        return None, "download job not found"
     status, result = row
     payload: dict = {}
     if result:
@@ -89,10 +99,20 @@ async def download_job_outcome(job_id: str | None, *, session_factory=None) -> t
         return True, None  # payload carries track_id or already_in_library
     if status in RUNNING_STATUSES:
         return None, None
+    if not payload:
+        return None, f"job {status} without a result"
     err = str(payload.get("last_error") or payload.get("error") or payload.get("message") or f"job {status}")[:500]
     if is_infra_error(err):
         return None, err
     return False, err
+
+
+async def submission_outcome(job_id: str | None, enqueue_error: str | None) -> tuple[bool | None, str | None]:
+    """A submission's outcome: an enqueue error decides it outright (the job row, if
+    any, says nothing useful then), else the job row does."""
+    if enqueue_error:
+        return (None if is_infra_error(enqueue_error) else False), enqueue_error
+    return await download_job_outcome(job_id)
 
 
 async def unsettled_jobs(job_ids: list[str]) -> set[str]:
@@ -107,22 +127,36 @@ async def unsettled_jobs(job_ids: list[str]) -> set[str]:
     return {r[0] for r in rows}
 
 
+def _lastfm_configured() -> bool:
+    from backend.config import get_settings
+    return bool(get_settings().lastfm.api_key)
+
+
 async def lookup_duration(artist: str, track: str) -> int | None:
     """The song's length in seconds from Last.fm track.getInfo, or None when unknown.
-    0 or a failed lookup means no duration gate. Cached per attempt key."""
+
+    Used as a soft target only (another version may be listed). A Last.fm answer
+    without a length is cached as "no length"; a failed or slow call (lastfm_api
+    returns None on 429/non-200/errors, and the call is cut off after
+    DURATION_LOOKUP_TIMEOUT seconds) is not cached, so it is tried again later."""
     key = attempt_key(artist, track)
     if key in _duration_cache:
         return _duration_cache[key]
+    if not _lastfm_configured():
+        return None
     try:
-        from backend.services.lastfm import get_track_info
-        info = await get_track_info(artist, track)
-    except Exception as e:
-        log.debug(f"[auto-download] Last.fm duration lookup failed for {artist} — {track}: {e}")
-        return None  # transient: don't cache, try again next time
+        from backend.services.lastfm import lastfm_api
+        data = await asyncio.wait_for(
+            lastfm_api("track.getInfo", {"artist": artist, "track": track}), DURATION_LOOKUP_TIMEOUT)
+    except Exception as e:  # includes the timeout
+        log.debug(f"[auto-download] Last.fm duration lookup failed for {artist} — {track}: {e!r}")
+        return None
+    if data is None:
+        return None  # failed call: don't cache
     ms = 0
     try:
-        ms = int((info or {}).get("duration_ms") or 0)
-    except (TypeError, ValueError):
+        ms = int(((data or {}).get("track") or {}).get("duration") or 0)
+    except (TypeError, ValueError, AttributeError):
         ms = 0
     secs = int(round(ms / 1000)) if ms > 0 else None
     if len(_duration_cache) >= _DURATION_CACHE_MAX:
@@ -132,7 +166,7 @@ async def lookup_duration(artist: str, track: str) -> int | None:
 
 
 def _tracked(source: str | None) -> bool:
-    return source not in UNTRACKED_SOURCES
+    return source in TRACKED_SOURCES
 
 
 async def submit_tracked(
@@ -140,11 +174,13 @@ async def submit_tracked(
     expected_duration: int | None = None, skip_in_backoff: bool = True,
     job_id: str | None = None, wait: bool = True,
 ) -> dict:
-    """Start one automatic download. Returns {job_id, skipped, error}:
+    """Start one automatic download. Returns {job_id, skipped, error, deduped}:
 
     - skipped: why it was not started (backoff), job_id None.
     - job_id None and no skip: enqueue skipped it because the library already has it.
     - error: enqueue_download raised (job_id is the id it was given).
+    - deduped: another job was already downloading this track and job_id is that
+      job's; its owner records the outcome, so finish_tracked must not do it again.
 
     With wait=True (the default) this returns once the download has finished, as
     enqueue_download always did; with wait=False it returns once the job row exists."""
@@ -156,12 +192,12 @@ async def submit_tracked(
                 why = await in_backoff(bo_db, artist, track)
             if why:
                 log.info(f"[auto-download] Skip {artist} — {track}: {why}")
-                return {"job_id": None, "skipped": why, "error": None}
+                return {"job_id": None, "skipped": why, "error": None, "deduped": False}
         except Exception as e:
             log.debug(f"[auto-download] backoff check failed for {artist} — {track}: {e}")
 
-    if expected_duration is None and not target_track_id:
-        expected_duration = await lookup_duration(artist, track)
+    if expected_duration is None and not target_track_id and _tracked(source):
+        expected_duration = await lookup_duration(artist, track)  # soft target
 
     job_id = job_id or str(uuid.uuid4())
     try:
@@ -169,24 +205,26 @@ async def submit_tracked(
                                           target_track_id=target_track_id,
                                           expected_duration=expected_duration, wait=wait)
     except Exception as e:
+        # enqueue_download only raises for our own trouble (database, web process),
+        # never because of the track.
         log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
-        return {"job_id": job_id, "skipped": None, "error": str(e)[:500]}
-    return {"job_id": returned, "skipped": None, "error": None}
+        return {"job_id": job_id, "skipped": None, "error": f"Internal error: {e}"[:500], "deduped": False}
+    return {"job_id": returned, "skipped": None, "error": None,
+            "deduped": returned is not None and returned != job_id}
 
 
 async def finish_tracked(
     job_id: str | None, artist: str, track: str, source: str | None, *,
-    enqueue_error: str | None = None,
+    enqueue_error: str | None = None, deduped: bool = False,
 ) -> dict:
     """Read a submitted download's outcome and record it in download_attempts.
 
     Returns {artist, track, job_id, ok, error, skipped}. ok is True (done), False
     (the search/transfer failed) or None (unknown: still running, or an infrastructure
-    failure) — None is never recorded."""
-    ok, err = await download_job_outcome(job_id)
-    if ok is None and enqueue_error:
-        ok, err = (None if is_infra_error(enqueue_error) else False), enqueue_error
-    if ok is not None and _tracked(source):
+    failure) — None is never recorded, and neither is the outcome of a deduped
+    submission (the job's own submitter records it)."""
+    ok, err = await submission_outcome(job_id, enqueue_error)
+    if ok is not None and _tracked(source) and not deduped:
         try:
             async with async_session() as rec_db:
                 await record_outcome(rec_db, artist, track, source, ok, err, job_id)
@@ -214,7 +252,8 @@ async def download_tracked(
     if sub["skipped"]:
         return {"artist": artist, "track": track, "job_id": None,
                 "ok": None, "error": None, "skipped": sub["skipped"]}
-    return await finish_tracked(sub["job_id"], artist, track, source, enqueue_error=sub["error"])
+    return await finish_tracked(sub["job_id"], artist, track, source, enqueue_error=sub["error"],
+                                deduped=sub["deduped"])
 
 
 async def download_tracked_many(

@@ -90,7 +90,10 @@ async def test_cancel_during_transfer(db_ready, fake_slsk, imported):
     fake_slsk.behaviour = {"alpha": "queue"}
 
     async def cancel_soon():
-        await asyncio.sleep(0.1)
+        for _ in range(500):  # once the transfer is queued with the peer
+            if fake_slsk.transfers.table:
+                break
+            await asyncio.sleep(0.01)
         download.cancelled_jobs.add("job-1")
 
     canceller = asyncio.create_task(cancel_soon())
@@ -178,3 +181,37 @@ async def test_poll_peer_denial(fake_slsk):
     t = await started(fake_slsk, "fail")
     status, _, err = await download.poll_transfer(fake_slsk, t, "job-p", queue_timeout=1, stall_timeout=1)
     assert (status, err) == ("failed", "Denied")
+
+
+# --- duration gate: soft (outside length) vs strict (library's own copy) ----------
+
+def dur_result(username, seconds, speed=2_000_000):
+    from backend.soulseek.protocol.types import FileAttribute, FileInfo, SearchResult
+    return SearchResult(username=username, token="t", slots_free=True, avg_speed=speed, files=[
+        FileInfo(filename=fname(), size=40 * 1024 * 1024, attrs={FileAttribute.DURATION: seconds})])
+
+
+async def test_soft_duration_scores_but_never_rejects():
+    from backend.soulseek.search import pick_best_results_native
+    results = [dur_result("far", 260, speed=2_000_000), dur_result("near", 201, speed=600_000)]
+    soft = await pick_best_results_native(results, ARTIST, TRACK, target_duration=200, strict_duration=False)
+    assert [c["username"] for c in soft] == ["near", "far"]  # match wins, the miss stays a candidate
+    strict = await pick_best_results_native(results, ARTIST, TRACK, target_duration=200, strict_duration=True)
+    assert [c["username"] for c in strict] == ["near"]
+
+
+async def test_lastfm_length_is_soft_in_a_download(db_ready, fake_slsk, imported):
+    fake_slsk.results = [dur_result("alpha", 260)]  # Last.fm lists another version's length
+    async with async_session() as s:
+        s.add(Job(id="job-s", type="download", status="running", started_at=datetime.utcnow()))
+        await s.commit()
+        job = await s.get(Job, "job-s")
+        s.expunge(job)
+    req = download.DownloadRequest(artist=ARTIST, track=TRACK, source="similar", expected_duration=200)
+    await download._do_download_inner(None, job, "job-s", "d", req)
+    assert fake_slsk.downloads == ["alpha"] and job.status == "completed"
+    # The same length from the library's own copy is strict: no candidate left.
+    req = download.DownloadRequest(artist=ARTIST, track=TRACK, expected_duration=200, strict_duration=True)
+    job.status = "running"
+    await download._do_download_inner(None, job, "job-s", "d", req)
+    assert fake_slsk.downloads == ["alpha"] and job.status == "failed"

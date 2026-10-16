@@ -233,7 +233,15 @@ class DownloadRequest(BaseModel):
     source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
     target_track_id: str | None = None  # the existing track this download should upgrade/replace
     exclude_users: list[str] = []  # peers to skip — "try another source" after these failed
-    expected_duration: int | None = None  # seconds; rejects candidates of a different length
+    expected_duration: int | None = None  # seconds; the length candidates are scored against
+    # True: candidates more than a few seconds off expected_duration are rejected. Only
+    # for a length from the library's own copy; an outside length (Last.fm, a playlist
+    # service) may be another version's, so it only scores. A target_track_id's own
+    # duration is always strict.
+    strict_duration: bool = False
+    # True for "Download all" style requests: a track in the failed-search backoff is
+    # skipped. A single click (bulk False) always downloads; its outcome is still recorded.
+    bulk: bool = False
 
 
 class BulkDownloadRequest(BaseModel):
@@ -398,13 +406,6 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
     }
 
 
-# Sources of the trigger route that come from bulk lists the user downloads in one
-# click (Weekly Radar, discovery tabs, ...). These go through the failed-search
-# memory like the scheduler's downloads: a track in backoff is skipped and every
-# outcome is recorded. No source, "manual", "library" and "upgrade" stay untracked.
-_TRACKED_TRIGGER_SOURCES = {"weekly-radar", "radar", "discovery", "similar", "recommendation", "playlist", "remix"}
-
-
 @router.post("/trigger")
 async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Download a specific file or auto-search and download best result."""
@@ -412,8 +413,12 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     if reason:
         return {"error": "blacklisted", "reason": reason}
 
-    # A bulk-list source with no hand-picked file: tracked (see _TRACKED_TRIGGER_SOURCES).
-    tracked = req.source in _TRACKED_TRIGGER_SOURCES and not req.filename and not req.target_track_id
+    # Discovery-style sources (Weekly Radar, discovery tabs, recommendations, ...) with
+    # no hand-picked file go through the failed-search memory: the outcome is always
+    # recorded, and a "Download all" request (bulk) skips a track in backoff. No source,
+    # "manual", "library" and "upgrade" stay untracked.
+    from backend.services.auto_download import TRACKED_SOURCES
+    tracked = req.source in TRACKED_SOURCES and not req.filename and not req.target_track_id
 
     # Auto-download (no specific file picked, not an upgrade) of a song the
     # library already has: nothing to fetch, hand back the track. A picked file
@@ -423,7 +428,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         if in_lib:
             return {"status": "in_library", "track_id": in_lib}
 
-    if tracked:
+    if tracked and req.bulk:
         from backend.services.download_attempts import in_backoff
         why = await in_backoff(db, req.artist, req.track)
         if why:
@@ -438,7 +443,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         return {"status": "already_downloading", "job_id": existing}
 
     if tracked and req.expected_duration is None:
-        # Same duration gate as the scheduler's downloads (Last.fm length, cached).
+        # Same (soft) duration scoring as the scheduler's downloads (Last.fm length).
         from backend.services.auto_download import lookup_duration
         req.expected_duration = await lookup_duration(req.artist, req.track)
 
@@ -588,6 +593,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
         # few seconds are a different song (74 upgrades a week were fetched and then
         # discarded as "not the track being upgraded").
         target_duration = req.expected_duration
+        strict_duration = req.strict_duration
         if req.target_track_id:
             async with async_session() as q_sess:
                 cur = (await q_sess.execute(
@@ -597,7 +603,9 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             if cur:
                 better_than = (cur[0] or "", cur[1] or 0)
                 if cur[2]:
+                    # The library's own copy: a different length is a different song.
                     target_duration = int(round(cur[2]))
+                    strict_duration = True
 
         if req.username and req.filename and native_ready:
             # Direct download — try requested source first, then fall back to search
@@ -605,7 +613,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             try:
                 from backend.soulseek.search import search_multi_strategy_native
                 fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
-                                                               target_duration=target_duration)
+                                                               target_duration=target_duration,
+                                                               strict_duration=strict_duration)
                 # Add fallbacks excluding the already-requested source
                 for fb in fallbacks:
                     if fb["username"] != req.username:
@@ -617,7 +626,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             # Auto-download — get candidates from search
             from backend.soulseek.search import search_multi_strategy_native
             candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
-                                                            target_duration=target_duration)
+                                                            target_duration=target_duration,
+                                                            strict_duration=strict_duration)
         elif native_client:
             # Native client exists but never reconnected — fail fast with a
             # clear, recognizable error instead of falling through to slskd.
@@ -939,7 +949,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
     except Exception as e:
         log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)
         job.status = "failed"
-        job.result = json.dumps({"error": str(e)})
+        # Our own failure (e.g. "database is locked"), not the track's.
+        job.result = json.dumps({"error": f"Internal error: {e}"})
     finally:
         if job_id in cancelled_jobs and job.status != "completed":
             job.status = "failed"
@@ -968,7 +979,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             log.debug(f"[download] Staging cleanup skipped for {job_id}: {e}")
 
 async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None,
-                                     expected_duration: int | None = None, wait: bool = True) -> str | None:
+                                     expected_duration: int | None = None, wait: bool = True,
+                                     strict_duration: bool = False) -> str | None:
     """Delegate a download to the web process, which owns the native Soulseek
     client. The arq worker has no native client of its own (it can only bind the
     listen port in one process), so any download it initiates must run where the
@@ -992,7 +1004,8 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
             resp = await client.post(
                 url, json={"artist": artist, "track": track, "job_id": job_id,
                            "source": source, "target_track_id": target_track_id,
-                           "expected_duration": expected_duration, "wait": wait}
+                           "expected_duration": expected_duration, "wait": wait,
+                           "strict_duration": strict_duration}
             )
             if resp.status_code == 200:
                 return resp.json().get("job_id", job_id)
@@ -1059,13 +1072,14 @@ _background_downloads: set[asyncio.Task] = set()
 
 
 async def _create_download_job(artist: str, track: str, job_id: str | None, source: str | None,
-                               target_track_id: str | None, expected_duration: int | None):
+                               target_track_id: str | None, expected_duration: int | None,
+                               strict_duration: bool = False):
     """Write a download job's row and register it live. Returns what
     _run_download_job needs: (job_id, desc, request, search semaphore, initial status)."""
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id,
-                             expected_duration=expected_duration)
+                             expected_duration=expected_duration, strict_duration=strict_duration)
     sem = _get_semaphore()
 
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
@@ -1125,14 +1139,15 @@ async def _run_download_job_detached(job_id: str, *args) -> None:
                 if row is not None and row.status in ("pending", "running"):
                     row.status = "failed"
                     row.finished_at = datetime.utcnow()
-                    row.result = json.dumps({"error": str(e)[:500]})
+                    row.result = json.dumps({"error": f"Internal error: {e}"[:500]})
                     await sess.commit()
         except Exception as e2:
             log.debug(f"[download] Could not mark background job {job_id} failed: {e2}")
 
 
 async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
-                           *, expected_duration: int | None = None, wait: bool = True) -> str | None:
+                           *, expected_duration: int | None = None, wait: bool = True,
+                           strict_duration: bool = False) -> str | None:
     """Create an individual download job with semaphore queuing. Returns job_id, or
     None when an automatic download was skipped because the library already has it.
 
@@ -1159,10 +1174,11 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     from backend.soulseek import get_client
     if get_client() is None:
         return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
-                                               expected_duration=expected_duration, wait=wait)
+                                               expected_duration=expected_duration, wait=wait,
+                                               strict_duration=strict_duration)
 
     job_id, desc, dl_req, sem, initial_status = await _create_download_job(
-        artist, track, job_id, source, target_track_id, expected_duration)
+        artist, track, job_id, source, target_track_id, expected_duration, strict_duration)
     if not wait:
         task = asyncio.create_task(_run_download_job_detached(job_id, desc, dl_req, sem, initial_status))
         _background_downloads.add(task)
@@ -1179,6 +1195,7 @@ class InternalDownloadRequest(BaseModel):
     source: str | None = None
     target_track_id: str | None = None
     expected_duration: int | None = None
+    strict_duration: bool = False
     # False: create the job, start it in the background and answer at once (the
     # worker's batches poll the job rows instead of holding a request per download).
     wait: bool = True
@@ -1192,7 +1209,8 @@ async def internal_run_download(req: InternalDownloadRequest):
     it answers once the job row exists and the download runs in the background."""
     jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
                                  target_track_id=req.target_track_id,
-                                 expected_duration=req.expected_duration, wait=req.wait)
+                                 expected_duration=req.expected_duration, wait=req.wait,
+                                 strict_duration=req.strict_duration)
     return {"job_id": jid}
 
 

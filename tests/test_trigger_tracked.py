@@ -27,10 +27,11 @@ def lastfm(monkeypatch):
     import backend.services.lastfm as lf
     calls = []
 
-    async def info(artist, track):
-        calls.append(track)
-        return {"duration_ms": 200_000}
-    monkeypatch.setattr(lf, "get_track_info", info)
+    async def api(method, params):
+        calls.append(params["track"])
+        return {"track": {"duration": "200000"}}
+    monkeypatch.setattr(lf, "lastfm_api", api)
+    monkeypatch.setattr(auto, "_lastfm_configured", lambda: True)
     auto._duration_cache.clear()
     yield calls
     auto._duration_cache.clear()
@@ -64,15 +65,24 @@ async def attempts():
 
 async def test_radar_trigger_in_backoff_is_skipped(db_ready, fake_slsk, lastfm):
     await put_backoff()
-    resp = await trigger(source="weekly-radar")
+    resp = await trigger(source="weekly-radar", bulk=True)  # "Download all"
     assert resp["status"] == "skipped" and "backoff" in resp["reason"]
     assert await n_jobs() == 0 and fake_slsk.searches == []
+
+
+async def test_single_click_in_backoff_downloads_and_records(db_ready, fake_slsk, lastfm):
+    await put_backoff()
+    fake_slsk.results = [result("alpha", f"Music\\{ARTIST}\\01 - {TRACK}.flac")]
+    fake_slsk.behaviour = {"alpha": "fail"}
+    resp = await trigger(source="weekly-radar")  # one track's button: bulk False
+    assert "job_id" in resp
+    assert await attempts() == 2  # outcome still recorded
 
 
 async def test_radar_trigger_records_failure_and_gates_duration(db_ready, fake_slsk, lastfm):
     fake_slsk.results = [result("alpha", f"Music\\{ARTIST}\\01 - {TRACK}.flac")]
     fake_slsk.behaviour = {"alpha": "fail"}
-    resp = await trigger(source="weekly-radar")
+    resp = await trigger(source="weekly-radar", bulk=True)
     assert "job_id" in resp
     assert lastfm == [TRACK]  # length looked up for the duration gate
     assert await attempts() == 1  # outcome recorded once the job ended
