@@ -20,8 +20,20 @@ _transfer_semaphore: asyncio.Semaphore | None = None
 
 # Download jobs the user cancelled (filled by the job-cancel route in
 # backend/api/jobs.py). Checked in memory on every poll instead of reading the
-# job row from SQLite every 2 seconds; _do_download_inner discards its id when done.
+# job row from SQLite every 2 seconds.
 cancelled_jobs: set[str] = set()
+
+# Download jobs owned by a task in this process, from the moment their row is
+# written (so a job still waiting for a slot counts) until that task ends. The
+# cancel route only adds ids found here, so a stale row from before a restart
+# can't leave an id in cancelled_jobs that nothing will ever remove.
+live_download_jobs: set[str] = set()
+
+
+def _job_done(job_id: str) -> None:
+    """Forget a download job's in-memory flags once its task has finished."""
+    live_download_jobs.discard(job_id)
+    cancelled_jobs.discard(job_id)
 
 # How long a job waits for a peer that another job is downloading from before it
 # moves on to its next candidate (the busy one is retried once at the end).
@@ -369,13 +381,14 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         job_sess.add(job)
         await job_sess.commit()
         job_sess.expunge(job)
+    live_download_jobs.add(job_id)
     await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
 
     async def do_download():
         # Wait for a search slot — no DB session held
         slot = _SearchSlot(sem)
-        await slot.acquire()
         try:
+            await slot.acquire()
             if job.status == "pending":
                 job.status = "running"
                 await _save_job_obj(job)
@@ -383,6 +396,7 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
             await _do_download_inner(None, job, job_id, desc, req, search_slot=slot)
         finally:
             slot.release()
+            _job_done(job_id)
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
@@ -1024,12 +1038,13 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
         )
         sess.add(job)
         await sess.commit()
-    await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+    live_download_jobs.add(job_id)
 
     # Wait for a search slot — no DB session held during wait
     slot = _SearchSlot(sem)
-    await slot.acquire()
     try:
+        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+        await slot.acquire()
         async with async_session() as sess:
             job = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one()
             if job.status == "pending":
@@ -1041,6 +1056,7 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
         await _do_download_inner(None, job, job_id, desc, dl_req, search_slot=slot)
     finally:
         slot.release()
+        _job_done(job_id)
     return job_id
 
 

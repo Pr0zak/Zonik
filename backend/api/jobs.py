@@ -351,8 +351,11 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
     if job.type == "download":
         # The running download polls this in-memory set rather than the DB row.
-        from backend.api.download import cancelled_jobs
-        cancelled_jobs.add(job_id)
+        # Only for a job a task in this process still owns: anything else (a stale
+        # row from before a restart) would leave the id in the set forever.
+        from backend.api.download import cancelled_jobs, live_download_jobs
+        if job_id in live_download_jobs:
+            cancelled_jobs.add(job_id)
     await broadcast_job_update({"id": job_id, "type": job.type, "status": "failed", "progress": job.progress, "total": job.total})
     return {"ok": True}
 
