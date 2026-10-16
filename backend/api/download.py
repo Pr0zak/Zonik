@@ -94,6 +94,61 @@ class _SearchSlot:
             self._sem.release()
 
 
+# Seconds between two looks at a transfer in poll_transfer (tests shrink it).
+POLL_INTERVAL = 2
+
+
+async def poll_transfer(client, transfer, job_id: str | None, queue_timeout=120, stall_timeout=60, check_cancel=True):
+    """Poll a Transfer (the object client.download returned) until it settles.
+    Returns (status, save_path, error). Every give-up goes through
+    TransferManager.abort(), which also stops the socket task and deletes the partial.
+
+    Gives up when the peer doesn't start within queue_timeout, when data stops
+    for stall_timeout, or at the soulseek.transfer_max_minutes ceiling — a slow
+    transfer that keeps making progress is otherwise allowed to finish. A job id
+    found in cancelled_jobs (check_cancel) aborts the transfer as the user's doing."""
+    import time
+    from backend.soulseek.protocol.types import TransferState
+    from backend.config import get_settings as _cfg
+    last_bytes = 0
+    stall_start = None
+    queue_start = time.monotonic()
+    max_seconds = max(1, _cfg().soulseek.transfer_max_minutes) * 60
+    while time.monotonic() - queue_start < max_seconds:
+        await asyncio.sleep(POLL_INTERVAL)
+        if check_cancel and job_id in cancelled_jobs:
+            client.transfers.abort(transfer, "Cancelled by user", blame_peer=False)
+            return "cancelled", None, "Cancelled by user"
+        if transfer.state == TransferState.COMPLETED:
+            return "completed", transfer.save_path, None
+        elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
+            return "failed", None, transfer.error or transfer.state
+        if not client.transfers.is_tracked(transfer):
+            client.transfers.abort(transfer, "Transfer removed")
+            return "failed", None, "Transfer removed"
+
+        # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
+        if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
+            if time.monotonic() - queue_start > queue_timeout:
+                client.transfers.abort(transfer, "Peer did not respond")
+                return "failed", None, "Peer did not respond in time"
+            continue  # Don't check stall yet
+
+        # CONNECTED/TRANSFERRING — detect data stall
+        if transfer.received_bytes > last_bytes:
+            last_bytes = transfer.received_bytes
+            stall_start = None
+        else:
+            if stall_start is None:
+                stall_start = time.monotonic()
+            elif time.monotonic() - stall_start > stall_timeout:
+                client.transfers.abort(transfer, "Stalled (no data)")
+                return "failed", None, "Transfer stalled — no data received"
+    minutes = max_seconds // 60
+    client.transfers.abort(transfer, f"Took longer than {minutes} min")
+    return "timeout", None, f"Transfer took longer than {minutes} minutes"
+
+
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -416,7 +471,6 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
     import asyncio
     from backend.soulseek import get_client
     from backend.soulseek.client import PeerBusy
-    from backend.soulseek.protocol.types import TransferState
     from backend.services.scanner import import_downloaded_file
 
     async def _save_job():
@@ -467,54 +521,6 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             peer_fault = any(r in why for r in _PEER_FAULT_REASONS)
             return None, fsize, f"Not imported: {why}", peer_fault
         return track_id, fsize, None, False
-
-    async def poll_transfer(client, transfer, queue_timeout=120, stall_timeout=60, check_cancel=True):
-        """Poll a Transfer (the object client.download returned) until it settles.
-        Returns (status, save_path, error). Every give-up goes through
-        TransferManager.abort(), which also stops the socket task and deletes the partial.
-
-        Gives up when the peer doesn't start within queue_timeout, when data stops
-        for stall_timeout, or at the soulseek.transfer_max_minutes ceiling — a slow
-        transfer that keeps making progress is otherwise allowed to finish."""
-        import time
-        last_bytes = 0
-        stall_start = None
-        queue_start = time.monotonic()
-        from backend.config import get_settings as _cfg
-        max_seconds = max(1, _cfg().soulseek.transfer_max_minutes) * 60
-        while time.monotonic() - queue_start < max_seconds:
-            await asyncio.sleep(2)
-            if check_cancel and job_id in cancelled_jobs:
-                client.transfers.abort(transfer, "Cancelled by user", blame_peer=False)
-                return "cancelled", None, "Cancelled by user"
-            if transfer.state == TransferState.COMPLETED:
-                return "completed", transfer.save_path, None
-            elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
-                return "failed", None, transfer.error or transfer.state
-            if not client.transfers.is_tracked(transfer):
-                client.transfers.abort(transfer, "Transfer removed")
-                return "failed", None, "Transfer removed"
-
-            # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
-            if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
-                if time.monotonic() - queue_start > queue_timeout:
-                    client.transfers.abort(transfer, "Peer did not respond")
-                    return "failed", None, "Peer did not respond in time"
-                continue  # Don't check stall yet
-
-            # CONNECTED/TRANSFERRING — detect data stall
-            if transfer.received_bytes > last_bytes:
-                last_bytes = transfer.received_bytes
-                stall_start = None
-            else:
-                if stall_start is None:
-                    stall_start = time.monotonic()
-                elif time.monotonic() - stall_start > stall_timeout:
-                    client.transfers.abort(transfer, "Stalled (no data)")
-                    return "failed", None, "Transfer stalled — no data received"
-        minutes = max_seconds // 60
-        client.transfers.abort(transfer, f"Took longer than {minutes} min")
-        return "timeout", None, f"Transfer took longer than {minutes} minutes"
 
     try:
         if job_id in cancelled_jobs:  # cancelled while it waited for a slot
@@ -650,7 +656,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                             if native_client.logged_in:
                                 await native_client.reputation.record_failure(dl_username)
                             return candidate, "failed", None, str(e)
-                        status, save_path, error = await poll_transfer(native_client, transfer)
+                        status, save_path, error = await poll_transfer(native_client, transfer, job_id)
                 except PeerBusy:
                     return candidate, "failed", None, "Peer busy with another download"
                 except asyncio.CancelledError:
@@ -842,7 +848,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                                     log.info(f"[download] Not blaming {dl_username}: our Soulseek server link is down")
                                 continue
 
-                            status, save_path, error = await poll_transfer(native_client, transfer)
+                            status, save_path, error = await poll_transfer(native_client, transfer, job_id)
                 except PeerBusy:
                     attempt -= 1
                     if job_id in cancelled_jobs:
