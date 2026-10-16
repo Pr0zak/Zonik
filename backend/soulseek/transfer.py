@@ -101,6 +101,8 @@ class Transfer:
 class TransferManager:
     """Manages active file transfers."""
 
+    read_timeout: float = 60  # seconds without data before a transfer counts as stalled
+
     def __init__(
         self,
         staging_dir: str = "/opt/zonik/cache/staging",
@@ -503,19 +505,16 @@ class TransferManager:
             transfer.last_progress_at = time.time()
             log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
 
+            stalled = False
             async with aiofiles.open(save_path, "wb") as f:
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
+                        chunk = await asyncio.wait_for(reader.read(65536), timeout=self.read_timeout)
                     except asyncio.TimeoutError:
-                        if transfer.received_bytes > 0 and (
-                            transfer.total_bytes == 0 or
-                            transfer.received_bytes >= transfer.total_bytes * 0.95
-                        ):
-                            break
-                        raise ConnectionError("Peer stopped sending data (60s timeout)")
-                    if not chunk:
+                        stalled = True  # a stall is never success, however close to the end
                         break
+                    if not chunk:
+                        break  # clean EOF
                     transfer.received_bytes += len(chunk)
                     transfer.last_progress_at = time.time()
                     await f.write(chunk)
@@ -524,16 +523,19 @@ class TransferManager:
                     if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
                         break
 
-            if transfer.received_bytes > 0 and (
-                transfer.total_bytes == 0 or
-                transfer.received_bytes >= transfer.total_bytes * 0.99
-            ):
+            got, total = transfer.received_bytes, transfer.total_bytes
+            # Only an exact, complete file counts: a FLAC 1 % short still parses
+            # and would import as a "good" track with its ending cut off.
+            complete = (got == total) if total > 0 else (got > 0 and not stalled)
+            if transfer.state in TERMINAL_STATES:
+                pass  # aborted while we were finishing up
+            elif complete:
                 self.update_state(transfer, TransferState.COMPLETED)
-                log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
-            elif transfer.received_bytes > 0:
-                self.update_state(transfer, TransferState.FAILED,
-                                  error=f"Incomplete: {transfer.received_bytes}/{transfer.total_bytes}")
-                log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
+                log.info(f"[transfer] Completed: {short_name} ({got} bytes)")
+            elif got > 0:
+                why = "stalled" if stalled else ("oversized" if total and got > total else "connection closed")
+                self.update_state(transfer, TransferState.FAILED, error=f"Incomplete: {got}/{total}")
+                log.warning(f"[transfer] Incomplete ({why}): {short_name} ({got}/{total})")
             else:
                 self.update_state(transfer, TransferState.FAILED, error="No data received")
                 log.warning(f"[transfer] No data received for {short_name}")
@@ -550,6 +552,8 @@ class TransferManager:
             if transfer.writer is writer:
                 transfer.writer = None
             _close_quietly(writer)
+            if transfer.state != TransferState.COMPLETED:
+                self._remove_partial(transfer)  # no resume: a partial is just litter
             await self._notify(transfer)
 
     def active_paths(self) -> list[str]:

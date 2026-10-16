@@ -278,3 +278,33 @@ async def test_sweep_keeps_terminal_entries_for_a_minute(tmp_path):
     assert tm.is_tracked(t)
     tm._sweep(now + 31)
     assert not tm.is_tracked(t)
+
+
+# --- 100 % or nothing -----------------------------------------------------------
+
+@pytest.mark.parametrize("got", [0, 500, 990, 999])
+async def test_short_file_fails_and_partial_is_removed(tmp_path, got):
+    tm, calls = make_manager(tmp_path)
+    t = make_transfer(tm, total=1000)
+    await tm._receive(t, reader_with(b"d" * got), FakeWriter())
+    assert t.state == TransferState.FAILED
+    assert t.error == ("No data received" if got == 0 else f"Incomplete: {got}/1000")
+    assert not Path(t.save_path).exists()
+    assert len(calls) == 1
+
+
+async def test_stall_near_the_end_fails(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    tm.read_timeout = 0.05
+    t = make_transfer(tm, total=1000)
+    await tm._receive(t, reader_with(b"e" * 999, eof=False), FakeWriter())
+    assert t.state == TransferState.FAILED and t.error == "Incomplete: 999/1000"
+    assert not Path(t.save_path).exists()
+
+
+async def test_stall_with_unknown_size_fails(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    tm.read_timeout = 0.05
+    t = make_transfer(tm, total=0)
+    await tm._receive(t, reader_with(b"f" * 10, eof=False), FakeWriter())
+    assert t.state == TransferState.FAILED
