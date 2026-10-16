@@ -75,13 +75,20 @@ claude_model = "claude-sonnet-5-5"
 track_ai_usage = true
 
 # Recommendation score weights (artist_affinity, genre_match, lastfm_similar, popularity,
-# novelty) are renormalised to sum to 1. w_audio_match and w_clap_similarity are accepted
-# but ignored: audio_match was a constant and clap_similarity always 0 before download.
+# novelty, and clap_similarity when a candidate has one) are renormalised to sum to 1 over
+# the terms present. w_audio_match is accepted but ignored (it was a constant).
 # w_artist_affinity = 0.25
 # w_genre_match = 0.20
 # w_lastfm_similar = 0.20
+# w_clap_similarity = 0.10
 # w_popularity = 0.05
 # w_novelty = 0.05
+#
+# CLAP similarity before download: the refresh fetches each top candidate's 30 s iTunes
+# preview, embeds it with CLAP (needs [analysis] enable_clap) and compares it to the taste
+# centroid. Embeddings are cached per preview URL; ~1 s of CPU per uncached preview.
+# clap_previews = true
+# clap_preview_limit = 100
 #
 # Auto-download gating lives in the schedule task config: "min_score" on the
 # recommendation_refresh task (default 0.5). The Last.fm global chart (lastfm_top_tracks) is

@@ -138,8 +138,10 @@ class AssistantConfig(BaseModel):
     w_artist_affinity: float = 0.25
     w_genre_match: float = 0.20
     w_lastfm_similar: float = 0.20
-    # w_audio_match / w_clap_similarity are ignored (kept so old configs still load): both terms
-    # were dead (constant 0.5 / always 0). The other five weights are renormalised to sum to 1.
+    # w_audio_match is ignored (kept so old configs still load): it was a constant 0.5.
+    # w_clap_similarity weighs the CLAP similarity of a candidate's 30 s iTunes preview to the
+    # taste centroid. The weights of the terms present for a candidate are renormalised to sum
+    # to 1, so a candidate without a preview similarity is scored on the other five as before.
     w_audio_match: float = 0.15
     w_clap_similarity: float = 0.10
     w_popularity: float = 0.05
@@ -148,6 +150,12 @@ class AssistantConfig(BaseModel):
     # Last.fm similarity score, so the usual 0.5 recommendation threshold is unreachable.
     # Overridable per task with "chart_min_score" in the task config.
     chart_min_score: float = 0.3
+    # Download each top candidate's iTunes preview (<= 3 MB) during the recommendation refresh,
+    # embed it with CLAP and score it against the taste centroid. Needs analysis.enable_clap.
+    # Embeddings are cached per preview URL in preview_embeddings.
+    clap_previews: bool = True
+    # At most this many previews are scored per refresh (CPU CLAP: ~1 s each on a cache miss).
+    clap_preview_limit: int = 100
     # AI feature toggles
     ai_reranking: bool = True
     ai_search: bool = True
