@@ -202,6 +202,15 @@ async def recommendation_stats(db: AsyncSession = Depends(get_db)):
     thumbs_down = (await db.execute(
         select(func.count(Recommendation.id)).where(Recommendation.feedback == "thumbs_down")
     )).scalar() or 0
+    # Count pending and failed directly. The old "total - downloaded - thumbs_down"
+    # subtraction lumped accepted, rejected, expired and (since the scheduler stopped
+    # marking failed downloads as downloaded) failed rows in with pending.
+    pending = (await db.execute(
+        select(func.count(Recommendation.id)).where(Recommendation.status == "pending")
+    )).scalar() or 0
+    failed = (await db.execute(
+        select(func.count(Recommendation.id)).where(Recommendation.status == "failed")
+    )).scalar() or 0
 
     # By source breakdown
     source_result = await db.execute(
@@ -223,7 +232,8 @@ async def recommendation_stats(db: AsyncSession = Depends(get_db)):
         "downloaded": downloaded,
         "thumbs_up": thumbs_up,
         "thumbs_down": thumbs_down,
-        "pending": total - downloaded - thumbs_down,
+        "pending": pending,
+        "failed": failed,
         "by_source": by_source,
         "downloads_by_source": downloads_by_source,
     }
