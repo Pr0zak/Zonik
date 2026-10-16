@@ -349,6 +349,10 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
     if not job.result:
         job.result = json.dumps({"error": "Cancelled by user"})
     await db.commit()
+    if job.type == "download":
+        # The running download polls this in-memory set rather than the DB row.
+        from backend.api.download import cancelled_jobs
+        cancelled_jobs.add(job_id)
     await broadcast_job_update({"id": job_id, "type": job.type, "status": "failed", "progress": job.progress, "total": job.total})
     return {"ok": True}
 
