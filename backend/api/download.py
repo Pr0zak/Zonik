@@ -750,12 +750,6 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             "id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1,
             "description": desc, **job_outcome(final_status, job.result),
         })
-        # Clean up zero-byte and non-audio leftovers in download dir
-        try:
-            from backend.services.scanner import cleanup_download_dir
-            cleanup_download_dir()
-        except Exception as e:
-            log.debug(f"[download] Cleanup skipped: {e}")
 
 async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None) -> str:
     """Delegate a download to the web process, which owns the native Soulseek

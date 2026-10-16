@@ -18,6 +18,11 @@ log = logging.getLogger(__name__)
 
 DOWNLOAD_TTL = 5 * 60  # 5 minutes
 
+ACTIVE_STATES = (
+    TransferState.REQUESTED, TransferState.QUEUED,
+    TransferState.CONNECTED, TransferState.TRANSFERRING,
+)
+
 
 @dataclass
 class Transfer:
@@ -344,6 +349,13 @@ class TransferManager:
                 pass
             if self.on_complete:
                 await self.on_complete(transfer)
+
+    def active_paths(self) -> list[str]:
+        """Paths owned by transfers that are still in flight — cleanup must not touch them."""
+        return [
+            t.save_path for t in self.transfers.values()
+            if t.save_path and t.state in ACTIVE_STATES
+        ]
 
     def get_all_transfers(self) -> list[dict]:
         return [t.to_dict() for t in self.transfers.values()]

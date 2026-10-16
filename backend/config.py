@@ -44,7 +44,10 @@ class RedisConfig(BaseModel):
 class SoulseekConfig(BaseModel):
     slskd_url: str = ""
     slskd_api_key: str = ""
-    download_dir: str = "/downloads"
+    download_dir: str = "/downloads"  # legacy; no longer written to (see staging_dir)
+    # Local per-job staging for native transfers: <staging_dir>/<job_id>/...
+    # Finished files are moved into the library from here; only this dir is ever cleaned.
+    staging_dir: str = "/opt/zonik/cache/staging"
     preferred_formats: list[str] = ["flac", "wav", "mp3"]
     min_file_size_mb: int = 3
     max_workers: int = 4
