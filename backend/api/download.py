@@ -926,11 +926,12 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             log.debug(f"[download] Staging cleanup skipped for {job_id}: {e}")
 
 async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None,
-                                     expected_duration: int | None = None) -> str:
+                                     expected_duration: int | None = None, wait: bool = True) -> str | None:
     """Delegate a download to the web process, which owns the native Soulseek
-    client, and wait for it to finish. The arq worker has no native client of its
-    own (it can only bind the listen port in one process), so any download it
-    initiates must run where the client lives. Keeps enqueue_download synchronous."""
+    client. The arq worker has no native client of its own (it can only bind the
+    listen port in one process), so any download it initiates must run where the
+    client lives. wait=True waits for the download to finish (enqueue_download stays
+    synchronous); wait=False only waits for the web to create the job row."""
     import httpx
     from backend.config import get_settings
     job_id = job_id or str(uuid.uuid4())
@@ -940,15 +941,16 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
         port = 3000
     url = f"http://127.0.0.1:{port}/api/download/internal-run"
     try:
-        # Read timeout must exceed the worst-case download in the web: up to ~5
-        # candidates × 300s poll timeout + search + semaphore wait. 30 min covers
-        # it so a slow-but-successful download isn't force-failed here.
-        timeout = httpx.Timeout(connect=10.0, read=1800.0, write=30.0, pool=None)
+        # Waiting: the read timeout should cover a slow-but-successful download
+        # (search + queue wait + transfer); a longer one is read back from the job
+        # row as "still running" (outcome unknown), never as a failure. Not waiting:
+        # the web only dedups, checks the library and writes the row.
+        timeout = httpx.Timeout(connect=10.0, read=1800.0 if wait else 60.0, write=30.0, pool=None)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 url, json={"artist": artist, "track": track, "job_id": job_id,
                            "source": source, "target_track_id": target_track_id,
-                           "expected_duration": expected_duration}
+                           "expected_duration": expected_duration, "wait": wait}
             )
             if resp.status_code == 200:
                 return resp.json().get("job_id", job_id)
@@ -1009,32 +1011,15 @@ async def _already_have_lossless(artist: str, track: str) -> bool:
     return same_title and (existing.format or "").lower() in _LOSSLESS
 
 
-async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
-                           *, expected_duration: int | None = None) -> str | None:
-    """Create an individual download job with semaphore queuing. Returns job_id, or
-    None when an automatic download was skipped because the library already has it."""
-    # Dedup: skip if same artist+track already pending/running
-    async with async_session() as check_sess:
-        existing = await _find_existing_download(check_sess, artist, track)
-        if existing:
-            log.info(f"[download] Dedup: {artist} — {track} already in job {existing}")
-            return existing
+# Downloads started with wait=False run as tasks of their own; keep a reference so
+# the event loop doesn't garbage-collect one mid-flight.
+_background_downloads: set[asyncio.Task] = set()
 
-    if source in _LIBRARY_CHECK_SOURCES and not target_track_id:
-        try:
-            if await _already_have_lossless(artist, track):
-                log.info(f"[download] Skip ({source}): {artist} — {track} already in library as lossless")
-                return None
-        except Exception as e:
-            log.debug(f"[download] Library pre-check failed for {artist} — {track}: {e}")
 
-    # The native Soulseek client lives in the web process; the arq worker has none.
-    # If this process can't download natively, delegate to the web and wait for it.
-    from backend.soulseek import get_client
-    if get_client() is None:
-        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
-                                               expected_duration=expected_duration)
-
+async def _create_download_job(artist: str, track: str, job_id: str | None, source: str | None,
+                               target_track_id: str | None, expected_duration: int | None):
+    """Write a download job's row and register it live. Returns what
+    _run_download_job needs: (job_id, desc, request, search semaphore, initial status)."""
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id,
@@ -1059,8 +1044,13 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     except Exception:
         _job_done(job_id)
         raise
+    return job_id, desc, dl_req, sem, initial_status
 
-    # Wait for a search slot — no DB session held during wait
+
+async def _run_download_job(job_id: str, desc: str, dl_req: DownloadRequest, sem: asyncio.Semaphore,
+                            initial_status: str) -> None:
+    """Wait for a search slot, then run the download to its end. Always forgets the
+    job's in-memory flags when it returns."""
     slot = _SearchSlot(sem)
     try:
         await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
@@ -1077,6 +1067,66 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     finally:
         slot.release()
         _job_done(job_id)
+
+
+async def _run_download_job_detached(job_id: str, *args) -> None:
+    """_run_download_job as a task nobody awaits: a failure before the download
+    proper (which handles its own) still leaves a failed row, not a row stuck
+    pending that a polling batch would wait on until its deadline."""
+    try:
+        await _run_download_job(job_id, *args)
+    except Exception as e:
+        log.warning(f"[download] Background job {job_id} failed: {e}", exc_info=True)
+        try:
+            async with async_session() as sess:
+                row = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()
+                if row is not None and row.status in ("pending", "running"):
+                    row.status = "failed"
+                    row.finished_at = datetime.utcnow()
+                    row.result = json.dumps({"error": str(e)[:500]})
+                    await sess.commit()
+        except Exception as e2:
+            log.debug(f"[download] Could not mark background job {job_id} failed: {e2}")
+
+
+async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
+                           *, expected_duration: int | None = None, wait: bool = True) -> str | None:
+    """Create an individual download job with semaphore queuing. Returns job_id, or
+    None when an automatic download was skipped because the library already has it.
+
+    wait=True (the default) returns once the download has finished. wait=False
+    returns as soon as the job row exists and runs the download as a background
+    task; the caller reads the outcome from the job row."""
+    # Dedup: skip if same artist+track already pending/running
+    async with async_session() as check_sess:
+        existing = await _find_existing_download(check_sess, artist, track)
+        if existing:
+            log.info(f"[download] Dedup: {artist} — {track} already in job {existing}")
+            return existing
+
+    if source in _LIBRARY_CHECK_SOURCES and not target_track_id:
+        try:
+            if await _already_have_lossless(artist, track):
+                log.info(f"[download] Skip ({source}): {artist} — {track} already in library as lossless")
+                return None
+        except Exception as e:
+            log.debug(f"[download] Library pre-check failed for {artist} — {track}: {e}")
+
+    # The native Soulseek client lives in the web process; the arq worker has none.
+    # If this process can't download natively, delegate to the web.
+    from backend.soulseek import get_client
+    if get_client() is None:
+        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
+                                               expected_duration=expected_duration, wait=wait)
+
+    job_id, desc, dl_req, sem, initial_status = await _create_download_job(
+        artist, track, job_id, source, target_track_id, expected_duration)
+    if not wait:
+        task = asyncio.create_task(_run_download_job_detached(job_id, desc, dl_req, sem, initial_status))
+        _background_downloads.add(task)
+        task.add_done_callback(_background_downloads.discard)
+        return job_id
+    await _run_download_job(job_id, desc, dl_req, sem, initial_status)
     return job_id
 
 
@@ -1087,16 +1137,20 @@ class InternalDownloadRequest(BaseModel):
     source: str | None = None
     target_track_id: str | None = None
     expected_duration: int | None = None
+    # False: create the job, start it in the background and answer at once (the
+    # worker's batches poll the job rows instead of holding a request per download).
+    wait: bool = True
 
 
 @router.post("/internal-run")
 async def internal_run_download(req: InternalDownloadRequest):
-    """Internal: run a full download to completion IN THIS process, which owns the
-    native Soulseek client. Called by the arq worker (via _delegate_download_to_web)
-    to perform downloads it cannot run itself. Localhost-only by deployment."""
+    """Internal: run a download IN THIS process, which owns the native Soulseek
+    client. Called by the arq worker (via _delegate_download_to_web) to perform
+    downloads it cannot run itself. Localhost-only by deployment. With wait=false
+    it answers once the job row exists and the download runs in the background."""
     jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
                                  target_track_id=req.target_track_id,
-                                 expected_duration=req.expected_duration)
+                                 expected_duration=req.expected_duration, wait=req.wait)
     return {"job_id": jid}
 
 

@@ -95,6 +95,18 @@ async def download_job_outcome(job_id: str | None, *, session_factory=None) -> t
     return False, err
 
 
+async def unsettled_jobs(job_ids: list[str]) -> set[str]:
+    """The ids among job_ids whose row is still pending/running. A missing row counts
+    as settled (download_job_outcome reports it as not found)."""
+    if not job_ids:
+        return set()
+    async with async_session() as db:
+        rows = (await db.execute(
+            select(Job.id).where(Job.id.in_(job_ids), Job.status.in_(RUNNING_STATUSES))
+        )).all()
+    return {r[0] for r in rows}
+
+
 async def lookup_duration(artist: str, track: str) -> int | None:
     """The song's length in seconds from Last.fm track.getInfo, or None when unknown.
     0 or a failed lookup means no duration gate. Cached per attempt key."""
@@ -153,11 +165,9 @@ async def submit_tracked(
 
     job_id = job_id or str(uuid.uuid4())
     try:
-        kwargs = {"job_id": job_id, "source": source, "target_track_id": target_track_id,
-                  "expected_duration": expected_duration}
-        if not wait:
-            kwargs["wait"] = False
-        returned = await enqueue_download(artist, track, **kwargs)
+        returned = await enqueue_download(artist, track, job_id=job_id, source=source,
+                                          target_track_id=target_track_id,
+                                          expected_duration=expected_duration, wait=wait)
     except Exception as e:
         log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
         return {"job_id": job_id, "skipped": None, "error": str(e)[:500]}
