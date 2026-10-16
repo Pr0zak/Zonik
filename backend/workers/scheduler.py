@@ -403,14 +403,20 @@ async def _download_backend_ready() -> bool:
         return False
 
 
-_INFRA_ERROR_MARKERS = ("backend unreachable", "not connected", "cancelled")
-
-
 def _is_infra_error(err: str | None) -> bool:
     """Failures that say nothing about whether the track can be found (Soulseek down or
-    not logged in, delegation to the web process failed, user cancelled)."""
-    low = (err or "").lower()
-    return any(m in low for m in _INFRA_ERROR_MARKERS)
+    not logged in, delegation to the web process failed, user cancelled).
+
+    Only the exact messages Zonik itself writes count. A substring match on
+    "cancelled" or "not connected" would also catch a peer's own refusal reason
+    ("Cancelled" is a standard Soulseek denial) or an OS error text, and those are
+    real per-track failures that must enter backoff."""
+    e = (err or "").strip()
+    return (
+        e.startswith("Soulseek download backend unreachable")
+        or e.startswith("Soulseek server not connected")
+        or e == "Cancelled by user"
+    )
 
 
 async def _download_job_outcome(job_id: str | None) -> tuple[bool | None, str | None]:
@@ -612,9 +618,13 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
                             )
                         except (ValueError, TypeError):
                             err = str(job_row.result)[:500]
-                    if _is_infra_error(str(err)):
-                        # Soulseek down / cancelled: not the track's fault. Back to pending
-                        # with the attempt refunded so it doesn't count toward retirement.
+                    still_running = job_row is not None and job_row.status in ("pending", "running")
+                    if still_running or _is_infra_error(str(err)):
+                        # Outcome unknown (dedup against another running job, or the
+                        # delegation read timeout fired while the web is still downloading)
+                        # or Soulseek down / cancelled: not the track's fault. Back to
+                        # pending with the attempt refunded so it doesn't count toward
+                        # retirement.
                         await final_db.execute(
                             _update(TrackUpgrade)
                             .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "downloading")

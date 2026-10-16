@@ -152,8 +152,31 @@ def test_download_job_outcome(monkeypatch):
     assert outcome(("completed", _json.dumps({"already_in_library": True})))[0] is True
     ok, err = outcome(("failed", _json.dumps({"message": "No results for x"})))
     assert ok is False and "No results" in err
-    for msg in ("Soulseek backend unreachable", "Soulseek server not connected", "Cancelled by user"):
+    for msg in ("Soulseek download backend unreachable: web returned 502", "Soulseek server not connected — try again later", "Cancelled by user"):
         ok, err = outcome(("failed", _json.dumps({"error": msg})))
         assert ok is None and err == msg
     assert outcome(("running", None)) == (None, None)
     assert outcome(None)[0] is False  # job row missing
+
+
+def test_infra_error_matches_only_zoniks_own_messages():
+    from backend.workers.scheduler import _is_infra_error
+    assert _is_infra_error("Soulseek download backend unreachable: connection refused")
+    assert _is_infra_error("Soulseek server not connected — try again later")
+    assert _is_infra_error("Cancelled by user")
+    # A peer's own refusal reason or an OS error text is a real per-track failure.
+    assert not _is_infra_error("Cancelled")
+    assert not _is_infra_error("[Errno 107] Transport endpoint is not connected")
+    assert not _is_infra_error("Peer did not respond in time")
+    assert not _is_infra_error(None)
+
+
+def test_library_keys_fall_back_for_non_latin_names():
+    from backend.services.library_match import key_artist, key_title
+    assert key_artist("Beyoncé feat. Jay-Z") == "beyonc"
+    assert key_title("Halo (Remastered 2014)") == "halo"
+    assert key_title("Halo (Remastered 2014)", strict=True) == "haloremastered2014"
+    # Fully non-Latin names keep their own identity instead of collapsing to "".
+    assert key_artist("宇多田ヒカル") == "宇多田ヒカル"
+    assert key_title("Первый") == "первый"
+    assert key_artist("宇多田ヒカル") != key_artist("坂本龍一")

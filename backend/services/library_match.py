@@ -67,6 +67,18 @@ def artists_overlap(a: str, b: str) -> bool:
     return bool(artist_names(a) & artist_names(b))
 
 
+def key_artist(s: str) -> str:
+    """Index key for an artist. A name with no Latin letters or digits (CJK, Cyrillic)
+    normalises to "", which would make every such name one key; fall back to the
+    casefolded raw text so those still match only themselves."""
+    return norm_artist(s) or (s or "").casefold().strip()
+
+
+def key_title(s: str, strict: bool = False) -> str:
+    """Index key for a title, with the same non-Latin fallback as key_artist."""
+    return (norm_title_strict(s) if strict else norm_title(s)) or (s or "").casefold().strip()
+
+
 async def _library_index(db: AsyncSession, strict_title: bool = False) -> dict[tuple[str, str], str]:
     global _index, _index_strict, _index_built_at, _index_count
     count = (await db.execute(select(func.count(Track.id)))).scalar_one()
@@ -81,13 +93,9 @@ async def _library_index(db: AsyncSession, strict_title: bool = False) -> dict[t
     strict: dict[tuple[str, str], str] = {}
     for track_id, title, artist in rows.all():
         if title and artist:
-            na = norm_artist(artist)
-            # Names with no Latin letters/digits normalise to "" and would make every such
-            # candidate look owned — leave them out of the index.
-            if na and norm_title(title):
-                index.setdefault((na, norm_title(title)), track_id)
-            if na and norm_title_strict(title):
-                strict.setdefault((na, norm_title_strict(title)), track_id)
+            na = key_artist(artist)
+            index.setdefault((na, key_title(title)), track_id)
+            strict.setdefault((na, key_title(title, strict=True)), track_id)
     _index, _index_strict = index, strict
     _index_built_at, _index_count = time.monotonic(), count
     return strict if strict_title else index
@@ -99,8 +107,7 @@ async def match_library(db: AsyncSession, artist: str, title: str, strict_title:
     if not artist or not title:
         return None
     index = await _library_index(db, strict_title)
-    nt = norm_title_strict if strict_title else norm_title
-    na, ntt = norm_artist(artist), nt(title)
+    na, ntt = key_artist(artist), key_title(title, strict=strict_title)
     if not na or not ntt:
         return None
     return index.get((na, ntt))
@@ -117,11 +124,10 @@ async def batch_library_match(
     if not items:
         return
     index = await _library_index(db, strict_title)
-    nt = norm_title_strict if strict_title else norm_title
     for t in items:
         name = t.get(name_key) or ""
         artist = t.get(artist_key) or ""
-        na, ntt = norm_artist(artist), nt(name)
+        na, ntt = key_artist(artist), key_title(name, strict=strict_title)
         matched = index.get((na, ntt)) if na and ntt else None
         t["in_library"] = matched is not None
         t["track_id"] = matched
