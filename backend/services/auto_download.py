@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 # Sources that consult and feed download_attempts and get the (soft) Last.fm length.
 # Everything else (no source, "manual", "library", "upgrade", ...) is untracked.
 TRACKED_SOURCES = {"weekly-radar", "radar", "discovery", "similar", "recommendation",
-                   "playlist", "remix", "worker"}
+                   "playlist", "remix", "new-releases", "worker"}
 
 # Seconds a Last.fm length lookup may take before the download goes ahead without one.
 DURATION_LOOKUP_TIMEOUT = 5

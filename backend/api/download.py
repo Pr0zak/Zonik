@@ -1266,6 +1266,7 @@ async def download_status():
     if client:
         return {
             "downloads": client.transfers.get_all_transfers(),
+            "uploads": client.transfers.get_all_uploads(),
             "logged_in": client.logged_in,
         }
     return {"downloads": [], "logged_in": False}
@@ -1300,6 +1301,7 @@ async def soulseek_stats():
             "total_bytes_transferred": 0,
             "aggregate_speed": 0,
             "reputation": {"tracked_peers": 0, "peers": []},
+            "uploads": {"active": 0, "queued": 0, "completed": 0, "failed": 0, "bytes_sent": 0, "speed": 0},
         }
 
     transfers = client.transfers.get_all_transfers()
@@ -1309,6 +1311,17 @@ async def soulseek_stats():
     failed = sum(1 for t in transfers if t.get("state") in ("failed", "denied"))
     total_bytes = sum(t.get("received_bytes", 0) for t in transfers)
     agg_speed = sum(t.get("speed", 0) for t in transfers if t.get("state") == "transferring")
+
+    # Uploads we serve to peers (share_library) — kept apart from the download counts.
+    uploads = client.transfers.get_all_uploads()
+    upload_stats = {
+        "active": sum(1 for u in uploads if u.get("state") in ("transferring", "connected")),
+        "queued": sum(1 for u in uploads if u.get("state") in ("requested", "queued")),
+        "completed": sum(1 for u in uploads if u.get("state") == "completed"),
+        "failed": sum(1 for u in uploads if u.get("state") in ("failed", "denied")),
+        "bytes_sent": sum(u.get("received_bytes", 0) for u in uploads),
+        "speed": round(sum(u.get("speed", 0) for u in uploads if u.get("state") == "transferring")),
+    }
 
     uptime = 0.0
     if client.server.connected_since:
@@ -1331,6 +1344,7 @@ async def soulseek_stats():
         "total_bytes_transferred": total_bytes,
         "aggregate_speed": round(agg_speed),
         "reputation": client.reputation.get_summary(),
+        "uploads": upload_stats,
     }
 
 

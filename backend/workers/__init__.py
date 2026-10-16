@@ -180,6 +180,8 @@ async def generate_embedding(ctx: dict, track_id: str, file_path: str):
 
 
 async def startup(ctx: dict):
+    from backend import process
+    process.mark_worker()  # the recommender embeds previews only here, never in zonik-web
     log.info("Zonik worker started — downloads delegate to the web's native Soulseek client")
 
 
