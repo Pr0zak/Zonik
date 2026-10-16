@@ -130,6 +130,8 @@ class AssistantConfig(BaseModel):
     w_artist_affinity: float = 0.25
     w_genre_match: float = 0.20
     w_lastfm_similar: float = 0.20
+    # w_audio_match / w_clap_similarity are ignored (kept so old configs still load): both terms
+    # were dead (constant 0.5 / always 0). The other five weights are renormalised to sum to 1.
     w_audio_match: float = 0.15
     w_clap_similarity: float = 0.10
     w_popularity: float = 0.05

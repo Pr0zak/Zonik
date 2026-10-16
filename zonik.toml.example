@@ -62,6 +62,18 @@ claude_model = "claude-sonnet-5-5"
 # Record one ai_usage row per Claude API call (powers the AI usage dashboard)
 track_ai_usage = true
 
+# Recommendation score weights (artist_affinity, genre_match, lastfm_similar, popularity,
+# novelty) are renormalised to sum to 1. w_audio_match and w_clap_similarity are accepted
+# but ignored: audio_match was a constant and clap_similarity always 0 before download.
+# w_artist_affinity = 0.25
+# w_genre_match = 0.20
+# w_lastfm_similar = 0.20
+# w_popularity = 0.05
+# w_novelty = 0.05
+#
+# Auto-download gating lives in the schedule task config, not here: set "min_score" on the
+# recommendation_refresh task (default 0.5); lastfm_top_tracks reuses it to filter the chart.
+
 # Optional: override the built-in pricing snapshot in
 # backend/services/ai/pricing.py. model-id -> [input, output] USD per 1M tokens.
 # [assistant.model_pricing]

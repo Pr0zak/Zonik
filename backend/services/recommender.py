@@ -452,6 +452,18 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
 # 3. Scoring Engine
 # ---------------------------------------------------------------------------
 
+def weighted_score(cfg, artist_affinity: float, genre_match: float, lastfm_similar: float,
+                   popularity: float, novelty: float) -> float:
+    """Weighted sum of the live signals, with the weights renormalised to sum to 1 now that
+    audio_match / clap_similarity no longer contribute (w_audio_match and w_clap_similarity
+    stay in the config for compatibility but are ignored)."""
+    weights = (cfg.w_artist_affinity, cfg.w_genre_match, cfg.w_lastfm_similar,
+               cfg.w_popularity, cfg.w_novelty)
+    total = sum(weights) or 1.0
+    values = (artist_affinity, genre_match, lastfm_similar, popularity, novelty)
+    return sum(w * v for w, v in zip(weights, values)) / total
+
+
 def score_candidate(candidate: dict, profile: dict, clap_centroid: bytes | None = None) -> tuple[float, dict]:
     """Score a candidate track against the taste profile. Returns (score, breakdown)."""
     settings = get_settings()
@@ -502,13 +514,13 @@ def score_candidate(candidate: dict, profile: dict, clap_centroid: bytes | None 
     lastfm_similar = candidate.get("lastfm_match") or 0.0
     breakdown["lastfm_similar"] = round(lastfm_similar, 3)
 
-    # Audio profile match (heuristic — we don't have candidate audio yet)
-    audio = profile.get("audio", {})
-    audio_match = 0.5 if audio.get("avg_bpm") else 0.0  # Default middle if we have profile
-    breakdown["audio_match"] = round(audio_match, 3)
-
-    # CLAP similarity (only if we have centroid — post-download signal)
-    clap_similarity = 0.0
+    # audio_match and clap_similarity are NOT scored. audio_match was a constant 0.5 (we
+    # have no audio for a candidate before download) and clap_similarity was always 0, so
+    # together they stole a quarter of the weight and capped scores at ~0.49 against the
+    # 0.5 auto-download threshold. Their weights are dropped and the rest renormalised
+    # (see weighted_score). They stay in the breakdown as 0 for API/UI compatibility.
+    # Follow-up: compute CLAP similarity on the 30 s iTunes preview before download.
+    breakdown["audio_match"] = 0.0
     breakdown["clap_similarity"] = 0.0
 
     # Popularity
@@ -526,15 +538,7 @@ def score_candidate(candidate: dict, profile: dict, clap_centroid: bytes | None 
     breakdown["novelty"] = round(novelty, 3)
 
     # Weighted sum
-    score = (
-        cfg.w_artist_affinity * artist_affinity +
-        cfg.w_genre_match * genre_match +
-        cfg.w_lastfm_similar * lastfm_similar +
-        cfg.w_audio_match * audio_match +
-        cfg.w_clap_similarity * clap_similarity +
-        cfg.w_popularity * popularity +
-        cfg.w_novelty * novelty
-    )
+    score = weighted_score(cfg, artist_affinity, genre_match, lastfm_similar, popularity, novelty)
 
     return round(min(1.0, max(0.0, score)), 3), breakdown
 
