@@ -204,6 +204,9 @@ class UploadManager:
         # username -> (consecutive TransferResponse timeouts, don't ask before).
         self._user_backoff: dict[str, tuple[int, float]] = {}
         self._sweep_task: asyncio.Task | None = None
+        # Session totals: finished entries are swept after TERMINAL_KEEP_SECONDS, so
+        # anything that reports "completed"/"failed"/"bytes sent" since startup reads these.
+        self.totals = {"completed": 0, "failed": 0, "bytes_sent": 0}
         self._bg: set[asyncio.Task] = set()
         self._closed = False
 
@@ -311,8 +314,13 @@ class UploadManager:
     def _set_state(self, up: Upload, state: str, error: str | None = None) -> None:
         if state != up.state:
             up.state_since = time.time()
-            if state in TERMINAL_STATES:
+            if state in TERMINAL_STATES and up.ended_at is None:
                 up.ended_at = up.state_since
+                if state == TransferState.COMPLETED:
+                    self.totals["completed"] += 1
+                else:
+                    self.totals["failed"] += 1
+                self.totals["bytes_sent"] += up.sent_bytes
         up.state = state
         if error is not None:
             up.error = error

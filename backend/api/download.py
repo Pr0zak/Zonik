@@ -1317,9 +1317,11 @@ async def soulseek_stats():
     upload_stats = {
         "active": sum(1 for u in uploads if u.get("state") in ("transferring", "connected")),
         "queued": sum(1 for u in uploads if u.get("state") in ("requested", "queued")),
-        "completed": sum(1 for u in uploads if u.get("state") == "completed"),
-        "failed": sum(1 for u in uploads if u.get("state") in ("failed", "denied")),
-        "bytes_sent": sum(u.get("received_bytes", 0) for u in uploads),
+        # Session totals (finished entries are swept from the list after a minute).
+        "completed": client.uploads.totals["completed"],
+        "failed": client.uploads.totals["failed"],
+        "bytes_sent": client.uploads.totals["bytes_sent"]
+        + sum(u.get("received_bytes", 0) for u in uploads if u.get("state") == "transferring"),
         "speed": round(sum(u.get("speed", 0) for u in uploads if u.get("state") == "transferring")),
     }
 
