@@ -1,10 +1,12 @@
 """Multi-strategy search + quality scoring — uses native SoulseekClient."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 from backend.config import get_settings
+from backend.soulseek.protocol.types import SearchResult
 from backend.services.soulseek import (
     normalize_text, words_match, strip_track_extras, clean_track_name,
     clean_artist_name, title_matches, PREFERRED_EXTENSIONS,
@@ -14,6 +16,9 @@ if TYPE_CHECKING:
     from backend.soulseek.client import SoulseekClient
 
 log = logging.getLogger(__name__)
+
+MAX_QUERY_VARIANTS = 4
+DURATION_TOLERANCE = 3  # seconds a candidate's reported duration may differ from the target
 
 
 def beats_quality(ext: str, size: int, current: tuple[str, int]) -> bool:
@@ -35,17 +40,25 @@ async def pick_best_results_native(
     track: str,
     reputation=None,
     better_than: tuple[str, int] | None = None,
+    target_duration: int | None = None,
 ) -> list[dict]:
     """Score and rank search results from native client. Returns flat file list.
 
     better_than=(format, file_size) keeps only files that would upgrade that copy,
-    so an upgrade never downloads something the importer will throw away."""
+    so an upgrade never downloads something the importer will throw away.
+
+    target_duration (seconds) rejects files whose reported duration is more than
+    DURATION_TOLERANCE off — a different song that shares enough title words to
+    pass the title gate. Files that report no duration are kept; a matching
+    duration earns a bonus."""
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
     scored = []
     rejected_title = 0
     rejected_quality = 0
+    rejected_duration = 0
+    want_duration = int(target_duration) if target_duration and target_duration > 0 else None
     for search_result in results:
         for file_info in search_result.files:
             filename = file_info.filename
@@ -73,7 +86,16 @@ async def pick_best_results_native(
                 rejected_title += 1
                 continue
 
+            duration_match = False
+            if want_duration is not None and file_info.duration > 0:
+                if abs(file_info.duration - want_duration) > DURATION_TOLERANCE:
+                    rejected_duration += 1
+                    continue
+                duration_match = True
+
             score = 0
+            if duration_match:
+                score += 6
             # Artist match — strong signal, not required (often only in the path).
             if words_match(clean_artist_name(artist), filename) or words_match(artist, filename):
                 score += 12
@@ -141,12 +163,16 @@ async def pick_best_results_native(
                     "bitRate": bitrate,
                     "slots_free": search_result.slots_free,
                     "avg_speed": search_result.avg_speed,
+                    "duration": file_info.duration,
                 }))
 
     if rejected_title:
         log.info(f"[native] title gate skipped {rejected_title} file(s) not matching '{track}'")
     if rejected_quality:
         log.info(f"[native] upgrade gate skipped {rejected_quality} file(s) no better than {better_than[0]}")
+    if rejected_duration:
+        log.info(f"[native] duration gate skipped {rejected_duration} file(s) not within "
+                 f"{DURATION_TOLERANCE}s of {want_duration}s")
 
     if not scored:
         return []
@@ -166,13 +192,8 @@ async def pick_best_results_native(
     return candidates
 
 
-async def search_multi_strategy_native(
-    client: "SoulseekClient",
-    artist: str,
-    track: str,
-    better_than: tuple[str, int] | None = None,
-) -> list[dict]:
-    """Try multiple search strategies using native client. Returns best candidates."""
+def build_query_variants(artist: str, track: str) -> list[str]:
+    """The 1-4 distinct search queries tried for one track, most specific first."""
     queries = [f"{artist} {track}"]
     cleaned_track = strip_track_extras(track)
     cleaned_artist = clean_artist_name(artist)
@@ -184,21 +205,78 @@ async def search_multi_strategy_native(
     first_artist = artist.split()[0] if artist.split() else artist
     if first_artist.lower() != cleaned_artist.lower():
         queries.append(f"{first_artist} {cleaned_track}")
-
-    seen: set[str] = set()
+    out: list[str] = []
     for q in queries:
-        if q in seen:
-            continue
-        seen.add(q)
-        log.info(f"[native] Search strategy: '{q}'")
-        results = await client.search(q)
-        if results:
-            candidates = await pick_best_results_native(results, artist, track, reputation=client.reputation,
-                                                        better_than=better_than)
-            if candidates:
-                return candidates
+        if q not in out:
+            out.append(q)
+    return out[:MAX_QUERY_VARIANTS]
 
-    return []
+
+def merge_search_results(responses: list[list[SearchResult]]) -> list[SearchResult]:
+    """Merge the responses of several queries into one list: one SearchResult per
+    peer (first-seen slot/speed/queue figures), each file listed once per
+    (username, filename)."""
+    merged: dict[str, SearchResult] = {}
+    seen_files: set[tuple[str, str]] = set()
+    for results in responses:
+        for sr in results:
+            target = merged.get(sr.username)
+            if target is None:
+                target = SearchResult(
+                    username=sr.username, token=sr.token, files=[],
+                    slots_free=sr.slots_free, avg_speed=sr.avg_speed, queue_length=sr.queue_length,
+                )
+                merged[sr.username] = target
+            for fi in sr.files:
+                key = (sr.username, fi.filename)
+                if key in seen_files:
+                    continue
+                seen_files.add(key)
+                target.files.append(fi)
+    return list(merged.values())
+
+
+async def search_multi_strategy_native(
+    client: "SoulseekClient",
+    artist: str,
+    track: str,
+    better_than: tuple[str, int] | None = None,
+    target_duration: int | None = None,
+) -> list[dict]:
+    """Search the most specific query first; only if it gives no usable
+    candidate, search the remaining variants at once, merge everything and rank
+    once.
+
+    The first query usually succeeds, so most tracks cost one search (the
+    Soulseek server is believed to throttle heavy searchers). For a hard track
+    the fallbacks run concurrently — each client.search uses its own token — so
+    it costs two search timeouts instead of up to four in a row."""
+    queries = build_query_variants(artist, track)
+
+    async def run(qs: list[str]) -> list[list[SearchResult]]:
+        log.info(f"[native] Search strategies: {qs}")
+        responses = await asyncio.gather(*(client.search(q) for q in qs), return_exceptions=True)
+        ok: list[list[SearchResult]] = []
+        for q, r in zip(qs, responses):
+            if isinstance(r, BaseException):
+                log.warning(f"[native] Search '{q}' failed: {r}")
+                continue
+            ok.append(r)
+        return ok
+
+    async def rank(responses: list[list[SearchResult]]) -> list[dict]:
+        merged = merge_search_results(responses)
+        if not merged:
+            return []
+        return await pick_best_results_native(merged, artist, track, reputation=client.reputation,
+                                              better_than=better_than, target_duration=target_duration)
+
+    first = await run(queries[:1])
+    candidates = await rank(first)
+    if candidates or len(queries) == 1:
+        return candidates
+    rest = await run(queries[1:])
+    return await rank(first + rest)
 
 
 async def search_and_download_native(

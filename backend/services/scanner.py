@@ -1004,48 +1004,93 @@ async def _mark_upgrade_failed(db, track_id: str, message: str):
 
 
 def cleanup_download_dir(max_age_hours: int = 24) -> dict:
-    """Remove stale files from the download directory.
+    """Remove stale per-job folders from Zonik's own staging directory.
 
-    Removes: zero-byte files, non-audio files, and audio files older than
-    max_age_hours (already imported into library by then).
+    Transfers are written to `<soulseek.staging_dir>/<job_id>/...` and each job
+    removes its own folder when it finishes, so this only sweeps up what a crash
+    or restart left behind. It never touches the NAS `download_dir` (a shared
+    folder other downloaders use), never touches a path an active transfer owns,
+    and never removes anything modified in the last hour — including zero-byte
+    files, which is what a transfer looks like the moment it opens its file.
     """
+    import os
+    import shutil
     import time
-    settings = get_settings()
-    dl_dir = Path(settings.soulseek.download_dir)
-    if not dl_dir.exists():
-        return {"removed": 0, "freed_bytes": 0}
 
-    cutoff = time.time() - (max_age_hours * 3600)
-    removed = 0
-    freed = 0
-    for f in dl_dir.iterdir():
-        if not f.is_file():
-            continue
+    result = {"removed": 0, "freed_bytes": 0}
+    settings = get_settings()
+    staging_cfg = (settings.soulseek.staging_dir or "").strip()
+    if not staging_cfg:
+        return result
+    staging = Path(staging_cfg)
+    if staging.is_symlink() or not staging.is_dir():
+        return result
+    staging = staging.resolve()
+
+    # Refuse to sweep the NAS download dir, or anything that contains it or sits inside it.
+    try:
+        dl_dir = Path(settings.soulseek.download_dir).resolve() if settings.soulseek.download_dir else None
+    except OSError:
+        dl_dir = None
+    if staging == Path(staging.anchor) or (
+        dl_dir is not None and (staging == dl_dir or staging in dl_dir.parents or dl_dir in staging.parents)
+    ):
+        log.warning(f"[cleanup] Refusing to clean {staging}: it overlaps download_dir {dl_dir}")
+        return result
+
+    # Top-level staging entries an active transfer owns (by save path or job folder).
+    protected: set[str] = set()
+    try:
+        from backend.soulseek import get_client
+        client = get_client()
+        if client is not None:
+            for owned in client.transfers.active_paths():
+                try:
+                    rel = Path(owned).resolve().relative_to(staging)
+                except (ValueError, OSError):
+                    continue
+                if rel.parts:
+                    protected.add(rel.parts[0])
+    except Exception as e:
+        log.debug(f"[cleanup] Could not read active transfers: {e}")
+
+    # Anything touched within the last hour (or younger than max_age) stays.
+    cutoff = time.time() - max(max_age_hours * 3600, 3600)
+
+    for entry in list(staging.iterdir()):
+        if entry.name in protected or entry.is_symlink():
+            continue  # active transfer; or a link Zonik never makes — don't follow it
         try:
-            stat = f.stat()
+            st = entry.lstat()
         except OSError:
             continue
-        # Remove zero-byte files (failed transfers)
-        if stat.st_size == 0:
-            f.unlink(missing_ok=True)
-            log.info(f"[cleanup] Removed zero-byte file: {f.name}")
-            removed += 1
+        newest = st.st_mtime
+        size = st.st_size if entry.is_file() else 0
+        if entry.is_dir():
+            for root, dirs, files in os.walk(entry, followlinks=False):
+                for name in dirs + files:
+                    try:
+                        sub = os.lstat(os.path.join(root, name))
+                    except OSError:
+                        continue
+                    newest = max(newest, sub.st_mtime)
+                    if name in files:
+                        size += sub.st_size
+        if newest > cutoff:
             continue
-        ext = f.suffix.lower()
-        # Remove non-audio files
-        if ext not in AUDIO_EXTENSIONS:
-            freed += stat.st_size
-            f.unlink(missing_ok=True)
-            log.info(f"[cleanup] Removed non-audio file: {f.name}")
-            removed += 1
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+        except OSError as e:
+            log.warning(f"[cleanup] Could not remove {entry}: {e}")
             continue
-        # Remove audio files older than max_age_hours (already imported)
-        if stat.st_mtime < cutoff:
-            freed += stat.st_size
-            f.unlink(missing_ok=True)
-            log.info(f"[cleanup] Removed old download: {f.name}")
-            removed += 1
+        result["removed"] += 1
+        result["freed_bytes"] += size
+        log.info(f"[cleanup] Removed stale staging entry: {entry.name}")
 
-    if removed:
-        log.info(f"[cleanup] Removed {removed} files, freed {freed / (1024*1024):.1f} MB")
-    return {"removed": removed, "freed_bytes": freed}
+    if result["removed"]:
+        log.info(f"[cleanup] Removed {result['removed']} staging entries, "
+                 f"freed {result['freed_bytes'] / (1024*1024):.1f} MB")
+    return result

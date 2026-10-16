@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -9,7 +10,7 @@ import time
 from backend.soulseek.server_conn import ServerConnection
 from backend.soulseek.listener import PeerListener
 from backend.soulseek.peer import PeerConnection
-from backend.soulseek.transfer import TransferManager, Transfer
+from backend.soulseek.transfer import TransferManager, Transfer, TERMINAL_STATES
 from backend.soulseek.reputation import PeerReputation
 from backend.soulseek.protocol.types import (
     ConnectionType, TransferDirection, TransferState, SearchResult, FileInfo,
@@ -23,6 +24,10 @@ SEARCH_QUIET = 3.0      # ...then stop once no new response for this long
 DEFAULT_PEER_TIMEOUT = 20
 
 
+class PeerBusy(Exception):
+    """Another download holds this peer's one-file-at-a-time slot."""
+
+
 class SoulseekClient:
     """High-level Soulseek client — search, download, peer management."""
 
@@ -31,11 +36,13 @@ class SoulseekClient:
         server_host: str = "server.slsknet.org",
         server_port: int = 2242,
         listen_port: int = 2234,
-        download_dir: str | None = None,
+        staging_dir: str | None = None,
     ):
-        if download_dir is None:
-            from backend.config import get_settings
-            download_dir = get_settings().soulseek.download_dir
+        from backend.config import get_settings
+        slsk_cfg = get_settings().soulseek
+        if staging_dir is None:
+            staging_dir = slsk_cfg.staging_dir
+        max_transfer_seconds = max(1, slsk_cfg.transfer_max_minutes) * 60
 
         self.server = ServerConnection(
             host=server_host,
@@ -49,7 +56,8 @@ class SoulseekClient:
             on_connection=self._handle_inbound_connection,
         )
         self.transfers = TransferManager(
-            download_dir=download_dir,
+            staging_dir=staging_dir,
+            max_transfer_seconds=max_transfer_seconds,
             on_progress=self._on_transfer_progress,
             on_complete=self._on_transfer_complete,
         )
@@ -63,6 +71,9 @@ class SoulseekClient:
         self._peer_address_futures: dict[str, asyncio.Future] = {}
         self._last_broadcast: float = 0
         self._peer_cleanup_task: asyncio.Task | None = None
+        self._file_tasks: set[asyncio.Task] = set()
+        # Per-peer lock: [semaphore, holders+waiters]; entries are pruned when idle.
+        self._peer_slots: dict[str, list] = {}
 
     @property
     def logged_in(self) -> bool:
@@ -175,10 +186,47 @@ class SoulseekClient:
         peer = await self._get_or_connect_peer(username)
 
         transfer = self.transfers.create_transfer(username, filename, job_id=job_id)
-        await peer.send_queue_upload(filename)
-        await peer.send_place_in_queue_request(filename)
+        try:
+            await peer.send_queue_upload(filename)
+            await peer.send_place_in_queue_request(filename)
+        except BaseException:
+            # Never queued — don't leave a REQUESTED entry behind to time out later.
+            self.transfers.remove_transfer(username, filename)
+            raise
 
         return transfer
+
+    @contextlib.asynccontextmanager
+    async def peer_slot(self, username: str, timeout: float | None = None):
+        """Hold the one-file-at-a-time slot for a peer around queueing and
+        transferring one file. Peers serve one upload at a time, so a second file
+        queued to the same peer just waits on their side while holding one of our
+        transfer slots.
+
+        With a timeout, raises PeerBusy if the slot isn't free in time, so the
+        caller can try another source instead of waiting out someone else's
+        transfer."""
+        entry = self._peer_slots.get(username)
+        if entry is None:
+            entry = [asyncio.Semaphore(1), 0]
+            self._peer_slots[username] = entry
+        entry[1] += 1
+        try:
+            if timeout is None:
+                await entry[0].acquire()
+            else:
+                try:
+                    await asyncio.wait_for(entry[0].acquire(), timeout)
+                except asyncio.TimeoutError:
+                    raise PeerBusy(username) from None
+            try:
+                yield
+            finally:
+                entry[0].release()
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0 and self._peer_slots.get(username) is entry:
+                del self._peer_slots[username]
 
     async def _get_or_connect_peer(self, username: str, timeout: float = DEFAULT_PEER_TIMEOUT) -> PeerConnection:
         """Get existing peer or establish new connection (races direct vs indirect)."""
@@ -305,17 +353,24 @@ class SoulseekClient:
                     asyncio.create_task(self._accept_indirect_peer(username, host, port, token))
 
             elif conn_type == ConnectionType.FILE_TRANSFER:
-                # Server relay token differs from transfer token — match by username
+                # The relay token differs from the transfer token, so this is only a
+                # provisional pick (by username as a last resort); the handler
+                # re-resolves it from the uploader's FileTransferInit token.
+                # Every lookup is scoped to this user: a token-only match could be
+                # another user's transfer that happens to share the token value.
+                by_token = True
                 transfer = self.transfers.get_transfer_by_token(username, token)
                 if not transfer:
-                    transfer = self.transfers.find_transfer_by_token(token)
-                if not transfer:
+                    by_token = False
                     transfer = self.transfers.find_active_transfer_for_user(username)
                 if transfer:
                     log.info(f"[client] Server-mediated file transfer to {username} at {host}:{port}")
                     # token = relay token (for pierce_firewall), transfer.token = file token (for handshake)
-                    asyncio.create_task(
-                        self.transfers.handle_outbound_file_transfer(transfer, host, port, token)
+                    self._start_file_task(
+                        transfer if by_token else None,
+                        self.transfers.handle_outbound_file_transfer(
+                            transfer, host, port, token, matched_by_token=by_token,
+                        ),
                     )
                 else:
                     log.warning(f"[client] connect_to_peer FILE_TRANSFER but no matching transfer for {username}")
@@ -378,6 +433,15 @@ class SoulseekClient:
         elif kind == "transfer_request":
             if msg.get("direction") == TransferDirection.UPLOAD:
                 transfer = self.transfers.get_transfer(peer.username, msg["filename"])
+                if transfer and transfer.state in TERMINAL_STATES:
+                    transfer = None  # we gave up on it — don't revive an abandoned transfer
+                if transfer and (transfer.state == TransferState.TRANSFERRING or transfer.receiving):
+                    # Already streaming on a live connection: resetting its token and
+                    # size here would let a second connection take it over.
+                    await peer.send_transfer_response(msg["token"], False, "Transfer already in progress")
+                    log.warning(f"[client] Refused repeat transfer request from {peer.username}: "
+                                f"{msg['filename']} is already transferring")
+                    return
                 if transfer:
                     transfer.token = msg["token"]
                     transfer.total_bytes = msg.get("size", 0)
@@ -398,27 +462,27 @@ class SoulseekClient:
 
         elif kind == "upload_denied":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
-            if transfer:
+            if transfer and transfer.state not in TERMINAL_STATES:
                 reason = msg.get("reason", "")
                 log.warning(f"[client] Upload denied by {peer.username}: {reason}")
                 self.transfers.update_state(transfer, TransferState.DENIED, error=reason)
-                await self._on_transfer_complete(transfer)
+                self.transfers.abort(transfer, reason)  # fires on_complete once
 
         elif kind == "transfer_response":
             # Peer rejected our transfer request
             if not msg.get("allowed"):
                 transfer = self.transfers.get_transfer_by_token(peer.username, msg["token"])
-                if transfer:
+                if transfer and transfer.state not in TERMINAL_STATES:
                     reason = msg.get("reason", "Rejected by peer")
                     self.transfers.update_state(transfer, TransferState.DENIED, error=reason)
-                    await self._on_transfer_complete(transfer)
+                    self.transfers.abort(transfer, reason)
 
         elif kind == "upload_failed":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
-            if transfer:
+            if transfer and transfer.state not in TERMINAL_STATES:
                 log.warning(f"[client] Upload failed by {peer.username}: {msg.get('filename', '?')}")
-                self.transfers.update_state(transfer, TransferState.FAILED, error="Upload failed by peer")
-                await self._on_transfer_complete(transfer)
+                # Stops the handler if it is still receiving, deletes the partial, notifies once.
+                self.transfers.abort(transfer, "Upload failed by peer")
 
         elif kind == "queue_upload":
             # Peer wants to download from us — deny (we don't upload)
@@ -441,13 +505,17 @@ class SoulseekClient:
 
             if conn_type == ConnectionType.FILE_TRANSFER:
                 # File transfer connection — route to TransferManager
+                # PeerInit's token is often 0 for F connections; the handler
+                # re-resolves from FileTransferInit, so a username pick is fine here.
                 token = msg.get("token")
-                if token:
-                    transfer = self.transfers.get_transfer_by_token(username, token)
+                if token is not None:
+                    by_token = self.transfers.get_transfer_by_token(username, token)
+                    transfer = by_token or self.transfers.find_active_transfer_for_user(username)
                     if transfer:
                         log.info(f"[client] Inbound file transfer connection from {username} (peer_init F)")
-                        asyncio.create_task(
-                            self.transfers.handle_file_transfer_connection(username, token, reader, writer)
+                        self._start_file_task(
+                            by_token,  # only claim the transfer when the token named it
+                            self.transfers.handle_file_transfer_connection(username, token, reader, writer),
                         )
                     else:
                         log.warning(f"[client] File transfer connection from {username} but no matching transfer")
@@ -477,16 +545,28 @@ class SoulseekClient:
                 transfer = self.transfers.find_transfer_by_token(token)
                 if transfer:
                     log.info(f"[client] Inbound file transfer via pierce_firewall from {transfer.username}")
-                    asyncio.create_task(
+                    self._start_file_task(
+                        transfer,
                         self.transfers.handle_file_transfer_connection(
-                            transfer.username, token, reader, writer
-                        )
+                            transfer.username, token, reader, writer, username_known=False,
+                        ),
                     )
                 else:
                     log.warning(f"[client] pierce_firewall with unknown token {token.hex()}")
                     writer.close()
             else:
                 writer.close()
+
+    def _start_file_task(self, transfer: Transfer | None, coro) -> asyncio.Task:
+        """Run a file-connection handler as a task the client keeps a reference to,
+        and record it on the transfer (unless another handler already owns it) so
+        TransferManager.abort() can cancel it."""
+        task = asyncio.create_task(coro)
+        self._file_tasks.add(task)
+        task.add_done_callback(self._file_tasks.discard)
+        if transfer is not None and (transfer.task is None or transfer.task.done()):
+            transfer.task = task
+        return task
 
     # --- Transfer callbacks ---
 
@@ -503,7 +583,7 @@ class SoulseekClient:
         """Called when download completes or fails."""
         if transfer.state == TransferState.COMPLETED:
             await self.reputation.record_success(transfer.username)
-        else:
+        elif transfer.blame_peer:  # not when we gave up ourselves (cancel, another source won)
             await self.reputation.record_failure(transfer.username)
         await self._sync_job_progress(transfer)
         await self._broadcast_transfers()
@@ -562,6 +642,8 @@ class SoulseekClient:
         self.server.destroy()
         self.listener.destroy()
         self.transfers.destroy()
+        for task in list(self._file_tasks):
+            task.cancel()
         for peer in list(self.peers.values()):
             peer.destroy()
         self.peers.clear()

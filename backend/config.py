@@ -44,7 +44,10 @@ class RedisConfig(BaseModel):
 class SoulseekConfig(BaseModel):
     slskd_url: str = ""
     slskd_api_key: str = ""
-    download_dir: str = "/downloads"
+    download_dir: str = "/downloads"  # legacy; no longer written to (see staging_dir)
+    # Local per-job staging for native transfers: <staging_dir>/<job_id>/...
+    # Finished files are moved into the library from here; only this dir is ever cleaned.
+    staging_dir: str = "/opt/zonik/cache/staging"
     preferred_formats: list[str] = ["flac", "wav", "mp3"]
     min_file_size_mb: int = 3
     max_workers: int = 4
@@ -55,7 +58,12 @@ class SoulseekConfig(BaseModel):
     server_host: str = "server.slsknet.org"
     server_port: int = 2242
     use_native: bool = False
-    max_concurrent_downloads: int = 4  # Max simultaneous download jobs (others queue)
+    max_concurrent_downloads: int = 4  # Max simultaneous transfer attempts (others queue)
+    max_concurrent_searches: int = 3  # Max download jobs in their search phase at once (others show "pending")
+    # Ceiling for one transfer: the poller gives up after this long, and the client's
+    # cleanup drops a TRANSFERRING entry with no data for this long. A transfer that
+    # stops sending for 60 s still fails as stalled; a slow but steady one may finish.
+    transfer_max_minutes: int = 30
     # Multi-source download settings
     parallel_sources: int = 1  # How many peers to download from simultaneously (1 = sequential)
     source_strategy: str = "first"  # "first" = keep first completed, "best" = wait for all and keep best quality

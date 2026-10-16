@@ -10,25 +10,88 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-# Module-level download queue — limits concurrent download jobs
-_download_semaphore: asyncio.Semaphore | None = None
+# Two module-level queues. A job takes a *search* slot when it starts (that is
+# what "pending" vs "running" means for a job row) and gives it back once it has
+# its candidates; each transfer attempt then takes a *transfer* slot. Searches are
+# cheap and short, transfers long, so one stubborn track no longer holds a slot
+# for 20 minutes while other jobs can't even search.
+_search_semaphore: asyncio.Semaphore | None = None
+_transfer_semaphore: asyncio.Semaphore | None = None
+
+# Download jobs the user cancelled (filled by the job-cancel route in
+# backend/api/jobs.py). Checked in memory on every poll instead of reading the
+# job row from SQLite every 2 seconds.
+cancelled_jobs: set[str] = set()
+
+# Download jobs owned by a task in this process, from the moment their row is
+# written (so a job still waiting for a slot counts) until that task ends. The
+# cancel route only adds ids found here, so a stale row from before a restart
+# can't leave an id in cancelled_jobs that nothing will ever remove.
+live_download_jobs: set[str] = set()
+
+
+def _job_done(job_id: str) -> None:
+    """Forget a download job's in-memory flags once its task has finished."""
+    live_download_jobs.discard(job_id)
+    cancelled_jobs.discard(job_id)
+
+# How long a job waits for a peer that another job is downloading from before it
+# moves on to its next candidate (the busy one is retried once at the end).
+PEER_BUSY_WAIT = 60
+
+
+def _get_search_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the job/search queue (soulseek.max_concurrent_searches)."""
+    global _search_semaphore
+    if _search_semaphore is None:
+        from backend.config import get_settings
+        limit = max(1, get_settings().soulseek.max_concurrent_searches)
+        _search_semaphore = asyncio.Semaphore(limit)
+        log.info(f"[download] Search queue initialized: max {limit} concurrent searches")
+    return _search_semaphore
+
+
+def _get_transfer_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the transfer queue (soulseek.max_concurrent_downloads)."""
+    global _transfer_semaphore
+    if _transfer_semaphore is None:
+        from backend.config import get_settings
+        limit = max(1, get_settings().soulseek.max_concurrent_downloads)
+        _transfer_semaphore = asyncio.Semaphore(limit)
+        log.info(f"[download] Transfer queue initialized: max {limit} concurrent transfers")
+    return _transfer_semaphore
 
 
 def _get_semaphore() -> asyncio.Semaphore:
-    """Lazy-init semaphore with configured max_concurrent_downloads."""
-    global _download_semaphore
-    if _download_semaphore is None:
-        from backend.config import get_settings
-        limit = get_settings().soulseek.max_concurrent_downloads
-        _download_semaphore = asyncio.Semaphore(limit)
-        log.info(f"[download] Queue initialized: max {limit} concurrent downloads")
-    return _download_semaphore
+    """The queue a new download job waits in (its search phase)."""
+    return _get_search_semaphore()
 
 
 def reset_download_semaphore():
-    """Reset semaphore after config change. New limit takes effect for next downloads."""
-    global _download_semaphore
-    _download_semaphore = None
+    """Reset both queues after a config change. New limits take effect for the
+    next jobs; slots already held are returned to the semaphore they came from."""
+    global _search_semaphore, _transfer_semaphore
+    _search_semaphore = None
+    _transfer_semaphore = None
+
+
+class _SearchSlot:
+    """A search-queue slot a job holds from admission until it has its candidates.
+    release() is idempotent, so the job can hand it back early and the wrapper's
+    finally can still call it safely."""
+
+    def __init__(self, sem: asyncio.Semaphore):
+        self._sem = sem
+        self._held = False
+
+    async def acquire(self) -> None:
+        await self._sem.acquire()
+        self._held = True
+
+    def release(self) -> None:
+        if self._held:
+            self._held = False
+            self._sem.release()
 
 
 from fastapi import APIRouter, Depends, BackgroundTasks
@@ -115,6 +178,7 @@ class DownloadRequest(BaseModel):
     source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
     target_track_id: str | None = None  # the existing track this download should upgrade/replace
     exclude_users: list[str] = []  # peers to skip — "try another source" after these failed
+    expected_duration: int | None = None  # seconds; rejects candidates of a different length
 
 
 class BulkDownloadRequest(BaseModel):
@@ -317,26 +381,35 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         job_sess.add(job)
         await job_sess.commit()
         job_sess.expunge(job)
+    live_download_jobs.add(job_id)
     await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
 
     async def do_download():
-        # Wait for semaphore — no DB session held
-        async with sem:
+        # Wait for a search slot — no DB session held
+        slot = _SearchSlot(sem)
+        try:
+            await slot.acquire()
             if job.status == "pending":
                 job.status = "running"
                 await _save_job_obj(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-            await _do_download_inner(None, job, job_id, desc, req)
+            await _do_download_inner(None, job, job_id, desc, req, search_slot=slot)
+        finally:
+            slot.release()
+            _job_done(job_id)
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
 
 
-async def _do_download_inner(db_ignored, job, job_id, desc, req):
-    """Core download logic — runs inside the download semaphore.
+async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_SearchSlot | None" = None):
+    """Core download logic. Entered holding a search slot (search_slot), which it
+    releases once it has its candidates; each transfer attempt then takes a
+    transfer slot and the peer's one-at-a-time lock.
     Uses short-lived DB sessions to avoid holding connections during transfers."""
     import asyncio
     from backend.soulseek import get_client
+    from backend.soulseek.client import PeerBusy
     from backend.soulseek.protocol.types import TransferState
     from backend.services.scanner import import_downloaded_file
 
@@ -353,12 +426,18 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         except Exception:
             return 0
 
+    # Importer reasons that mean the peer sent a broken file (its fault), as
+    # opposed to a deliberate rejection — wrong song, not an upgrade — which is
+    # our search's fault and must not count against the peer.
+    _PEER_FAULT_REASONS = ("the peer sent an empty file", "isn't readable audio")
+
     async def _import_or_fail(path):
-        """Import a finished transfer. Returns (track_id, file_size, error).
+        """Import a finished transfer. Returns (track_id, file_size, error, peer_fault).
 
         A peer can report a transfer COMPLETED while delivering an empty or
         truncated file. The importer rejects those and returns no track, so
         treat a missing track_id as a failed download — never a success.
+        peer_fault is True only when the rejection was the file's fault.
         """
         fsize = _file_size(path)
         reasons: list[str] = []
@@ -374,40 +453,46 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             # a success: hand back the track they already have. (This used to
             # fail the job and count against a peer that sent a good file.)
             outcome["already_in_library"] = True
-            return existing_ids[0], fsize, None
+            return existing_ids[0], fsize, None, False
         if not track_id:
             # The importer says why; most rejections are deliberate (duplicate, not an
             # upgrade, wrong song), not broken files as this message used to claim.
             why = reasons[-1] if reasons else "the file couldn't be imported"
-            return None, fsize, f"Not imported: {why}"
-        return track_id, fsize, None
+            peer_fault = any(r in why for r in _PEER_FAULT_REASONS)
+            return None, fsize, f"Not imported: {why}", peer_fault
+        return track_id, fsize, None, False
 
-    async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
-        """Poll transfer until terminal state. Returns (status, save_path, error)."""
+    async def poll_transfer(client, transfer, queue_timeout=120, stall_timeout=60, check_cancel=True):
+        """Poll a Transfer (the object client.download returned) until it settles.
+        Returns (status, save_path, error). Every give-up goes through
+        TransferManager.abort(), which also stops the socket task and deletes the partial.
+
+        Gives up when the peer doesn't start within queue_timeout, when data stops
+        for stall_timeout, or at the soulseek.transfer_max_minutes ceiling — a slow
+        transfer that keeps making progress is otherwise allowed to finish."""
         import time
         last_bytes = 0
         stall_start = None
         queue_start = time.monotonic()
-        for _ in range(timeout_polls):
+        from backend.config import get_settings as _cfg
+        max_seconds = max(1, _cfg().soulseek.transfer_max_minutes) * 60
+        while time.monotonic() - queue_start < max_seconds:
             await asyncio.sleep(2)
-            if check_cancel:
-                async with async_session() as cancel_sess:
-                    fresh = (await cancel_sess.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none()
-                    if fresh and fresh.status == "failed":
-                        return "cancelled", None, "Cancelled by user"
-            transfer = client.transfers.get_transfer(username, filename)
-            if not transfer:
-                return "failed", None, "Transfer removed"
+            if check_cancel and job_id in cancelled_jobs:
+                client.transfers.abort(transfer, "Cancelled by user", blame_peer=False)
+                return "cancelled", None, "Cancelled by user"
             if transfer.state == TransferState.COMPLETED:
                 return "completed", transfer.save_path, None
             elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
                 return "failed", None, transfer.error or transfer.state
+            if not client.transfers.is_tracked(transfer):
+                client.transfers.abort(transfer, "Transfer removed")
+                return "failed", None, "Transfer removed"
 
             # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
             if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
                 if time.monotonic() - queue_start > queue_timeout:
-                    client.transfers.update_state(transfer, TransferState.FAILED, error="Peer did not respond")
-                    client.transfers.remove_transfer(username, filename)
+                    client.transfers.abort(transfer, "Peer did not respond")
                     return "failed", None, "Peer did not respond in time"
                 continue  # Don't check stall yet
 
@@ -419,12 +504,17 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 if stall_start is None:
                     stall_start = time.monotonic()
                 elif time.monotonic() - stall_start > stall_timeout:
-                    client.transfers.update_state(transfer, TransferState.FAILED, error="Stalled (no data)")
-                    client.transfers.remove_transfer(username, filename)
+                    client.transfers.abort(transfer, "Stalled (no data)")
                     return "failed", None, "Transfer stalled — no data received"
-        return "timeout", None, "Transfer monitoring timed out"
+        minutes = max_seconds // 60
+        client.transfers.abort(transfer, f"Took longer than {minutes} min")
+        return "timeout", None, f"Transfer took longer than {minutes} minutes"
 
     try:
+        if job_id in cancelled_jobs:  # cancelled while it waited for a slot
+            job.status = "failed"
+            job.result = json.dumps({"error": "Cancelled by user"})
+            return
         native_client = get_client()
         from backend.config import get_settings as _get_settings
         dl_settings = _get_settings()
@@ -434,8 +524,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         # If the native client exists but the server connection just dropped
         # (auto-reconnect in flight), wait briefly for it to come back rather
         # than instantly failing or falling through to a slskd path that may
-        # not be configured. Up to ~30s — short relative to the per-job
-        # download timeout (150 polls × 2s = 300s) but enough to ride through
+        # not be configured. Up to ~30s — short relative to the per-transfer
+        # ceiling (soulseek.transfer_max_minutes) but enough to ride through
         # most reconnect blips.
         if native_client and not native_client.logged_in:
             log.info(f"[download] Native client not logged in — waiting up to 30s for reconnect")
@@ -453,20 +543,28 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         # this the best available MP3 was downloaded and then thrown away as "not
         # higher quality" (266 upgrades failed that way).
         better_than = None
+        # Candidates whose reported length differs from the track's by more than a
+        # few seconds are a different song (74 upgrades a week were fetched and then
+        # discarded as "not the track being upgraded").
+        target_duration = req.expected_duration
         if req.target_track_id:
             async with async_session() as q_sess:
                 cur = (await q_sess.execute(
-                    select(Track.format, Track.file_size).where(Track.id == req.target_track_id)
+                    select(Track.format, Track.file_size, Track.duration_seconds)
+                    .where(Track.id == req.target_track_id)
                 )).first()
             if cur:
                 better_than = (cur[0] or "", cur[1] or 0)
+                if cur[2]:
+                    target_duration = int(round(cur[2]))
 
         if req.username and req.filename and native_ready:
             # Direct download — try requested source first, then fall back to search
             candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
             try:
                 from backend.soulseek.search import search_multi_strategy_native
-                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than)
+                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
+                                                               target_duration=target_duration)
                 # Add fallbacks excluding the already-requested source
                 for fb in fallbacks:
                     if fb["username"] != req.username:
@@ -477,7 +575,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         elif native_ready:
             # Auto-download — get candidates from search
             from backend.soulseek.search import search_multi_strategy_native
-            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than)
+            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
+                                                            target_duration=target_duration)
         elif native_client:
             # Native client exists but never reconnected — fail fast with a
             # clear, recognizable error instead of falling through to slskd.
@@ -497,6 +596,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         if req.exclude_users and candidates:
             skip = {u.lower() for u in req.exclude_users}
             candidates = [c for c in candidates if c["username"].lower() not in skip]
+
+        # Search phase over: let the next job search while this one transfers.
+        if search_slot is not None:
+            search_slot.release()
+        transfer_sem = _get_transfer_semaphore()
 
         if native_ready and not candidates and job.status != "failed":
             job.status = "failed"
@@ -524,20 +628,33 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 """Attempt download from one source. Returns (candidate, status, save_path, error)."""
                 dl_username = candidate["username"]
                 dl_filename = candidate["filename"]
+                transfer = None
                 try:
-                    await native_client.download(dl_username, dl_filename, job_id=job_id)
-                    log.info(f"[download] Multi-source queued: {dl_username}")
-                except Exception as e:
-                    await native_client.reputation.record_failure(dl_username)
-                    return candidate, "failed", None, str(e)
-                # check_cancel=False: parallel sources share the outer db session
-                status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename, check_cancel=False)
+                    # One file at a time per peer (waiting only briefly if another
+                    # job holds it), then a transfer slot.
+                    async with native_client.peer_slot(dl_username, timeout=PEER_BUSY_WAIT), transfer_sem:
+                        if job_id in cancelled_jobs:
+                            return candidate, "cancelled", None, "Cancelled by user"
+                        try:
+                            transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
+                            log.info(f"[download] Multi-source queued: {dl_username}")
+                        except Exception as e:
+                            # Peer unreachable — no Transfer exists, so this is the one record.
+                            await native_client.reputation.record_failure(dl_username)
+                            return candidate, "failed", None, str(e)
+                        status, save_path, error = await poll_transfer(native_client, transfer)
+                except PeerBusy:
+                    return candidate, "failed", None, "Peer busy with another download"
+                except asyncio.CancelledError:
+                    # "first" strategy: another source won — stop this one for real
+                    if transfer is not None:
+                        native_client.transfers.abort(transfer, "Another source finished first", blame_peer=False)
+                    raise
+                # The transfer's own success/failure is recorded once by the
+                # client's on_complete — not again here.
                 if status == "completed":
-                    await native_client.reputation.record_success(dl_username)
                     return candidate, "completed", save_path, None
-                else:
-                    await native_client.reputation.record_failure(dl_username)
-                    return candidate, status, None, error
+                return candidate, status, None, error
 
             if source_strategy == "first":
                 # Race — keep first completed, cancel the rest
@@ -573,10 +690,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 if winner:
                     cand, save_path = winner
                     short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-                    track_id, fsize, import_err = await _import_or_fail(save_path)
+                    track_id, fsize, import_err, peer_fault = await _import_or_fail(save_path)
                     if import_err:
                         log.warning(f"[download] {cand['username']} / {short}: {import_err}")
-                        await native_client.reputation.record_failure(cand["username"])
+                        if peer_fault:
+                            await native_client.reputation.record_failure(cand["username"])
                         job.status = "failed"
                         job.result = json.dumps({"message": import_err, "username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first"})
                         job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": import_err}])
@@ -627,12 +745,13 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     # and then delivers 0 bytes sorts first — fall through to
                     # the next-best source instead of trusting the winner.
                     for cand, path in completed:
-                        track_id, fsize, import_err = await _import_or_fail(path)
+                        track_id, fsize, import_err, peer_fault = await _import_or_fail(path)
                         if not import_err:
                             best_cand, best_path = cand, path
                             break
                         log.warning(f"[download] {cand['username']}: {import_err}")
-                        await native_client.reputation.record_failure(cand["username"])
+                        if peer_fault:
+                            await native_client.reputation.record_failure(cand["username"])
                         source_errors.append({"user": cand["username"], "error": import_err})
 
                     # Delete everything we didn't import (the winner has
@@ -662,12 +781,24 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             # === Sequential download (parallel_sources == 1, original behavior) ===
             last_error = ""
             source_errors = []  # [(username, error), ...]
-            for i, candidate in enumerate(candidates):
+            # (candidate, already_deferred). A candidate whose peer is busy with
+            # another job's file is moved to the back once, so the job tries its
+            # other sources instead of queueing behind someone else's transfer.
+            work = [(c, False) for c in candidates]
+            attempt = 0
+            while work:
+                candidate, deferred = work.pop(0)
+                if job_id in cancelled_jobs:
+                    job.status = "failed"
+                    job.result = json.dumps({"error": "Cancelled by user"})
+                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                    break
                 dl_username = candidate["username"]
                 dl_filename = candidate["filename"]
                 short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
 
-                attempt_label = f"attempt {i+1}/{len(candidates)}"
+                attempt += 1
+                attempt_label = f"attempt {attempt}/{len(candidates)}"
                 job.tracks = json.dumps([{
                     "artist": req.artist, "track": req.track, "status": "downloading",
                     "username": dl_username, "filename": short_name,
@@ -675,38 +806,55 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 await _save_job()
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
 
+                # One file at a time per peer (so two jobs never have two files
+                # queued with the same uploader), then a transfer slot. Both are
+                # released before the import below. A busy peer is waited on only
+                # briefly — except on its retry when nothing else is left to try.
+                peer_wait = None if (deferred and not work) else PEER_BUSY_WAIT
                 try:
-                    await native_client.download(dl_username, dl_filename, job_id=job_id)
-                    log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
-                except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
-                    # Transient network errors — don't penalize reputation
-                    log.warning(f"[download] Transient connection error to {dl_username}: {e}")
-                    last_error = f"Connection timeout: {e}"
-                    source_errors.append({"user": dl_username, "error": last_error})
-                    continue
-                except Exception as e:
-                    log.warning(f"[download] Failed to connect to {dl_username}: {e}")
-                    last_error = f"Connection failed: {e}"
-                    source_errors.append({"user": dl_username, "error": last_error})
-                    await native_client.reputation.record_failure(dl_username)
-                    continue
+                    async with native_client.peer_slot(dl_username, timeout=peer_wait), transfer_sem:
+                        if job_id in cancelled_jobs:
+                            status, save_path, error = "cancelled", None, "Cancelled by user"
+                        else:
+                            try:
+                                transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
+                                log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
+                            except Exception as e:
+                                # Peer unreachable before any Transfer exists: the one place this
+                                # job records a failure for a source that never got to transfer.
+                                timeout_like = isinstance(e, (asyncio.TimeoutError, ConnectionRefusedError, OSError))
+                                log.warning(f"[download] Could not reach {dl_username}: {e}")
+                                last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
+                                source_errors.append({"user": dl_username, "error": last_error})
+                                await native_client.reputation.record_failure(dl_username)
+                                continue
 
-                status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                            status, save_path, error = await poll_transfer(native_client, transfer)
+                except PeerBusy:
+                    attempt -= 1
+                    if not deferred:
+                        log.info(f"[download] {dl_username} is busy with another download — trying other sources first")
+                        work.append((candidate, True))
+                    else:
+                        last_error = "Peer busy with another download"
+                        source_errors.append({"user": dl_username, "error": last_error})
+                    continue
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
-                    track_id, fsize, import_err = await _import_or_fail(save_path)
+                    track_id, fsize, import_err, peer_fault = await _import_or_fail(save_path)
                     if import_err:
-                        # The transfer "succeeded" but produced nothing usable —
-                        # blame this peer and fall through to the next source.
+                        # The transfer "succeeded" but produced nothing usable. Blame
+                        # the peer only for a broken file — a wrong song or a file no
+                        # better than ours is our search's fault, not theirs.
                         log.warning(f"[download] {dl_username} / {short_name}: {import_err}")
-                        await native_client.reputation.record_failure(dl_username)
+                        if peer_fault:
+                            await native_client.reputation.record_failure(dl_username)
                         last_error = import_err
                         source_errors.append({"user": dl_username, "error": import_err})
                         continue
-                    await native_client.reputation.record_success(dl_username)
                     job.status = "completed"
-                    job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
+                    job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": attempt, "sources_tried": len(source_errors) + 1, "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
                     break
                 elif status == "cancelled":
@@ -715,7 +863,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
                     break
                 else:
-                    await native_client.reputation.record_failure(dl_username)
+                    # Already recorded once by the client's on_complete.
                     last_error = error or status
                     source_errors.append({"user": dl_username, "error": last_error})
 
@@ -737,6 +885,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         job.status = "failed"
         job.result = json.dumps({"error": str(e)})
     finally:
+        if job_id in cancelled_jobs and job.status != "completed":
+            job.status = "failed"
+            job.result = json.dumps({"error": "Cancelled by user"})
+        cancelled_jobs.discard(job_id)
         job.finished_at = datetime.utcnow()
         if outcome and job.status == "completed":
             try:
@@ -750,14 +902,17 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             "id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1,
             "description": desc, **job_outcome(final_status, job.result),
         })
-        # Clean up zero-byte and non-audio leftovers in download dir
+        # The file has been imported (moved into the library) or rejected by
+        # now — drop this job's staging folder and anything a loser left in it.
         try:
-            from backend.services.scanner import cleanup_download_dir
-            cleanup_download_dir()
+            _client = get_client()
+            if _client is not None:
+                _client.transfers.discard_job(job_id)
         except Exception as e:
-            log.debug(f"[download] Cleanup skipped: {e}")
+            log.debug(f"[download] Staging cleanup skipped for {job_id}: {e}")
 
-async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None) -> str:
+async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None,
+                                     expected_duration: int | None = None) -> str:
     """Delegate a download to the web process, which owns the native Soulseek
     client, and wait for it to finish. The arq worker has no native client of its
     own (it can only bind the listen port in one process), so any download it
@@ -778,7 +933,8 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 url, json={"artist": artist, "track": track, "job_id": job_id,
-                           "source": source, "target_track_id": target_track_id}
+                           "source": source, "target_track_id": target_track_id,
+                           "expected_duration": expected_duration}
             )
             if resp.status_code == 200:
                 return resp.json().get("job_id", job_id)
@@ -839,7 +995,8 @@ async def _already_have_lossless(artist: str, track: str) -> bool:
     return same_title and (existing.format or "").lower() in _LOSSLESS
 
 
-async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None) -> str | None:
+async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
+                           *, expected_duration: int | None = None) -> str | None:
     """Create an individual download job with semaphore queuing. Returns job_id, or
     None when an automatic download was skipped because the library already has it."""
     # Dedup: skip if same artist+track already pending/running
@@ -861,11 +1018,13 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     # If this process can't download natively, delegate to the web and wait for it.
     from backend.soulseek import get_client
     if get_client() is None:
-        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id)
+        return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
+                                               expected_duration=expected_duration)
 
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
-    dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id)
+    dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id,
+                             expected_duration=expected_duration)
     sem = _get_semaphore()
 
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
@@ -879,10 +1038,13 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
         )
         sess.add(job)
         await sess.commit()
-    await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+    live_download_jobs.add(job_id)
 
-    # Wait for semaphore slot — no DB session held during wait
-    async with sem:
+    # Wait for a search slot — no DB session held during wait
+    slot = _SearchSlot(sem)
+    try:
+        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+        await slot.acquire()
         async with async_session() as sess:
             job = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one()
             if job.status == "pending":
@@ -891,7 +1053,10 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
             sess.expunge(job)
         # job is now detached — _do_download_inner uses its own short-lived sessions
-        await _do_download_inner(None, job, job_id, desc, dl_req)
+        await _do_download_inner(None, job, job_id, desc, dl_req, search_slot=slot)
+    finally:
+        slot.release()
+        _job_done(job_id)
     return job_id
 
 
@@ -901,6 +1066,7 @@ class InternalDownloadRequest(BaseModel):
     job_id: str | None = None
     source: str | None = None
     target_track_id: str | None = None
+    expected_duration: int | None = None
 
 
 @router.post("/internal-run")
@@ -909,7 +1075,8 @@ async def internal_run_download(req: InternalDownloadRequest):
     native Soulseek client. Called by the arq worker (via _delegate_download_to_web)
     to perform downloads it cannot run itself. Localhost-only by deployment."""
     jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
-                                 target_track_id=req.target_track_id)
+                                 target_track_id=req.target_track_id,
+                                 expected_duration=req.expected_duration)
     return {"job_id": jid}
 
 
@@ -931,7 +1098,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
 
 async def _process_bulk_download_queue(queue: list[tuple[str, str]], source: str | None = None):
     """Process bulk downloads with bounded concurrency (matches download semaphore)."""
-    sem = asyncio.Semaphore(4)  # limit DB connections; actual download concurrency gated by _download_semaphore
+    sem = asyncio.Semaphore(4)  # limit DB connections; actual concurrency gated by the search/transfer queues
 
     async def _do(artist: str, track: str):
         async with sem:
@@ -952,15 +1119,13 @@ class CancelTransferRequest(BaseModel):
 async def cancel_transfer(req: CancelTransferRequest):
     """Cancel an active transfer in the native Soulseek client."""
     from backend.soulseek import get_client
-    from backend.soulseek.protocol.types import TransferState
     client = get_client()
     if not client:
         return {"error": "Native client not available"}
     transfer = client.transfers.get_transfer(req.username, req.filename)
     if not transfer:
         return {"error": "Transfer not found"}
-    client.transfers.update_state(transfer, TransferState.FAILED, error="Cancelled by user")
-    client.transfers.remove_transfer(req.username, req.filename)
+    client.transfers.abort(transfer, "Cancelled by user", blame_peer=False)
     from backend.api.websocket import broadcast_transfer_progress
     await broadcast_transfer_progress(client.transfers.get_all_transfers())
     return {"ok": True}

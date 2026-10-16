@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import shutil
 import struct
 import time
 from dataclasses import dataclass, field
@@ -16,10 +18,24 @@ from backend.soulseek.protocol.types import TransferState
 
 log = logging.getLogger(__name__)
 
-DOWNLOAD_TTL = 5 * 60  # 5 minutes
+# Backstop for a transfer nobody is polling: a TRANSFERRING entry with no
+# bytes for this long is given up. Overridden by soulseek.transfer_max_minutes.
+DEFAULT_MAX_TRANSFER_SECONDS = 30 * 60
+TERMINAL_KEEP_SECONDS = 60     # finished entries stay visible this long
+QUEUE_TIMEOUT_SECONDS = 180    # REQUESTED/QUEUED, from creation
+CONNECTED_TIMEOUT_SECONDS = 120  # CONNECTED with no file connection, from acceptance
+
+ACTIVE_STATES = (
+    TransferState.REQUESTED, TransferState.QUEUED,
+    TransferState.CONNECTED, TransferState.TRANSFERRING,
+)
+
+TERMINAL_STATES = (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED)
+
+_SAFE_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
-@dataclass
+@dataclass(eq=False)  # identity semantics: two transfers are never "equal"
 class Transfer:
     """Represents a single file download."""
     username: str
@@ -29,9 +45,26 @@ class Transfer:
     total_bytes: int = 0
     received_bytes: int = 0
     started_at: float = field(default_factory=time.time)
+    state_since: float = field(default_factory=time.time)  # when `state` last changed
+    last_progress_at: float = field(default_factory=time.time)  # last chunk received
+    ended_at: float | None = None  # when it reached a terminal state
     save_path: str | None = None
     error: str | None = None
     job_id: str | None = None  # links transfer back to the originating Job
+    # The running file-connection handler and its socket, so a give-up can stop it.
+    task: asyncio.Task | None = field(default=None, repr=False)
+    writer: asyncio.StreamWriter | None = field(default=None, repr=False)
+    # False when the failure is ours (user cancel, another source won), not the peer's.
+    blame_peer: bool = True
+    notified: bool = False  # on_complete has fired (it must fire exactly once)
+    # The task currently in the data phase (_receive) for this transfer. Set before
+    # the first await, so a second connection can never take over a live stream.
+    receiver: asyncio.Task | None = field(default=None, repr=False)
+
+    @property
+    def receiving(self) -> bool:
+        """True while some task is streaming this transfer's file."""
+        return self.receiver is not None and not self.receiver.done()
 
     @property
     def progress(self) -> float:
@@ -76,17 +109,25 @@ class Transfer:
 class TransferManager:
     """Manages active file transfers."""
 
+    read_timeout: float = 60  # seconds without data before a transfer counts as stalled
+
     def __init__(
         self,
-        download_dir: str = "/downloads",
+        staging_dir: str = "/opt/zonik/cache/staging",
+        max_transfer_seconds: int = DEFAULT_MAX_TRANSFER_SECONDS,
         on_progress: Callable[[Transfer], Awaitable[None]] | None = None,
         on_complete: Callable[[Transfer], Awaitable[None]] | None = None,
     ):
-        self.download_dir = download_dir
+        # Transfers are staged on local disk, one folder per job, and the
+        # importer moves the finished file into the library. Nothing is written
+        # to the NAS download dir any more.
+        self.staging_dir = staging_dir
+        self.max_transfer_seconds = max_transfer_seconds
         self.on_progress = on_progress
         self.on_complete = on_complete
         self.transfers: dict[str, Transfer] = {}  # keyed by "username:filename"
         self._cleanup_task: asyncio.Task | None = None
+        self._bg: set[asyncio.Task] = set()  # on_complete calls scheduled by abort()
 
     def start(self) -> None:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
@@ -146,13 +187,195 @@ class TransferManager:
         self.transfers[key] = transfer
         return transfer
 
+    def is_tracked(self, transfer: Transfer) -> bool:
+        """Is this exact Transfer object still in the table (not dropped or replaced)?"""
+        return self.transfers.get(self._normalize_key(transfer.username, transfer.filename)) is transfer
+
     def remove_transfer(self, username: str, filename: str) -> None:
         self.transfers.pop(self._normalize_key(username, filename), None)
 
+    def job_dir(self, job_id: str) -> Path | None:
+        """The staging folder for one job, or None if the id isn't a safe folder name."""
+        if not job_id or not _SAFE_NAME.fullmatch(job_id):
+            return None
+        return Path(self.staging_dir) / job_id
+
+    def save_path_for(self, transfer: Transfer) -> Path:
+        """<staging_dir>/<job_id>/<token hex>/<basename> (or <token hex>/<basename>
+        without a job). The token level keeps two sources of one job that share a
+        basename — scene releases usually do — from writing into the same file."""
+        basename = transfer.filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if basename in ("", ".", ".."):
+            basename = "download"
+        tok = transfer.token.hex() if transfer.token else f"t{id(transfer):x}"
+        base = self.job_dir(transfer.job_id) if transfer.job_id else None
+        if base is None:
+            base = Path(self.staging_dir)
+        return base / tok / basename
+
+    def discard_job(self, job_id: str) -> None:
+        """Remove a finished job's staging folder (after it imported or rejected its file).
+        Any transfer of that job still in flight is an orphan by now — abort it first."""
+        for t in list(self.transfers.values()):
+            if t.job_id == job_id and t.state in ACTIVE_STATES:
+                self.abort(t, "Job finished", blame_peer=False)
+        folder = self.job_dir(job_id)
+        if folder is None or not folder.exists():
+            return
+        try:
+            shutil.rmtree(folder)
+        except OSError as e:
+            log.warning(f"[transfer] Could not remove staging folder {folder}: {e}")
+
     def update_state(self, transfer: Transfer, state: str, **kwargs) -> None:
+        if state != transfer.state:
+            transfer.state_since = time.time()
+            if state in TERMINAL_STATES:
+                transfer.ended_at = transfer.state_since
         transfer.state = state
         for k, v in kwargs.items():
             setattr(transfer, k, v)
+
+    # --- Giving up, and firing on_complete exactly once ---
+
+    def abort(self, transfer: Transfer, error: str, *, blame_peer: bool = True) -> bool:
+        """Give up on a transfer: mark it FAILED, cancel its handler task, close its
+        socket, delete the partial file, drop it from the table and fire on_complete
+        (once). blame_peer=False when the give-up is ours (user cancel, another
+        source won) so the peer's reputation isn't charged for it.
+
+        A COMPLETED transfer is left alone (its file is about to be imported);
+        returns False in that case, True otherwise."""
+        if transfer.state == TransferState.COMPLETED:
+            return False
+        if not blame_peer:
+            transfer.blame_peer = False
+        if transfer.state not in TERMINAL_STATES:
+            self.update_state(transfer, TransferState.FAILED, error=error)
+        task = transfer.task
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if task is not None and not task.done() and task is not current:
+            task.cancel()
+        self._close_writer(transfer)
+        self._remove_partial(transfer)
+        self._forget(transfer)
+        self._schedule_notify(transfer)
+        log.info(f"[transfer] Aborted {transfer.username} / {transfer.filename}: {error}")
+        return True
+
+    def _forget(self, transfer: Transfer) -> None:
+        key = self._normalize_key(transfer.username, transfer.filename)
+        if self.transfers.get(key) is transfer:
+            del self.transfers[key]
+
+    @staticmethod
+    def _close_writer(transfer: Transfer) -> None:
+        writer, transfer.writer = transfer.writer, None
+        _close_quietly(writer)
+
+    @staticmethod
+    def _remove_partial(transfer: Transfer) -> None:
+        if transfer.save_path and transfer.state != TransferState.COMPLETED:
+            try:
+                Path(transfer.save_path).unlink(missing_ok=True)
+            except OSError as e:
+                log.debug(f"[transfer] Could not remove partial {transfer.save_path}: {e}")
+
+    async def _notify(self, transfer: Transfer) -> None:
+        if transfer.notified:
+            return
+        transfer.notified = True
+        await self._fire_complete(transfer)
+
+    async def _fire_complete(self, transfer: Transfer) -> None:
+        if self.on_complete:
+            try:
+                await self.on_complete(transfer)
+            except Exception as e:
+                log.debug(f"[transfer] on_complete failed for {transfer.filename}: {e}")
+
+    def _schedule_notify(self, transfer: Transfer) -> None:
+        """Fire on_complete from sync code (abort) without awaiting it here."""
+        if transfer.notified:
+            return
+        transfer.notified = True  # set now so a racing handler doesn't fire it too
+        if not self.on_complete:
+            return
+        task = asyncio.create_task(self._fire_complete(transfer))
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    # --- File connections ---
+
+    async def _read_transfer_init(
+        self, transfer: Transfer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+        *, fail_transfer: bool = True,
+    ) -> bytes | None:
+        """Read the uploader's FileTransferInit (the 4-byte transfer token).
+        On failure the connection is closed and None returned; the transfer is
+        failed too, but only when we're sure the connection was for it
+        (fail_transfer — a username-only pick may be the wrong transfer)."""
+        try:
+            peer_token = await asyncio.wait_for(reader.readexactly(4), timeout=60)
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
+            log.warning(f"[transfer] No FileTransferInit from {transfer.username}: {e}")
+            _close_quietly(writer)
+            if fail_transfer:
+                await self._fail_unless_owned(transfer, f"No response: {e}")
+            return None
+        log.info(f"[transfer] FileTransferInit from {transfer.username}: {peer_token.hex()}")
+        return peer_token
+
+    async def _fail_unless_owned(self, transfer: Transfer, error: str) -> None:
+        if transfer.state not in TERMINAL_STATES and not _owned_elsewhere(transfer):
+            self.update_state(transfer, TransferState.FAILED, error=error)
+            await self._notify(transfer)
+
+    def _resolve_by_token(self, provisional: Transfer, peer_token: bytes, username: str) -> Transfer | None:
+        """Re-resolve a file connection from the uploader's FileTransferInit token.
+
+        The connection was attached to a provisional Transfer before the token
+        arrived — for server-relayed connections only by username, since the
+        relay token is not the transfer token. With several files queued to one
+        peer that pick can be wrong, so look the real one up by token and switch.
+
+        `username` is the user on the other end of this connection. The lookup is
+        scoped to that user: uploaders pick transfer tokens as small counters, so a
+        token-only hit on someone else's transfer is a collision, not a match."""
+        resolved = self.get_transfer_by_token(username, peer_token)
+        if resolved is provisional:
+            return provisional
+        if resolved is None:
+            if provisional.token is not None and provisional.token != peer_token:
+                # The provisional transfer was accepted under a different token, and
+                # nothing we still track has this one (e.g. a transfer we aborted).
+                # Writing it under the provisional's name would store the wrong file.
+                log.warning(
+                    f"[transfer] Token {peer_token.hex()} from {provisional.username} matches no "
+                    f"transfer (provisional {provisional.filename} has {provisional.token.hex()}); closing"
+                )
+                self._release_task(provisional)
+                return None
+            return provisional  # no token on either side to contradict the username pick
+        log.info(
+            f"[transfer] Token {peer_token.hex()} names {resolved.filename}, "
+            f"not the provisional {provisional.filename} — switching"
+        )
+        self._release_task(provisional)
+        return resolved
+
+    @staticmethod
+    def _release_task(transfer: Transfer) -> None:
+        """This connection turned out not to be `transfer`'s — stop claiming it."""
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if current is not None and transfer.task is current:
+            transfer.task = None
 
     async def handle_file_transfer_connection(
         self,
@@ -160,97 +383,47 @@ class TransferManager:
         token: bytes,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
+        username_known: bool = True,
     ) -> None:
-        """Handle an inbound file transfer connection.
+        """Handle an inbound file transfer connection (PeerInit F or PierceFirewall).
 
-        Protocol (we are the downloader):
-        1. Connection established (pierce_firewall already parsed)
-        2. We SEND transfer_token (4 bytes) — tells peer which file
-        3. We SEND file_offset (8 bytes) — resume position
-        4. Peer sends file data
+        Protocol (we are the downloader): the uploader sends FileTransferInit
+        (the 4-byte transfer token), we send FileOffset (8 bytes), data follows.
+
+        username_known=False is the PierceFirewall case: the connection carries
+        only a token, and `username` is whoever owns the transfer that token
+        matched — the one place a token-only lookup is used.
         """
-        # Find the transfer — try token, then username
-        transfer = self.get_transfer_by_token(username, token)
-        if not transfer:
+        # Provisional pick, re-resolved once FileTransferInit names the real transfer.
+        # With a known username every lookup is scoped to that user.
+        by_token = True
+        if username_known:
+            transfer = self.get_transfer_by_token(username, token)
+        else:
             transfer = self.find_transfer_by_token(token)
-        if not transfer:
+            if transfer is not None:
+                username = transfer.username
+        if not transfer and username_known:
+            by_token = False
             transfer = self.find_active_transfer_for_user(username)
         if not transfer:
             log.warning(f"[transfer] No transfer found for {username} (token {token.hex()})")
-            writer.close()
+            _close_quietly(writer)
             return
 
         log.info(f"[transfer] Inbound file transfer from {username}: {transfer.filename}")
-        self.update_state(transfer, TransferState.TRANSFERRING)
-
-        # Protocol: uploader sends FileTransferInit (4-byte token), then we send FileOffset (8 bytes)
-        # Read the transfer token from the uploader first
         try:
-            peer_token = await asyncio.wait_for(reader.readexactly(4), timeout=60)
-            log.info(f"[transfer] FileTransferInit from {username}: {peer_token.hex()}")
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
-            log.warning(f"[transfer] No FileTransferInit from {username}: {e}")
-            self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
-            writer.close()
+            peer_token = await self._read_transfer_init(transfer, reader, writer, fail_transfer=by_token)
+        except asyncio.CancelledError:
+            _close_quietly(writer)
+            raise
+        if peer_token is None:
             return
-
-        # Send file offset (8 bytes) — tells uploader where to start
-        writer.write(struct.pack("<Q", transfer.received_bytes))
-        await writer.drain()
-
-        # Determine save path
-        short_name = transfer.filename.rsplit("\\", 1)[-1]
-        save_path = Path(self.download_dir) / short_name
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        transfer.save_path = str(save_path)
-
-        try:
-            async with aiofiles.open(save_path, "wb") as f:
-                while True:
-                    try:
-                        chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
-                    except asyncio.TimeoutError:
-                        if transfer.received_bytes > 0 and (
-                            transfer.total_bytes == 0 or
-                            transfer.received_bytes >= transfer.total_bytes * 0.95
-                        ):
-                            break
-                        raise ConnectionError("Peer stopped sending data (60s timeout)")
-                    if not chunk:
-                        break
-
-                    transfer.received_bytes += len(chunk)
-                    await f.write(chunk)
-
-                    if self.on_progress:
-                        await self.on_progress(transfer)
-
-                    if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
-                        break
-
-            if transfer.received_bytes > 0 and (
-                transfer.total_bytes == 0 or
-                transfer.received_bytes >= transfer.total_bytes * 0.99
-            ):
-                self.update_state(transfer, TransferState.COMPLETED)
-                log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
-            elif transfer.received_bytes > 0:
-                self.update_state(transfer, TransferState.FAILED,
-                                  error=f"Incomplete: {transfer.received_bytes}/{transfer.total_bytes}")
-                log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
-            else:
-                self.update_state(transfer, TransferState.FAILED, error="No data received")
-                log.warning(f"[transfer] No data received for {short_name}")
-        except Exception as e:
-            self.update_state(transfer, TransferState.FAILED, error=str(e))
-            log.error(f"[transfer] Error downloading {short_name}: {e}")
-        finally:
-            try:
-                writer.close()
-            except Exception:
-                pass
-            if self.on_complete:
-                await self.on_complete(transfer)
+        transfer = self._resolve_by_token(transfer, peer_token, username)
+        if transfer is None:
+            _close_quietly(writer)
+            return
+        await self._receive(transfer, reader, writer)
 
     async def handle_outbound_file_transfer(
         self,
@@ -258,92 +431,164 @@ class TransferManager:
         host: str,
         port: int,
         token: bytes,
+        matched_by_token: bool = True,
     ) -> None:
-        """Connect to peer for file transfer (outbound, server-mediated)."""
+        """Connect to peer for file transfer (outbound, server-mediated).
+
+        `token` is the server's relay token (for PierceFirewall). `transfer` is
+        a provisional pick; matched_by_token=False means it was chosen by
+        username only, so a failure before FileTransferInit doesn't fail it."""
         log.info(f"[transfer] Outbound file transfer to {transfer.username} at {host}:{port}")
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port), timeout=10
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             log.warning(f"[transfer] Outbound connect failed to {transfer.username}: {e}")
-            self.update_state(transfer, TransferState.FAILED, error=f"Connect failed: {e}")
+            if matched_by_token:
+                await self._fail_unless_owned(transfer, f"Connect failed: {e}")
             return
 
-        # Send pierce firewall with the RELAY token (so peer can match the connection)
-        pf_msg = build_pierce_firewall_raw(token)
-        writer.write(pf_msg)
-        await writer.drain()
-
-        # Protocol: uploader sends FileTransferInit (4-byte token), then we send FileOffset (8 bytes)
-        # Read the transfer token from the uploader first
         try:
-            peer_token = await asyncio.wait_for(reader.readexactly(4), timeout=60)
-            log.info(f"[transfer] FileTransferInit from {transfer.username}: {peer_token.hex()}")
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
-            log.warning(f"[transfer] No FileTransferInit from {transfer.username}: {e}")
-            self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
-            writer.close()
+            # Send pierce firewall with the RELAY token (so peer can match the connection)
+            writer.write(build_pierce_firewall_raw(token))
+            await writer.drain()
+            peer_token = await self._read_transfer_init(
+                transfer, reader, writer, fail_transfer=matched_by_token,
+            )
+        except asyncio.CancelledError:
+            _close_quietly(writer)
+            raise
+        except (ConnectionError, OSError) as e:
+            log.warning(f"[transfer] Outbound handshake failed with {transfer.username}: {e}")
+            _close_quietly(writer)
+            if matched_by_token:
+                await self._fail_unless_owned(transfer, f"Handshake failed: {e}")
+            return
+        if peer_token is None:
+            return
+        transfer = self._resolve_by_token(transfer, peer_token, transfer.username)
+        if transfer is None:
+            _close_quietly(writer)
+            return
+        await self._receive(transfer, reader, writer)
+
+    async def _receive(
+        self,
+        transfer: Transfer,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ) -> None:
+        """The data phase of a file connection, shared by inbound and outbound:
+        claim the transfer, send the offset, stream into the staging file and
+        settle the final state. Always closes the socket and fires on_complete
+        exactly once; being cancelled counts as an abort."""
+        if transfer.state in TERMINAL_STATES:
+            log.info(f"[transfer] {transfer.filename} is already {transfer.state}; closing connection")
+            _close_quietly(writer)
+            return
+        current = asyncio.current_task()
+        if transfer.receiving and transfer.receiver is not current:
+            # Another connection is streaming this file (its state may even read
+            # CONNECTED again if the uploader re-sent a TransferRequest). Never
+            # let a second connection write into the same file.
+            log.warning(
+                f"[transfer] {transfer.filename} is already being received on another "
+                f"connection from {transfer.username}; closing this one"
+            )
+            _close_quietly(writer)
             return
 
-        # Send file offset (8 bytes) — tells uploader where to start
-        offset_bytes = struct.pack("<Q", transfer.received_bytes)
-        writer.write(offset_bytes)
-        await writer.drain()
-
-        self.update_state(transfer, TransferState.TRANSFERRING)
-        log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
-
-        # Determine save path
-        short_name = transfer.filename.rsplit("\\", 1)[-1]
-        save_path = Path(self.download_dir) / short_name
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        transfer.save_path = str(save_path)
-
+        # Claim before the first await so there is no window for a second connection.
+        transfer.receiver = current
+        transfer.task = current
+        transfer.writer = writer
+        short_name = transfer.filename
         try:
+            # No resume: always start a fresh file from offset 0.
+            transfer.received_bytes = 0
+            writer.write(struct.pack("<Q", 0))
+            await writer.drain()
+
+            save_path = self.save_path_for(transfer)
+            short_name = save_path.name
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            transfer.save_path = str(save_path)
+            self.update_state(transfer, TransferState.TRANSFERRING)
+            transfer.last_progress_at = time.time()
+            log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
+
+            stalled = False
             async with aiofiles.open(save_path, "wb") as f:
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(reader.read(65536), timeout=60)
+                        chunk = await asyncio.wait_for(reader.read(65536), timeout=self.read_timeout)
                     except asyncio.TimeoutError:
-                        if transfer.received_bytes > 0 and (
-                            transfer.total_bytes == 0 or
-                            transfer.received_bytes >= transfer.total_bytes * 0.95
-                        ):
-                            break
-                        raise ConnectionError("Peer stopped sending data (60s timeout)")
-                    if not chunk:
+                        stalled = True  # a stall is never success, however close to the end
                         break
+                    if not chunk:
+                        break  # clean EOF
+                    if transfer.total_bytes > 0:
+                        # Ignore anything past the announced size; a few stray bytes
+                        # after a complete file don't make it incomplete.
+                        chunk = chunk[:transfer.total_bytes - transfer.received_bytes]
                     transfer.received_bytes += len(chunk)
+                    transfer.last_progress_at = time.time()
                     await f.write(chunk)
                     if self.on_progress:
                         await self.on_progress(transfer)
                     if transfer.total_bytes > 0 and transfer.received_bytes >= transfer.total_bytes:
                         break
 
-            if transfer.received_bytes > 0 and (
-                transfer.total_bytes == 0 or
-                transfer.received_bytes >= transfer.total_bytes * 0.99
-            ):
+            got, total = transfer.received_bytes, transfer.total_bytes
+            # Only an exact, complete file counts: a FLAC 1 % short still parses
+            # and would import as a "good" track with its ending cut off.
+            complete = (got == total) if total > 0 else (got > 0 and not stalled)
+            if transfer.state in TERMINAL_STATES:
+                pass  # aborted while we were finishing up
+            elif complete:
                 self.update_state(transfer, TransferState.COMPLETED)
-                log.info(f"[transfer] Completed: {short_name} ({transfer.received_bytes} bytes)")
-            elif transfer.received_bytes > 0:
-                self.update_state(transfer, TransferState.FAILED,
-                                  error=f"Incomplete: {transfer.received_bytes}/{transfer.total_bytes}")
-                log.warning(f"[transfer] Incomplete: {short_name} ({transfer.received_bytes}/{transfer.total_bytes})")
+                log.info(f"[transfer] Completed: {short_name} ({got} bytes)")
+            elif got > 0:
+                why = "stalled" if stalled else "connection closed"
+                self.update_state(transfer, TransferState.FAILED, error=f"Incomplete: {got}/{total}")
+                log.warning(f"[transfer] Incomplete ({why}): {short_name} ({got}/{total})")
             else:
                 self.update_state(transfer, TransferState.FAILED, error="No data received")
                 log.warning(f"[transfer] No data received for {short_name}")
+        except asyncio.CancelledError:
+            if transfer.state not in TERMINAL_STATES:
+                self.update_state(transfer, TransferState.FAILED, error="Cancelled")
+            log.info(f"[transfer] Cancelled: {short_name}")
+            raise
         except Exception as e:
-            self.update_state(transfer, TransferState.FAILED, error=str(e))
+            if transfer.state not in TERMINAL_STATES:
+                self.update_state(transfer, TransferState.FAILED, error=str(e))
             log.error(f"[transfer] Error downloading {short_name}: {e}")
         finally:
-            try:
-                writer.close()
-            except Exception:
-                pass
-            if self.on_complete:
-                await self.on_complete(transfer)
+            if transfer.writer is writer:
+                transfer.writer = None
+            if transfer.receiver is current:
+                transfer.receiver = None
+            _close_quietly(writer)
+            if transfer.state != TransferState.COMPLETED:
+                self._remove_partial(transfer)  # no resume: a partial is just litter
+            await self._notify(transfer)
+
+    def active_paths(self) -> list[str]:
+        """Paths owned by transfers that are still in flight — cleanup must not touch them."""
+        paths: list[str] = []
+        for t in self.transfers.values():
+            if t.state not in ACTIVE_STATES:
+                continue
+            if t.save_path:
+                paths.append(t.save_path)
+            folder = self.job_dir(t.job_id) if t.job_id else None
+            if folder is not None:
+                paths.append(str(folder))
+        return paths
 
     def get_all_transfers(self) -> list[dict]:
         return [t.to_dict() for t in self.transfers.values()]
@@ -360,34 +605,62 @@ class TransferManager:
         try:
             while True:
                 await asyncio.sleep(60)
-                now = time.time()
-                to_remove = []
-                for key, transfer in self.transfers.items():
-                    age = now - transfer.started_at
-                    if transfer.state in (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED):
-                        if age > 60:  # Keep terminal states for 1 minute
-                            to_remove.append(key)
-                    elif transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
-                        if age > 180:  # 3 min for queue timeout (waiting for peer response)
-                            log.warning(f"[transfer] Queue timeout: {transfer.filename} ({transfer.state})")
-                            transfer.state = TransferState.FAILED
-                            transfer.error = "Queue timeout"
-                            to_remove.append(key)
-                    elif transfer.state == TransferState.CONNECTED:
-                        if age > 120:  # 2 min connected but no data
-                            log.warning(f"[transfer] Connected timeout: {transfer.filename}")
-                            transfer.state = TransferState.FAILED
-                            transfer.error = "Connected but no data"
-                            to_remove.append(key)
-                    elif age > DOWNLOAD_TTL:
-                        log.warning(f"[transfer] Cleaning up stuck transfer: {transfer.filename}")
-                        to_remove.append(key)
-                for key in to_remove:
-                    del self.transfers[key]
+                self._sweep(time.time())
         except asyncio.CancelledError:
             return
+
+    def _sweep(self, now: float) -> None:
+        """One cleanup pass: expire terminal entries, abort stuck ones."""
+        to_remove: list[str] = []
+        to_abort: list[tuple[Transfer, str]] = []
+        for key, transfer in self.transfers.items():
+            if transfer.state in TERMINAL_STATES:
+                if now - (transfer.ended_at or transfer.started_at) > TERMINAL_KEEP_SECONDS:
+                    to_remove.append(key)
+            elif transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
+                if now - transfer.started_at > QUEUE_TIMEOUT_SECONDS:
+                    log.warning(f"[transfer] Queue timeout: {transfer.filename} ({transfer.state})")
+                    to_abort.append((transfer, "Queue timeout"))
+            elif transfer.state == TransferState.CONNECTED:
+                if now - transfer.state_since > CONNECTED_TIMEOUT_SECONDS:
+                    log.warning(f"[transfer] Connected timeout: {transfer.filename}")
+                    to_abort.append((transfer, "Connected but no data"))
+            elif transfer.state == TransferState.TRANSFERRING:
+                # Aged from the last chunk, not from creation: a slow transfer
+                # that keeps making progress is allowed to finish.
+                idle = now - transfer.last_progress_at
+                if idle > self.max_transfer_seconds:
+                    log.warning(f"[transfer] No data for {idle / 60:.0f} min: {transfer.filename}")
+                    to_abort.append((transfer, "No progress"))
+        for key in to_remove:
+            self.transfers.pop(key, None)
+        for transfer, error in to_abort:
+            self.abort(transfer, error)
 
     def destroy(self) -> None:
         if self._cleanup_task and not self._cleanup_task.done():
             self._cleanup_task.cancel()
+        for t in list(self.transfers.values()):
+            if t.task is not None and not t.task.done():
+                t.task.cancel()
         self.transfers.clear()
+
+
+def _owned_elsewhere(transfer: Transfer) -> bool:
+    """True when another, still-running task is handling this transfer's file connection."""
+    task = transfer.task
+    if task is None or task.done():
+        return False
+    try:
+        return task is not asyncio.current_task()
+    except RuntimeError:
+        return True
+
+
+def _close_quietly(writer: asyncio.StreamWriter | None) -> None:
+    if writer is None:
+        return
+    try:
+        writer.close()
+    except Exception:
+        pass
