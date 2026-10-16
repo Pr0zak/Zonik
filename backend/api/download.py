@@ -23,6 +23,10 @@ _transfer_semaphore: asyncio.Semaphore | None = None
 # job row from SQLite every 2 seconds; _do_download_inner discards its id when done.
 cancelled_jobs: set[str] = set()
 
+# How long a job waits for a peer that another job is downloading from before it
+# moves on to its next candidate (the busy one is retried once at the end).
+PEER_BUSY_WAIT = 60
+
 
 def _get_search_semaphore() -> asyncio.Semaphore:
     """Lazy-init the job/search queue (soulseek.max_concurrent_searches)."""
@@ -391,6 +395,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
     Uses short-lived DB sessions to avoid holding connections during transfers."""
     import asyncio
     from backend.soulseek import get_client
+    from backend.soulseek.client import PeerBusy
     from backend.soulseek.protocol.types import TransferState
     from backend.services.scanner import import_downloaded_file
 
@@ -611,8 +616,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 dl_filename = candidate["filename"]
                 transfer = None
                 try:
-                    # One file at a time per peer, then a transfer slot.
-                    async with native_client.peer_slot(dl_username), transfer_sem:
+                    # One file at a time per peer (waiting only briefly if another
+                    # job holds it), then a transfer slot.
+                    async with native_client.peer_slot(dl_username, timeout=PEER_BUSY_WAIT), transfer_sem:
+                        if job_id in cancelled_jobs:
+                            return candidate, "cancelled", None, "Cancelled by user"
                         try:
                             transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                             log.info(f"[download] Multi-source queued: {dl_username}")
@@ -621,6 +629,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                             await native_client.reputation.record_failure(dl_username)
                             return candidate, "failed", None, str(e)
                         status, save_path, error = await poll_transfer(native_client, transfer)
+                except PeerBusy:
+                    return candidate, "failed", None, "Peer busy with another download"
                 except asyncio.CancelledError:
                     # "first" strategy: another source won — stop this one for real
                     if transfer is not None:
@@ -757,7 +767,13 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             # === Sequential download (parallel_sources == 1, original behavior) ===
             last_error = ""
             source_errors = []  # [(username, error), ...]
-            for i, candidate in enumerate(candidates):
+            # (candidate, already_deferred). A candidate whose peer is busy with
+            # another job's file is moved to the back once, so the job tries its
+            # other sources instead of queueing behind someone else's transfer.
+            work = [(c, False) for c in candidates]
+            attempt = 0
+            while work:
+                candidate, deferred = work.pop(0)
                 if job_id in cancelled_jobs:
                     job.status = "failed"
                     job.result = json.dumps({"error": "Cancelled by user"})
@@ -767,7 +783,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 dl_filename = candidate["filename"]
                 short_name = dl_filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] if dl_filename else ""
 
-                attempt_label = f"attempt {i+1}/{len(candidates)}"
+                attempt += 1
+                attempt_label = f"attempt {attempt}/{len(candidates)}"
                 job.tracks = json.dumps([{
                     "artist": req.artist, "track": req.track, "status": "downloading",
                     "username": dl_username, "filename": short_name,
@@ -777,22 +794,37 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
 
                 # One file at a time per peer (so two jobs never have two files
                 # queued with the same uploader), then a transfer slot. Both are
-                # released before the import below.
-                async with native_client.peer_slot(dl_username), transfer_sem:
-                    try:
-                        transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
-                        log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
-                    except Exception as e:
-                        # Peer unreachable before any Transfer exists: the one place this
-                        # job records a failure for a source that never got to transfer.
-                        timeout_like = isinstance(e, (asyncio.TimeoutError, ConnectionRefusedError, OSError))
-                        log.warning(f"[download] Could not reach {dl_username}: {e}")
-                        last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
-                        source_errors.append({"user": dl_username, "error": last_error})
-                        await native_client.reputation.record_failure(dl_username)
-                        continue
+                # released before the import below. A busy peer is waited on only
+                # briefly — except on its retry when nothing else is left to try.
+                peer_wait = None if (deferred and not work) else PEER_BUSY_WAIT
+                try:
+                    async with native_client.peer_slot(dl_username, timeout=peer_wait), transfer_sem:
+                        if job_id in cancelled_jobs:
+                            status, save_path, error = "cancelled", None, "Cancelled by user"
+                        else:
+                            try:
+                                transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
+                                log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
+                            except Exception as e:
+                                # Peer unreachable before any Transfer exists: the one place this
+                                # job records a failure for a source that never got to transfer.
+                                timeout_like = isinstance(e, (asyncio.TimeoutError, ConnectionRefusedError, OSError))
+                                log.warning(f"[download] Could not reach {dl_username}: {e}")
+                                last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
+                                source_errors.append({"user": dl_username, "error": last_error})
+                                await native_client.reputation.record_failure(dl_username)
+                                continue
 
-                    status, save_path, error = await poll_transfer(native_client, transfer)
+                            status, save_path, error = await poll_transfer(native_client, transfer)
+                except PeerBusy:
+                    attempt -= 1
+                    if not deferred:
+                        log.info(f"[download] {dl_username} is busy with another download — trying other sources first")
+                        work.append((candidate, True))
+                    else:
+                        last_error = "Peer busy with another download"
+                        source_errors.append({"user": dl_username, "error": last_error})
+                    continue
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
@@ -808,7 +840,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                         source_errors.append({"user": dl_username, "error": import_err})
                         continue
                     job.status = "completed"
-                    job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": i + 1, "sources_tried": len(source_errors) + 1, "track_id": track_id})
+                    job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": attempt, "sources_tried": len(source_errors) + 1, "track_id": track_id})
                     job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
                     break
                 elif status == "cancelled":

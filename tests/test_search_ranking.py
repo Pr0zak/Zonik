@@ -115,3 +115,28 @@ async def test_peer_slot_serialises_one_peer_and_prunes():
     assert order.index(f"{first}-") < order.index(f"{second}+")  # never overlapped on "peer"
     assert order.index("c+") < order.index(f"{second}+")  # the other peer didn't wait
     assert fake._peer_slots == {}  # idle entries pruned
+
+
+@pytest.mark.asyncio
+async def test_peer_slot_timeout_raises_peer_busy_and_cleans_up():
+    from backend.soulseek.client import PeerBusy, SoulseekClient
+    fake = SimpleNamespace(_peer_slots={})
+    held = asyncio.Event()
+    release = asyncio.Event()
+
+    async def holder():
+        async with SoulseekClient.peer_slot(fake, "peer"):
+            held.set()
+            await release.wait()
+
+    h = asyncio.create_task(holder())
+    await held.wait()
+    with pytest.raises(PeerBusy):
+        async with SoulseekClient.peer_slot(fake, "peer", timeout=0.02):
+            pass
+    release.set()
+    await h
+    assert fake._peer_slots == {}
+    # the slot is free again afterwards
+    async with SoulseekClient.peer_slot(fake, "peer", timeout=0.02):
+        pass

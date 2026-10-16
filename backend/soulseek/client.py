@@ -24,6 +24,10 @@ SEARCH_QUIET = 3.0      # ...then stop once no new response for this long
 DEFAULT_PEER_TIMEOUT = 20
 
 
+class PeerBusy(Exception):
+    """Another download holds this peer's one-file-at-a-time slot."""
+
+
 class SoulseekClient:
     """High-level Soulseek client — search, download, peer management."""
 
@@ -193,19 +197,32 @@ class SoulseekClient:
         return transfer
 
     @contextlib.asynccontextmanager
-    async def peer_slot(self, username: str):
+    async def peer_slot(self, username: str, timeout: float | None = None):
         """Hold the one-file-at-a-time slot for a peer around queueing and
         transferring one file. Peers serve one upload at a time, so a second file
         queued to the same peer just waits on their side while holding one of our
-        transfer slots."""
+        transfer slots.
+
+        With a timeout, raises PeerBusy if the slot isn't free in time, so the
+        caller can try another source instead of waiting out someone else's
+        transfer."""
         entry = self._peer_slots.get(username)
         if entry is None:
             entry = [asyncio.Semaphore(1), 0]
             self._peer_slots[username] = entry
         entry[1] += 1
         try:
-            async with entry[0]:
+            if timeout is None:
+                await entry[0].acquire()
+            else:
+                try:
+                    await asyncio.wait_for(entry[0].acquire(), timeout)
+                except asyncio.TimeoutError:
+                    raise PeerBusy(username) from None
+            try:
                 yield
+            finally:
+                entry[0].release()
         finally:
             entry[1] -= 1
             if entry[1] == 0 and self._peer_slots.get(username) is entry:
