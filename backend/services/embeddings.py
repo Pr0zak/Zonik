@@ -193,8 +193,11 @@ def generate_embedding(file_path: str) -> bytes | None:
     try:
         import librosa
 
-        model, _ = _load_clap_model()
-        if model is None:
+        # Check availability without holding a reference to the model: decoding
+        # takes seconds, and a reference held here would keep an unloaded model
+        # alive next to the freshly loaded one. _embed_audio takes the model
+        # under the in-use counter.
+        if not clap_model_available():
             return None
 
         # Load audio (CLAP expects 48kHz)

@@ -830,7 +830,8 @@ async def score_previews_with_clap(db: AsyncSession, candidates: list[dict],
                 # Don't leave the model resident when it was only loaded for this pass
                 # (unload_clap_model keeps it if another embedding call is running).
                 if not was_loaded:
-                    emb_mod.unload_clap_model()
+                    # gc + malloc_trim, and possibly a wait on the model lock: off the loop.
+                    await asyncio.get_running_loop().run_in_executor(None, emb_mod.unload_clap_model)
     try:
         await _store_preview_embeddings(db, new, model_name)
     except Exception as e:
@@ -1187,13 +1188,13 @@ async def refresh_recommendations(
     # CLAP similarity on the 30 s previews: adds the clap term to each candidate's score.
     if on_progress:
         await on_progress(step, total_steps, "Comparing previews to your taste...")
-    # Only the worker embeds new previews. A manual refresh runs in the web process (which owns
-    # the Soulseek client; the worker has none) and scores cached previews only, so zonik-web
-    # never loads the ~1 GB CLAP model or spends minutes of CPU on inference.
-    from backend.soulseek import get_client
-    in_web_process = get_client() is not None
+    # Only the worker embeds new previews. A manual refresh (or "Run now") runs in the web
+    # process and scores cached previews only, so zonik-web never loads the ~1 GB CLAP model
+    # or spends minutes of CPU on inference. The worker marks itself at startup; inferring
+    # the process from the Soulseek client was wrong whenever the client was down.
+    from backend import process as _process
     preview_stats = await score_previews_with_clap(
-        db, top, clap_centroid, allow_model_load=not in_web_process,
+        db, top, clap_centroid, allow_model_load=_process.IS_WORKER,
     )
     if preview_stats["scored"]:
         top.sort(key=lambda x: x["score"], reverse=True)
