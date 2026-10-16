@@ -288,20 +288,77 @@ class TransferManager:
 
     async def _read_transfer_init(
         self, transfer: Transfer, reader: asyncio.StreamReader, writer: asyncio.StreamWriter,
+        *, fail_transfer: bool = True,
     ) -> bytes | None:
         """Read the uploader's FileTransferInit (the 4-byte transfer token).
-        On failure the connection is closed and None returned."""
+        On failure the connection is closed and None returned; the transfer is
+        failed too, but only when we're sure the connection was for it
+        (fail_transfer — a username-only pick may be the wrong transfer)."""
         try:
             peer_token = await asyncio.wait_for(reader.readexactly(4), timeout=60)
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as e:
             log.warning(f"[transfer] No FileTransferInit from {transfer.username}: {e}")
             _close_quietly(writer)
-            if transfer.state not in TERMINAL_STATES and not _owned_elsewhere(transfer):
-                self.update_state(transfer, TransferState.FAILED, error=f"No response: {e}")
-                await self._notify(transfer)
+            if fail_transfer:
+                await self._fail_unless_owned(transfer, f"No response: {e}")
             return None
         log.info(f"[transfer] FileTransferInit from {transfer.username}: {peer_token.hex()}")
         return peer_token
+
+    async def _fail_unless_owned(self, transfer: Transfer, error: str) -> None:
+        if transfer.state not in TERMINAL_STATES and not _owned_elsewhere(transfer):
+            self.update_state(transfer, TransferState.FAILED, error=error)
+            await self._notify(transfer)
+
+    def _resolve_by_token(self, provisional: Transfer, peer_token: bytes) -> Transfer | None:
+        """Re-resolve a file connection from the uploader's FileTransferInit token.
+
+        The connection was attached to a provisional Transfer before the token
+        arrived — for server-relayed connections only by username, since the
+        relay token is not the transfer token. With several files queued to one
+        peer that pick can be wrong, so look the real one up by token and switch."""
+        resolved = self.get_transfer_by_token(provisional.username, peer_token)
+        if resolved is None:
+            # Transfer tokens are chosen by each uploader (often small counters), so
+            # a token-only match on another user's transfer is a collision, not a hit.
+            cand = self.find_transfer_by_token(peer_token)
+            if cand is not None and cand.username == provisional.username:
+                resolved = cand
+            elif cand is not None:
+                log.warning(
+                    f"[transfer] Token {peer_token.hex()} from {provisional.username} matches "
+                    f"{cand.username}'s transfer — ignoring the cross-user match"
+                )
+        if resolved is provisional:
+            return provisional
+        if resolved is None:
+            if provisional.token is not None and provisional.token != peer_token:
+                # The provisional transfer was accepted under a different token, and
+                # nothing we still track has this one (e.g. a transfer we aborted).
+                # Writing it under the provisional's name would store the wrong file.
+                log.warning(
+                    f"[transfer] Token {peer_token.hex()} from {provisional.username} matches no "
+                    f"transfer (provisional {provisional.filename} has {provisional.token.hex()}); closing"
+                )
+                self._release_task(provisional)
+                return None
+            return provisional  # no token on either side to contradict the username pick
+        log.info(
+            f"[transfer] Token {peer_token.hex()} names {resolved.filename}, "
+            f"not the provisional {provisional.filename} — switching"
+        )
+        self._release_task(provisional)
+        return resolved
+
+    @staticmethod
+    def _release_task(transfer: Transfer) -> None:
+        """This connection turned out not to be `transfer`'s — stop claiming it."""
+        try:
+            current = asyncio.current_task()
+        except RuntimeError:
+            current = None
+        if current is not None and transfer.task is current:
+            transfer.task = None
 
     async def handle_file_transfer_connection(
         self,
@@ -315,11 +372,14 @@ class TransferManager:
         Protocol (we are the downloader): the uploader sends FileTransferInit
         (the 4-byte transfer token), we send FileOffset (8 bytes), data follows.
         """
-        # Provisional pick — try token, then username
+        # Provisional pick — try token, then username; re-resolved once the
+        # uploader's FileTransferInit names the real transfer.
+        by_token = True
         transfer = self.get_transfer_by_token(username, token)
         if not transfer:
             transfer = self.find_transfer_by_token(token)
         if not transfer:
+            by_token = False
             transfer = self.find_active_transfer_for_user(username)
         if not transfer:
             log.warning(f"[transfer] No transfer found for {username} (token {token.hex()})")
@@ -328,11 +388,15 @@ class TransferManager:
 
         log.info(f"[transfer] Inbound file transfer from {username}: {transfer.filename}")
         try:
-            peer_token = await self._read_transfer_init(transfer, reader, writer)
+            peer_token = await self._read_transfer_init(transfer, reader, writer, fail_transfer=by_token)
         except asyncio.CancelledError:
             _close_quietly(writer)
             raise
         if peer_token is None:
+            return
+        transfer = self._resolve_by_token(transfer, peer_token)
+        if transfer is None:
+            _close_quietly(writer)
             return
         await self._receive(transfer, reader, writer)
 
@@ -342,8 +406,13 @@ class TransferManager:
         host: str,
         port: int,
         token: bytes,
+        matched_by_token: bool = True,
     ) -> None:
-        """Connect to peer for file transfer (outbound, server-mediated)."""
+        """Connect to peer for file transfer (outbound, server-mediated).
+
+        `token` is the server's relay token (for PierceFirewall). `transfer` is
+        a provisional pick; matched_by_token=False means it was chosen by
+        username only, so a failure before FileTransferInit doesn't fail it."""
         log.info(f"[transfer] Outbound file transfer to {transfer.username} at {host}:{port}")
         try:
             reader, writer = await asyncio.wait_for(
@@ -353,27 +422,31 @@ class TransferManager:
             raise
         except Exception as e:
             log.warning(f"[transfer] Outbound connect failed to {transfer.username}: {e}")
-            if transfer.state not in TERMINAL_STATES and not _owned_elsewhere(transfer):
-                self.update_state(transfer, TransferState.FAILED, error=f"Connect failed: {e}")
-                await self._notify(transfer)
+            if matched_by_token:
+                await self._fail_unless_owned(transfer, f"Connect failed: {e}")
             return
 
         try:
             # Send pierce firewall with the RELAY token (so peer can match the connection)
             writer.write(build_pierce_firewall_raw(token))
             await writer.drain()
-            peer_token = await self._read_transfer_init(transfer, reader, writer)
+            peer_token = await self._read_transfer_init(
+                transfer, reader, writer, fail_transfer=matched_by_token,
+            )
         except asyncio.CancelledError:
             _close_quietly(writer)
             raise
         except (ConnectionError, OSError) as e:
             log.warning(f"[transfer] Outbound handshake failed with {transfer.username}: {e}")
             _close_quietly(writer)
-            if transfer.state not in TERMINAL_STATES and not _owned_elsewhere(transfer):
-                self.update_state(transfer, TransferState.FAILED, error=f"Handshake failed: {e}")
-                await self._notify(transfer)
+            if matched_by_token:
+                await self._fail_unless_owned(transfer, f"Handshake failed: {e}")
             return
         if peer_token is None:
+            return
+        transfer = self._resolve_by_token(transfer, peer_token)
+        if transfer is None:
+            _close_quietly(writer)
             return
         await self._receive(transfer, reader, writer)
 
@@ -389,6 +462,13 @@ class TransferManager:
         exactly once; being cancelled counts as an abort."""
         if transfer.state in TERMINAL_STATES:
             log.info(f"[transfer] {transfer.filename} is already {transfer.state}; closing connection")
+            _close_quietly(writer)
+            return
+        if transfer.state == TransferState.TRANSFERRING and _owned_elsewhere(transfer):
+            log.warning(
+                f"[transfer] {transfer.filename} is already transferring on another "
+                f"connection from {transfer.username}; closing this one"
+            )
             _close_quietly(writer)
             return
 

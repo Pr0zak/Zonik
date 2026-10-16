@@ -311,18 +311,24 @@ class SoulseekClient:
                     asyncio.create_task(self._accept_indirect_peer(username, host, port, token))
 
             elif conn_type == ConnectionType.FILE_TRANSFER:
-                # Server relay token differs from transfer token — match by username
+                # The relay token differs from the transfer token, so this is only a
+                # provisional pick (by username as a last resort); the handler
+                # re-resolves it from the uploader's FileTransferInit token.
+                by_token = True
                 transfer = self.transfers.get_transfer_by_token(username, token)
                 if not transfer:
                     transfer = self.transfers.find_transfer_by_token(token)
                 if not transfer:
+                    by_token = False
                     transfer = self.transfers.find_active_transfer_for_user(username)
                 if transfer:
                     log.info(f"[client] Server-mediated file transfer to {username} at {host}:{port}")
                     # token = relay token (for pierce_firewall), transfer.token = file token (for handshake)
                     self._start_file_task(
-                        transfer,
-                        self.transfers.handle_outbound_file_transfer(transfer, host, port, token),
+                        transfer if by_token else None,
+                        self.transfers.handle_outbound_file_transfer(
+                            transfer, host, port, token, matched_by_token=by_token,
+                        ),
                     )
                 else:
                     log.warning(f"[client] connect_to_peer FILE_TRANSFER but no matching transfer for {username}")
@@ -450,13 +456,16 @@ class SoulseekClient:
 
             if conn_type == ConnectionType.FILE_TRANSFER:
                 # File transfer connection — route to TransferManager
+                # PeerInit's token is often 0 for F connections; the handler
+                # re-resolves from FileTransferInit, so a username pick is fine here.
                 token = msg.get("token")
-                if token:
-                    transfer = self.transfers.get_transfer_by_token(username, token)
+                if token is not None:
+                    by_token = self.transfers.get_transfer_by_token(username, token)
+                    transfer = by_token or self.transfers.find_active_transfer_for_user(username)
                     if transfer:
                         log.info(f"[client] Inbound file transfer connection from {username} (peer_init F)")
                         self._start_file_task(
-                            transfer,
+                            by_token,  # only claim the transfer when the token named it
                             self.transfers.handle_file_transfer_connection(username, token, reader, writer),
                         )
                     else:

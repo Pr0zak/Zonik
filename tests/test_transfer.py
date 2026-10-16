@@ -175,3 +175,72 @@ async def test_discard_job_removes_staging_folder(tmp_path):
     assert folder.exists()
     tm.discard_job("job-1")
     assert not folder.exists()
+
+
+# --- token re-resolution ------------------------------------------------------
+
+def two_queued(tm):
+    a = make_transfer(tm, filename="Music\\A.flac", total=4, token=b"\x01\x00\x00\x00")
+    b = make_transfer(tm, filename="Music\\B.flac", total=6, token=b"\x02\x00\x00\x00")
+    return a, b
+
+
+async def test_inbound_connection_switches_to_token_named_transfer(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    a, b = two_queued(tm)
+    relay = b"\xff\xff\xff\xff"  # server relay token: matches nothing, so the pick is by username
+    assert tm.find_active_transfer_for_user("peer") is a
+    w = FakeWriter()
+    await tm.handle_file_transfer_connection("peer", relay, reader_with(b"\x02\x00\x00\x00" + b"BBBBBB"), w)
+    assert b.state == TransferState.COMPLETED
+    assert Path(b.save_path).name == "B.flac" and Path(b.save_path).read_bytes() == b"BBBBBB"
+    assert a.state == TransferState.CONNECTED and a.save_path is None
+    assert [t for t, _ in calls] == [b]
+
+
+async def test_outbound_connection_switches_to_token_named_transfer(tmp_path, monkeypatch):
+    tm, _ = make_manager(tmp_path)
+    a, b = two_queued(tm)
+    w = FakeWriter()
+
+    async def fake_open(host, port):
+        return reader_with(b"\x02\x00\x00\x00" + b"BBBBBB"), w
+
+    monkeypatch.setattr(asyncio, "open_connection", fake_open)
+    await tm.handle_outbound_file_transfer(a, "h", 1, b"\xff\xff\xff\xff", matched_by_token=False)
+    assert b.state == TransferState.COMPLETED and a.state == TransferState.CONNECTED
+
+
+async def test_connection_for_transfer_already_streaming_is_closed(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    a, b = two_queued(tm)
+    b.state = TransferState.TRANSFERRING
+    other = asyncio.create_task(asyncio.sleep(10))  # the connection already streaming B
+    b.task = other
+    try:
+        w = FakeWriter()
+        await tm.handle_file_transfer_connection("peer", b"\xff" * 4, reader_with(b"\x02\x00\x00\x00" + b"BBBBBB"), w)
+        assert w.closed and not w.data  # no offset sent, nothing written
+        assert b.task is other and b.save_path is None
+        assert calls == []
+    finally:
+        other.cancel()
+
+
+async def test_unknown_token_does_not_write_under_provisional_name(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    a, b = two_queued(tm)
+    w = FakeWriter()
+    await tm.handle_file_transfer_connection("peer", b"\xff" * 4, reader_with(b"\x09\x00\x00\x00" + b"ZZZZ"), w)
+    assert w.closed and not w.data
+    assert a.state == TransferState.CONNECTED and a.save_path is None
+    assert calls == []
+
+
+async def test_cross_user_token_collision_is_ignored(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    mine = make_transfer(tm, filename="Music\\Mine.flac", total=4, token=None, username="peer")
+    theirs = make_transfer(tm, filename="Music\\Theirs.flac", total=4, token=b"\x02\x00\x00\x00", username="other")
+    await tm.handle_file_transfer_connection("peer", b"\xff" * 4, reader_with(b"\x02\x00\x00\x00" + b"MMMM"), FakeWriter())
+    assert theirs.state == TransferState.CONNECTED and theirs.save_path is None
+    assert mine.state == TransferState.COMPLETED
