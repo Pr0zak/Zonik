@@ -398,12 +398,22 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
     }
 
 
+# Sources of the trigger route that come from bulk lists the user downloads in one
+# click (Weekly Radar, discovery tabs, ...). These go through the failed-search
+# memory like the scheduler's downloads: a track in backoff is skipped and every
+# outcome is recorded. No source, "manual", "library" and "upgrade" stay untracked.
+_TRACKED_TRIGGER_SOURCES = {"weekly-radar", "radar", "discovery", "similar", "recommendation", "playlist", "remix"}
+
+
 @router.post("/trigger")
 async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Download a specific file or auto-search and download best result."""
     reason = await is_blacklisted(db, req.artist, req.track)
     if reason:
         return {"error": "blacklisted", "reason": reason}
+
+    # A bulk-list source with no hand-picked file: tracked (see _TRACKED_TRIGGER_SOURCES).
+    tracked = req.source in _TRACKED_TRIGGER_SOURCES and not req.filename and not req.target_track_id
 
     # Auto-download (no specific file picked, not an upgrade) of a song the
     # library already has: nothing to fetch, hand back the track. A picked file
@@ -413,11 +423,24 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         if in_lib:
             return {"status": "in_library", "track_id": in_lib}
 
+    if tracked:
+        from backend.services.download_attempts import in_backoff
+        why = await in_backoff(db, req.artist, req.track)
+        if why:
+            log.info(f"[download] Skip ({req.source}): {req.artist} — {req.track}: {why}")
+            # "error" too, so clients that only check it stop instead of polling a job.
+            return {"status": "skipped", "reason": why, "error": "skipped"}
+
     # Dedup: skip if same artist+track already pending/running
     existing = await _find_existing_download(db, req.artist, req.track)
     if existing:
         log.info(f"[download] Dedup: {req.artist} — {req.track} already in job {existing}")
         return {"status": "already_downloading", "job_id": existing}
+
+    if tracked and req.expected_duration is None:
+        # Same duration gate as the scheduler's downloads (Last.fm length, cached).
+        from backend.services.auto_download import lookup_duration
+        req.expected_duration = await lookup_duration(req.artist, req.track)
 
     job_id = str(uuid.uuid4())
     desc = f"{req.artist} — {req.track}"
@@ -458,6 +481,12 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         finally:
             slot.release()
             _job_done(job_id)
+            if tracked:
+                try:
+                    from backend.services.auto_download import finish_tracked
+                    await finish_tracked(job_id, req.artist, req.track, req.source)
+                except Exception as e:
+                    log.debug(f"[download] could not record outcome for {desc}: {e}")
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
