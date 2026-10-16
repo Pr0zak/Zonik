@@ -70,8 +70,27 @@ def test_query_variants_are_distinct_and_capped():
     assert len(qs) == len(set(qs)) and 1 <= len(qs) <= 4
 
 
+ARTIST, TRACK = "The Artist feat. Someone", "Song Title (Remastered 2011)"
+
+
 @pytest.mark.asyncio
-async def test_variants_run_concurrently_and_merge():
+async def test_first_variant_alone_when_it_finds_candidates():
+    asked = []
+
+    async def search(q):
+        asked.append(q)
+        return [result("alice", "X\\Song Title.flac")]
+
+    client = SimpleNamespace(search=search, reputation=None)
+    picked = await search_multi_strategy_native(client, ARTIST, TRACK)
+    assert asked == build_query_variants(ARTIST, TRACK)[:1]
+    assert [c["username"] for c in picked] == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_variants_run_concurrently_and_merge():
+    variants = build_query_variants(ARTIST, TRACK)
+    assert len(variants) >= 3
     running = 0
     peak = 0
     asked = []
@@ -79,20 +98,22 @@ async def test_variants_run_concurrently_and_merge():
     async def search(q):
         nonlocal running, peak
         asked.append(q)
+        if q == variants[0]:
+            return [result("nobody-useful", "X\\Other Song.flac")]  # fails the title gate
         running += 1
         peak = max(peak, running)
         await asyncio.sleep(0.05)
         running -= 1
-        # each variant finds a different peer; one peer shows up in every response
+        # each fallback finds a different peer; one peer shows up in every response
         return [result(f"peer{len(asked)}", "X\\Song Title.flac"), result("shared", "X\\Song Title.flac")]
 
     client = SimpleNamespace(search=search, reputation=None)
-    picked = await search_multi_strategy_native(client, "The Artist feat. Someone", "Song Title (Remastered 2011)")
-    assert len(asked) >= 2
-    assert peak == len(asked)  # all variants in flight at once
+    picked = await search_multi_strategy_native(client, ARTIST, TRACK)
+    assert asked[0] == variants[0] and sorted(asked[1:]) == sorted(variants[1:])
+    assert peak == len(variants) - 1  # every fallback in flight at once
     users = [c["username"] for c in picked]
     assert len(users) == len(set(users))
-    assert "shared" in users
+    assert "shared" in users and "nobody-useful" not in users
 
 
 # --- per-peer slot ----------------------------------------------------------------

@@ -243,24 +243,40 @@ async def search_multi_strategy_native(
     better_than: tuple[str, int] | None = None,
     target_duration: int | None = None,
 ) -> list[dict]:
-    """Search every query variant at once, merge the responses and rank once.
+    """Search the most specific query first; only if it gives no usable
+    candidate, search the remaining variants at once, merge everything and rank
+    once.
 
-    Each client.search uses its own token, so the variants run concurrently: a
-    track nobody has costs one search timeout instead of up to four in a row."""
+    The first query usually succeeds, so most tracks cost one search (the
+    Soulseek server is believed to throttle heavy searchers). For a hard track
+    the fallbacks run concurrently — each client.search uses its own token — so
+    it costs two search timeouts instead of up to four in a row."""
     queries = build_query_variants(artist, track)
-    log.info(f"[native] Search strategies: {queries}")
-    responses = await asyncio.gather(*(client.search(q) for q in queries), return_exceptions=True)
-    ok: list[list[SearchResult]] = []
-    for q, r in zip(queries, responses):
-        if isinstance(r, BaseException):
-            log.warning(f"[native] Search '{q}' failed: {r}")
-            continue
-        ok.append(r)
-    merged = merge_search_results(ok)
-    if not merged:
-        return []
-    return await pick_best_results_native(merged, artist, track, reputation=client.reputation,
-                                          better_than=better_than, target_duration=target_duration)
+
+    async def run(qs: list[str]) -> list[list[SearchResult]]:
+        log.info(f"[native] Search strategies: {qs}")
+        responses = await asyncio.gather(*(client.search(q) for q in qs), return_exceptions=True)
+        ok: list[list[SearchResult]] = []
+        for q, r in zip(qs, responses):
+            if isinstance(r, BaseException):
+                log.warning(f"[native] Search '{q}' failed: {r}")
+                continue
+            ok.append(r)
+        return ok
+
+    async def rank(responses: list[list[SearchResult]]) -> list[dict]:
+        merged = merge_search_results(responses)
+        if not merged:
+            return []
+        return await pick_best_results_native(merged, artist, track, reputation=client.reputation,
+                                              better_than=better_than, target_duration=target_duration)
+
+    first = await run(queries[:1])
+    candidates = await rank(first)
+    if candidates or len(queries) == 1:
+        return candidates
+    rest = await run(queries[1:])
+    return await rank(first + rest)
 
 
 async def search_and_download_native(
