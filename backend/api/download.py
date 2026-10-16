@@ -372,17 +372,23 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     # Write the Job row before returning its id, so a client that looks the job
     # up straight away finds it instead of "Job not found".
     initial_status = "pending" if sem.locked() else "running"
-    async with async_session() as job_sess:
-        job = Job(
-            id=job_id, type="download", card=card, status=initial_status,
-            started_at=datetime.utcnow(),
-            tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued" if initial_status == "pending" else "pending"}]),
-        )
-        job_sess.add(job)
-        await job_sess.commit()
-        job_sess.expunge(job)
+    # Register the job as live before the row is committed, so a cancel that
+    # arrives between the commit and the registration is still seen.
     live_download_jobs.add(job_id)
-    await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+    try:
+        async with async_session() as job_sess:
+            job = Job(
+                id=job_id, type="download", card=card, status=initial_status,
+                started_at=datetime.utcnow(),
+                tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued" if initial_status == "pending" else "pending"}]),
+            )
+            job_sess.add(job)
+            await job_sess.commit()
+            job_sess.expunge(job)
+        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+    except Exception:
+        _job_done(job_id)
+        raise
 
     async def do_download():
         # Wait for a search slot — no DB session held
@@ -809,10 +815,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 # One file at a time per peer (so two jobs never have two files
                 # queued with the same uploader), then a transfer slot. Both are
                 # released before the import below. A busy peer is waited on only
-                # briefly — except on its retry when nothing else is left to try.
-                peer_wait = None if (deferred and not work) else PEER_BUSY_WAIT
+                # briefly; when it is the last thing left to try the wait repeats
+                # in the same short steps so a cancel is noticed between them.
                 try:
-                    async with native_client.peer_slot(dl_username, timeout=peer_wait), transfer_sem:
+                    async with native_client.peer_slot(dl_username, timeout=PEER_BUSY_WAIT), transfer_sem:
                         if job_id in cancelled_jobs:
                             status, save_path, error = "cancelled", None, "Cancelled by user"
                         else:
@@ -832,13 +838,21 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                             status, save_path, error = await poll_transfer(native_client, transfer)
                 except PeerBusy:
                     attempt -= 1
-                    if not deferred:
+                    if job_id in cancelled_jobs:
+                        status, save_path, error = "cancelled", None, "Cancelled by user"
+                    elif not deferred:
                         log.info(f"[download] {dl_username} is busy with another download — trying other sources first")
                         work.append((candidate, True))
+                        continue
+                    elif not work:
+                        # Nothing else left: keep waiting for this peer, one short
+                        # step at a time, checking for a cancel between steps.
+                        work.append((candidate, True))
+                        continue
                     else:
                         last_error = "Peer busy with another download"
                         source_errors.append({"user": dl_username, "error": last_error})
-                    continue
+                        continue
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
@@ -1030,15 +1044,21 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
     initial_status = "pending" if sem.locked() else "running"
     card = f"dl:{source}" if source else "dl"
-    async with async_session() as sess:
-        job = Job(
-            id=job_id, type="download", card=card, status=initial_status,
-            started_at=datetime.utcnow(),
-            tracks=json.dumps([{"artist": artist, "track": track, "status": "queued" if initial_status == "pending" else "pending"}]),
-        )
-        sess.add(job)
-        await sess.commit()
+    # Register the job as live before the row is committed, so a cancel that
+    # arrives between the commit and the registration is still seen.
     live_download_jobs.add(job_id)
+    try:
+        async with async_session() as sess:
+            job = Job(
+                id=job_id, type="download", card=card, status=initial_status,
+                started_at=datetime.utcnow(),
+                tracks=json.dumps([{"artist": artist, "track": track, "status": "queued" if initial_status == "pending" else "pending"}]),
+            )
+            sess.add(job)
+            await sess.commit()
+    except Exception:
+        _job_done(job_id)
+        raise
 
     # Wait for a search slot — no DB session held during wait
     slot = _SearchSlot(sem)
