@@ -382,15 +382,21 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             return None, fsize, f"Not imported: {why}"
         return track_id, fsize, None
 
-    async def poll_transfer(client, transfer, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
+    async def poll_transfer(client, transfer, queue_timeout=120, stall_timeout=60, check_cancel=True):
         """Poll a Transfer (the object client.download returned) until it settles.
         Returns (status, save_path, error). Every give-up goes through
-        TransferManager.abort(), which also stops the socket task and deletes the partial."""
+        TransferManager.abort(), which also stops the socket task and deletes the partial.
+
+        Gives up when the peer doesn't start within queue_timeout, when data stops
+        for stall_timeout, or at the soulseek.transfer_max_minutes ceiling — a slow
+        transfer that keeps making progress is otherwise allowed to finish."""
         import time
         last_bytes = 0
         stall_start = None
         queue_start = time.monotonic()
-        for _ in range(timeout_polls):
+        from backend.config import get_settings as _cfg
+        max_seconds = max(1, _cfg().soulseek.transfer_max_minutes) * 60
+        while time.monotonic() - queue_start < max_seconds:
             await asyncio.sleep(2)
             if check_cancel:
                 async with async_session() as cancel_sess:
@@ -423,8 +429,9 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 elif time.monotonic() - stall_start > stall_timeout:
                     client.transfers.abort(transfer, "Stalled (no data)")
                     return "failed", None, "Transfer stalled — no data received"
-        client.transfers.abort(transfer, "Transfer monitoring timed out")
-        return "timeout", None, "Transfer monitoring timed out"
+        minutes = max_seconds // 60
+        client.transfers.abort(transfer, f"Took longer than {minutes} min")
+        return "timeout", None, f"Transfer took longer than {minutes} minutes"
 
     try:
         native_client = get_client()
@@ -436,8 +443,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
         # If the native client exists but the server connection just dropped
         # (auto-reconnect in flight), wait briefly for it to come back rather
         # than instantly failing or falling through to a slskd path that may
-        # not be configured. Up to ~30s — short relative to the per-job
-        # download timeout (150 polls × 2s = 300s) but enough to ride through
+        # not be configured. Up to ~30s — short relative to the per-transfer
+        # ceiling (soulseek.transfer_max_minutes) but enough to ride through
         # most reconnect blips.
         if native_client and not native_client.logged_in:
             log.info(f"[download] Native client not logged in — waiting up to 30s for reconnect")

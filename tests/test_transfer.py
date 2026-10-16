@@ -244,3 +244,37 @@ async def test_cross_user_token_collision_is_ignored(tmp_path):
     await tm.handle_file_transfer_connection("peer", b"\xff" * 4, reader_with(b"\x02\x00\x00\x00" + b"MMMM"), FakeWriter())
     assert theirs.state == TransferState.CONNECTED and theirs.save_path is None
     assert mine.state == TransferState.COMPLETED
+
+
+# --- cleanup sweep ------------------------------------------------------------
+
+async def test_sweep_ages_transferring_from_last_progress(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    tm.max_transfer_seconds = 1800
+    now = 10_000.0
+    slow = make_transfer(tm, filename="Music\\slow.flac", token=b"\x01\x00\x00\x00")
+    slow.state = TransferState.TRANSFERRING
+    slow.started_at = now - 3600          # an hour old...
+    slow.last_progress_at = now - 30      # ...but still receiving
+    dead = make_transfer(tm, filename="Music\\dead.flac", token=b"\x02\x00\x00\x00")
+    dead.state = TransferState.TRANSFERRING
+    dead.started_at = now - 3600
+    dead.last_progress_at = now - 1801
+    tm._sweep(now)
+    await asyncio.sleep(0)
+    assert slow.state == TransferState.TRANSFERRING and tm.is_tracked(slow)
+    assert dead.state == TransferState.FAILED and not tm.is_tracked(dead)
+    assert [t for t, _ in calls] == [dead]
+
+
+async def test_sweep_keeps_terminal_entries_for_a_minute(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    now = 10_000.0
+    t = make_transfer(tm)
+    t.started_at = now - 3600
+    t.state = TransferState.COMPLETED
+    t.ended_at = now - 30
+    tm._sweep(now)
+    assert tm.is_tracked(t)
+    tm._sweep(now + 31)
+    assert not tm.is_tracked(t)

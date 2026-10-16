@@ -33,9 +33,11 @@ class SoulseekClient:
         listen_port: int = 2234,
         staging_dir: str | None = None,
     ):
+        from backend.config import get_settings
+        slsk_cfg = get_settings().soulseek
         if staging_dir is None:
-            from backend.config import get_settings
-            staging_dir = get_settings().soulseek.staging_dir
+            staging_dir = slsk_cfg.staging_dir
+        max_transfer_seconds = max(1, slsk_cfg.transfer_max_minutes) * 60
 
         self.server = ServerConnection(
             host=server_host,
@@ -50,6 +52,7 @@ class SoulseekClient:
         )
         self.transfers = TransferManager(
             staging_dir=staging_dir,
+            max_transfer_seconds=max_transfer_seconds,
             on_progress=self._on_transfer_progress,
             on_complete=self._on_transfer_complete,
         )

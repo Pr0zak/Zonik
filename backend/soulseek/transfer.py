@@ -18,7 +18,12 @@ from backend.soulseek.protocol.types import TransferState
 
 log = logging.getLogger(__name__)
 
-DOWNLOAD_TTL = 5 * 60  # 5 minutes
+# Backstop for a transfer nobody is polling: a TRANSFERRING entry with no
+# bytes for this long is given up. Overridden by soulseek.transfer_max_minutes.
+DEFAULT_MAX_TRANSFER_SECONDS = 30 * 60
+TERMINAL_KEEP_SECONDS = 60     # finished entries stay visible this long
+QUEUE_TIMEOUT_SECONDS = 180    # REQUESTED/QUEUED, from creation
+CONNECTED_TIMEOUT_SECONDS = 120  # CONNECTED with no file connection, from acceptance
 
 ACTIVE_STATES = (
     TransferState.REQUESTED, TransferState.QUEUED,
@@ -40,6 +45,9 @@ class Transfer:
     total_bytes: int = 0
     received_bytes: int = 0
     started_at: float = field(default_factory=time.time)
+    state_since: float = field(default_factory=time.time)  # when `state` last changed
+    last_progress_at: float = field(default_factory=time.time)  # last chunk received
+    ended_at: float | None = None  # when it reached a terminal state
     save_path: str | None = None
     error: str | None = None
     job_id: str | None = None  # links transfer back to the originating Job
@@ -96,6 +104,7 @@ class TransferManager:
     def __init__(
         self,
         staging_dir: str = "/opt/zonik/cache/staging",
+        max_transfer_seconds: int = DEFAULT_MAX_TRANSFER_SECONDS,
         on_progress: Callable[[Transfer], Awaitable[None]] | None = None,
         on_complete: Callable[[Transfer], Awaitable[None]] | None = None,
     ):
@@ -103,6 +112,7 @@ class TransferManager:
         # importer moves the finished file into the library. Nothing is written
         # to the NAS download dir any more.
         self.staging_dir = staging_dir
+        self.max_transfer_seconds = max_transfer_seconds
         self.on_progress = on_progress
         self.on_complete = on_complete
         self.transfers: dict[str, Transfer] = {}  # keyed by "username:filename"
@@ -208,6 +218,10 @@ class TransferManager:
             log.warning(f"[transfer] Could not remove staging folder {folder}: {e}")
 
     def update_state(self, transfer: Transfer, state: str, **kwargs) -> None:
+        if state != transfer.state:
+            transfer.state_since = time.time()
+            if state in TERMINAL_STATES:
+                transfer.ended_at = transfer.state_since
         transfer.state = state
         for k, v in kwargs.items():
             setattr(transfer, k, v)
@@ -486,6 +500,7 @@ class TransferManager:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             transfer.save_path = str(save_path)
             self.update_state(transfer, TransferState.TRANSFERRING)
+            transfer.last_progress_at = time.time()
             log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
 
             async with aiofiles.open(save_path, "wb") as f:
@@ -502,6 +517,7 @@ class TransferManager:
                     if not chunk:
                         break
                     transfer.received_bytes += len(chunk)
+                    transfer.last_progress_at = time.time()
                     await f.write(chunk)
                     if self.on_progress:
                         await self.on_progress(transfer)
@@ -573,21 +589,24 @@ class TransferManager:
         to_remove: list[str] = []
         to_abort: list[tuple[Transfer, str]] = []
         for key, transfer in self.transfers.items():
-            age = now - transfer.started_at
             if transfer.state in TERMINAL_STATES:
-                if age > 60:  # Keep terminal states for 1 minute
+                if now - (transfer.ended_at or transfer.started_at) > TERMINAL_KEEP_SECONDS:
                     to_remove.append(key)
             elif transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
-                if age > 180:  # 3 min for queue timeout (waiting for peer response)
+                if now - transfer.started_at > QUEUE_TIMEOUT_SECONDS:
                     log.warning(f"[transfer] Queue timeout: {transfer.filename} ({transfer.state})")
                     to_abort.append((transfer, "Queue timeout"))
             elif transfer.state == TransferState.CONNECTED:
-                if age > 120:  # 2 min connected but no data
+                if now - transfer.state_since > CONNECTED_TIMEOUT_SECONDS:
                     log.warning(f"[transfer] Connected timeout: {transfer.filename}")
                     to_abort.append((transfer, "Connected but no data"))
-            elif age > DOWNLOAD_TTL:
-                log.warning(f"[transfer] Cleaning up stuck transfer: {transfer.filename}")
-                to_abort.append((transfer, "Timed out"))
+            elif transfer.state == TransferState.TRANSFERRING:
+                # Aged from the last chunk, not from creation: a slow transfer
+                # that keeps making progress is allowed to finish.
+                idle = now - transfer.last_progress_at
+                if idle > self.max_transfer_seconds:
+                    log.warning(f"[transfer] No data for {idle / 60:.0f} min: {transfer.filename}")
+                    to_abort.append((transfer, "No progress"))
         for key in to_remove:
             self.transfers.pop(key, None)
         for transfer, error in to_abort:

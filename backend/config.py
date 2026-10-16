@@ -59,6 +59,10 @@ class SoulseekConfig(BaseModel):
     server_port: int = 2242
     use_native: bool = False
     max_concurrent_downloads: int = 4  # Max simultaneous download jobs (others queue)
+    # Ceiling for one transfer: the poller gives up after this long, and the client's
+    # cleanup drops a TRANSFERRING entry with no data for this long. A transfer that
+    # stops sending for 60 s still fails as stalled; a slow but steady one may finish.
+    transfer_max_minutes: int = 30
     # Multi-source download settings
     parallel_sources: int = 1  # How many peers to download from simultaneously (1 = sequential)
     source_strategy: str = "first"  # "first" = keep first completed, "best" = wait for all and keep best quality
