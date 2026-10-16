@@ -194,12 +194,15 @@ async def lifespan(app: FastAPI):
     # Mark any stuck "running" jobs as failed (killed by restart)
     log = logging.getLogger(__name__)
     async with async_session() as session:
-        from sqlalchemy import update
+        from sqlalchemy import update, func
         from datetime import datetime
         stuck = await session.execute(
             update(Job)
             .where(Job.status.in_(["running", "pending"]))
-            .values(status="failed", finished_at=datetime.utcnow())
+            # The reason matters to the download pipeline: is_infra_error reads it as
+            # "outcome unknown", so a restart never counts against a track.
+            .values(status="failed", finished_at=datetime.utcnow(),
+                    result=func.coalesce(Job.result, '{"error": "Interrupted by restart"}'))
         )
         if stuck.rowcount:
             await session.commit()

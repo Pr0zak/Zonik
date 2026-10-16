@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,7 +55,7 @@ async def search_playlists(req: SearchRequest):
 
 
 @router.post("/import")
-async def import_playlist(req: ImportRequest, db: AsyncSession = Depends(get_db)):
+async def import_playlist(req: ImportRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """Create a local playlist from imported tracks.
 
     Only includes tracks that are in the library. Optionally downloads missing tracks.
@@ -89,17 +89,22 @@ async def import_playlist(req: ImportRequest, db: AsyncSession = Depends(get_db)
 
     await db.commit()
 
-    # Optionally trigger downloads for missing tracks
+    # Optionally download the missing tracks — in the background, through the tracked
+    # path (backoff, duration gate, outcome recorded), a few at a time.
     download_jobs = 0
     if req.download_missing:
-        from backend.api.download import enqueue_download
+        items = []
         for t in matched_tracks:
             if not t.get("in_library") and t.get("title") and t.get("artist"):
-                try:
-                    await enqueue_download(t["artist"], t["title"], source="playlist")
-                    download_jobs += 1
-                except Exception:
-                    pass
+                dur = t.get("duration_seconds")
+                items.append({
+                    "artist": t["artist"], "track": t["title"],
+                    "expected_duration": int(round(dur)) if isinstance(dur, (int, float)) and dur > 0 else None,
+                })
+        if items:
+            from backend.services.auto_download import download_tracked_many
+            background_tasks.add_task(download_tracked_many, items, source="playlist")
+        download_jobs = len(items)
 
     return {
         "playlist_id": playlist_id,

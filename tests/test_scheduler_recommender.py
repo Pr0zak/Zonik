@@ -156,7 +156,8 @@ def test_download_job_outcome(monkeypatch):
         ok, err = outcome(("failed", _json.dumps({"error": msg})))
         assert ok is None and err == msg
     assert outcome(("running", None)) == (None, None)
-    assert outcome(None)[0] is False  # job row missing
+    assert outcome(None)[0] is None  # job row missing: unknown, never a track failure
+    assert outcome(("failed", None))[0] is None  # reaped with no result: unknown
 
 
 def test_infra_error_matches_only_zoniks_own_messages():

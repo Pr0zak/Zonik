@@ -12,6 +12,9 @@ from backend.database import async_session
 
 log = logging.getLogger(__name__)
 
+# Written into a reaped job's empty result: is_infra_error treats it as unknown.
+INTERRUPTED_RESULT = '{"error": "Interrupted by restart or job timeout"}'
+
 
 async def reap_stuck_jobs() -> None:
     """Mark jobs that have been running/pending far longer than any real job should
@@ -19,7 +22,7 @@ async def reap_stuck_jobs() -> None:
     web does this once on boot, but long-lived processes accumulate orphans — e.g.
     a task killed by arq's job_timeout never updates its Job row, so it sits
     'running' forever."""
-    from sqlalchemy import update as _update
+    from sqlalchemy import update as _update, func as _func
     from datetime import timedelta
     from backend.models.job import Job
     from backend.models.upgrade import TrackUpgrade
@@ -29,7 +32,10 @@ async def reap_stuck_jobs() -> None:
             r = await db.execute(
                 _update(Job)
                 .where(Job.status.in_(["running", "pending"]), Job.started_at < cutoff)
-                .values(status="failed", finished_at=datetime.utcnow())
+                # A reason the download pipeline reads as "outcome unknown", not as
+                # the track failing (backend.services.auto_download.is_infra_error).
+                .values(status="failed", finished_at=datetime.utcnow(),
+                        result=_func.coalesce(Job.result, INTERRUPTED_RESULT))
             )
             if r.rowcount:
                 await db.commit()
@@ -52,7 +58,11 @@ async def run_scheduled_tasks(ctx: dict):
     from sqlalchemy import select
     from backend.models.schedule import ScheduleTask
     from backend.models.job import Job
-    from backend.workers.scheduler import run_task
+    from backend.workers.scheduler import run_task, start_tick
+
+    # Every due task below runs inside this one arq job (60-minute job_timeout);
+    # auto-download batches stop by the tick deadline set here.
+    start_tick()
 
     # Sweep up orphaned jobs/upgrades before scheduling new work.
     await reap_stuck_jobs()
@@ -105,11 +115,13 @@ async def run_scheduled_tasks(ctx: dict):
 
 
 async def download_track(ctx: dict, artist: str, track: str):
-    """Background download task. Routes through enqueue_download so the worker
-    delegates to the web process (which owns the native Soulseek client) instead
-    of running a client-less download itself."""
-    from backend.api.download import enqueue_download
-    return await enqueue_download(artist, track)
+    """Background download task, through the tracked path (backoff, duration gate,
+    outcome recorded). enqueue_download underneath delegates to the web process,
+    which owns the native Soulseek client. Returns the job id (None when skipped
+    or the library already has it)."""
+    from backend.services.auto_download import download_tracked
+    outcome = await download_tracked(artist, track, source="worker")
+    return outcome["job_id"]
 
 
 async def analyze_track(ctx: dict, track_id: str, file_path: str):

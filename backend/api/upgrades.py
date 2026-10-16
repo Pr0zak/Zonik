@@ -170,7 +170,8 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
     result = await db.execute(query)
     upgrades = result.scalars().all()
 
-    # Collect upgrade info for the single background processor
+    # Collect upgrade info for the single background processor. A user clicking Start
+    # overrides the scan's retired/backoff skips; each outcome still settles its row.
     upgrade_queue = []
     for u in upgrades:
         if u.attempts >= u.max_attempts:
@@ -192,13 +193,14 @@ async def start_upgrades(req: StartRequest, background_tasks: BackgroundTasks, d
 
 
 async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):
-    """Process upgrade downloads with bounded concurrency."""
+    """Process upgrade downloads through the tracked path with bounded concurrency.
+    Each row is linked to its job, downloaded with the target track (so the importer
+    replaces that exact track) and settled by finalize_upgrade — the same rule the
+    scheduled upgrade scan uses, including "still running → back to pending"."""
     import asyncio as _asyncio
-    from backend.api.download import enqueue_download
-    import json as _json
-    from backend.models.job import Job
+    from backend.services.auto_download import download_tracked, finalize_upgrade
 
-    sem = _asyncio.Semaphore(4)  # limit DB connections; actual download concurrency gated by _download_semaphore
+    sem = _asyncio.Semaphore(4)  # limit DB connections; actual download concurrency gated by the download queues
 
     async def _do(upgrade_id: str, artist: str, track: str):
         async with sem:
@@ -220,42 +222,9 @@ async def _process_upgrade_queue(queue: list[tuple[str, str, str]]):
 
                 # Download (blocks until complete) — pass the target track so the
                 # importer replaces this exact track instead of fuzzy-matching tags.
-                await enqueue_download(artist, track, job_id=job_id, source="upgrade", target_track_id=target_track_id)
-
-                # Update upgrade status based on job result
-                async with async_session() as db:
-                    job = (await db.execute(
-                        select(Job).where(Job.id == job_id)
-                    )).scalar_one_or_none()
-
-                    upgrade = (await db.execute(
-                        select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
-                    )).scalar_one_or_none()
-
-                    if upgrade and upgrade.status == "downloading":
-                        if job and job.status == "completed":
-                            # Only mark completed if scanner already confirmed the upgrade
-                            # (upgraded_format is set by _mark_upgrade_completed in scanner.py)
-                            if upgrade.upgraded_format:
-                                # Already handled by scanner — just ensure status
-                                upgrade.status = "completed"
-                                upgrade.completed_at = upgrade.completed_at or datetime.utcnow()
-                            else:
-                                # Download succeeded but scanner didn't match it as an upgrade
-                                # — the track was imported as new or title didn't match
-                                upgrade.status = "failed"
-                                upgrade.error_message = "Downloaded but not matched as upgrade (title mismatch or same quality)"
-                        elif job and job.status == "failed":
-                            err = ""
-                            if job.result:
-                                try:
-                                    err = _json.loads(job.result).get("error", "")
-                                except Exception:
-                                    err = str(job.result)
-                            upgrade.status = "failed"
-                            upgrade.error_message = err or "Download failed"
-                        upgrade.updated_at = datetime.utcnow()
-                        await db.commit()
+                outcome = await download_tracked(artist, track, source="upgrade",
+                                                 target_track_id=target_track_id, job_id=job_id)
+                await finalize_upgrade(upgrade_id, outcome["ok"], outcome["error"])
 
             except Exception as e:
                 log.warning(f"[upgrade] Failed to process {artist} — {track}: {e}")

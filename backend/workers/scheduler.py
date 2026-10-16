@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, func
@@ -19,7 +21,8 @@ from backend.models.favorite import Favorite
 from backend.models.playlist import Playlist, PlaylistTrack
 from backend.api.websocket import broadcast_job_update
 from backend.services.library_match import batch_library_match
-from backend.services.download_attempts import in_backoff, record_outcome, keys_in_backoff, attempt_key
+from backend.services.download_attempts import keys_in_backoff, attempt_key, upgrade_skip_ids
+from backend.services.auto_download import is_infra_error, download_job_outcome
 
 log = logging.getLogger(__name__)
 
@@ -403,77 +406,81 @@ async def _download_backend_ready() -> bool:
         return False
 
 
-def _is_infra_error(err: str | None) -> bool:
-    """Failures that say nothing about whether the track can be found (Soulseek down or
-    not logged in, delegation to the web process failed, user cancelled).
-
-    Only the exact messages Zonik itself writes count. A substring match on
-    "cancelled" or "not connected" would also catch a peer's own refusal reason
-    ("Cancelled" is a standard Soulseek denial) or an OS error text, and those are
-    real per-track failures that must enter backoff."""
-    e = (err or "").strip()
-    return (
-        e.startswith("Soulseek download backend unreachable")
-        or e.startswith("Soulseek server not connected")
-        or e == "Cancelled by user"
-    )
+# Moved to backend.services.auto_download; the names stay importable from here.
+_is_infra_error = is_infra_error
 
 
 async def _download_job_outcome(job_id: str | None) -> tuple[bool | None, str | None]:
-    """Read a download job. Returns (ok, error): ok=True when it completed (or enqueue
-    skipped it because the library already has it), False when the search/transfer failed,
-    None when the outcome is unknown: still pending/running, or an infrastructure failure
-    (backend unreachable / not connected / cancelled) that must not count against the track."""
-    if job_id is None:
-        return True, None  # enqueue_download: library already has it
-    try:
-        async with async_session() as jdb:
-            row = (await jdb.execute(select(Job.status, Job.result).where(Job.id == job_id))).first()
-    except Exception as e:
-        return None, f"could not read job: {e}"
-    if row is None:
-        return False, "download job not found"
-    status, result = row
-    payload: dict = {}
-    if result:
-        try:
-            payload = json.loads(result)
-            if not isinstance(payload, dict):
-                payload = {}
-        except (ValueError, TypeError):
-            payload = {"message": str(result)[:300]}
-    if status == "completed":
-        return True, None  # payload carries track_id or already_in_library
-    if status in ("pending", "running", "queued", "downloading"):
-        return None, None
-    err = str(payload.get("last_error") or payload.get("error") or payload.get("message") or f"job {status}")[:500]
-    if _is_infra_error(err):
-        return None, err
-    return False, err
+    """download_job_outcome read through this module's session factory."""
+    return await download_job_outcome(job_id, session_factory=async_session)
+
+
+# A batch of automatic downloads must finish inside the arq worker's job timeout
+# (job_timeout = 3600 s in backend/workers/__init__.py) together with the task that
+# found the tracks. Downloads still running at the deadline keep running in the web
+# process; the batch just stops waiting and reports them as unknown (ok=None).
+AUTO_DOWNLOAD_BATCH_MINUTES = 45
+# Downloads submitted to the web and not yet finished. More are submitted as these
+# finish, so the web's pending queue stays short and the order stays sensible.
+AUTO_DOWNLOAD_MAX_OUTSTANDING = 25
+# Seconds between two looks at the outstanding job rows.
+AUTO_DOWNLOAD_POLL_SECONDS = 10
+
+# One arq job (run_scheduled_tasks) runs every due task in turn, all inside the same
+# 60-minute job_timeout. It sets this deadline when it starts (start + 50 min);
+# every auto-download batch in that tick stops by it, and a batch that would start
+# after it doesn't start at all. None outside a scheduler tick (e.g. "run now").
+TICK_MINUTES = 50
+_tick_deadline: ContextVar[float | None] = ContextVar("zonik_tick_deadline", default=None)
+
+
+def start_tick() -> None:
+    """Mark the start of a scheduler tick (called by run_scheduled_tasks)."""
+    _tick_deadline.set(time.monotonic() + TICK_MINUTES * 60)
+
+
+def tick_deadline() -> float | None:
+    return _tick_deadline.get()
 
 
 async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]:
-    """Trigger individual download jobs for each missing track via enqueue_download.
-    Uses enqueue_download which has short-lived DB sessions to avoid pool exhaustion.
+    """Download each missing track through the tracked path (backoff, duration gate,
+    outcome recording — backend.services.auto_download) without blocking on any one.
+
+    Every track is submitted with wait=False (the web creates the job and runs it in
+    the background), at most AUTO_DOWNLOAD_MAX_OUTSTANDING at a time; the job rows are
+    then polled every AUTO_DOWNLOAD_POLL_SECONDS and each outcome is recorded as its
+    job settles, until all are done or AUTO_DOWNLOAD_BATCH_MINUTES have passed.
 
     For source="upgrade_scan", entries may carry `upgrade_id` and `track_id`. We
-    attach the download job_id to the TrackUpgrade row, bump `attempts`, and on
-    job failure mark the row as `failed` so it doesn't sit at `pending` forever.
-    Successful uploads are marked `completed` by the scanner during import.
+    attach the download job_id to the TrackUpgrade row, bump `attempts`, and settle
+    the row afterwards (finalize_upgrade) so it doesn't sit at `downloading` forever.
+    Successful upgrades are marked `completed` by the scanner during import.
 
-    Returns one outcome per attempted track: [{artist, track, job_id, ok, error}].
-    Tracks skipped for backoff, or the whole batch when the Soulseek backend is down,
-    produce no outcome (callers must leave those untouched). `ok` is True (done),
-    False (the search failed) or None (unknown: job still running, or an infrastructure
-    failure) — None is never recorded in download_attempts. Upgrade entries return no outcomes.
+    Returns one outcome per attempted track: [{artist, track, job_id, ok, error, skipped}].
+    Tracks skipped for backoff, tracks not submitted before the deadline, or the whole
+    batch when the Soulseek backend is down, produce no outcome (callers must leave
+    those untouched). `ok` is True (done), False (the search failed) or None (unknown:
+    still running at the deadline, or an infrastructure failure) — None is never
+    recorded in download_attempts. Upgrade entries return no outcomes.
     """
     import asyncio
     import uuid as _uuid
-    from sqlalchemy import update as _update
-    from backend.api.download import enqueue_download
-    from backend.models.upgrade import TrackUpgrade
+    from backend.services.auto_download import (
+        submit_tracked, finish_tracked, finalize_upgrade, unsettled_jobs, submission_outcome,
+    )
 
     total = len(missing)
+    # The batch's own deadline starts now (submissions count against it), capped by
+    # the scheduler tick's: several tasks share one 60-minute arq job.
+    deadline = time.monotonic() + AUTO_DOWNLOAD_BATCH_MINUTES * 60
+    tick = tick_deadline()
+    if tick is not None:
+        if time.monotonic() >= tick:
+            log.warning(f"[auto-download] {source}: scheduler tick deadline passed — leaving "
+                        f"{total} tracks for the next run")
+            return []
+        deadline = min(deadline, tick)
     log.info(f"Auto-downloading {total} missing tracks from {source}")
 
     # Circuit-breaker: if the Soulseek download backend is down, skip the whole
@@ -499,157 +506,138 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
             unique.append(t)
         missing = unique
 
-    sem = asyncio.Semaphore(4)  # limit concurrency of enqueue calls
+    queue = [t for t in missing if t.get("artist") and t.get("track")]
+    outcomes: list[dict] = []
+    outstanding: list[dict] = []  # submitted, job not settled: {artist, track, job_id, upgrade_id, error}
     skipped_backoff = 0
+    sem = asyncio.Semaphore(4)  # concurrent submissions (backoff check, Last.fm, web call)
 
-    async def download_one(t: dict) -> dict | None:
+    async def submit(t: dict) -> dict | None:
+        """Submit one track. Returns its in-flight record, or None when not started."""
         nonlocal skipped_backoff
-        artist = t.get("artist", "")
-        track = t.get("track", "")
-        if not artist or not track:
-            return
-
-        # Failed-search memory: don't re-run a search that failed recently. Upgrades have
-        # their own per-track attempt accounting (_run_upgrade_scan), so they skip this.
-        if source != "upgrade_scan":
-            try:
-                async with async_session() as bo_db:
-                    why = await in_backoff(bo_db, artist, track)
-                if why:
-                    skipped_backoff += 1
-                    log.info(f"[auto-download] Skip {artist} — {track}: {why}")
-                    return
-            except Exception as e:
-                log.debug(f"[auto-download] backoff check failed for {artist} — {track}: {e}")
-
+        artist, track = t["artist"], t["track"]
         upgrade_id = t.get("upgrade_id") if source == "upgrade_scan" else None
         job_id = str(_uuid.uuid4())
         target_track_id = None
-
-        # Enforce max_attempts so a permanently-unavailable track isn't retried
-        # forever on every scan. Also capture the target track_id so the importer
-        # replaces the exact original instead of fuzzy-matching the download's tags.
-        if upgrade_id:
-            try:
-                async with async_session() as att_db:
-                    row = (await att_db.execute(
-                        select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
-                    )).scalar_one_or_none()
-                    if row:
-                        target_track_id = row.track_id
-                    if row and row.status == "pending" and row.attempts >= (row.max_attempts or 3):
-                        await att_db.execute(
-                            _update(TrackUpgrade)
-                            .where(TrackUpgrade.id == upgrade_id)
-                            .values(status="failed", error_message="Max attempts exhausted",
-                                    updated_at=datetime.utcnow())
-                        )
-                        await att_db.commit()
-                        log.info(f"[auto-download] Upgrade {upgrade_id} exhausted max_attempts — skipping")
-                        return
-            except Exception as e:
-                log.debug(f"[auto-download] max_attempts check failed for {upgrade_id}: {e}")
-
-        # Pre-link upgrade row to this job + bump attempts so the pipeline is observable.
-        if upgrade_id:
-            try:
-                async with async_session() as link_db:
-                    await link_db.execute(
-                        _update(TrackUpgrade)
-                        .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "pending")
-                        .values(
-                            status="downloading",
-                            job_id=job_id,
-                            attempts=TrackUpgrade.attempts + 1,
-                            updated_at=datetime.utcnow(),
-                        )
-                    )
-                    await link_db.commit()
-            except Exception as e:
-                log.debug(f"[auto-download] Could not pre-link upgrade {upgrade_id}: {e}")
-
-        enqueue_error: str | None = None
         async with sem:
-            try:
-                returned_job_id = await enqueue_download(artist, track, job_id=job_id, source=dl_source, target_track_id=target_track_id)
-            except Exception as e:
-                log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
-                returned_job_id = job_id
-                enqueue_error = str(e)[:500]
+            # Enforce max_attempts so a permanently-unavailable track isn't retried
+            # forever on every scan. Also capture the target track_id so the importer
+            # replaces the exact original instead of fuzzy-matching the download's tags.
+            if upgrade_id:
+                go, target_track_id = await _prepare_upgrade(upgrade_id, job_id)
+                if not go:
+                    return None
+            sub = await submit_tracked(artist, track, source=dl_source, target_track_id=target_track_id,
+                                       job_id=job_id, wait=False)
+        if sub["skipped"]:
+            skipped_backoff += 1
+            return None
+        return {"artist": artist, "track": track, "job_id": sub["job_id"],
+                "upgrade_id": upgrade_id, "error": sub["error"], "deduped": sub["deduped"]}
 
-        if source != "upgrade_scan":
-            ok, err = await _download_job_outcome(returned_job_id)
-            if ok is None and enqueue_error:
-                ok, err = (None if _is_infra_error(enqueue_error) else False), enqueue_error
-            if ok is not None:
-                try:
-                    async with async_session() as rec_db:
-                        await record_outcome(rec_db, artist, track, dl_source, ok, err, returned_job_id)
-                except Exception as e:
-                    log.debug(f"[auto-download] could not record outcome for {artist} — {track}: {e}")
-            return {
-                "artist": artist, "track": track, "job_id": returned_job_id,
-                "ok": ok, "error": err if ok is not True else None,
-            }
+    async def finish(item: dict) -> None:
+        if item["upgrade_id"]:
+            ok, err = await submission_outcome(item["job_id"], item["error"])
+            await finalize_upgrade(item["upgrade_id"], ok, err)
+            return
+        outcomes.append(await finish_tracked(item["job_id"], item["artist"], item["track"], dl_source,
+                                             enqueue_error=item["error"], deduped=item["deduped"]))
 
-        # If this was an upgrade row that's STILL `downloading`, the scanner never
-        # called _mark_upgrade_completed (download failed or imported file wasn't
-        # an upgrade). Mark it failed with the job's error message.
-        if upgrade_id:
-            try:
-                async with async_session() as final_db:
-                    row = (await final_db.execute(
-                        select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
-                    )).scalar_one_or_none()
-                    if not row or row.status != "downloading":
-                        return
-                    err = "Download failed"
-                    job_row = (await final_db.execute(
-                        select(Job).where(Job.id == returned_job_id)
-                    )).scalar_one_or_none()
-                    if job_row and job_row.result:
-                        try:
-                            err_payload = json.loads(job_row.result)
-                            err = (
-                                err_payload.get("last_error")
-                                or err_payload.get("error")
-                                or err_payload.get("message")
-                                or err
-                            )
-                        except (ValueError, TypeError):
-                            err = str(job_row.result)[:500]
-                    still_running = job_row is not None and job_row.status in ("pending", "running")
-                    if still_running or _is_infra_error(str(err)):
-                        # Outcome unknown (dedup against another running job, or the
-                        # delegation read timeout fired while the web is still downloading)
-                        # or Soulseek down / cancelled: not the track's fault. Back to
-                        # pending with the attempt refunded so it doesn't count toward
-                        # retirement.
-                        await final_db.execute(
-                            _update(TrackUpgrade)
-                            .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "downloading")
-                            .values(status="pending", attempts=func.max(TrackUpgrade.attempts - 1, 0),
-                                    updated_at=datetime.utcnow())
-                        )
-                        await final_db.commit()
-                        return
-                    await final_db.execute(
-                        _update(TrackUpgrade)
-                        .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "downloading")
-                        .values(
-                            status="failed",
-                            error_message=str(err)[:500],
-                            updated_at=datetime.utcnow(),
-                        )
-                    )
-                    await final_db.commit()
-            except Exception as e:
-                log.debug(f"[auto-download] Could not finalize upgrade {upgrade_id}: {e}")
+    while True:
+        # Top up the in-flight set while there is time left.
+        room = AUTO_DOWNLOAD_MAX_OUTSTANDING - len(outstanding)
+        if room > 0 and queue and time.monotonic() < deadline:
+            batch, queue = queue[:room], queue[room:]
+            submitted = await asyncio.gather(*(submit(t) for t in batch), return_exceptions=True)
+            for t, r in zip(batch, submitted):
+                if isinstance(r, BaseException):
+                    log.warning(f"[auto-download] Could not submit {t['artist']} — {t['track']}: {r}")
+                elif r is not None:
+                    outstanding.append(r)
 
-    tasks = [asyncio.create_task(download_one(t)) for t in missing]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    log.info(f"[auto-download] {source}: {total} candidates, skipped_backoff={skipped_backoff}")
-    return [r for r in results if isinstance(r, dict)]
+        # Settled ones: a skipped/failed submission (no job, or an enqueue error) and
+        # any job whose row is no longer pending/running.
+        try:
+            running = await unsettled_jobs([i["job_id"] for i in outstanding if i["job_id"] and not i["error"]])
+        except Exception as e:
+            log.debug(f"[auto-download] could not poll job rows: {e}")
+            running = {i["job_id"] for i in outstanding}
+        still: list[dict] = []
+        for item in outstanding:
+            if item["job_id"] in running and not item["error"]:
+                still.append(item)
+            else:
+                await finish(item)
+        outstanding = still
+
+        if not outstanding and (not queue or time.monotonic() >= deadline):
+            break
+        if time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(AUTO_DOWNLOAD_POLL_SECONDS)
+
+    if outstanding:
+        log.warning(
+            f"[auto-download] {source}: batch deadline reached with "
+            f"{len(outstanding)} download(s) still running — outcome unknown, left to finish in the web: "
+            + ", ".join(f"{i['artist']} — {i['track']}" for i in outstanding[:10])
+        )
+        for item in outstanding:
+            # Still pending/running: finish() reads ok=None, which records nothing and
+            # puts an upgrade row back to pending with its attempt refunded.
+            await finish(item)
+    if queue:
+        log.warning(f"[auto-download] {source}: {len(queue)} track(s) not submitted before the batch deadline")
+
+    log.info(f"[auto-download] {source}: {total} candidates, skipped_backoff={skipped_backoff}, "
+             f"outcomes={len(outcomes)}")
+    return outcomes
+
+
+async def _prepare_upgrade(upgrade_id: str, job_id: str) -> tuple[bool, str | None]:
+    """Upgrade bookkeeping before its download. Returns (go, target_track_id): a row
+    past max_attempts is retired and not downloaded (go False); otherwise the row is
+    linked to the job and the attempt counted."""
+    from sqlalchemy import update as _update
+    from backend.models.upgrade import TrackUpgrade
+    target_track_id = None
+    try:
+        async with async_session() as att_db:
+            row = (await att_db.execute(
+                select(TrackUpgrade).where(TrackUpgrade.id == upgrade_id)
+            )).scalar_one_or_none()
+            if row:
+                target_track_id = row.track_id
+            if row and row.status == "pending" and row.attempts >= (row.max_attempts or 3):
+                await att_db.execute(
+                    _update(TrackUpgrade)
+                    .where(TrackUpgrade.id == upgrade_id)
+                    .values(status="failed", error_message="Max attempts exhausted",
+                            updated_at=datetime.utcnow())
+                )
+                await att_db.commit()
+                log.info(f"[auto-download] Upgrade {upgrade_id} exhausted max_attempts — skipping")
+                return False, None
+    except Exception as e:
+        log.debug(f"[auto-download] max_attempts check failed for {upgrade_id}: {e}")
+
+    # Pre-link upgrade row to this job + bump attempts so the pipeline is observable.
+    try:
+        async with async_session() as link_db:
+            await link_db.execute(
+                _update(TrackUpgrade)
+                .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "pending")
+                .values(
+                    status="downloading",
+                    job_id=job_id,
+                    attempts=TrackUpgrade.attempts + 1,
+                    updated_at=datetime.utcnow(),
+                )
+            )
+            await link_db.commit()
+    except Exception as e:
+        log.debug(f"[auto-download] Could not pre-link upgrade {upgrade_id}: {e}")
+    return True, target_track_id
 
 
 async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
@@ -940,25 +928,8 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
     # Per-track failure history across ALL TrackUpgrade rows. Each scan used to insert a
     # fresh row with attempts=0, so max_attempts never tripped for a track that kept failing.
     from backend.models.upgrade import TrackUpgrade
-    from backend.services.download_attempts import retry_delay
     max_attempts = int(cfg.get("max_attempts", 3))
-    fail_rows = (await db.execute(
-        select(
-            TrackUpgrade.track_id,
-            func.count(TrackUpgrade.id),
-            func.max(func.coalesce(TrackUpgrade.updated_at, TrackUpgrade.created_at)),
-        )
-        .where(TrackUpgrade.status == "failed")
-        .group_by(TrackUpgrade.track_id)
-    )).all()
-    now = datetime.utcnow()
-    retired_ids: set[str] = set()
-    backoff_ids: set[str] = set()
-    for tid, n_failed, last_failed in fail_rows:
-        if n_failed >= max_attempts:
-            retired_ids.add(tid)
-        elif last_failed and last_failed + retry_delay(n_failed) > now:
-            backoff_ids.add(tid)
+    retired_ids, backoff_ids = await upgrade_skip_ids(db, max_attempts)
 
     # Over-fetch by the size of the skip set so skipped tracks don't starve the batch.
     query = query.order_by(Track.bitrate.asc().nullslast()).limit(count + len(retired_ids) + len(backoff_ids))

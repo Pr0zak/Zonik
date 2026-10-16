@@ -598,7 +598,7 @@
 		let started = 0;
 		for (const t of missing) {
 			try {
-				await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name, source: 'similar' }) });
+				await fetch('/api/download/trigger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artist: t.artist, track: t.name, source: 'similar', bulk: true }) });
 				started++;
 			} catch { /* individual failures tracked via WS */ }
 		}

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.download_attempt import DownloadAttempt
@@ -100,3 +100,32 @@ async def record_outcome(
     row.last_error = (error or "")[:500] or None
     row.last_job_id = job_id
     await db.commit()
+
+
+async def upgrade_skip_ids(db: AsyncSession, max_attempts: int = 3,
+                           now: datetime | None = None) -> tuple[set[str], set[str]]:
+    """Track ids an upgrade must not be tried for yet: (retired, in_backoff).
+
+    Counts failed TrackUpgrade rows per track across every scan (each scan inserts a
+    fresh row, so a single row's attempts never reach max_attempts on their own).
+    max_attempts failures retire the track; fewer put it on the same backoff
+    schedule as failed searches, measured from its latest failure."""
+    from backend.models.upgrade import TrackUpgrade
+    rows = (await db.execute(
+        select(
+            TrackUpgrade.track_id,
+            func.count(TrackUpgrade.id),
+            func.max(func.coalesce(TrackUpgrade.updated_at, TrackUpgrade.created_at)),
+        )
+        .where(TrackUpgrade.status == "failed")
+        .group_by(TrackUpgrade.track_id)
+    )).all()
+    now = now or datetime.utcnow()
+    retired: set[str] = set()
+    backoff: set[str] = set()
+    for tid, n_failed, last_failed in rows:
+        if n_failed >= max_attempts:
+            retired.add(tid)
+        elif last_failed and last_failed + retry_delay(n_failed) > now:
+            backoff.add(tid)
+    return retired, backoff
