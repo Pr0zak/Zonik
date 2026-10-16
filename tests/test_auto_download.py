@@ -267,3 +267,27 @@ async def test_batch_records_finished_and_returns_unknown_at_deadline(db_ready, 
     assert "Skipped" not in by_track
     assert (await attempt_row("A", "Fails")).attempts == 1
     assert await attempt_row("A", "Hangs") is None
+
+
+# --- recommendations bulk download ------------------------------------------------
+
+async def test_rec_bulk_download_sets_status_from_outcome(db_ready, fake_enqueue, no_lastfm):
+    from backend.api import recommendations as recs_api
+    from backend.models.recommendation import Recommendation
+
+    async with async_session() as s:
+        for rid, track in (("r1", "Works"), ("r2", "Fails"), ("r3", "Hangs"), ("r4", "Backoff")):
+            s.add(Recommendation(id=rid, artist="A", track=track, source="tag", score=0.9, status="pending"))
+        s.add(DownloadAttempt(key=attempt_key("A", "Backoff"), artist="A", track="Backoff", attempts=1,
+                              next_retry_at=datetime.utcnow() + timedelta(days=1)))
+        await s.commit()
+    fake_enqueue.script["Fails"] = ("failed", {"message": "No results for A - Fails"})
+    fake_enqueue.script["Hangs"] = ("running", None)
+
+    await recs_api._download_recs(["r1", "r2", "r3", "r4"])
+    async with async_session() as s:
+        got = {r.id: r for r in (await s.execute(select(Recommendation))).scalars().all()}
+    assert got["r1"].status == "downloaded"
+    assert got["r2"].status == "failed" and "No results" in got["r2"].source_detail
+    assert got["r3"].status == "pending"  # unknown outcome
+    assert got["r4"].status == "pending"  # skipped for backoff

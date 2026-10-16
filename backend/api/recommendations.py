@@ -247,9 +247,8 @@ class BulkDownloadRequest(BaseModel):
 
 @router.post("/bulk-download")
 async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    """Download multiple recommendations as individual download jobs."""
-    from backend.api.download import enqueue_download
-
+    """Download multiple recommendations through the tracked path. Each rec's status
+    follows its own outcome once its download ends (see _download_recs)."""
     query = select(Recommendation).where(Recommendation.status == "pending")
     if req.mode == "above_score":
         query = query.where(Recommendation.score >= req.min_score)
@@ -263,15 +262,37 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
     if not recs:
         return {"ok": False, "error": "No pending recommendations to download"}
 
-    # Mark as downloaded immediately
-    for r in recs:
-        r.status = "downloaded"
-    await db.commit()
-
-    for r in recs:
-        background_tasks.add_task(enqueue_download, r.artist, r.track, source="recommendation")
-
+    background_tasks.add_task(_download_recs, [r.id for r in recs])
     return {"ok": True, "count": len(recs)}
+
+
+async def _download_recs(rec_ids: list[str]) -> None:
+    """Download the given recs (backoff, duration gate, outcome recorded), then set
+    each one's status the way the scheduled auto-download does: "downloaded" on
+    success, "failed" (error kept on source_detail) on failure, left pending when
+    the outcome is unknown or the track was skipped for backoff."""
+    from backend.services.auto_download import download_tracked_many
+    from backend.services.download_attempts import attempt_key
+
+    async with async_session() as db:
+        recs = (await db.execute(select(Recommendation).where(Recommendation.id.in_(rec_ids)))).scalars().all()
+        items = [{"artist": r.artist, "track": r.track} for r in recs]
+
+    outcomes = await download_tracked_many(items, source="recommendation")
+    by_key = {attempt_key(o["artist"], o["track"]): o for o in outcomes}
+
+    async with async_session() as db:
+        recs = (await db.execute(select(Recommendation).where(Recommendation.id.in_(rec_ids)))).scalars().all()
+        for r in recs:
+            o = by_key.get(attempt_key(r.artist, r.track))
+            if o is None or o["ok"] is None or r.status != "pending":
+                continue
+            if o["ok"]:
+                r.status = "downloaded"
+            else:
+                r.status = "failed"
+                r.source_detail = ((r.source_detail or "") + f" | download failed: {o['error'] or 'unknown'}")[:2000]
+        await db.commit()
 
 
 @router.post("/{rec_id}/explain")
