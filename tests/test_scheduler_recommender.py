@@ -181,3 +181,10 @@ def test_library_keys_fall_back_for_non_latin_names():
     assert key_artist("宇多田ヒカル") == "宇多田ヒカル"
     assert key_title("Первый") == "первый"
     assert key_artist("宇多田ヒカル") != key_artist("坂本龍一")
+
+
+def test_primary_artist_ends_at_semicolon_too():
+    from backend.services.library_match import key_artist
+    assert key_artist("BB Cooper; Jake Daniels") == "bbcooper"
+    assert key_artist("BB Cooper, Jake Daniels") == "bbcooper"
+    assert key_artist("AC/DC") == "acdc"

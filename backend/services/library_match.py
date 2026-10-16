@@ -47,7 +47,10 @@ def norm_title_strict(s: str) -> str:
 
 
 def norm_artist(s: str) -> str:
-    primary = (s or "").split(",", 1)[0]
+    # The primary artist ends at the first "," or ";" — ";" is how multi-value
+    # artist tags are joined ("BB Cooper; Jake Daniels"), and without this split a
+    # recommendation for "BB Cooper" never matched that library track.
+    primary = re.split(r"[,;]", s or "", 1)[0]
     primary = _FEAT_RE.sub("", primary).strip()
     return re.sub(r"[^a-z0-9]", "", primary.lower())
 

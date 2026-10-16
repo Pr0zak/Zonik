@@ -172,7 +172,14 @@ class SoulseekClient:
         now = time.monotonic()
         if now - at > SHARING_CHECK_SECONDS:
             try:
-                from backend.config import get_settings
+                from backend.config import CONFIG_PATHS, get_settings
+                # get_settings() is lru_cached: the Settings page clears it on save, but an
+                # edit of zonik.toml by hand is only seen if we notice the file changed.
+                mtime = next((os.path.getmtime(p) for p in CONFIG_PATHS if p.exists()), None)
+                if mtime != getattr(self, "_config_mtime", None):
+                    if getattr(self, "_config_mtime", None) is not None:
+                        get_settings.cache_clear()
+                    self._config_mtime = mtime
                 value = get_settings().soulseek.share_library
             except Exception:
                 pass
