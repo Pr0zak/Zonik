@@ -646,7 +646,9 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                             log.info(f"[download] Multi-source queued: {dl_username}")
                         except Exception as e:
                             # Peer unreachable — no Transfer exists, so this is the one record.
-                            await native_client.reputation.record_failure(dl_username)
+                            # Not when our own server link is down: that's not the peer's fault.
+                            if native_client.logged_in:
+                                await native_client.reputation.record_failure(dl_username)
                             return candidate, "failed", None, str(e)
                         status, save_path, error = await poll_transfer(native_client, transfer)
                 except PeerBusy:
@@ -832,7 +834,12 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                                 log.warning(f"[download] Could not reach {dl_username}: {e}")
                                 last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
                                 source_errors.append({"user": dl_username, "error": last_error})
-                                await native_client.reputation.record_failure(dl_username)
+                                # Only the peer's fault while our own server link is up; with it
+                                # down (reconnect in flight) no peer can be reached at all.
+                                if native_client.logged_in:
+                                    await native_client.reputation.record_failure(dl_username)
+                                else:
+                                    log.info(f"[download] Not blaming {dl_username}: our Soulseek server link is down")
                                 continue
 
                             status, save_path, error = await poll_transfer(native_client, transfer)
