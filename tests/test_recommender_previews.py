@@ -1,7 +1,12 @@
 """CLAP similarity on iTunes previews: scoring maths, explanation text and the cache path
 (fetch + embed stubbed, cache in an in-memory SQLite)."""
+import asyncio
+import functools
 import logging
 import os
+import tempfile
+import threading
+import time
 from datetime import datetime, timedelta
 
 import httpx
@@ -18,6 +23,8 @@ from backend.services import recommender as rec
 from backend.services.recommender import (
     _generate_explanation, apply_clap_similarity, clap_cosine, weighted_score,
 )
+
+MODEL = emb_mod.clap_model_name()
 
 
 def _unit(seed: int) -> np.ndarray:
@@ -139,8 +146,11 @@ def stubs(monkeypatch):
 async def test_cache_hit_and_miss(db, stubs):
     calls, state = stubs
     centroid = _unit(7)
-    db.add(PreviewEmbedding(preview_url="u1", embedding=centroid.tobytes(), created_at=datetime.utcnow()))
-    db.add(PreviewEmbedding(preview_url="old", embedding=centroid.tobytes(),
+    db.add(PreviewEmbedding(preview_url="u1", model=MODEL, embedding=centroid.tobytes(), created_at=datetime.utcnow()))
+    # same URL embedded by another CLAP model: must be a cache miss
+    db.add(PreviewEmbedding(preview_url="u2", model="some/other-clap", embedding=centroid.tobytes(),
+                            created_at=datetime.utcnow()))
+    db.add(PreviewEmbedding(preview_url="old", model=MODEL, embedding=centroid.tobytes(),
                             created_at=datetime.utcnow() - timedelta(days=365)))
     await db.commit()
     state["vectors"] = {"u2": _unit(8).tobytes()}  # u3's embed fails
@@ -158,8 +168,9 @@ async def test_cache_hit_and_miss(db, stubs):
     assert cands[2]["breakdown"]["clap_similarity"] == 0.0 and cands[2]["score"] == 0.0
     assert "clap_similarity" not in cands[3]["breakdown"]
 
-    urls = set((await db.execute(select(PreviewEmbedding.preview_url))).scalars())
-    assert urls == {"u1", "u2"}  # u2 cached, the year-old row pruned
+    keys = set((await db.execute(select(PreviewEmbedding.preview_url, PreviewEmbedding.model))).all())
+    # u2 cached for this model alongside the other model's row; the year-old row pruned
+    assert keys == {("u1", MODEL), ("u2", MODEL), ("u2", "some/other-clap")}
 
     # second refresh: everything that embedded is cached, the model isn't touched
     calls["embed"].clear()
@@ -175,7 +186,7 @@ async def test_model_unavailable_uses_cache_only(db, stubs):
     calls, state = stubs
     state["available"] = False
     centroid = _unit(3)
-    db.add(PreviewEmbedding(preview_url="u1", embedding=centroid.tobytes(), created_at=datetime.utcnow()))
+    db.add(PreviewEmbedding(preview_url="u1", model=MODEL, embedding=centroid.tobytes(), created_at=datetime.utcnow()))
     await db.commit()
     cands = [_cand("u1"), _cand("u2")]
     stats = await rec.score_previews_with_clap(db, cands, centroid.tobytes())
@@ -232,3 +243,142 @@ async def test_download_preview_size_cap_and_cleanup():
         os.unlink(path)
         assert await rec._download_preview(client, "https://x/missing") is None
         assert await rec._download_preview(client, "https://x/big") is None
+
+
+@pytest.mark.asyncio
+async def test_web_process_scores_cached_only(db, stubs, caplog):
+    calls, state = stubs
+    caplog.set_level(logging.INFO, logger="backend.services.recommender")
+    centroid = _unit(4)
+    db.add(PreviewEmbedding(preview_url="u1", model=MODEL, embedding=centroid.tobytes(), created_at=datetime.utcnow()))
+    await db.commit()
+    state["vectors"] = {"u2": _unit(5).tobytes()}
+    cands = [_cand("u1"), _cand("u2")]
+    stats = await rec.score_previews_with_clap(db, cands, centroid.tobytes(), allow_model_load=False)
+    assert calls["embed"] == [] and calls["available"] == 0 and calls["unload"] == 0
+    assert stats["scored"] == 1 and cands[1]["breakdown"]["clap_similarity"] == 0.0
+    assert any("1 uncached preview(s) left for the nightly worker" in r.getMessage() for r in caplog.records)
+
+
+# --- _embed_previews: temp files, slots, timeout ------------------------------------
+
+def _preview_files(d):
+    return sorted(n for n in os.listdir(d) if n.startswith(rec.PREVIEW_TMP_PREFIX))
+
+
+def _mock_client(monkeypatch, handler):
+    orig_client = httpx.AsyncClient
+    monkeypatch.setattr(rec.httpx, "AsyncClient",
+                        functools.partial(orig_client, transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.asyncio
+async def test_embed_previews_cleans_up(monkeypatch, tmp_path):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    stale = tmp_path / f"{rec.PREVIEW_TMP_PREFIX}stale.m4a"
+    stale.write_bytes(b"x")
+    os.utime(stale, (time.time() - 7200, time.time() - 7200))
+    fresh = tmp_path / f"{rec.PREVIEW_TMP_PREFIX}inflight.m4a"
+    fresh.write_bytes(b"x")
+
+    async def handler(request):
+        if request.url.path == "/missing":
+            return httpx.Response(404)
+        if request.url.path == "/slow":
+            async def trickle():
+                for _ in range(50):
+                    await asyncio.sleep(0.05)
+                    yield b"x"
+            return httpx.Response(200, content=trickle())
+        return httpx.Response(200, content=b"audio")
+
+    _mock_client(monkeypatch, handler)
+    monkeypatch.setattr(rec, "PREVIEW_TOTAL_TIMEOUT_S", 0.3)
+
+    on_disk_max = 0
+    embedded = []
+
+    async def fake_embed(path):
+        nonlocal on_disk_max
+        assert os.path.exists(path)
+        # files this pass created (minus the recent leftover that belongs to someone else)
+        on_disk_max = max(on_disk_max, len(_preview_files(tmp_path)) - 1)
+        embedded.append(path)
+        await asyncio.sleep(0.01)
+        return _unit(1).tobytes()
+
+    monkeypatch.setattr(rec, "_embed_preview_file", fake_embed)
+    urls = [f"https://x/ok{i}" for i in range(10)] + ["https://x/missing", "https://x/slow"]
+    out = await rec._embed_previews(urls)
+
+    assert set(out) == {f"https://x/ok{i}" for i in range(10)}
+    assert len(embedded) == 10
+    assert on_disk_max <= rec.PREVIEW_CONCURRENCY
+    # failed download, timed-out download and every embedded file are gone; the stale
+    # leftover was swept, a recent one (possibly another refresh's) is kept
+    assert _preview_files(tmp_path) == [fresh.name]
+
+
+@pytest.mark.asyncio
+async def test_embed_previews_removes_file_when_embed_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    _mock_client(monkeypatch, lambda r: httpx.Response(200, content=b"audio"))
+
+    async def failing_embed(path):
+        assert os.path.exists(path)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rec, "_embed_preview_file", failing_embed)
+    assert await rec._embed_previews(["https://x/a", "https://x/b"]) == {}
+    assert _preview_files(tmp_path) == []
+
+
+# --- model lock and in-use counter ----------------------------------------------------
+
+@pytest.fixture
+def fake_model(monkeypatch):
+    loads = []
+
+    def fake_do_load():
+        loads.append(threading.get_ident())
+        time.sleep(0.05)
+        emb_mod._model, emb_mod._processor = object(), object()
+
+    monkeypatch.setattr(emb_mod, "_do_load", fake_do_load)
+    monkeypatch.setattr(emb_mod, "_model", None)
+    monkeypatch.setattr(emb_mod, "_processor", None)
+    monkeypatch.setattr(emb_mod, "_in_use", 0)
+    return loads
+
+
+def test_concurrent_loads_load_once(fake_model):
+    threads = [threading.Thread(target=emb_mod.clap_model_available) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(fake_model) == 1 and emb_mod.clap_model_loaded()
+
+
+def test_unload_skipped_while_in_use(fake_model):
+    with emb_mod._use_model() as (model, _):
+        assert model is not None and emb_mod._in_use == 1
+        assert emb_mod.unload_clap_model() is False
+        assert emb_mod.clap_model_loaded()
+    assert emb_mod._in_use == 0
+    assert emb_mod.unload_clap_model() is True
+    assert not emb_mod.clap_model_loaded()
+    # the counter is released even when the caller raises; the next use reloads
+    with pytest.raises(RuntimeError):
+        with emb_mod._use_model():
+            raise RuntimeError("inference failed")
+    assert emb_mod._in_use == 0 and len(fake_model) == 2
+
+
+def test_use_model_when_unavailable(monkeypatch):
+    monkeypatch.setattr(emb_mod, "_do_load", lambda: None)
+    monkeypatch.setattr(emb_mod, "_model", None)
+    monkeypatch.setattr(emb_mod, "_in_use", 0)
+    with emb_mod._use_model() as (model, processor):
+        assert model is None and processor is None
+    assert emb_mod._in_use == 0

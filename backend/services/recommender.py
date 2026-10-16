@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 import uuid
 from datetime import datetime, timedelta
 from urllib.parse import quote_plus
@@ -593,6 +594,12 @@ PREVIEW_MAX_BYTES = 3 * 1024 * 1024
 PREVIEW_TIMEOUT_S = 10.0
 PREVIEW_CONCURRENCY = 4
 PREVIEW_CACHE_DAYS = 90
+# Wall-clock cap per preview download (httpx's timeout is per phase, so a server trickling
+# bytes could otherwise hold a download slot indefinitely).
+PREVIEW_TOTAL_TIMEOUT_S = 15.0
+PREVIEW_TMP_PREFIX = "zonik-preview-"
+# Temp previews older than this are leftovers of a killed refresh and are removed.
+PREVIEW_STALE_S = 3600
 
 
 def _as_vector(v: bytes | np.ndarray) -> np.ndarray:
@@ -644,17 +651,18 @@ def apply_clap_similarity(candidate: dict, similarity: float, cfg) -> None:
     candidate["score"] = score
 
 
-async def _load_cached_preview_embeddings(db: AsyncSession, urls: list[str]) -> dict[str, bytes]:
+async def _load_cached_preview_embeddings(db: AsyncSession, urls: list[str],
+                                          model: str) -> dict[str, bytes]:
     if not urls:
         return {}
     rows = (await db.execute(
         select(PreviewEmbedding.preview_url, PreviewEmbedding.embedding)
-        .where(PreviewEmbedding.preview_url.in_(urls))
+        .where(PreviewEmbedding.model == model, PreviewEmbedding.preview_url.in_(urls))
     )).all()
     return {u: e for u, e in rows}
 
 
-async def _store_preview_embeddings(db: AsyncSession, new: dict[str, bytes]) -> None:
+async def _store_preview_embeddings(db: AsyncSession, new: dict[str, bytes], model: str) -> None:
     """Insert new cache rows (ignoring any a concurrent refresh already wrote) and prune old ones."""
     from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -662,8 +670,9 @@ async def _store_preview_embeddings(db: AsyncSession, new: dict[str, bytes]) -> 
     if new:
         await db.execute(
             sqlite_insert(PreviewEmbedding)
-            .values([{"preview_url": u, "embedding": e, "created_at": now} for u, e in new.items()])
-            .on_conflict_do_nothing(index_elements=["preview_url"])
+            .values([{"preview_url": u, "model": model, "embedding": e, "created_at": now}
+                     for u, e in new.items()])
+            .on_conflict_do_nothing(index_elements=["preview_url", "model"])
         )
     await db.execute(
         delete(PreviewEmbedding).where(PreviewEmbedding.created_at < now - timedelta(days=PREVIEW_CACHE_DAYS))
@@ -671,10 +680,32 @@ async def _store_preview_embeddings(db: AsyncSession, new: dict[str, bytes]) -> 
     await db.commit()
 
 
+def _remove_stale_preview_files(max_age_s: float = PREVIEW_STALE_S) -> int:
+    """Delete temp previews left behind by a refresh that was killed mid-pass."""
+    removed = 0
+    cutoff = time.time() - max_age_s
+    tmpdir = tempfile.gettempdir()
+    try:
+        names = [n for n in os.listdir(tmpdir) if n.startswith(PREVIEW_TMP_PREFIX)]
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(tmpdir, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.unlink(path)
+                removed += 1
+        except OSError:
+            pass
+    if removed:
+        log.info(f"Preview CLAP: removed {removed} stale temp preview(s)")
+    return removed
+
+
 async def _download_preview(client: httpx.AsyncClient, url: str) -> str | None:
     """Stream a preview clip to a temp file, giving up past PREVIEW_MAX_BYTES. Returns the path
     (the caller removes it) or None on any failure (the temp file is removed here then)."""
-    fd, path = tempfile.mkstemp(prefix="zonik-preview-", suffix=".m4a")
+    fd, path = tempfile.mkstemp(prefix=PREVIEW_TMP_PREFIX, suffix=".m4a")
     ok = False
     try:
         with os.fdopen(fd, "wb") as f:
@@ -710,42 +741,51 @@ async def _embed_preview_file(path: str) -> bytes | None:
 
 
 async def _embed_previews(urls: list[str]) -> dict[str, bytes]:
-    """Download (4 at a time) and embed (one at a time: torch already uses every core) each
-    preview. A failed fetch or embed just leaves that URL out of the result."""
+    """Download and embed each preview, at most PREVIEW_CONCURRENCY in flight. A slot is held
+    from download through embedding to deletion, so no more than that many clips sit on disk;
+    embedding itself runs one at a time (torch already uses every core). A failed or slow
+    fetch, or a failed embed, just leaves that URL out of the result."""
+    _remove_stale_preview_files()
     out: dict[str, bytes] = {}
-    fetch_sem = asyncio.Semaphore(PREVIEW_CONCURRENCY)
+    slots = asyncio.Semaphore(PREVIEW_CONCURRENCY)
     embed_lock = asyncio.Lock()
 
     async with httpx.AsyncClient(timeout=PREVIEW_TIMEOUT_S, follow_redirects=True) as client:
         async def one(url: str) -> None:
-            async with fetch_sem:
-                path = await _download_preview(client, url)
-            if not path:
-                return
-            try:
-                async with embed_lock:
-                    emb = await _embed_preview_file(path)
-                if emb and len(emb) == 512 * 4:
-                    out[url] = emb
-            except Exception as e:
-                log.debug(f"Preview embed failed for {url}: {e}")
-            finally:
+            async with slots:
                 try:
-                    os.unlink(path)
-                except OSError:
-                    pass
+                    path = await asyncio.wait_for(_download_preview(client, url), PREVIEW_TOTAL_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    log.debug(f"Preview download timed out for {url}")
+                    return
+                if not path:
+                    return
+                try:
+                    async with embed_lock:
+                        emb = await _embed_preview_file(path)
+                    if emb and len(emb) == 512 * 4:
+                        out[url] = emb
+                except Exception as e:
+                    log.debug(f"Preview embed failed for {url}: {e}")
+                finally:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
 
         await asyncio.gather(*(one(u) for u in urls), return_exceptions=True)
     return out
 
 
 async def score_previews_with_clap(db: AsyncSession, candidates: list[dict],
-                                   clap_centroid: bytes | None) -> dict:
+                                   clap_centroid: bytes | None, allow_model_load: bool = True) -> dict:
     """Score the candidates' iTunes previews against the CLAP taste centroid, in place.
 
     Each candidate with a preview_url (the first clap_preview_limit of them) gets
     breakdown["clap_similarity"] and a score that includes the term. Embeddings come from the
-    preview_embeddings cache or are computed now and cached. Skips the whole pass with a single
+    preview_embeddings cache (keyed by URL and CLAP model) or are computed now and cached.
+    With allow_model_load=False (a manual refresh in the web process) only cached previews are
+    scored and the misses are left to the nightly worker run. Skips the whole pass with a single
     log line when it is switched off, CLAP is disabled, there is no centroid, or the model can't
     be loaded. Returns counters for the refresh summary."""
     settings = get_settings()
@@ -767,12 +807,18 @@ async def score_previews_with_clap(db: AsyncSession, candidates: list[dict],
     if not urls:
         return stats
 
-    cached = await _load_cached_preview_embeddings(db, urls)
+    from backend.services import embeddings as emb_mod
+
+    model_name = emb_mod.clap_model_name()
+    cached = await _load_cached_preview_embeddings(db, urls, model_name)
+    # End the read transaction now: the embedding pass below can take minutes and must not
+    # hold a SQLite snapshot open the whole time.
+    await db.commit()
     missing = [u for u in urls if u not in cached]
     new: dict[str, bytes] = {}
-    if missing:
-        from backend.services import embeddings as emb_mod
-
+    if missing and not allow_model_load:
+        log.info(f"Preview CLAP: {len(missing)} uncached preview(s) left for the nightly worker refresh")
+    elif missing:
         was_loaded = emb_mod.clap_model_loaded()
         available = await asyncio.get_running_loop().run_in_executor(None, emb_mod.clap_model_available)
         if not available:
@@ -781,12 +827,12 @@ async def score_previews_with_clap(db: AsyncSession, candidates: list[dict],
             try:
                 new = await _embed_previews(missing)
             finally:
-                # A manual refresh runs in the web process: don't leave the model resident
-                # there (or in the worker) when it was only loaded for this pass.
+                # Don't leave the model resident when it was only loaded for this pass
+                # (unload_clap_model keeps it if another embedding call is running).
                 if not was_loaded:
                     emb_mod.unload_clap_model()
     try:
-        await _store_preview_embeddings(db, new)
+        await _store_preview_embeddings(db, new, model_name)
     except Exception as e:
         await db.rollback()
         log.warning(f"Preview CLAP: could not update the embedding cache: {e}")
@@ -1141,7 +1187,14 @@ async def refresh_recommendations(
     # CLAP similarity on the 30 s previews: adds the clap term to each candidate's score.
     if on_progress:
         await on_progress(step, total_steps, "Comparing previews to your taste...")
-    preview_stats = await score_previews_with_clap(db, top, clap_centroid)
+    # Only the worker embeds new previews. A manual refresh runs in the web process (which owns
+    # the Soulseek client; the worker has none) and scores cached previews only, so zonik-web
+    # never loads the ~1 GB CLAP model or spends minutes of CPU on inference.
+    from backend.soulseek import get_client
+    in_web_process = get_client() is not None
+    preview_stats = await score_previews_with_clap(
+        db, top, clap_centroid, allow_model_load=not in_web_process,
+    )
     if preview_stats["scored"]:
         top.sort(key=lambda x: x["score"], reverse=True)
 

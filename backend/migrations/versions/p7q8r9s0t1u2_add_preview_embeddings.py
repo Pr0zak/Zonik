@@ -20,9 +20,11 @@ def upgrade() -> None:
     # IF NOT EXISTS: upgrade.sh's init_db() (create_all) creates the table before alembic runs.
     op.execute("""
         CREATE TABLE IF NOT EXISTS preview_embeddings (
-            preview_url TEXT NOT NULL PRIMARY KEY,
+            preview_url TEXT NOT NULL,
+            model TEXT NOT NULL,
             embedding BLOB NOT NULL,
-            created_at DATETIME NOT NULL
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY (preview_url, model)
         )
     """)
 
