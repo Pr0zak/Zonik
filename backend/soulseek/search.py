@@ -1,10 +1,12 @@
 """Multi-strategy search + quality scoring — uses native SoulseekClient."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 from backend.config import get_settings
+from backend.soulseek.protocol.types import SearchResult
 from backend.services.soulseek import (
     normalize_text, words_match, strip_track_extras, clean_track_name,
     clean_artist_name, title_matches, PREFERRED_EXTENSIONS,
@@ -15,6 +17,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+MAX_QUERY_VARIANTS = 4
 DURATION_TOLERANCE = 3  # seconds a candidate's reported duration may differ from the target
 
 
@@ -189,14 +192,8 @@ async def pick_best_results_native(
     return candidates
 
 
-async def search_multi_strategy_native(
-    client: "SoulseekClient",
-    artist: str,
-    track: str,
-    better_than: tuple[str, int] | None = None,
-    target_duration: int | None = None,
-) -> list[dict]:
-    """Try multiple search strategies using native client. Returns best candidates."""
+def build_query_variants(artist: str, track: str) -> list[str]:
+    """The 1-4 distinct search queries tried for one track, most specific first."""
     queries = [f"{artist} {track}"]
     cleaned_track = strip_track_extras(track)
     cleaned_artist = clean_artist_name(artist)
@@ -208,21 +205,62 @@ async def search_multi_strategy_native(
     first_artist = artist.split()[0] if artist.split() else artist
     if first_artist.lower() != cleaned_artist.lower():
         queries.append(f"{first_artist} {cleaned_track}")
-
-    seen: set[str] = set()
+    out: list[str] = []
     for q in queries:
-        if q in seen:
-            continue
-        seen.add(q)
-        log.info(f"[native] Search strategy: '{q}'")
-        results = await client.search(q)
-        if results:
-            candidates = await pick_best_results_native(results, artist, track, reputation=client.reputation,
-                                                        better_than=better_than, target_duration=target_duration)
-            if candidates:
-                return candidates
+        if q not in out:
+            out.append(q)
+    return out[:MAX_QUERY_VARIANTS]
 
-    return []
+
+def merge_search_results(responses: list[list[SearchResult]]) -> list[SearchResult]:
+    """Merge the responses of several queries into one list: one SearchResult per
+    peer (first-seen slot/speed/queue figures), each file listed once per
+    (username, filename)."""
+    merged: dict[str, SearchResult] = {}
+    seen_files: set[tuple[str, str]] = set()
+    for results in responses:
+        for sr in results:
+            target = merged.get(sr.username)
+            if target is None:
+                target = SearchResult(
+                    username=sr.username, token=sr.token, files=[],
+                    slots_free=sr.slots_free, avg_speed=sr.avg_speed, queue_length=sr.queue_length,
+                )
+                merged[sr.username] = target
+            for fi in sr.files:
+                key = (sr.username, fi.filename)
+                if key in seen_files:
+                    continue
+                seen_files.add(key)
+                target.files.append(fi)
+    return list(merged.values())
+
+
+async def search_multi_strategy_native(
+    client: "SoulseekClient",
+    artist: str,
+    track: str,
+    better_than: tuple[str, int] | None = None,
+    target_duration: int | None = None,
+) -> list[dict]:
+    """Search every query variant at once, merge the responses and rank once.
+
+    Each client.search uses its own token, so the variants run concurrently: a
+    track nobody has costs one search timeout instead of up to four in a row."""
+    queries = build_query_variants(artist, track)
+    log.info(f"[native] Search strategies: {queries}")
+    responses = await asyncio.gather(*(client.search(q) for q in queries), return_exceptions=True)
+    ok: list[list[SearchResult]] = []
+    for q, r in zip(queries, responses):
+        if isinstance(r, BaseException):
+            log.warning(f"[native] Search '{q}' failed: {r}")
+            continue
+        ok.append(r)
+    merged = merge_search_results(ok)
+    if not merged:
+        return []
+    return await pick_best_results_native(merged, artist, track, reputation=client.reputation,
+                                          better_than=better_than, target_duration=target_duration)
 
 
 async def search_and_download_native(

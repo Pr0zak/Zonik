@@ -2,12 +2,16 @@
 
 Run: uv run --with pytest --with pytest-asyncio pytest tests/test_search_ranking.py
 """
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from backend.soulseek.protocol.types import FileAttribute, FileInfo, SearchResult
-from backend.soulseek.search import pick_best_results_native
+from backend.soulseek.search import (
+    build_query_variants, merge_search_results, pick_best_results_native, search_multi_strategy_native,
+)
 
-pytestmark = pytest.mark.asyncio
 
 MB = 1024 * 1024
 
@@ -18,6 +22,7 @@ def result(user, filename, duration=None, size=30 * MB):
                         slots_free=True, avg_speed=0, queue_length=0)
 
 
+@pytest.mark.asyncio
 async def test_duration_gate_rejects_wrong_length_keeps_unknown():
     results = [
         result("right", "Artist\\Album\\01 - Jingle Bells.flac", duration=181),
@@ -31,6 +36,7 @@ async def test_duration_gate_rejects_wrong_length_keeps_unknown():
     assert users[0] == "right"  # matching duration earns the bonus
 
 
+@pytest.mark.asyncio
 async def test_duration_gate_tolerance_is_three_seconds():
     results = [
         result("plus3", "A\\Song.flac", duration=183),
@@ -40,7 +46,72 @@ async def test_duration_gate_tolerance_is_three_seconds():
     assert [c["username"] for c in picked] == ["plus3"]
 
 
+@pytest.mark.asyncio
 async def test_no_target_duration_keeps_everything():
     results = [result("a", "A\\Song.flac", duration=100), result("b", "B\\Song.flac", duration=300)]
     picked = await pick_best_results_native(results, "Artist", "Song")
     assert {c["username"] for c in picked} == {"a", "b"}
+
+
+# --- query variants: run concurrently, merge, rank once -------------------------
+
+def test_merge_dedupes_files_by_user_and_filename():
+    a1 = result("alice", "A\\Song.flac")
+    a2 = result("alice", "A\\Song.flac")          # same file from a second query
+    a3 = result("alice", "A\\Song (Live).flac")    # another file, same peer
+    b1 = result("bob", "A\\Song.flac")             # same name, other peer: kept
+    merged = merge_search_results([[a1, b1], [a2, a3]])
+    by_user = {sr.username: [f.filename for f in sr.files] for sr in merged}
+    assert by_user == {"alice": ["A\\Song.flac", "A\\Song (Live).flac"], "bob": ["A\\Song.flac"]}
+
+
+def test_query_variants_are_distinct_and_capped():
+    qs = build_query_variants("The Artist feat. Someone", "Song Title (Remastered 2011)")
+    assert len(qs) == len(set(qs)) and 1 <= len(qs) <= 4
+
+
+@pytest.mark.asyncio
+async def test_variants_run_concurrently_and_merge():
+    running = 0
+    peak = 0
+    asked = []
+
+    async def search(q):
+        nonlocal running, peak
+        asked.append(q)
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.05)
+        running -= 1
+        # each variant finds a different peer; one peer shows up in every response
+        return [result(f"peer{len(asked)}", "X\\Song Title.flac"), result("shared", "X\\Song Title.flac")]
+
+    client = SimpleNamespace(search=search, reputation=None)
+    picked = await search_multi_strategy_native(client, "The Artist feat. Someone", "Song Title (Remastered 2011)")
+    assert len(asked) >= 2
+    assert peak == len(asked)  # all variants in flight at once
+    users = [c["username"] for c in picked]
+    assert len(users) == len(set(users))
+    assert "shared" in users
+
+
+# --- per-peer slot ----------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_peer_slot_serialises_one_peer_and_prunes():
+    from backend.soulseek.client import SoulseekClient
+    fake = SimpleNamespace(_peer_slots={})
+    order = []
+
+    async def job(name, user):
+        async with SoulseekClient.peer_slot(fake, user):
+            order.append(f"{name}+")
+            await asyncio.sleep(0.02)
+            order.append(f"{name}-")
+
+    await asyncio.gather(job("a", "peer"), job("b", "peer"), job("c", "other"))
+    ia, ib = order.index("a+"), order.index("b+")
+    first, second = ("a", "b") if ia < ib else ("b", "a")
+    assert order.index(f"{first}-") < order.index(f"{second}+")  # never overlapped on "peer"
+    assert order.index("c+") < order.index(f"{second}+")  # the other peer didn't wait
+    assert fake._peer_slots == {}  # idle entries pruned

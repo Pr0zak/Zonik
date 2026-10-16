@@ -10,8 +10,13 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-# Module-level download queue — limits concurrent download jobs
-_download_semaphore: asyncio.Semaphore | None = None
+# Two module-level queues. A job takes a *search* slot when it starts (that is
+# what "pending" vs "running" means for a job row) and gives it back once it has
+# its candidates; each transfer attempt then takes a *transfer* slot. Searches are
+# cheap and short, transfers long, so one stubborn track no longer holds a slot
+# for 20 minutes while other jobs can't even search.
+_search_semaphore: asyncio.Semaphore | None = None
+_transfer_semaphore: asyncio.Semaphore | None = None
 
 # Download jobs the user cancelled (filled by the job-cancel route in
 # backend/api/jobs.py). Checked in memory on every poll instead of reading the
@@ -19,21 +24,58 @@ _download_semaphore: asyncio.Semaphore | None = None
 cancelled_jobs: set[str] = set()
 
 
-def _get_semaphore() -> asyncio.Semaphore:
-    """Lazy-init semaphore with configured max_concurrent_downloads."""
-    global _download_semaphore
-    if _download_semaphore is None:
+def _get_search_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the job/search queue (soulseek.max_concurrent_searches)."""
+    global _search_semaphore
+    if _search_semaphore is None:
         from backend.config import get_settings
-        limit = get_settings().soulseek.max_concurrent_downloads
-        _download_semaphore = asyncio.Semaphore(limit)
-        log.info(f"[download] Queue initialized: max {limit} concurrent downloads")
-    return _download_semaphore
+        limit = max(1, get_settings().soulseek.max_concurrent_searches)
+        _search_semaphore = asyncio.Semaphore(limit)
+        log.info(f"[download] Search queue initialized: max {limit} concurrent searches")
+    return _search_semaphore
+
+
+def _get_transfer_semaphore() -> asyncio.Semaphore:
+    """Lazy-init the transfer queue (soulseek.max_concurrent_downloads)."""
+    global _transfer_semaphore
+    if _transfer_semaphore is None:
+        from backend.config import get_settings
+        limit = max(1, get_settings().soulseek.max_concurrent_downloads)
+        _transfer_semaphore = asyncio.Semaphore(limit)
+        log.info(f"[download] Transfer queue initialized: max {limit} concurrent transfers")
+    return _transfer_semaphore
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """The queue a new download job waits in (its search phase)."""
+    return _get_search_semaphore()
 
 
 def reset_download_semaphore():
-    """Reset semaphore after config change. New limit takes effect for next downloads."""
-    global _download_semaphore
-    _download_semaphore = None
+    """Reset both queues after a config change. New limits take effect for the
+    next jobs; slots already held are returned to the semaphore they came from."""
+    global _search_semaphore, _transfer_semaphore
+    _search_semaphore = None
+    _transfer_semaphore = None
+
+
+class _SearchSlot:
+    """A search-queue slot a job holds from admission until it has its candidates.
+    release() is idempotent, so the job can hand it back early and the wrapper's
+    finally can still call it safely."""
+
+    def __init__(self, sem: asyncio.Semaphore):
+        self._sem = sem
+        self._held = False
+
+    async def acquire(self) -> None:
+        await self._sem.acquire()
+        self._held = True
+
+    def release(self) -> None:
+        if self._held:
+            self._held = False
+            self._sem.release()
 
 
 from fastapi import APIRouter, Depends, BackgroundTasks
@@ -326,20 +368,26 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
 
     async def do_download():
-        # Wait for semaphore — no DB session held
-        async with sem:
+        # Wait for a search slot — no DB session held
+        slot = _SearchSlot(sem)
+        await slot.acquire()
+        try:
             if job.status == "pending":
                 job.status = "running"
                 await _save_job_obj(job)
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
-            await _do_download_inner(None, job, job_id, desc, req)
+            await _do_download_inner(None, job, job_id, desc, req, search_slot=slot)
+        finally:
+            slot.release()
 
     background_tasks.add_task(do_download)
     return {"job_id": job_id}
 
 
-async def _do_download_inner(db_ignored, job, job_id, desc, req):
-    """Core download logic — runs inside the download semaphore.
+async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_SearchSlot | None" = None):
+    """Core download logic. Entered holding a search slot (search_slot), which it
+    releases once it has its candidates; each transfer attempt then takes a
+    transfer slot and the peer's one-at-a-time lock.
     Uses short-lived DB sessions to avoid holding connections during transfers."""
     import asyncio
     from backend.soulseek import get_client
@@ -530,6 +578,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             skip = {u.lower() for u in req.exclude_users}
             candidates = [c for c in candidates if c["username"].lower() not in skip]
 
+        # Search phase over: let the next job search while this one transfers.
+        if search_slot is not None:
+            search_slot.release()
+        transfer_sem = _get_transfer_semaphore()
+
         if native_ready and not candidates and job.status != "failed":
             job.status = "failed"
             if better_than is not None:
@@ -556,18 +609,22 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 """Attempt download from one source. Returns (candidate, status, save_path, error)."""
                 dl_username = candidate["username"]
                 dl_filename = candidate["filename"]
+                transfer = None
                 try:
-                    transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
-                    log.info(f"[download] Multi-source queued: {dl_username}")
-                except Exception as e:
-                    # Peer unreachable — no Transfer exists, so this is the one record.
-                    await native_client.reputation.record_failure(dl_username)
-                    return candidate, "failed", None, str(e)
-                try:
-                    status, save_path, error = await poll_transfer(native_client, transfer)
+                    # One file at a time per peer, then a transfer slot.
+                    async with native_client.peer_slot(dl_username), transfer_sem:
+                        try:
+                            transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
+                            log.info(f"[download] Multi-source queued: {dl_username}")
+                        except Exception as e:
+                            # Peer unreachable — no Transfer exists, so this is the one record.
+                            await native_client.reputation.record_failure(dl_username)
+                            return candidate, "failed", None, str(e)
+                        status, save_path, error = await poll_transfer(native_client, transfer)
                 except asyncio.CancelledError:
                     # "first" strategy: another source won — stop this one for real
-                    native_client.transfers.abort(transfer, "Another source finished first", blame_peer=False)
+                    if transfer is not None:
+                        native_client.transfers.abort(transfer, "Another source finished first", blame_peer=False)
                     raise
                 # The transfer's own success/failure is recorded once by the
                 # client's on_complete — not again here.
@@ -718,20 +775,24 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 await _save_job()
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
 
-                try:
-                    transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
-                    log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
-                except Exception as e:
-                    # Peer unreachable before any Transfer exists: the one place this
-                    # job records a failure for a source that never got to transfer.
-                    timeout_like = isinstance(e, (asyncio.TimeoutError, ConnectionRefusedError, OSError))
-                    log.warning(f"[download] Could not reach {dl_username}: {e}")
-                    last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
-                    source_errors.append({"user": dl_username, "error": last_error})
-                    await native_client.reputation.record_failure(dl_username)
-                    continue
+                # One file at a time per peer (so two jobs never have two files
+                # queued with the same uploader), then a transfer slot. Both are
+                # released before the import below.
+                async with native_client.peer_slot(dl_username), transfer_sem:
+                    try:
+                        transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
+                        log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
+                    except Exception as e:
+                        # Peer unreachable before any Transfer exists: the one place this
+                        # job records a failure for a source that never got to transfer.
+                        timeout_like = isinstance(e, (asyncio.TimeoutError, ConnectionRefusedError, OSError))
+                        log.warning(f"[download] Could not reach {dl_username}: {e}")
+                        last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
+                        source_errors.append({"user": dl_username, "error": last_error})
+                        await native_client.reputation.record_failure(dl_username)
+                        continue
 
-                status, save_path, error = await poll_transfer(native_client, transfer)
+                    status, save_path, error = await poll_transfer(native_client, transfer)
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
@@ -933,8 +994,10 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
         await sess.commit()
     await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
 
-    # Wait for semaphore slot — no DB session held during wait
-    async with sem:
+    # Wait for a search slot — no DB session held during wait
+    slot = _SearchSlot(sem)
+    await slot.acquire()
+    try:
         async with async_session() as sess:
             job = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one()
             if job.status == "pending":
@@ -943,7 +1006,9 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
             sess.expunge(job)
         # job is now detached — _do_download_inner uses its own short-lived sessions
-        await _do_download_inner(None, job, job_id, desc, dl_req)
+        await _do_download_inner(None, job, job_id, desc, dl_req, search_slot=slot)
+    finally:
+        slot.release()
     return job_id
 
 
@@ -985,7 +1050,7 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
 
 async def _process_bulk_download_queue(queue: list[tuple[str, str]], source: str | None = None):
     """Process bulk downloads with bounded concurrency (matches download semaphore)."""
-    sem = asyncio.Semaphore(4)  # limit DB connections; actual download concurrency gated by _download_semaphore
+    sem = asyncio.Semaphore(4)  # limit DB connections; actual concurrency gated by the search/transfer queues
 
     async def _do(artist: str, track: str):
         async with sem:

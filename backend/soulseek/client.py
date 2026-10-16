@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
@@ -67,6 +68,8 @@ class SoulseekClient:
         self._last_broadcast: float = 0
         self._peer_cleanup_task: asyncio.Task | None = None
         self._file_tasks: set[asyncio.Task] = set()
+        # Per-peer lock: [semaphore, holders+waiters]; entries are pruned when idle.
+        self._peer_slots: dict[str, list] = {}
 
     @property
     def logged_in(self) -> bool:
@@ -188,6 +191,25 @@ class SoulseekClient:
             raise
 
         return transfer
+
+    @contextlib.asynccontextmanager
+    async def peer_slot(self, username: str):
+        """Hold the one-file-at-a-time slot for a peer around queueing and
+        transferring one file. Peers serve one upload at a time, so a second file
+        queued to the same peer just waits on their side while holding one of our
+        transfer slots."""
+        entry = self._peer_slots.get(username)
+        if entry is None:
+            entry = [asyncio.Semaphore(1), 0]
+            self._peer_slots[username] = entry
+        entry[1] += 1
+        try:
+            async with entry[0]:
+                yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0 and self._peer_slots.get(username) is entry:
+                del self._peer_slots[username]
 
     async def _get_or_connect_peer(self, username: str, timeout: float = DEFAULT_PEER_TIMEOUT) -> PeerConnection:
         """Get existing peer or establish new connection (races direct vs indirect)."""

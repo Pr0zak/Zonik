@@ -25,6 +25,11 @@ staging_dir = "/opt/zonik/cache/staging"
 # Ceiling for one transfer, in minutes. A transfer still fails after 60 s with no
 # data, or 120 s waiting in the peer's queue; a slow but steady one may run this long.
 transfer_max_minutes = 30
+# Download queues. A job holds a search slot while it searches (jobs waiting for
+# one show as "pending"), then each transfer attempt takes a transfer slot. On top
+# of that, only one file is ever queued with the same peer at a time.
+max_concurrent_searches = 3
+max_concurrent_downloads = 4
 preferred_formats = ["flac", "wav", "mp3"]
 min_file_size_mb = 3
 max_workers = 4

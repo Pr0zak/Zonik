@@ -58,7 +58,8 @@ class SoulseekConfig(BaseModel):
     server_host: str = "server.slsknet.org"
     server_port: int = 2242
     use_native: bool = False
-    max_concurrent_downloads: int = 4  # Max simultaneous download jobs (others queue)
+    max_concurrent_downloads: int = 4  # Max simultaneous transfer attempts (others queue)
+    max_concurrent_searches: int = 3  # Max download jobs in their search phase at once (others show "pending")
     # Ceiling for one transfer: the poller gives up after this long, and the client's
     # cleanup drops a TRANSFERRING entry with no data for this long. A transfer that
     # stops sending for 60 s still fails as stalled; a slow but steady one may finish.
