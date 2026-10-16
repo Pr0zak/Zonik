@@ -45,6 +45,9 @@ OFFSET_TIMEOUT = 60          # waiting for FileOffset on the F connection
 WRITE_TIMEOUT = 60           # one chunk not drained for this long = stalled peer
 FINISH_WAIT = 30             # after the last byte, wait this long for the peer to close
 QUEUED_RETRY_SECONDS = 60    # peer answered "Queued": ask again after this
+# A peer that doesn't answer our TransferRequest isn't asked about any of its
+# files for this long, growing with consecutive silences.
+NO_ANSWER_BACKOFF = (60, 300, 1800)
 TERMINAL_KEEP_SECONDS = 60   # finished entries stay visible this long
 QUEUE_MAX_AGE_SECONDS = 24 * 3600  # a queued entry nobody served in a day is dropped
 MAX_QUEUED_PER_USER = 200
@@ -198,6 +201,8 @@ class UploadManager:
         self.uploads: dict[tuple[str, str], Upload] = {}
         # (username, token) -> future for the peer's TransferResponse.
         self._awaiting: dict[tuple[str, bytes], asyncio.Future] = {}
+        # username -> (consecutive TransferResponse timeouts, don't ask before).
+        self._user_backoff: dict[str, tuple[int, float]] = {}
         self._sweep_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()
         self._closed = False
@@ -271,6 +276,18 @@ class UploadManager:
     def running(self) -> int:
         return sum(1 for u in self.uploads.values() if u.active)
 
+    def _back_off(self, username: str) -> int:
+        """Record one more unanswered TransferRequest from this user; returns how
+        many seconds none of their files will be offered."""
+        count = self._user_backoff.get(username, (0, 0.0))[0] + 1
+        wait = NO_ANSWER_BACKOFF[min(count, len(NO_ANSWER_BACKOFF)) - 1]
+        self._user_backoff[username] = (count, time.time() + wait)
+        return wait
+
+    def _backed_off(self, username: str, now: float) -> bool:
+        entry = self._user_backoff.get(username)
+        return entry is not None and entry[1] > now
+
     def _kick(self) -> None:
         """Start queued uploads while slots are free: oldest first, one per peer."""
         if self._closed or not self.enabled():
@@ -285,7 +302,7 @@ class UploadManager:
                 break
             if up.state != TransferState.QUEUED or up.active or up.retry_at > now:
                 continue
-            if up.username in busy_users:
+            if up.username in busy_users or self._backed_off(up.username, now):
                 continue
             busy_users.add(up.username)
             free -= 1
@@ -404,13 +421,18 @@ class UploadManager:
                 except asyncio.TimeoutError:
                     # No answer: keep it queued and offer it again later (the
                     # queue age limit drops it, telling the peer, eventually).
+                    # The back-off is per user, so a silent peer's other files
+                    # don't take the slot one after another.
                     self._set_state(up, TransferState.QUEUED)
-                    up.retry_at = time.time() + QUEUED_RETRY_SECONDS
-                    log.info(f"[upload] {up.username} did not answer for {up.filename}; retrying later")
+                    wait = self._back_off(up.username)
+                    up.retry_at = time.time() + wait
+                    log.info(f"[upload] {up.username} did not answer for {up.filename}; "
+                             f"not asking them again for {wait} s")
                     return
             finally:
                 if self._awaiting.get(key) is fut:
                     del self._awaiting[key]
+            self._user_backoff.pop(up.username, None)  # it answered
             if not allowed:
                 if reason.strip().rstrip(".").lower() == REASON_QUEUED.lower():
                     # The peer has it queued on its side; offer it again later.
@@ -509,6 +531,10 @@ class UploadManager:
                 self.drop(up, "Sharing turned off", REASON_NOT_SHARED)
             elif up.state == TransferState.QUEUED and not up.active and now - up.queued_at > QUEUE_MAX_AGE_SECONDS:
                 self.drop(up, "Queue timeout", REASON_CANCELLED)
+        waiting = self.active_usernames()
+        for user, (_, until) in list(self._user_backoff.items()):
+            if user not in waiting and until <= time.time():
+                del self._user_backoff[user]
         self._kick()
 
     def get_all(self) -> list[dict]:

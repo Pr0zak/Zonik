@@ -792,3 +792,66 @@ async def test_failed_login_tears_everything_down(monkeypatch):
     assert c.uploads._sweep_task.done()
     assert c._peer_cleanup_task.done()
     assert c.transfers._cleanup_task.done()
+
+
+async def test_silent_peer_does_not_hold_the_slot(library, monkeypatch):
+    import backend.soulseek.upload as upload_mod
+    monkeypatch.setattr(upload_mod, "RESPONSE_TIMEOUT", 0.05)
+    um, peers = make_manager(slots=1)
+    for f in (ONE, TWO, THREE):
+        assert um.queue("silent", f) is None
+    assert um.queue("other", ONE) is None
+    # silent's first file times out, then the slot goes to the other peer
+    await wait_until(lambda: "other" in peers and peers["other"].sent)
+    req = peers["other"].sent[0]
+    um.handle_transfer_response("other", req["token"], False, "Cancelled")  # it answers
+    await asyncio.sleep(0.3)  # several response timeouts' worth
+    asked = [m for m in peers["silent"].sent if m["kind"] == "transfer_request"]
+    assert len(asked) == 1  # its other files were not tried one after another
+    assert um.running() == 0
+    assert um._user_backoff["silent"][0] == 1
+    assert "other" not in um._user_backoff
+    # the back-off grows with consecutive silences
+    assert [um._back_off("x") for _ in range(4)] == [60, 300, 1800, 1800]
+
+
+async def test_flip_during_a_refresh_is_not_lost(monkeypatch):
+    c = make_client(sharing=False)
+    refreshes = []
+
+    async def fake_refresh():
+        refreshes.append(1)
+        if len(refreshes) == 1:
+            c._share_wake.set()  # share_library flip noticed while this refresh runs
+        return 0, 0
+
+    monkeypatch.setattr(c, "refresh_shares", fake_refresh)
+    task = asyncio.create_task(c._share_refresh_loop())
+    try:
+        await wait_until(lambda: len(refreshes) >= 2, timeout=1.0)
+    finally:
+        task.cancel()
+        c.destroy()
+
+
+async def test_cancelled_peer_connect_stops_both_attempts(monkeypatch):
+    c = make_client()
+    started = []
+
+    async def slow_address(username, timeout=10):
+        started.append("direct")
+        await asyncio.sleep(10)
+
+    async def noop(*a):
+        pass
+
+    monkeypatch.setattr(c, "_request_peer_address", slow_address)
+    monkeypatch.setattr(c.server, "connect_to_peer", noop)
+    original = c.listener.on_connection
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(c._get_or_connect_peer("bob"), 0.05)
+    await asyncio.sleep(0.01)
+    assert started == ["direct"]
+    assert c.listener.on_connection == original  # the indirect attempt was unwound too
+    assert "bob" not in c.peers
+    c.destroy()

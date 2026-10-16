@@ -146,6 +146,9 @@ class SoulseekClient:
         try:
             while True:
                 delay = SHARE_REFRESH_SECONDS
+                # Clear before refreshing: a share_library flip noticed while the
+                # refresh runs must still wake the next pass.
+                self._share_wake.clear()
                 try:
                     _, num_files = await self.refresh_shares()
                     if num_files == 0 and self._sharing_enabled():
@@ -155,7 +158,6 @@ class SoulseekClient:
                 except Exception as e:
                     log.warning(f"[client] Share refresh failed: {e}")
                     delay = SHARE_RETRY_SECONDS
-                self._share_wake.clear()
                 try:
                     await asyncio.wait_for(self._share_wake.wait(), timeout=delay)
                 except asyncio.TimeoutError:
@@ -347,47 +349,55 @@ class SoulseekClient:
         # Race both approaches
         direct_task = asyncio.create_task(try_direct())
         indirect_task = asyncio.create_task(try_indirect())
-
-        done, pending = await asyncio.wait(
-            {direct_task, indirect_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-
-        # Cancel losers
-        for task in pending:
-            task.cancel()
-
         peer = None
-        errors = []
-        for task in done:
-            try:
-                peer = task.result()
-                break
-            except Exception as e:
-                errors.append(e)
 
-        if peer is None:
-            # Also check if any pending tasks completed
+        def discard_unused(task: asyncio.Task) -> None:
+            # A connection that isn't the one we keep — a loser, or one that
+            # finished after we were cancelled — is reading already: close it.
+            if task.cancelled() or task.exception() is not None:
+                return
+            result = task.result()
+            if result is not None and result is not peer:
+                result.destroy()
+
+        try:
+            done, pending = await asyncio.wait(
+                {direct_task, indirect_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            # Cancel losers
             for task in pending:
+                task.cancel()
+
+            errors = []
+            for task in done:
                 try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    pass
-            raise ConnectionError(f"Cannot connect to {username}: {errors}")
+                    peer = task.result()
+                    break
+                except Exception as e:
+                    errors.append(e)
 
-        # Clean up losing peer
-        for task in pending:
-            try:
-                result = task.result() if task.done() else None
-                if result and result != peer:
-                    result.destroy()
-            except Exception:
-                pass
+            if peer is None:
+                # Also check if any pending tasks completed
+                for task in pending:
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        pass
+                raise ConnectionError(f"Cannot connect to {username}: {errors}")
 
-        self.peers[username] = peer
-        return peer
+            self.peers[username] = peer
+            return peer
+        finally:
+            # Also runs when we are cancelled mid-race (e.g. by a caller's timeout):
+            # stop both attempts and close whatever connects anyway.
+            for task in (direct_task, indirect_task):
+                if not task.done():
+                    task.cancel()
+                task.add_done_callback(discard_unused)
 
     async def _request_peer_address(self, username: str, timeout: float = 10) -> dict:
         """Request peer address from server and wait for response."""
