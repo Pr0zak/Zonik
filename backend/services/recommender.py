@@ -601,6 +601,95 @@ async def _get_feedback_multipliers(db: AsyncSession) -> dict[str, float]:
     return multipliers
 
 
+# Engagement feedback: the library itself says which sources and artists earn plays.
+SOURCE_MIN_SAMPLES = 10
+ARTIST_MIN_SAMPLES = 2
+STALE_UNPLAYED_DAYS = 30
+STALE_UNPLAYED_MULT = 0.7
+
+
+def engagement_multiplier(played: int, total: int, min_samples: int) -> float:
+    """0.6 + 0.8 x played share (0.6 when nothing was played, 1.4 when all were);
+    1.0 until there are `min_samples` downloads to judge by."""
+    if total < min_samples or total <= 0:
+        return 1.0
+    return round(0.6 + 0.8 * (played / total), 3)
+
+
+def compute_engagement(
+    rows: list[tuple[str, str, bool, float]],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """rows = (source, normalised artist, played, age_days) per downloaded recommendation
+    that is in the library. Returns ({source: mult}, {artist: mult}).
+
+    An artist with a single download (too few for the formula) that is at least
+    STALE_UNPLAYED_DAYS old and was never played gets STALE_UNPLAYED_MULT: a soft negative
+    for something we fetched a month ago and never listened to."""
+    by_source: dict[str, list[bool]] = {}
+    by_artist: dict[str, list[tuple[bool, float]]] = {}
+    for source, artist, played, age_days in rows:
+        by_source.setdefault(source, []).append(played)
+        by_artist.setdefault(artist, []).append((played, age_days))
+
+    source_mults: dict[str, float] = {}
+    for source, plays in by_source.items():
+        m = engagement_multiplier(sum(plays), len(plays), SOURCE_MIN_SAMPLES)
+        if m != 1.0:
+            source_mults[source] = m
+
+    artist_mults: dict[str, float] = {}
+    for artist, items in by_artist.items():
+        m = engagement_multiplier(sum(1 for p, _ in items if p), len(items), ARTIST_MIN_SAMPLES)
+        if m == 1.0 and len(items) < ARTIST_MIN_SAMPLES and all(
+            not p and age >= STALE_UNPLAYED_DAYS for p, age in items
+        ):
+            m = STALE_UNPLAYED_MULT
+        if m != 1.0:
+            artist_mults[artist] = m
+    return source_mults, artist_mults
+
+
+async def _get_engagement_multipliers(db: AsyncSession) -> tuple[dict[str, float], dict[str, float]]:
+    """(per-source, per-normalised-artist) multipliers from what happened to earlier
+    auto-downloads: of the 'downloaded' recommendations that are now in the library,
+    how many were played (play_count > 0) or favorited."""
+    from backend.models.track import Track as _Track
+
+    recs = (await db.execute(
+        select(Recommendation.artist, Recommendation.track, Recommendation.source, Recommendation.created_at)
+        .where(Recommendation.status == "downloaded")
+    )).all()
+    if not recs:
+        return {}, {}
+
+    items = [{"artist": a, "name": t, "source": src or "", "created_at": c} for a, t, src, c in recs]
+    await batch_library_match(db, items, name_key="name", artist_key="artist")
+    track_ids = {i["track_id"] for i in items if i.get("track_id")}
+    if not track_ids:
+        return {}, {}
+
+    plays = {
+        tid: pc or 0
+        for tid, pc in (await db.execute(select(_Track.id, _Track.play_count))).all()
+        if tid in track_ids
+    }
+    fav_ids = {
+        tid for (tid,) in (await db.execute(select(Favorite.track_id).where(Favorite.track_id.isnot(None)))).all()
+        if tid in track_ids
+    }
+
+    now = datetime.utcnow()
+    rows = []
+    for i in items:
+        tid = i.get("track_id")
+        if not tid:
+            continue
+        played = plays.get(tid, 0) > 0 or tid in fav_ids
+        age = (now - i["created_at"]).total_seconds() / 86400 if i["created_at"] else 0.0
+        rows.append((i["source"], norm_artist(i["artist"]), played, age))
+    return compute_engagement(rows)
+
+
 async def validate_downloaded_recommendations(db: AsyncSession) -> int:
     """Validate downloaded recommendations against CLAP taste centroid.
 
@@ -718,6 +807,7 @@ async def refresh_recommendations(
     tp = await db.get(TasteProfile, "default")
     clap_centroid = tp.clap_centroid if tp else None
     feedback_mults = await _get_feedback_multipliers(db)
+    source_eng, artist_eng = await _get_engagement_multipliers(db)
 
     # Step 4: Score and rank
     scored = []
@@ -725,10 +815,21 @@ async def refresh_recommendations(
         score, breakdown = score_candidate(c, profile, clap_centroid)
         # Apply feedback multiplier
         artist_key = _normalize(c["artist"])
-        mult = feedback_mults.get(artist_key, 1.0)
-        if mult != 1.0:
-            score = round(min(1.0, max(0.0, score * mult)), 3)
+        # Explicit thumbs win over the engagement-derived artist multiplier; the per-source
+        # multiplier is a separate dimension and always applies.
+        mult = feedback_mults.get(artist_key)
+        if mult is not None:
             breakdown["feedback_multiplier"] = mult
+        else:
+            mult = artist_eng.get(norm_artist(c["artist"]), 1.0)
+            if mult != 1.0:
+                breakdown["engagement_artist_multiplier"] = mult
+        src_mult = source_eng.get(c["source"], 1.0)
+        if src_mult != 1.0:
+            breakdown["engagement_source_multiplier"] = src_mult
+        total_mult = mult * src_mult
+        if total_mult != 1.0:
+            score = round(min(1.0, max(0.0, score * total_mult)), 3)
         scored.append({**c, "score": score, "breakdown": breakdown})
 
     # Sort by score descending, take top N

@@ -614,6 +614,30 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
         for t in chart if not t.get("in_library")
     ]
 
+    # Gate the global chart through the taste profile: it was the worst-engaging source
+    # (8/51 played, 0 favorited). Reads the stored profile (building one is expensive);
+    # no stored profile means no gate.
+    skipped_low_score = 0
+    profile = await _load_stored_taste_profile(db)
+    if profile and missing:
+        from backend.services.recommender import score_candidate
+        min_score = await _recommendation_min_score(db)
+        listeners = {(t["artist"], t["name"]): t.get("listeners", 0) for t in chart}
+        kept = []
+        for m in missing:
+            score, _ = score_candidate({
+                "artist": m["artist"], "track": m["track"], "source": "trending",
+                "source_detail": "Last.fm trending",
+                "lastfm_listeners": listeners.get((m["artist"], m["track"]), 0),
+                "lastfm_match": 0.0,
+            }, profile)
+            if score >= min_score:
+                m["score"] = score
+                kept.append(m)
+            else:
+                skipped_low_score += 1
+        missing = kept
+
     job.total = len(chart)
     job.progress = in_library
     job.tracks = json.dumps(missing)
@@ -621,7 +645,27 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
         "total_chart": len(chart),
         "in_library": in_library,
         "missing": len(missing),
+        "skipped_low_score": skipped_low_score,
     })
+
+
+async def _load_stored_taste_profile(db: AsyncSession) -> dict | None:
+    from backend.models.taste_profile import TasteProfile
+    try:
+        tp = await db.get(TasteProfile, "default")
+        return json.loads(tp.profile_data) if tp and tp.profile_data else None
+    except (ValueError, TypeError):
+        return None
+
+
+async def _recommendation_min_score(db: AsyncSession, default: float = 0.5) -> float:
+    row = (await db.execute(
+        select(ScheduleTask.config).where(ScheduleTask.task_name == "recommendation_refresh")
+    )).scalar_one_or_none()
+    try:
+        return float((json.loads(row) if row else {}).get("min_score", default))
+    except (ValueError, TypeError):
+        return default
 
 
 async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
