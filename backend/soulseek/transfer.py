@@ -57,6 +57,14 @@ class Transfer:
     # False when the failure is ours (user cancel, another source won), not the peer's.
     blame_peer: bool = True
     notified: bool = False  # on_complete has fired (it must fire exactly once)
+    # The task currently in the data phase (_receive) for this transfer. Set before
+    # the first await, so a second connection can never take over a live stream.
+    receiver: asyncio.Task | None = field(default=None, repr=False)
+
+    @property
+    def receiving(self) -> bool:
+        """True while some task is streaming this transfer's file."""
+        return self.receiver is not None and not self.receiver.done()
 
     @property
     def progress(self) -> float:
@@ -326,25 +334,18 @@ class TransferManager:
             self.update_state(transfer, TransferState.FAILED, error=error)
             await self._notify(transfer)
 
-    def _resolve_by_token(self, provisional: Transfer, peer_token: bytes) -> Transfer | None:
+    def _resolve_by_token(self, provisional: Transfer, peer_token: bytes, username: str) -> Transfer | None:
         """Re-resolve a file connection from the uploader's FileTransferInit token.
 
         The connection was attached to a provisional Transfer before the token
         arrived — for server-relayed connections only by username, since the
         relay token is not the transfer token. With several files queued to one
-        peer that pick can be wrong, so look the real one up by token and switch."""
-        resolved = self.get_transfer_by_token(provisional.username, peer_token)
-        if resolved is None:
-            # Transfer tokens are chosen by each uploader (often small counters), so
-            # a token-only match on another user's transfer is a collision, not a hit.
-            cand = self.find_transfer_by_token(peer_token)
-            if cand is not None and cand.username == provisional.username:
-                resolved = cand
-            elif cand is not None:
-                log.warning(
-                    f"[transfer] Token {peer_token.hex()} from {provisional.username} matches "
-                    f"{cand.username}'s transfer — ignoring the cross-user match"
-                )
+        peer that pick can be wrong, so look the real one up by token and switch.
+
+        `username` is the user on the other end of this connection. The lookup is
+        scoped to that user: uploaders pick transfer tokens as small counters, so a
+        token-only hit on someone else's transfer is a collision, not a match."""
+        resolved = self.get_transfer_by_token(username, peer_token)
         if resolved is provisional:
             return provisional
         if resolved is None:
@@ -382,19 +383,27 @@ class TransferManager:
         token: bytes,
         reader: asyncio.StreamReader,
         writer: asyncio.StreamWriter,
+        username_known: bool = True,
     ) -> None:
         """Handle an inbound file transfer connection (PeerInit F or PierceFirewall).
 
         Protocol (we are the downloader): the uploader sends FileTransferInit
         (the 4-byte transfer token), we send FileOffset (8 bytes), data follows.
+
+        username_known=False is the PierceFirewall case: the connection carries
+        only a token, and `username` is whoever owns the transfer that token
+        matched — the one place a token-only lookup is used.
         """
-        # Provisional pick — try token, then username; re-resolved once the
-        # uploader's FileTransferInit names the real transfer.
+        # Provisional pick, re-resolved once FileTransferInit names the real transfer.
+        # With a known username every lookup is scoped to that user.
         by_token = True
-        transfer = self.get_transfer_by_token(username, token)
-        if not transfer:
+        if username_known:
+            transfer = self.get_transfer_by_token(username, token)
+        else:
             transfer = self.find_transfer_by_token(token)
-        if not transfer:
+            if transfer is not None:
+                username = transfer.username
+        if not transfer and username_known:
             by_token = False
             transfer = self.find_active_transfer_for_user(username)
         if not transfer:
@@ -410,7 +419,7 @@ class TransferManager:
             raise
         if peer_token is None:
             return
-        transfer = self._resolve_by_token(transfer, peer_token)
+        transfer = self._resolve_by_token(transfer, peer_token, username)
         if transfer is None:
             _close_quietly(writer)
             return
@@ -460,7 +469,7 @@ class TransferManager:
             return
         if peer_token is None:
             return
-        transfer = self._resolve_by_token(transfer, peer_token)
+        transfer = self._resolve_by_token(transfer, peer_token, transfer.username)
         if transfer is None:
             _close_quietly(writer)
             return
@@ -480,15 +489,21 @@ class TransferManager:
             log.info(f"[transfer] {transfer.filename} is already {transfer.state}; closing connection")
             _close_quietly(writer)
             return
-        if transfer.state == TransferState.TRANSFERRING and _owned_elsewhere(transfer):
+        current = asyncio.current_task()
+        if transfer.receiving and transfer.receiver is not current:
+            # Another connection is streaming this file (its state may even read
+            # CONNECTED again if the uploader re-sent a TransferRequest). Never
+            # let a second connection write into the same file.
             log.warning(
-                f"[transfer] {transfer.filename} is already transferring on another "
+                f"[transfer] {transfer.filename} is already being received on another "
                 f"connection from {transfer.username}; closing this one"
             )
             _close_quietly(writer)
             return
 
-        transfer.task = asyncio.current_task()
+        # Claim before the first await so there is no window for a second connection.
+        transfer.receiver = current
+        transfer.task = current
         transfer.writer = writer
         short_name = transfer.filename
         try:
@@ -515,6 +530,10 @@ class TransferManager:
                         break
                     if not chunk:
                         break  # clean EOF
+                    if transfer.total_bytes > 0:
+                        # Ignore anything past the announced size; a few stray bytes
+                        # after a complete file don't make it incomplete.
+                        chunk = chunk[:transfer.total_bytes - transfer.received_bytes]
                     transfer.received_bytes += len(chunk)
                     transfer.last_progress_at = time.time()
                     await f.write(chunk)
@@ -533,7 +552,7 @@ class TransferManager:
                 self.update_state(transfer, TransferState.COMPLETED)
                 log.info(f"[transfer] Completed: {short_name} ({got} bytes)")
             elif got > 0:
-                why = "stalled" if stalled else ("oversized" if total and got > total else "connection closed")
+                why = "stalled" if stalled else "connection closed"
                 self.update_state(transfer, TransferState.FAILED, error=f"Incomplete: {got}/{total}")
                 log.warning(f"[transfer] Incomplete ({why}): {short_name} ({got}/{total})")
             else:
@@ -551,6 +570,8 @@ class TransferManager:
         finally:
             if transfer.writer is writer:
                 transfer.writer = None
+            if transfer.receiver is current:
+                transfer.receiver = None
             _close_quietly(writer)
             if transfer.state != TransferState.COMPLETED:
                 self._remove_partial(transfer)  # no resume: a partial is just litter

@@ -339,10 +339,10 @@ class SoulseekClient:
                 # The relay token differs from the transfer token, so this is only a
                 # provisional pick (by username as a last resort); the handler
                 # re-resolves it from the uploader's FileTransferInit token.
+                # Every lookup is scoped to this user: a token-only match could be
+                # another user's transfer that happens to share the token value.
                 by_token = True
                 transfer = self.transfers.get_transfer_by_token(username, token)
-                if not transfer:
-                    transfer = self.transfers.find_transfer_by_token(token)
                 if not transfer:
                     by_token = False
                     transfer = self.transfers.find_active_transfer_for_user(username)
@@ -418,6 +418,13 @@ class SoulseekClient:
                 transfer = self.transfers.get_transfer(peer.username, msg["filename"])
                 if transfer and transfer.state in TERMINAL_STATES:
                     transfer = None  # we gave up on it — don't revive an abandoned transfer
+                if transfer and (transfer.state == TransferState.TRANSFERRING or transfer.receiving):
+                    # Already streaming on a live connection: resetting its token and
+                    # size here would let a second connection take it over.
+                    await peer.send_transfer_response(msg["token"], False, "Transfer already in progress")
+                    log.warning(f"[client] Refused repeat transfer request from {peer.username}: "
+                                f"{msg['filename']} is already transferring")
+                    return
                 if transfer:
                     transfer.token = msg["token"]
                     transfer.total_bytes = msg.get("size", 0)
@@ -524,7 +531,7 @@ class SoulseekClient:
                     self._start_file_task(
                         transfer,
                         self.transfers.handle_file_transfer_connection(
-                            transfer.username, token, reader, writer
+                            transfer.username, token, reader, writer, username_known=False,
                         ),
                     )
                 else:

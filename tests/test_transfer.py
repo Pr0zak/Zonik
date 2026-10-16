@@ -216,12 +216,12 @@ async def test_connection_for_transfer_already_streaming_is_closed(tmp_path):
     a, b = two_queued(tm)
     b.state = TransferState.TRANSFERRING
     other = asyncio.create_task(asyncio.sleep(10))  # the connection already streaming B
-    b.task = other
+    b.task = b.receiver = other
     try:
         w = FakeWriter()
         await tm.handle_file_transfer_connection("peer", b"\xff" * 4, reader_with(b"\x02\x00\x00\x00" + b"BBBBBB"), w)
         assert w.closed and not w.data  # no offset sent, nothing written
-        assert b.task is other and b.save_path is None
+        assert b.receiver is other and b.save_path is None
         assert calls == []
     finally:
         other.cancel()
@@ -244,6 +244,85 @@ async def test_cross_user_token_collision_is_ignored(tmp_path):
     await tm.handle_file_transfer_connection("peer", b"\xff" * 4, reader_with(b"\x02\x00\x00\x00" + b"MMMM"), FakeWriter())
     assert theirs.state == TransferState.CONNECTED and theirs.save_path is None
     assert mine.state == TransferState.COMPLETED
+
+
+async def test_peerinit_token_zero_never_picks_another_users_transfer(tmp_path):
+    # PeerInit F usually carries token 0; another user's pending transfer may have token 0 too.
+    tm, calls = make_manager(tmp_path)
+    mine = make_transfer(tm, filename="Music\\Mine.flac", total=4, token=b"\x05\x00\x00\x00", username="peer")
+    theirs = make_transfer(tm, filename="Music\\Theirs.flac", total=4, token=b"\x00\x00\x00\x00", username="other")
+    w = FakeWriter()
+    await tm.handle_file_transfer_connection("peer", b"\x00" * 4, reader_with(b"\x05\x00\x00\x00" + b"MMMM"), w)
+    assert mine.state == TransferState.COMPLETED
+    assert Path(mine.save_path).read_bytes() == b"MMMM"
+    assert theirs.state == TransferState.CONNECTED and theirs.save_path is None
+    assert [t for t, _ in calls] == [mine]
+
+
+async def test_failed_handshake_does_not_fail_another_users_transfer(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    theirs = make_transfer(tm, filename="Music\\Theirs.flac", total=4, token=b"\x00\x00\x00\x00", username="other")
+    w = FakeWriter()
+    await tm.handle_file_transfer_connection("peer", b"\x00" * 4, reader_with(b""), w)
+    assert w.closed
+    assert theirs.state == TransferState.CONNECTED and theirs.error is None
+    assert calls == []
+
+
+async def test_pierce_firewall_token_lookup_still_works(tmp_path):
+    # PierceFirewall carries only a token: the token-only lookup names the user.
+    tm, _ = make_manager(tmp_path)
+    t = make_transfer(tm, filename="Music\\Pf.flac", total=3, token=b"\x07\x00\x00\x00", username="peer")
+    await tm.handle_file_transfer_connection("peer", b"\x07\x00\x00\x00",
+                                             reader_with(b"\x07\x00\x00\x00" + b"xyz"), FakeWriter(),
+                                             username_known=False)
+    assert t.state == TransferState.COMPLETED
+
+
+async def test_second_connection_cannot_take_over_a_live_stream(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    t = make_transfer(tm, total=8)
+    r1, w1 = asyncio.StreamReader(), FakeWriter()
+    first = asyncio.create_task(tm._receive(t, r1, w1))
+    await asyncio.sleep(0)  # first connection claims the transfer and sends its offset
+    r1.feed_data(b"AAAA")
+    await asyncio.sleep(0.05)
+    # The uploader re-sends a TransferRequest: the old handler reset it to CONNECTED.
+    tm.update_state(t, TransferState.CONNECTED)
+    w2 = FakeWriter()
+    await tm._receive(t, reader_with(b"BBBBBBBB"), w2)
+    assert w2.closed and not w2.data  # refused: no offset sent, nothing written
+    r1.feed_data(b"AAAA")
+    r1.feed_eof()
+    await first
+    assert t.state == TransferState.COMPLETED
+    assert Path(t.save_path).read_bytes() == b"AAAAAAAA"
+    assert len(calls) == 1
+
+
+async def test_claim_happens_before_the_first_await(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    t = make_transfer(tm, total=4)
+    r1 = asyncio.StreamReader()
+    first = asyncio.create_task(tm._receive(t, r1, FakeWriter()))
+    await asyncio.sleep(0)
+    assert t.receiving
+    w2 = FakeWriter()
+    await tm._receive(t, reader_with(b"BBBB"), w2)
+    assert w2.closed and not w2.data
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert not t.receiving
+
+
+async def test_bytes_past_the_announced_size_are_ignored(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    t = make_transfer(tm, total=4)
+    await tm._receive(t, reader_with(b"ABCDE"), FakeWriter())
+    assert t.state == TransferState.COMPLETED
+    assert t.received_bytes == 4
+    assert Path(t.save_path).read_bytes() == b"ABCD"
 
 
 # --- cleanup sweep ------------------------------------------------------------
