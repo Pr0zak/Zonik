@@ -30,6 +30,7 @@ _FEAT_RE = re.compile(r"\s+(feat\.?|featuring|ft\.?)\s+.+$", re.IGNORECASE)
 # on the next search.
 _INDEX_TTL_S = 60.0
 _index: dict[tuple[str, str], str] = {}
+_index_strict: dict[tuple[str, str], str] = {}
 _index_built_at = 0.0
 _index_count = -1
 
@@ -37,6 +38,12 @@ _index_count = -1
 def norm_title(s: str) -> str:
     s = _PAREN_SUFFIX_RE.sub("", s or "").strip()
     return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def norm_title_strict(s: str) -> str:
+    """Like norm_title but keeps a trailing "(...)"/"[...]", so "Song (X Remix)" and
+    "Song" stay different tracks."""
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
 def norm_artist(s: str) -> str:
@@ -60,30 +67,43 @@ def artists_overlap(a: str, b: str) -> bool:
     return bool(artist_names(a) & artist_names(b))
 
 
-async def _library_index(db: AsyncSession) -> dict[tuple[str, str], str]:
-    global _index, _index_built_at, _index_count
+async def _library_index(db: AsyncSession, strict_title: bool = False) -> dict[tuple[str, str], str]:
+    global _index, _index_strict, _index_built_at, _index_count
     count = (await db.execute(select(func.count(Track.id)))).scalar_one()
     if count == _index_count and time.monotonic() - _index_built_at < _INDEX_TTL_S:
-        return _index
+        return _index_strict if strict_title else _index
     # Library is small (~5-10k tracks); one full scan is cheaper than an
     # OR-of-many-conditions query and avoids exact-match brittleness.
     rows = await db.execute(
         select(Track.id, Track.title, Artist.name).join(Artist, Track.artist_id == Artist.id)
     )
     index: dict[tuple[str, str], str] = {}
+    strict: dict[tuple[str, str], str] = {}
     for track_id, title, artist in rows.all():
         if title and artist:
-            index.setdefault((norm_artist(artist), norm_title(title)), track_id)
-    _index, _index_built_at, _index_count = index, time.monotonic(), count
-    return index
+            na = norm_artist(artist)
+            # Names with no Latin letters/digits normalise to "" and would make every such
+            # candidate look owned — leave them out of the index.
+            if na and norm_title(title):
+                index.setdefault((na, norm_title(title)), track_id)
+            if na and norm_title_strict(title):
+                strict.setdefault((na, norm_title_strict(title)), track_id)
+    _index, _index_strict = index, strict
+    _index_built_at, _index_count = time.monotonic(), count
+    return strict if strict_title else index
 
 
-async def match_library(db: AsyncSession, artist: str, title: str) -> str | None:
-    """Library track id for artist + title, or None."""
+async def match_library(db: AsyncSession, artist: str, title: str, strict_title: bool = False) -> str | None:
+    """Library track id for artist + title, or None. strict_title keeps a trailing
+    "(...)" version suffix significant."""
     if not artist or not title:
         return None
-    index = await _library_index(db)
-    return index.get((norm_artist(artist), norm_title(title)))
+    index = await _library_index(db, strict_title)
+    nt = norm_title_strict if strict_title else norm_title
+    na, ntt = norm_artist(artist), nt(title)
+    if not na or not ntt:
+        return None
+    return index.get((na, ntt))
 
 
 async def batch_library_match(
@@ -91,14 +111,17 @@ async def batch_library_match(
     items: list[dict],
     name_key: str = "name",
     artist_key: str = "artist",
+    strict_title: bool = False,
 ) -> None:
     """Set in_library / track_id on each dict, from one library index."""
     if not items:
         return
-    index = await _library_index(db)
+    index = await _library_index(db, strict_title)
+    nt = norm_title_strict if strict_title else norm_title
     for t in items:
         name = t.get(name_key) or ""
         artist = t.get(artist_key) or ""
-        matched = index.get((norm_artist(artist), norm_title(name))) if name and artist else None
+        na, ntt = norm_artist(artist), nt(name)
+        matched = index.get((na, ntt)) if na and ntt else None
         t["in_library"] = matched is not None
         t["track_id"] = matched

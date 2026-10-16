@@ -14,16 +14,24 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.download_attempt import DownloadAttempt
-from backend.services.library_match import norm_artist, norm_title
+from backend.services.library_match import norm_artist, norm_title_strict
 
 log = logging.getLogger(__name__)
 
 BACKOFF = [1, 7, 30]  # days to wait after the 1st, 2nd, 3rd failure
-RETIRED_DAYS = 365    # after len(BACKOFF)+... failures: effectively give up
+RETIRED_DAYS = 365    # past len(BACKOFF) failures: effectively give up
+# Nightly runs start at the same time each day but a failure is recorded some minutes or
+# hours in, so an exact 24 h wait would skip a whole extra run. Retry a bit early.
+SLACK = timedelta(hours=6)
 
 
 def attempt_key(artist: str, track: str) -> str:
-    return f"{norm_artist(artist)}::{norm_title(track)}"
+    """Normalised artist::title. The title keeps its "(...)" suffix: a remix or live version
+    is a different download. A part with no Latin letters/digits normalises to "" and would
+    collide with every other such name, so it falls back to the casefolded raw text."""
+    a = norm_artist(artist) or (artist or "").casefold().strip()
+    t = norm_title_strict(track) or (track or "").casefold().strip()
+    return f"{a}::{t}"
 
 
 def backoff_days(attempts: int) -> int:
@@ -39,8 +47,13 @@ def is_retired(attempts: int) -> bool:
     return attempts > len(BACKOFF)
 
 
+def retry_delay(attempts: int) -> timedelta:
+    """How long to wait after `attempts` failures, less SLACK (never negative)."""
+    return max(timedelta(0), timedelta(days=backoff_days(attempts)) - SLACK)
+
+
 def next_retry(attempts: int, now: datetime | None = None) -> datetime:
-    return (now or datetime.utcnow()) + timedelta(days=backoff_days(attempts))
+    return (now or datetime.utcnow()) + retry_delay(attempts)
 
 
 def reason_for(row: DownloadAttempt, now: datetime | None = None) -> str | None:

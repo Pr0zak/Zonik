@@ -71,8 +71,10 @@ track_ai_usage = true
 # w_popularity = 0.05
 # w_novelty = 0.05
 #
-# Auto-download gating lives in the schedule task config, not here: set "min_score" on the
-# recommendation_refresh task (default 0.5); lastfm_top_tracks reuses it to filter the chart.
+# Auto-download gating lives in the schedule task config: "min_score" on the
+# recommendation_refresh task (default 0.5). The Last.fm global chart (lastfm_top_tracks) is
+# filtered by the taste profile with its own bar, since chart entries have no similarity score:
+# chart_min_score = 0.3   # or "chart_min_score" in the lastfm_top_tracks task config
 
 # Optional: override the built-in pricing snapshot in
 # backend/services/ai/pricing.py. model-id -> [input, output] USD per 1M tokens.

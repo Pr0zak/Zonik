@@ -364,6 +364,8 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
         o = by_key.get(attempt_key(r.artist, r.track))
         if o is None:
             continue
+        if o["ok"] is None:
+            continue  # unknown (still running / infrastructure failure): stay pending
         if o["ok"]:
             r.status = "downloaded"
             n_ok += 1
@@ -401,10 +403,21 @@ async def _download_backend_ready() -> bool:
         return False
 
 
+_INFRA_ERROR_MARKERS = ("backend unreachable", "not connected", "cancelled")
+
+
+def _is_infra_error(err: str | None) -> bool:
+    """Failures that say nothing about whether the track can be found (Soulseek down or
+    not logged in, delegation to the web process failed, user cancelled)."""
+    low = (err or "").lower()
+    return any(m in low for m in _INFRA_ERROR_MARKERS)
+
+
 async def _download_job_outcome(job_id: str | None) -> tuple[bool | None, str | None]:
-    """Read a finished download job. Returns (ok, error): ok=True when it completed (or
-    enqueue skipped it because the library already has it), False when it failed,
-    None while it is still pending/running (outcome unknown, nothing to record)."""
+    """Read a download job. Returns (ok, error): ok=True when it completed (or enqueue
+    skipped it because the library already has it), False when the search/transfer failed,
+    None when the outcome is unknown: still pending/running, or an infrastructure failure
+    (backend unreachable / not connected / cancelled) that must not count against the track."""
     if job_id is None:
         return True, None  # enqueue_download: library already has it
     try:
@@ -427,8 +440,10 @@ async def _download_job_outcome(job_id: str | None) -> tuple[bool | None, str | 
         return True, None  # payload carries track_id or already_in_library
     if status in ("pending", "running", "queued", "downloading"):
         return None, None
-    err = payload.get("last_error") or payload.get("error") or payload.get("message") or f"job {status}"
-    return False, str(err)[:500]
+    err = str(payload.get("last_error") or payload.get("error") or payload.get("message") or f"job {status}")[:500]
+    if _is_infra_error(err):
+        return None, err
+    return False, err
 
 
 async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]:
@@ -442,8 +457,9 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
 
     Returns one outcome per attempted track: [{artist, track, job_id, ok, error}].
     Tracks skipped for backoff, or the whole batch when the Soulseek backend is down,
-    produce no outcome (callers must leave those untouched). A job still running when
-    we look is reported ok=True with no error. Upgrade entries return no outcomes.
+    produce no outcome (callers must leave those untouched). `ok` is True (done),
+    False (the search failed) or None (unknown: job still running, or an infrastructure
+    failure) — None is never recorded in download_attempts. Upgrade entries return no outcomes.
     """
     import asyncio
     import uuid as _uuid
@@ -463,6 +479,19 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
 
     # Map scheduler source to download source label
     dl_source = {"lastfm_top_tracks": "discovery", "discover_similar": "similar", "remix_discovery": "remix", "recommendation_refresh": "recommendation", "upgrade_scan": "upgrade"}.get(source, "discovery")
+
+    if source != "upgrade_scan":
+        # Two entries that normalise to the same attempt key would race on the
+        # download_attempts INSERT; one download serves both.
+        seen_keys: set[str] = set()
+        unique = []
+        for t in missing:
+            k = attempt_key(t.get("artist", ""), t.get("track", ""))
+            if k in seen_keys:
+                continue
+            seen_keys.add(k)
+            unique.append(t)
+        missing = unique
 
     sem = asyncio.Semaphore(4)  # limit concurrency of enqueue calls
     skipped_backoff = 0
@@ -545,7 +574,7 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
         if source != "upgrade_scan":
             ok, err = await _download_job_outcome(returned_job_id)
             if ok is None and enqueue_error:
-                ok, err = False, enqueue_error
+                ok, err = (None if _is_infra_error(enqueue_error) else False), enqueue_error
             if ok is not None:
                 try:
                     async with async_session() as rec_db:
@@ -554,7 +583,7 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
                     log.debug(f"[auto-download] could not record outcome for {artist} — {track}: {e}")
             return {
                 "artist": artist, "track": track, "job_id": returned_job_id,
-                "ok": ok is not False, "error": err if ok is False else None,
+                "ok": ok, "error": err if ok is not True else None,
             }
 
         # If this was an upgrade row that's STILL `downloading`, the scanner never
@@ -583,6 +612,17 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
                             )
                         except (ValueError, TypeError):
                             err = str(job_row.result)[:500]
+                    if _is_infra_error(str(err)):
+                        # Soulseek down / cancelled: not the track's fault. Back to pending
+                        # with the attempt refunded so it doesn't count toward retirement.
+                        await final_db.execute(
+                            _update(TrackUpgrade)
+                            .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "downloading")
+                            .values(status="pending", attempts=func.max(TrackUpgrade.attempts - 1, 0),
+                                    updated_at=datetime.utcnow())
+                        )
+                        await final_db.commit()
+                        return
                     await final_db.execute(
                         _update(TrackUpgrade)
                         .where(TrackUpgrade.id == upgrade_id, TrackUpgrade.status == "downloading")
@@ -620,17 +660,21 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
     skipped_low_score = 0
     profile = await _load_stored_taste_profile(db)
     if profile and missing:
-        from backend.services.recommender import score_candidate
-        min_score = await _recommendation_min_score(db)
+        from backend.services.recommender import score_candidate, _fetch_candidate_tags
+        min_score = await _chart_min_score(db)
         listeners = {(t["artist"], t["name"]): t.get("listeners", 0) for t in chart}
+        cands = [{
+            "artist": m["artist"], "track": m["track"], "source": "trending",
+            "source_detail": "Last.fm trending",
+            "lastfm_listeners": listeners.get((m["artist"], m["track"]), 0),
+            "lastfm_match": 0.0,
+        } for m in missing]
+        # Chart entries carry no tags, so without this genre_match is 0 for all of them and
+        # nothing can clear the bar. Rate-limited inside the lastfm client.
+        await _fetch_candidate_tags(cands)
         kept = []
-        for m in missing:
-            score, _ = score_candidate({
-                "artist": m["artist"], "track": m["track"], "source": "trending",
-                "source_detail": "Last.fm trending",
-                "lastfm_listeners": listeners.get((m["artist"], m["track"]), 0),
-                "lastfm_match": 0.0,
-            }, profile)
+        for m, c in zip(missing, cands):
+            score, _ = score_candidate(c, profile)
             if score >= min_score:
                 m["score"] = score
                 kept.append(m)
@@ -646,6 +690,7 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
         "in_library": in_library,
         "missing": len(missing),
         "skipped_low_score": skipped_low_score,
+        "kept": len(missing),
     })
 
 
@@ -658,13 +703,18 @@ async def _load_stored_taste_profile(db: AsyncSession) -> dict | None:
         return None
 
 
-async def _recommendation_min_score(db: AsyncSession, default: float = 0.5) -> float:
+async def _chart_min_score(db: AsyncSession) -> float:
+    """Chart-specific bar: `chart_min_score` in the lastfm_top_tracks task config, else
+    AssistantConfig.chart_min_score. (Not the recommendation threshold: chart entries have
+    no Last.fm similarity, so their ceiling is much lower.)"""
+    from backend.config import get_settings
+    default = get_settings().assistant.chart_min_score
     row = (await db.execute(
-        select(ScheduleTask.config).where(ScheduleTask.task_name == "recommendation_refresh")
+        select(ScheduleTask.config).where(ScheduleTask.task_name == "lastfm_top_tracks")
     )).scalar_one_or_none()
     try:
-        return float((json.loads(row) if row else {}).get("min_score", default))
-    except (ValueError, TypeError):
+        return float((json.loads(row) if row else {}).get("chart_min_score", default))
+    except (ValueError, TypeError, AttributeError):
         return default
 
 
@@ -880,7 +930,7 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
     # Per-track failure history across ALL TrackUpgrade rows. Each scan used to insert a
     # fresh row with attempts=0, so max_attempts never tripped for a track that kept failing.
     from backend.models.upgrade import TrackUpgrade
-    from backend.services.download_attempts import backoff_days
+    from backend.services.download_attempts import retry_delay
     max_attempts = int(cfg.get("max_attempts", 3))
     fail_rows = (await db.execute(
         select(
@@ -897,7 +947,7 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
     for tid, n_failed, last_failed in fail_rows:
         if n_failed >= max_attempts:
             retired_ids.add(tid)
-        elif last_failed and last_failed + timedelta(days=backoff_days(n_failed)) > now:
+        elif last_failed and last_failed + retry_delay(n_failed) > now:
             backoff_ids.add(tid)
 
     # Over-fetch by the size of the skip set so skipped tracks don't starve the batch.
@@ -1046,7 +1096,8 @@ async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, conf
                 "source_artist": t.artist.name if t.artist else "",
             })
 
-    await batch_library_match(db, remix_candidates, name_key="name", artist_key="artist")
+    # strict_title: "Song (X Remix)" must not match the library's "Song".
+    await batch_library_match(db, remix_candidates, name_key="name", artist_key="artist", strict_title=True)
     for r in remix_candidates:
         if not r["in_library"]:
             all_remixes.append({

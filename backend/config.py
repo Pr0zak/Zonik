@@ -136,6 +136,10 @@ class AssistantConfig(BaseModel):
     w_clap_similarity: float = 0.10
     w_popularity: float = 0.05
     w_novelty: float = 0.05
+    # Bar for Last.fm global-chart entries (lastfm_top_tracks). Chart entries have no
+    # Last.fm similarity score, so the usual 0.5 recommendation threshold is unreachable.
+    # Overridable per task with "chart_min_score" in the task config.
+    chart_min_score: float = 0.3
     # AI feature toggles
     ai_reranking: bool = True
     ai_search: bool = True

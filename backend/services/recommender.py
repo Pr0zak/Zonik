@@ -24,7 +24,7 @@ from backend.models.blacklist import DownloadBlacklist
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
 from backend.services.library_match import norm_artist, norm_title, batch_library_match
-from backend.services.download_attempts import keys_in_backoff
+from backend.services.download_attempts import keys_in_backoff, attempt_key
 
 log = logging.getLogger(__name__)
 
@@ -353,7 +353,7 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
         key = f"{norm_artist(artist)}::{norm_title(track)}"
         if key in library_keys:
             return
-        if key in backoff_keys:
+        if attempt_key(artist, track) in backoff_keys:
             return
         if _normalize(artist) in bl_artists:
             return
@@ -609,6 +609,7 @@ async def _get_feedback_multipliers(db: AsyncSession) -> dict[str, float]:
 SOURCE_MIN_SAMPLES = 10
 ARTIST_MIN_SAMPLES = 2
 STALE_UNPLAYED_DAYS = 30
+FRESH_GRACE_DAYS = 14
 STALE_UNPLAYED_MULT = 0.7
 
 
@@ -632,6 +633,10 @@ def compute_engagement(
     by_source: dict[str, list[bool]] = {}
     by_artist: dict[str, list[tuple[bool, float]]] = {}
     for source, artist, played, age_days in rows:
+        # A download from the last couple of weeks that nobody has played yet is not
+        # evidence of dislike - it just hasn't had time. Played rows count at any age.
+        if not played and age_days < FRESH_GRACE_DAYS:
+            continue
         by_source.setdefault(source, []).append(played)
         by_artist.setdefault(artist, []).append((played, age_days))
 
