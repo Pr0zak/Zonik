@@ -1117,17 +1117,10 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
 
 
 async def _process_bulk_download_queue(queue: list[tuple[str, str]], source: str | None = None):
-    """Process bulk downloads with bounded concurrency (matches download semaphore)."""
-    sem = asyncio.Semaphore(4)  # limit DB connections; actual concurrency gated by the search/transfer queues
-
-    async def _do(artist: str, track: str):
-        async with sem:
-            try:
-                await enqueue_download(artist, track, source=source)
-            except Exception as e:
-                log.warning(f"[bulk] Failed to download {artist} — {track}: {e}")
-
-    await asyncio.gather(*[_do(a, t) for a, t in queue])
+    """Run bulk downloads through the tracked path (backoff, duration gate, outcome
+    recorded) with bounded concurrency; the search/transfer queues gate the rest."""
+    from backend.services.auto_download import download_tracked_many
+    await download_tracked_many([{"artist": a, "track": t} for a, t in queue], source=source)
 
 
 class CancelTransferRequest(BaseModel):

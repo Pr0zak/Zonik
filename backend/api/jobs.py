@@ -158,6 +158,13 @@ async def failure_summary(type: str | None = None, db: AsyncSession = Depends(ge
     return sorted(out, key=lambda r: r["count"], reverse=True)
 
 
+async def _retry_downloads(items: list[dict]) -> None:
+    """Re-run failed downloads through the tracked path, a few at a time, recording
+    each outcome. Backoff is not consulted: the user asked for these retries."""
+    from backend.services.auto_download import download_tracked_many
+    await download_tracked_many(items, skip_in_backoff=False)
+
+
 @router.post("/retry-failed")
 async def retry_failed(background_tasks: BackgroundTasks, type: str | None = None, reason: str | None = None,
                        db: AsyncSession = Depends(get_db)):
@@ -174,10 +181,9 @@ async def retry_failed(background_tasks: BackgroundTasks, type: str | None = Non
         q = q.where(cond)
     jobs = (await db.execute(q)).scalars().all()
 
-    from backend.api.download import enqueue_download
-
     queued = 0
     retried_jobs = 0
+    retry_items: list[dict] = []
     for job in jobs:
         try:
             tracks = json.loads(job.tracks) if job.tracks else []
@@ -189,11 +195,13 @@ async def retry_failed(background_tasks: BackgroundTasks, type: str | None = Non
         if not wanted:
             continue
         for t in wanted:
-            background_tasks.add_task(enqueue_download, t["artist"], t["track"], source=source)
+            retry_items.append({"artist": t["artist"], "track": t["track"], "source": source})
             queued += 1
         await db.delete(job)
         retried_jobs += 1
     await db.commit()
+    if retry_items:
+        background_tasks.add_task(_retry_downloads, retry_items)
     return {"ok": True, "jobs": retried_jobs, "tracks": queued}
 
 
@@ -386,16 +394,13 @@ async def retry_job(job_id: str, background_tasks: BackgroundTasks, db: AsyncSes
     if not retryable_tracks:
         return {"error": "No retryable tracks"}
 
-    from backend.api.download import enqueue_download
-
     # Preserve original source from job card (e.g. "dl:upgrade" → "upgrade")
     source = job.card.split(":", 1)[1] if job.card and ":" in job.card else None
 
-    for t in retryable_tracks:
-        artist = t.get("artist", "")
-        track = t.get("track", "")
-        if artist and track:
-            background_tasks.add_task(enqueue_download, artist, track, source=source)
+    items = [{"artist": t.get("artist", ""), "track": t.get("track", ""), "source": source}
+             for t in retryable_tracks if t.get("artist") and t.get("track")]
+    if items:
+        background_tasks.add_task(_retry_downloads, items)
 
     return {"ok": True, "total": len(retryable_tracks)}
 
