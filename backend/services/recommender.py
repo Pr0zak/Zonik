@@ -4,6 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import tempfile
+import time
 import uuid
 from datetime import datetime, timedelta
 from urllib.parse import quote_plus
@@ -23,6 +26,7 @@ from backend.models.embedding import TrackEmbedding
 from backend.models.blacklist import DownloadBlacklist
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
+from backend.models.preview_embedding import PreviewEmbedding
 from backend.services.library_match import norm_artist, batch_library_match, key_artist, key_title
 from backend.services.download_attempts import keys_in_backoff, attempt_key
 
@@ -453,14 +457,20 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def weighted_score(cfg, artist_affinity: float, genre_match: float, lastfm_similar: float,
-                   popularity: float, novelty: float) -> float:
-    """Weighted sum of the live signals, with the weights renormalised to sum to 1 now that
-    audio_match / clap_similarity no longer contribute (w_audio_match and w_clap_similarity
-    stay in the config for compatibility but are ignored)."""
-    weights = (cfg.w_artist_affinity, cfg.w_genre_match, cfg.w_lastfm_similar,
-               cfg.w_popularity, cfg.w_novelty)
+                   popularity: float, novelty: float, clap_similarity: float | None = None) -> float:
+    """Weighted sum of the signals present, with their weights renormalised to sum to 1.
+
+    clap_similarity is the CLAP cosine of the candidate's iTunes preview to the taste centroid;
+    when it is None (no preview, or CLAP unavailable) the term and its weight are left out
+    entirely rather than counted as 0. audio_match never contributes (w_audio_match stays in
+    the config for compatibility but is ignored). Negative similarities count as 0."""
+    weights = [cfg.w_artist_affinity, cfg.w_genre_match, cfg.w_lastfm_similar,
+               cfg.w_popularity, cfg.w_novelty]
+    values = [artist_affinity, genre_match, lastfm_similar, popularity, novelty]
+    if clap_similarity is not None:
+        weights.append(cfg.w_clap_similarity)
+        values.append(min(1.0, max(0.0, clap_similarity)))
     total = sum(weights) or 1.0
-    values = (artist_affinity, genre_match, lastfm_similar, popularity, novelty)
     return sum(w * v for w, v in zip(weights, values)) / total
 
 
@@ -514,12 +524,11 @@ def score_candidate(candidate: dict, profile: dict, clap_centroid: bytes | None 
     lastfm_similar = candidate.get("lastfm_match") or 0.0
     breakdown["lastfm_similar"] = round(lastfm_similar, 3)
 
-    # audio_match and clap_similarity are NOT scored. audio_match was a constant 0.5 (we
-    # have no audio for a candidate before download) and clap_similarity was always 0, so
-    # together they stole a quarter of the weight and capped scores at ~0.49 against the
-    # 0.5 auto-download threshold. Their weights are dropped and the rest renormalised
-    # (see weighted_score). They stay in the breakdown as 0 for API/UI compatibility.
-    # Follow-up: compute CLAP similarity on the 30 s iTunes preview before download.
+    # audio_match is NOT scored: it was a constant 0.5 (we have no audio for a candidate
+    # before download). clap_similarity is not known yet either; refresh_recommendations
+    # fills it in from the candidate's iTunes preview (score_previews_with_clap) and rescores
+    # with apply_clap_similarity. Until then both stay in the breakdown as 0 for API/UI
+    # compatibility and neither weight counts (see weighted_score).
     breakdown["audio_match"] = 0.0
     breakdown["clap_similarity"] = 0.0
 
@@ -558,8 +567,9 @@ def _generate_explanation(candidate: dict, breakdown: dict) -> str:
     elif source == "trending":
         parts.append("Currently trending on Last.fm")
 
-    # Highlight strongest signal
-    top_signal = max(breakdown, key=breakdown.get) if breakdown else None
+    # Highlight strongest signal (CLAP gets its own phrase below, so it doesn't compete)
+    others = {k: v for k, v in breakdown.items() if k != "clap_similarity"}
+    top_signal = max(others, key=others.get) if others else None
     signal_labels = {
         "artist_affinity": "matches your favorite artists",
         "genre_match": "fits your preferred genres",
@@ -567,10 +577,283 @@ def _generate_explanation(candidate: dict, breakdown: dict) -> str:
         "novelty": "introduces a new artist",
         "popularity": "widely popular",
     }
-    if top_signal and top_signal in signal_labels and breakdown.get(top_signal, 0) > 0.3:
+    if top_signal and top_signal in signal_labels and others.get(top_signal, 0) > 0.3:
         parts.append(signal_labels[top_signal])
+    if (breakdown.get("clap_similarity") or 0) >= CLAP_EXPLAIN_THRESHOLD:
+        parts.append("sounds like what you play")
 
     return ". ".join(parts) if parts else "Recommended based on your listening profile"
+
+
+# ---------------------------------------------------------------------------
+# 3b. CLAP similarity on iTunes previews (before download)
+# ---------------------------------------------------------------------------
+
+CLAP_EXPLAIN_THRESHOLD = 0.6
+PREVIEW_MAX_BYTES = 3 * 1024 * 1024
+PREVIEW_TIMEOUT_S = 10.0
+PREVIEW_CONCURRENCY = 4
+PREVIEW_CACHE_DAYS = 90
+# Wall-clock cap per preview download (httpx's timeout is per phase, so a server trickling
+# bytes could otherwise hold a download slot indefinitely).
+PREVIEW_TOTAL_TIMEOUT_S = 15.0
+PREVIEW_TMP_PREFIX = "zonik-preview-"
+# Temp previews older than this are leftovers of a killed refresh and are removed.
+PREVIEW_STALE_S = 3600
+
+
+def _as_vector(v: bytes | np.ndarray) -> np.ndarray:
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        return np.frombuffer(v, dtype=np.float32)
+    return np.asarray(v, dtype=np.float32)
+
+
+def clap_cosine(a: bytes | np.ndarray, b: bytes | np.ndarray) -> float | None:
+    """Cosine similarity of two 512-dim CLAP vectors (float32 bytes or arrays). Computes the
+    full cosine because the taste centroid is a mean of unit vectors, not itself unit length.
+    None when either vector is malformed or zero."""
+    try:
+        va, vb = _as_vector(a), _as_vector(b)
+    except (ValueError, TypeError):
+        return None
+    if va.shape != (512,) or vb.shape != (512,):
+        return None
+    norm = float(np.linalg.norm(va) * np.linalg.norm(vb))
+    if not norm or not np.isfinite(norm):
+        return None
+    return float(np.dot(va, vb) / norm)
+
+
+def apply_clap_similarity(candidate: dict, similarity: float, cfg) -> None:
+    """Record a preview CLAP similarity on a scored candidate and rescore it with the term.
+
+    The base score is recomputed from the breakdown (with the clap weight renormalised in), then
+    the feedback / engagement multipliers recorded in the breakdown are re-applied, mirroring
+    refresh_recommendations' scoring loop. A Claude-assigned score is left alone: the term is
+    recorded for the UI but Claude's ranking stands."""
+    bd = candidate.setdefault("breakdown", {})
+    bd["clap_similarity"] = round(similarity, 3)
+    if "claude_score" in bd:
+        return
+    base = weighted_score(
+        cfg,
+        bd.get("artist_affinity", 0.0), bd.get("genre_match", 0.0), bd.get("lastfm_similar", 0.0),
+        bd.get("popularity", 0.0), bd.get("novelty", 0.0),
+        clap_similarity=similarity,
+    )
+    score = round(min(1.0, max(0.0, base)), 3)
+    mult = bd.get("feedback_multiplier")
+    if mult is None:
+        mult = bd.get("engagement_artist_multiplier", 1.0)
+    mult *= bd.get("engagement_source_multiplier", 1.0)
+    if mult != 1.0:
+        score = round(min(1.0, max(0.0, score * mult)), 3)
+    candidate["score"] = score
+
+
+async def _load_cached_preview_embeddings(db: AsyncSession, urls: list[str],
+                                          model: str) -> dict[str, bytes]:
+    if not urls:
+        return {}
+    rows = (await db.execute(
+        select(PreviewEmbedding.preview_url, PreviewEmbedding.embedding)
+        .where(PreviewEmbedding.model == model, PreviewEmbedding.preview_url.in_(urls))
+    )).all()
+    return {u: e for u, e in rows}
+
+
+async def _store_preview_embeddings(db: AsyncSession, new: dict[str, bytes], model: str) -> None:
+    """Insert new cache rows (ignoring any a concurrent refresh already wrote) and prune old ones."""
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    now = datetime.utcnow()
+    if new:
+        await db.execute(
+            sqlite_insert(PreviewEmbedding)
+            .values([{"preview_url": u, "model": model, "embedding": e, "created_at": now}
+                     for u, e in new.items()])
+            .on_conflict_do_nothing(index_elements=["preview_url", "model"])
+        )
+    await db.execute(
+        delete(PreviewEmbedding).where(PreviewEmbedding.created_at < now - timedelta(days=PREVIEW_CACHE_DAYS))
+    )
+    await db.commit()
+
+
+def _remove_stale_preview_files(max_age_s: float = PREVIEW_STALE_S) -> int:
+    """Delete temp previews left behind by a refresh that was killed mid-pass."""
+    removed = 0
+    cutoff = time.time() - max_age_s
+    tmpdir = tempfile.gettempdir()
+    try:
+        names = [n for n in os.listdir(tmpdir) if n.startswith(PREVIEW_TMP_PREFIX)]
+    except OSError:
+        return 0
+    for name in names:
+        path = os.path.join(tmpdir, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.unlink(path)
+                removed += 1
+        except OSError:
+            pass
+    if removed:
+        log.info(f"Preview CLAP: removed {removed} stale temp preview(s)")
+    return removed
+
+
+async def _download_preview(client: httpx.AsyncClient, url: str) -> str | None:
+    """Stream a preview clip to a temp file, giving up past PREVIEW_MAX_BYTES. Returns the path
+    (the caller removes it) or None on any failure (the temp file is removed here then)."""
+    fd, path = tempfile.mkstemp(prefix=PREVIEW_TMP_PREFIX, suffix=".m4a")
+    ok = False
+    try:
+        with os.fdopen(fd, "wb") as f:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    return None
+                if int(resp.headers.get("content-length") or 0) > PREVIEW_MAX_BYTES:
+                    return None
+                size = 0
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > PREVIEW_MAX_BYTES:
+                        return None
+                    f.write(chunk)
+        ok = size > 0
+        return path if ok else None
+    except Exception as e:
+        log.debug(f"Preview download failed for {url}: {e}")
+        return None
+    finally:
+        if not ok:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
+async def _embed_preview_file(path: str) -> bytes | None:
+    """Run the CLAP pipeline on a downloaded preview in a worker thread."""
+    from backend.services.embeddings import generate_embedding_for_path
+
+    return await asyncio.get_running_loop().run_in_executor(None, generate_embedding_for_path, path)
+
+
+async def _embed_previews(urls: list[str]) -> dict[str, bytes]:
+    """Download and embed each preview, at most PREVIEW_CONCURRENCY in flight. A slot is held
+    from download through embedding to deletion, so no more than that many clips sit on disk;
+    embedding itself runs one at a time (torch already uses every core). A failed or slow
+    fetch, or a failed embed, just leaves that URL out of the result."""
+    _remove_stale_preview_files()
+    out: dict[str, bytes] = {}
+    slots = asyncio.Semaphore(PREVIEW_CONCURRENCY)
+    embed_lock = asyncio.Lock()
+
+    async with httpx.AsyncClient(timeout=PREVIEW_TIMEOUT_S, follow_redirects=True) as client:
+        async def one(url: str) -> None:
+            async with slots:
+                try:
+                    path = await asyncio.wait_for(_download_preview(client, url), PREVIEW_TOTAL_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    log.debug(f"Preview download timed out for {url}")
+                    return
+                if not path:
+                    return
+                try:
+                    async with embed_lock:
+                        emb = await _embed_preview_file(path)
+                    if emb and len(emb) == 512 * 4:
+                        out[url] = emb
+                except Exception as e:
+                    log.debug(f"Preview embed failed for {url}: {e}")
+                finally:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+
+        await asyncio.gather(*(one(u) for u in urls), return_exceptions=True)
+    return out
+
+
+async def score_previews_with_clap(db: AsyncSession, candidates: list[dict],
+                                   clap_centroid: bytes | None, allow_model_load: bool = True) -> dict:
+    """Score the candidates' iTunes previews against the CLAP taste centroid, in place.
+
+    Each candidate with a preview_url (the first clap_preview_limit of them) gets
+    breakdown["clap_similarity"] and a score that includes the term. Embeddings come from the
+    preview_embeddings cache (keyed by URL and CLAP model) or are computed now and cached.
+    With allow_model_load=False (a manual refresh in the web process) only cached previews are
+    scored and the misses are left to the nightly worker run. Skips the whole pass with a single
+    log line when it is switched off, CLAP is disabled, there is no centroid, or the model can't
+    be loaded. Returns counters for the refresh summary."""
+    settings = get_settings()
+    cfg = settings.assistant
+    stats = {"scored": 0, "cached": 0, "embedded": 0, "failed": 0}
+
+    if not cfg.clap_previews:
+        log.info("Preview CLAP scoring skipped: assistant.clap_previews is off")
+        return stats
+    if not settings.analysis.enable_clap:
+        log.info("Preview CLAP scoring skipped: analysis.enable_clap is off")
+        return stats
+    if not clap_centroid or clap_cosine(clap_centroid, clap_centroid) is None:
+        log.info("Preview CLAP scoring skipped: no taste centroid (needs 3+ embedded favourite/top tracks)")
+        return stats
+
+    targets = [c for c in candidates if c.get("preview_url")][:max(0, cfg.clap_preview_limit)]
+    urls = list(dict.fromkeys(c["preview_url"] for c in targets))
+    if not urls:
+        return stats
+
+    from backend.services import embeddings as emb_mod
+
+    model_name = emb_mod.clap_model_name()
+    cached = await _load_cached_preview_embeddings(db, urls, model_name)
+    # End the read transaction now: the embedding pass below can take minutes and must not
+    # hold a SQLite snapshot open the whole time.
+    await db.commit()
+    missing = [u for u in urls if u not in cached]
+    new: dict[str, bytes] = {}
+    if missing and not allow_model_load:
+        log.info(f"Preview CLAP: {len(missing)} uncached preview(s) left for the nightly worker refresh")
+    elif missing:
+        was_loaded = emb_mod.clap_model_loaded()
+        available = await asyncio.get_running_loop().run_in_executor(None, emb_mod.clap_model_available)
+        if not available:
+            log.warning(f"Preview CLAP: model failed to load; using {len(cached)} cached previews only")
+        else:
+            try:
+                new = await _embed_previews(missing)
+            finally:
+                # Don't leave the model resident when it was only loaded for this pass
+                # (unload_clap_model keeps it if another embedding call is running).
+                if not was_loaded:
+                    # gc + malloc_trim, and possibly a wait on the model lock: off the loop.
+                    await asyncio.get_running_loop().run_in_executor(None, emb_mod.unload_clap_model)
+    try:
+        await _store_preview_embeddings(db, new, model_name)
+    except Exception as e:
+        await db.rollback()
+        log.warning(f"Preview CLAP: could not update the embedding cache: {e}")
+
+    for c in targets:
+        url = c["preview_url"]
+        emb = cached.get(url) or new.get(url)
+        sim = clap_cosine(emb, clap_centroid) if emb else None
+        if sim is None:
+            stats["failed"] += 1
+            continue
+        apply_clap_similarity(c, sim, cfg)
+        stats["scored"] += 1
+    stats["cached"] = len(cached)
+    stats["embedded"] = len(new)
+    log.info(
+        f"Preview CLAP: scored {stats['scored']}/{len(targets)} candidates "
+        f"({stats['cached']} cached, {stats['embedded']} newly embedded, {stats['failed']} without)"
+    )
+    return stats
 
 
 # ---------------------------------------------------------------------------
@@ -902,6 +1185,20 @@ async def refresh_recommendations(
         await on_progress(step, total_steps, f"Fetching artwork for {len(top)} recommendations...")
     await _batch_fetch_itunes(top)
 
+    # CLAP similarity on the 30 s previews: adds the clap term to each candidate's score.
+    if on_progress:
+        await on_progress(step, total_steps, "Comparing previews to your taste...")
+    # Only the worker embeds new previews. A manual refresh (or "Run now") runs in the web
+    # process and scores cached previews only, so zonik-web never loads the ~1 GB CLAP model
+    # or spends minutes of CPU on inference. The worker marks itself at startup; inferring
+    # the process from the Soulseek client was wrong whenever the client was down.
+    from backend import process as _process
+    preview_stats = await score_previews_with_clap(
+        db, top, clap_centroid, allow_model_load=_process.IS_WORKER,
+    )
+    if preview_stats["scored"]:
+        top.sort(key=lambda x: x["score"], reverse=True)
+
     if on_progress:
         await on_progress(step, total_steps, "Saving recommendations...")
 
@@ -951,6 +1248,7 @@ async def refresh_recommendations(
         "recommendations_saved": len(top),
         "top_score": top[0]["score"] if top else 0,
         "clap_validated": clap_validated,
+        "clap_previews_scored": preview_stats["scored"],
     }
     if claude_usage:
         result["claude_usage"] = claude_usage
