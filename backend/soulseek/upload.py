@@ -48,12 +48,23 @@ QUEUED_RETRY_SECONDS = 60    # peer answered "Queued": ask again after this
 TERMINAL_KEEP_SECONDS = 60   # finished entries stay visible this long
 QUEUE_MAX_AGE_SECONDS = 24 * 3600  # a queued entry nobody served in a day is dropped
 MAX_QUEUED_PER_USER = 200
+MAX_QUEUED_BYTES_PER_USER = 20 * 1024 ** 3
 MAX_QUEUED_TOTAL = 2000
 SWEEP_INTERVAL = 15
+DENY_CONNECT_TIMEOUT = 20    # connecting to a peer only to tell it a queued file is gone
+CHANGE_THROTTLE = 0.5        # progress notifications at most this often
 
-DENY_NOT_SHARING = "Not sharing this file"
-DENY_NOT_SHARED = "File not shared"
-DENY_TOO_MANY = "Too many files"
+# Standard rejection reasons (SLSKPROTOCOL "Transfer Rejection Reasons",
+# Nicotine+ slskmessages.TransferRejectReason). Clients key behaviour on the
+# exact strings — e.g. Nicotine+ retries a "File not shared." with a latin-1
+# path — so they must match, trailing dots included.
+REASON_QUEUED = "Queued"
+REASON_CANCELLED = "Cancelled"
+REASON_NOT_SHARED = "File not shared."
+REASON_READ_ERROR = "File read error."
+REASON_SHUTDOWN = "Pending shutdown."
+REASON_TOO_MANY_FILES = "Too many files"
+REASON_TOO_MANY_MEGABYTES = "Too many megabytes"
 
 TERMINAL_STATES = (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED)
 
@@ -153,6 +164,8 @@ class UploadManager:
       already past PeerInit/PierceFirewall.
     resolve(virtual_path) -> shares.SharedFile | None.
     enabled() -> share_library, checked on every request, dispatch and sweep.
+    send_if_connected(username, data) -> bool: write a message on an existing P
+      connection without awaiting (used at shutdown); False if there is none.
     """
 
     def __init__(
@@ -165,6 +178,7 @@ class UploadManager:
         slots: int = 2,
         speed_limit_kbps: int = 1024,
         on_change: Callable[[bool], Awaitable[None]] | None = None,
+        send_if_connected: Callable[[str, bytes], bool] | None = None,
     ):
         if resolve is None:
             from backend.soulseek.shares import resolve_shared_file
@@ -176,6 +190,10 @@ class UploadManager:
         self.slots = max(1, slots)
         self.limiter = RateLimiter(speed_limit_kbps)
         self.on_change = on_change
+        self.send_if_connected = send_if_connected
+        self._last_change = 0.0
+        self._change_task: asyncio.Task | None = None
+        self._change_again = False
         # (username, virtual path) -> Upload; insertion order is queue order.
         self.uploads: dict[tuple[str, str], Upload] = {}
         # (username, token) -> future for the peer's TransferResponse.
@@ -193,20 +211,24 @@ class UploadManager:
     def queue(self, username: str, filename: str) -> str | None:
         """A peer asked for a file. Returns None when it is queued (or already
         was), else the reason to deny it with."""
-        if self._closed or not self.enabled():
-            return DENY_NOT_SHARING
+        if self._closed:
+            return REASON_SHUTDOWN
+        if not self.enabled():
+            return REASON_NOT_SHARED
         shared = self.resolve(filename)
         if shared is None:
             log.info(f"[upload] {username} asked for an unshared file: {filename}")
-            return DENY_NOT_SHARED
+            return REASON_NOT_SHARED
         key = (username, shared.virtual)
         existing = self.uploads.get(key)
         if existing is not None and existing.state not in TERMINAL_STATES:
             return None
         pending = [u for u in self.uploads.values() if u.state not in TERMINAL_STATES]
-        if (len(pending) >= MAX_QUEUED_TOTAL
-                or sum(1 for u in pending if u.username == username) >= MAX_QUEUED_PER_USER):
-            return DENY_TOO_MANY
+        mine = [u for u in pending if u.username == username]
+        if len(pending) >= MAX_QUEUED_TOTAL or len(mine) >= MAX_QUEUED_PER_USER:
+            return REASON_TOO_MANY_FILES
+        if sum(u.total_bytes for u in mine) + shared.size > MAX_QUEUED_BYTES_PER_USER:
+            return REASON_TOO_MANY_MEGABYTES
         self.uploads.pop(key, None)  # a finished entry for the same file goes to the back
         self.uploads[key] = Upload(
             username=username, filename=filename, real_path=shared.real, total_bytes=shared.size,
@@ -279,14 +301,77 @@ class UploadManager:
             up.error = error
 
     def _changed(self, force: bool = False) -> None:
+        """Tell the client something changed. Progress (not forced) is throttled
+        before any task is made; forced notifications are coalesced so at most
+        one is pending, plus one follow-up for changes made while it ran."""
         if self.on_change is None or self._closed:
             return
-        try:
-            task = asyncio.create_task(self.on_change(force))
-        except RuntimeError:
+        now = time.monotonic()
+        if not force and now - self._last_change < CHANGE_THROTTLE:
             return
+        if self._change_task is not None and not self._change_task.done():
+            self._change_again = True
+            return
+        self._last_change = now
+        self._change_again = False
+        try:
+            self._change_task = asyncio.create_task(self._emit_changes(force))
+        except RuntimeError:
+            self._change_task = None
+
+    async def _emit_changes(self, force: bool) -> None:
+        while True:
+            try:
+                await self.on_change(force)
+            except Exception as e:
+                log.debug(f"[upload] change notification failed: {e}")
+            if not self._change_again or self._closed:
+                return
+            # Changes arrived while that one ran: one more covers all of them.
+            self._change_again = False
+            force = True
+            self._last_change = time.monotonic()
+
+    def _deny(self, up: Upload, reason: str) -> None:
+        """Tell the peer a file it has queued with us is not coming (UploadDenied),
+        or that one already accepted broke (UploadFailed). Uses the open P
+        connection when there is one; otherwise connects in the background,
+        except at shutdown."""
+        if up.state in (TransferState.CONNECTED, TransferState.TRANSFERRING) or up.offset or up.sent_bytes:
+            data = build_upload_failed(up.filename)
+        else:
+            data = build_upload_denied(up.filename, reason)
+        if self.send_if_connected is not None:
+            try:
+                if self.send_if_connected(up.username, data):
+                    return
+            except Exception:
+                pass
+        if self._closed:
+            return
+
+        async def send():
+            try:
+                peer = await asyncio.wait_for(self.get_peer(up.username), DENY_CONNECT_TIMEOUT)
+                await peer.send_raw(data)
+            except Exception as e:
+                log.debug(f"[upload] Could not tell {up.username} about {up.filename}: {e}")
+
+        task = asyncio.create_task(send())
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
+
+    def drop(self, up: Upload, error: str, reason: str) -> None:
+        """Give up on an upload that hasn't finished: cancel it, close its socket,
+        and tell the peer (`reason` is the wire string, `error` ours)."""
+        if up.state in TERMINAL_STATES:
+            return
+        self._deny(up, reason)
+        self._set_state(up, TransferState.FAILED, error)
+        if up.active:
+            up.task.cancel()
+        _close_quietly(up.writer)
+        self._changed(force=True)
 
     # --- One upload ---
 
@@ -299,7 +384,7 @@ class UploadManager:
             except OSError as e:
                 self._set_state(up, TransferState.FAILED, f"File missing: {e}")
                 peer = await self.get_peer(up.username)
-                await peer.send_raw(build_upload_denied(up.filename, DENY_NOT_SHARED))
+                await peer.send_raw(build_upload_denied(up.filename, REASON_READ_ERROR))
                 return
             up.total_bytes = st.st_size
             up.token = os.urandom(4)
@@ -314,12 +399,20 @@ class UploadManager:
                 await peer.send_raw(build_transfer_request(
                     TransferDirection.UPLOAD, up.token, up.filename, up.total_bytes,
                 ))
-                allowed, reason = await asyncio.wait_for(fut, RESPONSE_TIMEOUT)
+                try:
+                    allowed, reason = await asyncio.wait_for(fut, RESPONSE_TIMEOUT)
+                except asyncio.TimeoutError:
+                    # No answer: keep it queued and offer it again later (the
+                    # queue age limit drops it, telling the peer, eventually).
+                    self._set_state(up, TransferState.QUEUED)
+                    up.retry_at = time.time() + QUEUED_RETRY_SECONDS
+                    log.info(f"[upload] {up.username} did not answer for {up.filename}; retrying later")
+                    return
             finally:
                 if self._awaiting.get(key) is fut:
                     del self._awaiting[key]
             if not allowed:
-                if reason.strip().rstrip(".").lower() == "queued":
+                if reason.strip().rstrip(".").lower() == REASON_QUEUED.lower():
                     # The peer has it queued on its side; offer it again later.
                     self._set_state(up, TransferState.QUEUED)
                     up.retry_at = time.time() + QUEUED_RETRY_SECONDS
@@ -413,17 +506,10 @@ class UploadManager:
                 if now - (up.ended_at or up.queued_at) > TERMINAL_KEEP_SECONDS:
                     del self.uploads[key]
             elif not enabled:
-                self.cancel(up, "Sharing turned off")
+                self.drop(up, "Sharing turned off", REASON_NOT_SHARED)
             elif up.state == TransferState.QUEUED and not up.active and now - up.queued_at > QUEUE_MAX_AGE_SECONDS:
-                self._set_state(up, TransferState.FAILED, "Queue timeout")
+                self.drop(up, "Queue timeout", REASON_CANCELLED)
         self._kick()
-
-    def cancel(self, up: Upload, error: str) -> None:
-        if up.state not in TERMINAL_STATES:
-            self._set_state(up, TransferState.FAILED, error)
-        if up.active:
-            up.task.cancel()
-        _close_quietly(up.writer)
 
     def get_all(self) -> list[dict]:
         return [u.to_dict() for u in self.uploads.values()]
@@ -435,8 +521,9 @@ class UploadManager:
         self._closed = True
         if self._sweep_task and not self._sweep_task.done():
             self._sweep_task.cancel()
+        # _closed is set, so drop() only tells peers over connections already open.
         for up in list(self.uploads.values()):
-            self.cancel(up, "Shutting down")
+            self.drop(up, "Shutting down", REASON_SHUTDOWN)
         for fut in self._awaiting.values():
             if not fut.done():
                 fut.cancel()

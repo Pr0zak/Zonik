@@ -80,7 +80,9 @@ def resolve_shared_file(virtual_path: str) -> SharedFile | None:
     requested path onto the music dir, so a crafted path can't escape it."""
     if not virtual_path:
         return None
-    return _current.index.get(_virtual(virtual_path))
+    # Clients ask for <folder> + "\\" + <name>; root-level files (folder "") then
+    # come in with a leading backslash.
+    return _current.index.get(_virtual(virtual_path).lstrip("\\"))
 
 
 def _kbps(bitrate: int | None) -> int | None:
@@ -133,14 +135,22 @@ def build_share_list(music_dir: str, entries: Iterable[ShareEntry]) -> ShareList
         inner.uint32(len(files))
         for f in files:
             inner.uint8(1)  # code
-            inner.string(f.virtual)
+            inner.string(f.virtual.rsplit("\\", 1)[-1])  # bare name; clients prepend the folder
             inner.uint64(f.size)
             inner.string(Path(f.virtual.replace("\\", "/")).suffix.lstrip("."))
             inner.uint32(len(f.attrs))
             for attr_type, attr_value in f.attrs.items():
                 inner.uint32(attr_type)
                 inner.uint32(attr_value)
+    _trailer(inner)
     return ShareList(response=_wrap(inner), index=index, num_dirs=len(dirs), num_files=len(index))
+
+
+def _trailer(inner: MessageBuilder) -> None:
+    """End of a SharedFileListResponse (Peer Code 5): uint32 unknown (official
+    clients send 0), then the private folder count (we have none)."""
+    inner.uint32(0)
+    inner.uint32(0)
 
 
 def _wrap(inner: MessageBuilder) -> bytes:
@@ -153,6 +163,7 @@ def _wrap(inner: MessageBuilder) -> bytes:
 def _empty_list() -> ShareList:
     inner = MessageBuilder()
     inner.uint32(0)  # 0 directories
+    _trailer(inner)
     return ShareList(response=_wrap(inner), index={}, num_dirs=0, num_files=0)
 
 

@@ -140,9 +140,14 @@ def parse_peer_message(data: bytes) -> dict | None:
     elif code == PeerMessageCode.TRANSFER_RESPONSE:
         token = msg.raw(4)
         allowed = msg.uint8()
+        # Both tails are optional (Nicotine+ TransferResponse.parse_network_message):
+        # a refusal carries a reason string, an acceptance of a download request
+        # may carry the uint64 file size.
         if allowed == 0:
-            reason = msg.string()
+            reason = msg.string() if msg.has_remaining() else ""
             return {"kind": "transfer_response", "token": token, "allowed": False, "reason": reason}
+        if msg.has_remaining():
+            return {"kind": "transfer_response", "token": token, "allowed": True, "size": msg.uint64()}
         return {"kind": "transfer_response", "token": token, "allowed": True}
 
     elif code == PeerMessageCode.PLACE_IN_QUEUE_RESPONSE:

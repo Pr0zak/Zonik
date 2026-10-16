@@ -17,7 +17,7 @@ from backend.soulseek.protocol.types import (
     FileAttribute, PeerMessageCode, TransferDirection, TransferState,
 )
 from backend.soulseek.upload import (
-    DENY_NOT_SHARED, DENY_NOT_SHARING, RateLimiter, UploadManager,
+    REASON_NOT_SHARED, REASON_SHUTDOWN, RateLimiter, UploadManager,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -159,15 +159,15 @@ async def test_file_outside_shares_is_refused(library, tmp_path):
     secret = tmp_path / "secret.flac"
     secret.write_bytes(b"x" * 10)
     um, _ = make_manager()
-    assert um.queue("eve", "..\\secret.flac") == DENY_NOT_SHARED
-    assert um.queue("eve", str(secret)) == DENY_NOT_SHARED
-    assert um.queue("eve", "Artist\\Album\\nope.flac") == DENY_NOT_SHARED
+    assert um.queue("eve", "..\\secret.flac") == REASON_NOT_SHARED
+    assert um.queue("eve", str(secret)) == REASON_NOT_SHARED
+    assert um.queue("eve", "Artist\\Album\\nope.flac") == REASON_NOT_SHARED
     assert um.uploads == {}
 
 
 async def test_sharing_off_denies_everything(library):
     um, _ = make_manager(enabled=False)
-    assert um.queue("alice", ONE) == DENY_NOT_SHARING
+    assert um.queue("alice", ONE) == REASON_NOT_SHARED
     assert um.uploads == {}
 
 
@@ -249,14 +249,83 @@ async def test_offset_past_end_fails_and_tells_peer(library):
     assert bytes(w.data) == peers["a"].sent[0]["token"] and w.closed
 
 
-async def test_no_transfer_response_fails(library, monkeypatch):
+async def test_no_transfer_response_requeues(library, monkeypatch):
     import backend.soulseek.upload as upload_mod
     monkeypatch.setattr(upload_mod, "RESPONSE_TIMEOUT", 0.05)
     um, peers = make_manager()
     um.queue("a", ONE)
     up = um.uploads[("a", ONE)]
-    await wait_until(lambda: up.state == TransferState.FAILED)
-    assert up.error == "No response from peer"
+    await wait_until(lambda: "a" in peers and peers["a"].sent)
+    await wait_until(lambda: not up.active)
+    assert up.state == TransferState.QUEUED and up.retry_at > time.time()
+
+
+async def test_dropped_queued_upload_is_denied_to_the_peer(library):
+    um, peers = make_manager()
+    um._kick = lambda: None
+    um.queue("a", ONE)
+    up = um.uploads[("a", ONE)]
+    up.queued_at -= 2 * 24 * 3600
+    um._sweep(time.time())
+    assert up.state == TransferState.FAILED and up.error == "Queue timeout"
+    m = await (await um.get_peer("a")).wait_for("upload_denied")
+    assert m == {"kind": "upload_denied", "filename": ONE, "reason": "Cancelled"}
+
+
+async def test_sharing_turned_off_denies_queued_uploads(library):
+    flag = {"on": True}
+    um, peers = make_manager()
+    um.enabled = lambda: flag["on"]
+    um._kick = lambda: None
+    um.queue("a", ONE)
+    flag["on"] = False
+    um._sweep(time.time())
+    m = await (await um.get_peer("a")).wait_for("upload_denied")
+    assert m["reason"] == "File not shared."
+    assert um.uploads[("a", ONE)].state == TransferState.FAILED
+
+
+async def test_shutdown_tells_connected_peers(library):
+    sent = []
+    um, peers = make_manager()
+    um.send_if_connected = lambda user, data: sent.append((user, parse_peer_message(data[4:]))) or True
+    um._kick = lambda: None
+    um.queue("a", ONE)
+    um.destroy()
+    assert sent == [("a", {"kind": "upload_denied", "filename": ONE, "reason": REASON_SHUTDOWN})]
+    assert um.queue("b", TWO) == REASON_SHUTDOWN
+
+
+async def test_missing_file_is_a_read_error(library):
+    music, _ = library
+    um, peers = make_manager()
+    um.queue("a", ONE)
+    (music / "Artist" / "Album" / "01 - One.flac").unlink()
+    # the queue entry exists already; its _run stats the file
+    m = await (await um.get_peer("a")).wait_for("upload_denied")
+    assert m["reason"] == "File read error."
+
+
+async def test_change_notifications_are_throttled_and_coalesced(library):
+    calls = []
+    gate = asyncio.Event()
+
+    async def on_change(force):
+        calls.append(force)
+        await gate.wait()
+
+    um, _ = make_manager()
+    um.on_change = on_change
+    for _ in range(50):
+        um._changed()          # progress: one notification, the rest throttled
+    um._changed(force=True)    # pending one running: coalesced
+    um._changed(force=True)
+    await asyncio.sleep(0.01)
+    assert calls == [False]
+    gate.set()
+    await wait_until(lambda: len(calls) == 2)
+    await asyncio.sleep(0.05)
+    assert calls == [False, True]
 
 
 async def test_destroy_cancels_running_uploads(library):
@@ -275,7 +344,7 @@ async def test_destroy_cancels_running_uploads(library):
         await task
     assert up.state == TransferState.FAILED and w.closed
     assert um._sweep_task.cancelled() or um._sweep_task.done()
-    assert um.queue("b", TWO) == DENY_NOT_SHARING
+    assert um.queue("b", TWO) == REASON_SHUTDOWN
 
 
 # --- rate limit -------------------------------------------------------------------
@@ -329,12 +398,12 @@ async def test_client_denies_when_sharing_off(library):
     c = make_client(sharing=False)
     peer = FakePeer("alice")
     await c._handle_peer_message({"kind": "queue_upload", "filename": ONE}, peer)
-    assert peer.sent == [{"kind": "upload_denied", "filename": ONE, "reason": DENY_NOT_SHARING}]
+    assert peer.sent == [{"kind": "upload_denied", "filename": ONE, "reason": REASON_NOT_SHARED}]
     # legacy TransferRequest(download) is refused too
     await c._handle_peer_message({"kind": "transfer_request", "direction": TransferDirection.DOWNLOAD,
                                   "token": b"\x01\x00\x00\x00", "filename": ONE}, peer)
     assert peer.sent[-1] == {"kind": "transfer_response", "token": b"\x01\x00\x00\x00",
-                             "allowed": False, "reason": DENY_NOT_SHARING}
+                             "allowed": False, "reason": REASON_NOT_SHARED}
     assert c.uploads.uploads == {}
     c.destroy()
 
@@ -349,7 +418,7 @@ async def test_client_queues_and_answers_place_in_queue(library):
                                   "token": b"\x07\x00\x00\x00", "filename": THREE}, peer)
     await c._handle_peer_message({"kind": "place_in_queue_request", "filename": THREE}, peer)
     assert peer.sent == [
-        {"kind": "upload_denied", "filename": "Nope\\x.flac", "reason": DENY_NOT_SHARED},
+        {"kind": "upload_denied", "filename": "Nope\\x.flac", "reason": REASON_NOT_SHARED},
         {"kind": "transfer_response", "token": b"\x07\x00\x00\x00", "allowed": False, "reason": "Queued"},
         {"kind": "place_in_queue_response", "filename": THREE, "place": 2},
     ]
@@ -372,8 +441,9 @@ async def test_uploads_stay_out_of_the_download_keyspace(library):
     assert c.transfers.find_transfer_by_token(token) is None
     assert c.transfers.get_transfer_by_token("alice", token) is None
     assert c.transfers.get_transfer("alice", ONE) is dl
-    listed = c.transfers.get_all_transfers()
-    assert sorted(t["direction"] for t in listed) == ["download", "upload"]
+    assert [t["direction"] for t in c.transfers.get_all_transfers()] == ["download"]
+    assert [t["direction"] for t in c.transfers.get_active_transfers()] == ["download"]
+    assert [t["direction"] for t in c.transfers.get_all_uploads()] == ["upload"]
     # The peer's TransferResponse goes to the upload, not the download with that name
     await c._handle_peer_message({"kind": "transfer_response", "token": token,
                                   "allowed": False, "reason": "Cancelled"}, peers["alice"])
@@ -547,3 +617,178 @@ async def test_sync_refresh_inside_the_loop_only_schedules(monkeypatch, tmp_path
     assert shares.refresh_shares(str(tmp_path), True) == shares.get_share_counts()
     await wait_until(lambda: calls)
     assert calls == [(str(tmp_path), True)]
+
+
+# --- wire layouts, from the spec (not from our own builders) ----------------------
+
+def _u32(v):
+    return struct.pack("<I", v)
+
+
+def _str(s):
+    b = s.encode()
+    return _u32(len(b)) + b
+
+
+def _parse_browse(resp):
+    """Read a SharedFileListResponse the way a client does (Peer Code 5)."""
+    import zlib
+    from backend.soulseek.protocol.parser import MessageParser
+    p = MessageParser(resp[4:])
+    assert p.uint32() == PeerMessageCode.SHARED_FILE_LIST_RESPONSE
+    raw = zlib.decompress(p.remaining())
+    inner = MessageParser(raw)
+    folders = []
+    for _ in range(inner.uint32()):
+        folder = inner.string()
+        files = []
+        for _ in range(inner.uint32()):
+            assert inner.uint8() == 1
+            name = inner.string()
+            size = inner.uint64()
+            inner.string()  # extension
+            for _ in range(inner.uint32()):
+                inner.uint32(), inner.uint32()
+            files.append((name, size))
+        folders.append((folder, files))
+    assert inner.uint32() == 0  # unknown
+    assert inner.uint32() == 0  # private folders
+    assert not inner.has_remaining()
+    return raw, folders
+
+
+async def test_browse_paths_resolve_the_way_clients_build_them(tmp_path):
+    music = tmp_path / "music"
+    entries = [
+        shares.ShareEntry("Artist/Album/01 - One.flac", 10),
+        shares.ShareEntry("Loose.mp3", 20),
+    ]
+    try:
+        shares.install(shares.build_share_list(str(music), entries))
+        _, folders = _parse_browse(shares.get_shared_file_list_response())
+        assert folders == [("", [("Loose.mp3", 20)]), ("Artist\\Album", [("01 - One.flac", 10)])]
+        # Nicotine+ userbrowse: download path = folder + "\\" + name
+        requested = {folder + "\\" + name for folder, files in folders for name, _ in files}
+        assert requested == {"\\Loose.mp3", "Artist\\Album\\01 - One.flac"}
+        assert shares.resolve_shared_file("\\Loose.mp3").real == music / "Loose.mp3"
+        assert shares.resolve_shared_file("Artist\\Album\\01 - One.flac").real == \
+            music / "Artist" / "Album" / "01 - One.flac"
+        # and the upload side queues exactly those names
+        um, _ = make_manager()
+        um._kick = lambda: None
+        for path in requested:
+            assert um.queue("peer", path) is None
+    finally:
+        shares.install(shares._empty_list())
+
+
+async def test_browse_list_bytes_match_the_spec(tmp_path):
+    entries = [shares.ShareEntry("Artist/Album/01 - One.flac", 1000, 900_000, 60.4)]
+    expected = (
+        _u32(1)                                   # folders
+        + _str("Artist\\Album") + _u32(1)         # folder, file count
+        + b"\x01" + _str("01 - One.flac")         # code, bare file name
+        + struct.pack("<Q", 1000) + _str("flac")  # size, extension
+        + _u32(2) + _u32(0) + _u32(900) + _u32(1) + _u32(60)  # bitrate, length
+        + _u32(0)                                 # unknown
+        + _u32(0)                                 # private folders
+    )
+    try:
+        shares.install(shares.build_share_list(str(tmp_path), entries))
+        raw, _ = _parse_browse(shares.get_shared_file_list_response())
+        assert raw == expected
+        empty, folders = _parse_browse(shares._empty_list().response)
+        assert empty == _u32(0) + _u32(0) + _u32(0) and folders == []
+    finally:
+        shares.install(shares._empty_list())
+
+
+async def test_transfer_response_bytes_from_the_spec():
+    token = b"\x05\x00\x00\x00"
+    allowed_with_size = _u32(41) + token + b"\x01" + struct.pack("<Q", 123456)
+    assert parse_peer_message(allowed_with_size) == {
+        "kind": "transfer_response", "token": token, "allowed": True, "size": 123456}
+    allowed_bare = _u32(41) + token + b"\x01"
+    assert parse_peer_message(allowed_bare) == {"kind": "transfer_response", "token": token, "allowed": True}
+    refused = _u32(41) + token + b"\x00" + _str("Queued")
+    assert parse_peer_message(refused) == {
+        "kind": "transfer_response", "token": token, "allowed": False, "reason": "Queued"}
+    refused_bare = _u32(41) + token + b"\x00"
+    assert parse_peer_message(refused_bare)["reason"] == ""
+
+
+async def test_upload_side_message_bytes_from_the_spec():
+    from backend.soulseek.protocol.peer_messages import (
+        build_place_in_queue_response, build_transfer_request, build_upload_failed,
+        build_file_transfer_init,
+    )
+    token = b"\x07\x00\x00\x00"
+    body = _u32(40) + _u32(1) + token + _str("A\\b.flac") + struct.pack("<Q", 99)
+    assert build_transfer_request(TransferDirection.UPLOAD, token, "A\\b.flac", 99) == _u32(len(body)) + body
+    body = _u32(44) + _str("A\\b.flac") + _u32(3)
+    assert build_place_in_queue_response("A\\b.flac", 3) == _u32(len(body)) + body
+    body = _u32(46) + _str("A\\b.flac")
+    assert build_upload_failed("A\\b.flac") == _u32(len(body)) + body
+    assert build_file_transfer_init(token) == token
+
+
+# --- client plumbing ----------------------------------------------------------------
+
+async def test_sharing_flip_wakes_the_refresh_loop(monkeypatch):
+    import backend.soulseek.client as client_mod
+    import backend.config as config
+    c = make_client(sharing=False)
+    refreshes = []
+
+    async def fake_refresh():
+        refreshes.append(c._sharing[0])
+        return 0, 0
+
+    monkeypatch.setattr(c, "refresh_shares", fake_refresh)
+    task = asyncio.create_task(c._share_refresh_loop())
+    try:
+        await wait_until(lambda: len(refreshes) == 1)
+        real = config.get_settings()
+        on = real.model_copy(update={"soulseek": real.soulseek.model_copy(update={"share_library": True})})
+        monkeypatch.setattr(config, "get_settings", lambda: on)
+        c._sharing = (False, time.monotonic() - client_mod.SHARING_CHECK_SECONDS - 1)
+        assert c._sharing_enabled() is True
+        await wait_until(lambda: len(refreshes) == 2)  # not 6 h later
+    finally:
+        task.cancel()
+        c.destroy()
+
+
+async def test_concurrent_peer_address_requests_all_get_the_answer(monkeypatch):
+    c = make_client()
+
+    async def fake_get(username):
+        pass
+
+    monkeypatch.setattr(c.server, "get_peer_address", fake_get)
+    a = asyncio.create_task(c._request_peer_address("bob", timeout=1))
+    b = asyncio.create_task(c._request_peer_address("bob", timeout=1))
+    await wait_until(lambda: len(c._peer_address_futures.get("bob", [])) == 2)
+    await c._handle_server_message({"kind": "get_peer_address", "username": "bob", "host": "h", "port": 7})
+    assert await a == await b == {"host": "h", "port": 7}
+    assert "bob" not in c._peer_address_futures
+    c.destroy()
+
+
+async def test_failed_login_tears_everything_down(monkeypatch):
+    c = make_client()
+
+    async def bad_login(username, password):
+        raise ConnectionError("Login failed: INVALIDPASS")
+
+    async def noop():
+        pass
+
+    monkeypatch.setattr(c.server, "connect_and_login", bad_login)
+    monkeypatch.setattr(c.listener, "start", noop)
+    with pytest.raises(ConnectionError):
+        await c.connect_and_login("u", "p")
+    await asyncio.sleep(0)
+    assert c.uploads._sweep_task.done()
+    assert c._peer_cleanup_task.done()
+    assert c.transfers._cleanup_task.done()

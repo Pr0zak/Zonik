@@ -74,20 +74,26 @@ class SoulseekClient:
             slots=slsk_cfg.upload_slots,
             speed_limit_kbps=slsk_cfg.upload_speed_limit_kbps,
             on_change=self._on_upload_change,
+            send_if_connected=self._send_if_connected,
         )
-        self.transfers.uploads = self.uploads  # listed with downloads, never mixed into them
+        self.transfers.uploads = self.uploads  # get_all_uploads(); never mixed into downloads
         self._sharing = (slsk_cfg.share_library, time.monotonic())
         # Relay tokens of our upload F connections the server was asked to set up:
         # the peer answers with a PierceFirewall carrying that token.
         self._upload_relays: dict[bytes, asyncio.Future] = {}
         self._share_task: asyncio.Task | None = None
+        # Set when share_library flips, so the refresh loop rebuilds (or clears)
+        # the list and re-reports the counts now instead of at its next interval.
+        self._share_wake = asyncio.Event()
 
         self.peers: dict[str, PeerConnection] = {}
         self._search_results: dict[bytes, list[SearchResult]] = {}
         self._search_events: dict[bytes, asyncio.Event] = {}
         self._search_max: dict[bytes, int] = {}
         self._search_last: dict[bytes, float] = {}
-        self._peer_address_futures: dict[str, asyncio.Future] = {}
+        # Every caller waiting on one user's address gets the answer (an upload's
+        # direct connect and a download's peer connect can ask at the same time).
+        self._peer_address_futures: dict[str, list[asyncio.Future]] = {}
         self._last_broadcast: float = 0
         self._peer_cleanup_task: asyncio.Task | None = None
         self._file_tasks: set[asyncio.Task] = set()
@@ -104,14 +110,18 @@ class SoulseekClient:
 
     async def connect_and_login(self, username: str, password: str) -> None:
         """Connect to server, start listener, login."""
-        await self.listener.start()
-        self.transfers.start()
-        self.uploads.start()
-        self._peer_cleanup_task = asyncio.create_task(self._peer_cleanup_loop())
-        # Log in with whatever counts are cached (1/1 when none yet); the shared list
-        # is built in the background and the real counts reported once it is ready.
-        # Startup never waits for it.
-        await self.server.connect_and_login(username, password)
+        try:
+            await self.listener.start()
+            self.transfers.start()
+            self.uploads.start()
+            self._peer_cleanup_task = asyncio.create_task(self._peer_cleanup_loop())
+            # Log in with whatever counts are cached (1/1 when none yet); the shared
+            # list is built in the background and the real counts reported once it
+            # is ready. Startup never waits for it.
+            await self.server.connect_and_login(username, password)
+        except BaseException:
+            self.destroy()  # don't leave the listener and background loops running
+            raise
         self._share_task = asyncio.create_task(self._share_refresh_loop())
 
     async def refresh_shares(self) -> tuple[int, int]:
@@ -145,7 +155,11 @@ class SoulseekClient:
                 except Exception as e:
                     log.warning(f"[client] Share refresh failed: {e}")
                     delay = SHARE_RETRY_SECONDS
-                await asyncio.sleep(delay)
+                self._share_wake.clear()
+                try:
+                    await asyncio.wait_for(self._share_wake.wait(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
         except asyncio.CancelledError:
             return
 
@@ -160,8 +174,23 @@ class SoulseekClient:
                 value = get_settings().soulseek.share_library
             except Exception:
                 pass
+            if value != self._sharing[0]:
+                log.info(f"[client] share_library is now {value}; refreshing shares")
+                self._share_wake.set()
             self._sharing = (value, now)
         return value
+
+    def _send_if_connected(self, username: str, data: bytes) -> bool:
+        """Write a pre-built message on an open P connection without awaiting it
+        (for notices sent while shutting down). False if there is no connection."""
+        peer = self.peers.get(username)
+        if peer is None:
+            return False
+        try:
+            peer._stream.writer.write(data)
+        except Exception:
+            return False
+        return True
 
     async def _report_shares_to_server(self) -> None:
         """Report current share counts to the Soulseek server."""
@@ -362,13 +391,17 @@ class SoulseekClient:
 
     async def _request_peer_address(self, username: str, timeout: float = 10) -> dict:
         """Request peer address from server and wait for response."""
-        future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
-        self._peer_address_futures[username] = future
-        await self.server.get_peer_address(username)
+        future: asyncio.Future[dict] = asyncio.get_running_loop().create_future()
+        waiting = self._peer_address_futures.setdefault(username, [])
+        waiting.append(future)
         try:
+            await self.server.get_peer_address(username)
             return await asyncio.wait_for(future, timeout=timeout)
         finally:
-            self._peer_address_futures.pop(username, None)
+            if future in waiting:
+                waiting.remove(future)
+            if not waiting and self._peer_address_futures.get(username) is waiting:
+                del self._peer_address_futures[username]
 
     # --- Server message handlers ---
 
@@ -376,9 +409,9 @@ class SoulseekClient:
         kind = msg.get("kind")
 
         if kind == "get_peer_address":
-            future = self._peer_address_futures.get(msg["username"])
-            if future and not future.done():
-                future.set_result({"host": msg["host"], "port": msg["port"]})
+            for future in list(self._peer_address_futures.get(msg["username"], ())):
+                if not future.done():
+                    future.set_result({"host": msg["host"], "port": msg["port"]})
 
         elif kind == "connect_to_peer":
             conn_type = msg.get("type")
@@ -694,12 +727,11 @@ class SoulseekClient:
         return result
 
     async def _on_upload_change(self, force: bool = False) -> None:
-        """Upload state changed (force) or bytes moved (throttled like downloads)."""
-        now = time.monotonic()
-        if not force and now - self._last_broadcast < 0.5:
-            return
-        self._last_broadcast = now
-        await self._broadcast_transfers()
+        """Upload state changed (force) or bytes moved (already throttled and
+        coalesced by the UploadManager). The transfer broadcast carries downloads
+        only, so there is nothing to push yet; this is the hook for wiring upload
+        progress into the UI."""
+        return None
 
     def _start_file_task(self, transfer: Transfer | None, coro) -> asyncio.Task:
         """Run a file-connection handler as a task the client keeps a reference to,
