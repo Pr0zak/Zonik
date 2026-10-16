@@ -382,8 +382,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             return None, fsize, f"Not imported: {why}"
         return track_id, fsize, None
 
-    async def poll_transfer(client, username, filename, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
-        """Poll transfer until terminal state. Returns (status, save_path, error)."""
+    async def poll_transfer(client, transfer, timeout_polls=150, queue_timeout=120, stall_timeout=60, check_cancel=True):
+        """Poll a Transfer (the object client.download returned) until it settles.
+        Returns (status, save_path, error). Every give-up goes through
+        TransferManager.abort(), which also stops the socket task and deletes the partial."""
         import time
         last_bytes = 0
         stall_start = None
@@ -394,20 +396,20 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 async with async_session() as cancel_sess:
                     fresh = (await cancel_sess.execute(select(Job).where(Job.id == job.id))).scalar_one_or_none()
                     if fresh and fresh.status == "failed":
+                        client.transfers.abort(transfer, "Cancelled by user", blame_peer=False)
                         return "cancelled", None, "Cancelled by user"
-            transfer = client.transfers.get_transfer(username, filename)
-            if not transfer:
-                return "failed", None, "Transfer removed"
             if transfer.state == TransferState.COMPLETED:
                 return "completed", transfer.save_path, None
             elif transfer.state in (TransferState.FAILED, TransferState.DENIED):
                 return "failed", None, transfer.error or transfer.state
+            if not client.transfers.is_tracked(transfer):
+                client.transfers.abort(transfer, "Transfer removed")
+                return "failed", None, "Transfer removed"
 
             # Waiting for peer to accept (REQUESTED/QUEUED) — use queue timeout
             if transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
                 if time.monotonic() - queue_start > queue_timeout:
-                    client.transfers.update_state(transfer, TransferState.FAILED, error="Peer did not respond")
-                    client.transfers.remove_transfer(username, filename)
+                    client.transfers.abort(transfer, "Peer did not respond")
                     return "failed", None, "Peer did not respond in time"
                 continue  # Don't check stall yet
 
@@ -419,9 +421,9 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 if stall_start is None:
                     stall_start = time.monotonic()
                 elif time.monotonic() - stall_start > stall_timeout:
-                    client.transfers.update_state(transfer, TransferState.FAILED, error="Stalled (no data)")
-                    client.transfers.remove_transfer(username, filename)
+                    client.transfers.abort(transfer, "Stalled (no data)")
                     return "failed", None, "Transfer stalled — no data received"
+        client.transfers.abort(transfer, "Transfer monitoring timed out")
         return "timeout", None, "Transfer monitoring timed out"
 
     try:
@@ -525,13 +527,18 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 dl_username = candidate["username"]
                 dl_filename = candidate["filename"]
                 try:
-                    await native_client.download(dl_username, dl_filename, job_id=job_id)
+                    transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                     log.info(f"[download] Multi-source queued: {dl_username}")
                 except Exception as e:
                     await native_client.reputation.record_failure(dl_username)
                     return candidate, "failed", None, str(e)
                 # check_cancel=False: parallel sources share the outer db session
-                status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename, check_cancel=False)
+                try:
+                    status, save_path, error = await poll_transfer(native_client, transfer, check_cancel=False)
+                except asyncio.CancelledError:
+                    # "first" strategy: another source won — stop this one for real
+                    native_client.transfers.abort(transfer, "Another source finished first", blame_peer=False)
+                    raise
                 if status == "completed":
                     await native_client.reputation.record_success(dl_username)
                     return candidate, "completed", save_path, None
@@ -676,7 +683,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                 await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
 
                 try:
-                    await native_client.download(dl_username, dl_filename, job_id=job_id)
+                    transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                     log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
                 except (asyncio.TimeoutError, ConnectionRefusedError, OSError) as e:
                     # Transient network errors — don't penalize reputation
@@ -691,7 +698,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
                     await native_client.reputation.record_failure(dl_username)
                     continue
 
-                status, save_path, error = await poll_transfer(native_client, dl_username, dl_filename)
+                status, save_path, error = await poll_transfer(native_client, transfer)
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
@@ -954,15 +961,13 @@ class CancelTransferRequest(BaseModel):
 async def cancel_transfer(req: CancelTransferRequest):
     """Cancel an active transfer in the native Soulseek client."""
     from backend.soulseek import get_client
-    from backend.soulseek.protocol.types import TransferState
     client = get_client()
     if not client:
         return {"error": "Native client not available"}
     transfer = client.transfers.get_transfer(req.username, req.filename)
     if not transfer:
         return {"error": "Transfer not found"}
-    client.transfers.update_state(transfer, TransferState.FAILED, error="Cancelled by user")
-    client.transfers.remove_transfer(req.username, req.filename)
+    client.transfers.abort(transfer, "Cancelled by user", blame_peer=False)
     from backend.api.websocket import broadcast_transfer_progress
     await broadcast_transfer_progress(client.transfers.get_all_transfers())
     return {"ok": True}
