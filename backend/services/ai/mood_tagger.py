@@ -33,17 +33,17 @@ def _get_mood_embeddings() -> dict[str, np.ndarray]:
         return _mood_embeddings
 
     try:
-        from backend.services.embeddings import get_model
-        model, processor = get_model()
-        import torch
+        # Go through the embeddings service (which holds the CLAP model under its
+        # in-use counter) instead of a private get_model() that never existed — the
+        # old import failed silently and mood tagging always returned nothing.
+        from backend.services.embeddings import generate_text_embedding, embedding_from_bytes
 
         embeddings = {}
         for mood in MOOD_VOCAB:
-            text = f"{mood} music"
-            inputs = processor(text=[text], return_tensors="pt", padding=True)
-            with torch.no_grad():
-                text_embed = model.get_text_features(**inputs)
-            vec = text_embed[0].cpu().numpy().astype(np.float32)
+            raw = generate_text_embedding(f"{mood} music")
+            if raw is None:
+                raise RuntimeError("CLAP model unavailable")
+            vec = embedding_from_bytes(raw).astype(np.float32)
             vec = vec / (np.linalg.norm(vec) + 1e-8)
             embeddings[mood] = vec
 

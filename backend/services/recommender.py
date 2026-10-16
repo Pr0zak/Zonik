@@ -155,10 +155,25 @@ async def build_taste_profile(db: AsyncSession) -> dict:
                     embeddings.append(arr)
             except Exception:
                 pass
+    clap_similar_threshold = None
+    if centroid_ids:
         if len(embeddings) >= 3:
             centroid = np.mean(embeddings, axis=0)
             clap_centroid = centroid.tobytes()
             clap_count = len(embeddings)
+            # Calibrate "sounds like what you play": CLAP cosines to a mean centroid
+            # cluster high, so a fixed bar is either met by everything or by nothing.
+            # Use the median similarity of the listener's own favourites/top tracks to
+            # that centroid — a candidate at least as close as a typical favourite.
+            cnorm = float(np.linalg.norm(centroid))
+            if cnorm > 0:
+                sims = []
+                for arr in embeddings:
+                    n = float(np.linalg.norm(arr))
+                    if n > 0:
+                        sims.append(float(np.dot(arr, centroid) / (n * cnorm)))
+                if sims:
+                    clap_similar_threshold = round(float(np.median(sims)), 3)
 
     # Last.fm user history (if authenticated)
     lastfm_top_artists = []
@@ -201,6 +216,7 @@ async def build_taste_profile(db: AsyncSession) -> dict:
             "bpm_std": bpm_std,
             "avg_energy": round(avg_energy, 3) if avg_energy else None,
             "avg_danceability": round(avg_dance, 3) if avg_dance else None,
+            "clap_similar_threshold": clap_similar_threshold,
         },
     }
 
@@ -552,7 +568,7 @@ def score_candidate(candidate: dict, profile: dict, clap_centroid: bytes | None 
     return round(min(1.0, max(0.0, score)), 3), breakdown
 
 
-def _generate_explanation(candidate: dict, breakdown: dict) -> str:
+def _generate_explanation(candidate: dict, breakdown: dict, clap_threshold: float | None = None) -> str:
     """Generate a human-readable explanation for the recommendation."""
     parts = []
     source = candidate.get("source", "")
@@ -579,7 +595,7 @@ def _generate_explanation(candidate: dict, breakdown: dict) -> str:
     }
     if top_signal and top_signal in signal_labels and others.get(top_signal, 0) > 0.3:
         parts.append(signal_labels[top_signal])
-    if (breakdown.get("clap_similarity") or 0) >= CLAP_EXPLAIN_THRESHOLD:
+    if (breakdown.get("clap_similarity") or 0) >= (clap_threshold or CLAP_EXPLAIN_THRESHOLD):
         parts.append("sounds like what you play")
 
     return ". ".join(parts) if parts else "Recommended based on your listening profile"
@@ -1228,7 +1244,9 @@ async def refresh_recommendations(
             score=c["score"],
             score_breakdown=json.dumps(c["breakdown"]),
             status="pending",
-            explanation=_generate_explanation(c, c["breakdown"]),
+            explanation=_generate_explanation(
+                c, c["breakdown"], clap_threshold=(profile.get("audio") or {}).get("clap_similar_threshold"),
+            ),
             lastfm_listeners=c.get("lastfm_listeners"),
             lastfm_match=c.get("lastfm_match"),
             image_url=c.get("image_url"),
