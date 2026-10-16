@@ -1,0 +1,459 @@
+"""Upload side: serving shared library files to peers that ask for them.
+
+Protocol (we are the uploader):
+  1. The peer sends QueueUpload(filename) on the P connection (older clients send
+     TransferRequest(direction=download) instead; the client treats it the same).
+     The file must be in the shared list (shares.resolve_shared_file), or the
+     peer gets UploadDenied. PlaceInQueueRequest is answered from our queue.
+  2. When a slot is free we send TransferRequest(direction=upload, token, filename,
+     size) on the P connection and wait for the peer's TransferResponse(token,
+     allowed[, reason]). Not allowed with "Queued" keeps the file queued (asked
+     again later); any other reason drops it.
+  3. If allowed we open an F connection to the peer (the client races a direct
+     PeerInit F against a server-relayed PierceFirewall), send FileTransferInit
+     (the bare 4-byte token), read the 8-byte FileOffset, and stream the file
+     from that offset, then wait for the peer to close.
+
+Uploads live in their own table keyed by (username, virtual path), never in
+TransferManager.transfers, so nothing on the download side — token resolution,
+cancel, job progress, reputation — can see or pick one up.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import struct
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Awaitable, Callable
+
+import aiofiles
+
+from backend.soulseek.protocol.peer_messages import (
+    build_file_transfer_init, build_transfer_request, build_upload_denied,
+    build_upload_failed,
+)
+from backend.soulseek.protocol.types import TransferDirection, TransferState
+
+log = logging.getLogger(__name__)
+
+UPLOAD_CHUNK = 64 * 1024
+RESPONSE_TIMEOUT = 60        # waiting for the peer's TransferResponse
+OFFSET_TIMEOUT = 60          # waiting for FileOffset on the F connection
+WRITE_TIMEOUT = 60           # one chunk not drained for this long = stalled peer
+FINISH_WAIT = 30             # after the last byte, wait this long for the peer to close
+QUEUED_RETRY_SECONDS = 60    # peer answered "Queued": ask again after this
+TERMINAL_KEEP_SECONDS = 60   # finished entries stay visible this long
+QUEUE_MAX_AGE_SECONDS = 24 * 3600  # a queued entry nobody served in a day is dropped
+MAX_QUEUED_PER_USER = 200
+MAX_QUEUED_TOTAL = 2000
+SWEEP_INTERVAL = 15
+
+DENY_NOT_SHARING = "Not sharing this file"
+DENY_NOT_SHARED = "File not shared"
+DENY_TOO_MANY = "Too many files"
+
+TERMINAL_STATES = (TransferState.COMPLETED, TransferState.FAILED, TransferState.DENIED)
+
+
+class RateLimiter:
+    """Token bucket shared by every upload. Each caller takes its bytes up front
+    and sleeps off any debt, so concurrent uploads together stay under the rate.
+    0 = unlimited."""
+
+    def __init__(self, kbps: int, burst_bytes: int | None = None):
+        self.rate = max(0, kbps) * 1024  # bytes per second
+        self.burst = burst_bytes if burst_bytes is not None else max(self.rate, UPLOAD_CHUNK)
+        self.tokens = float(self.burst)
+        self.last = time.monotonic()
+
+    async def acquire(self, n: int) -> None:
+        if self.rate <= 0:
+            return
+        now = time.monotonic()
+        self.tokens = min(self.burst, self.tokens + (now - self.last) * self.rate)
+        self.last = now
+        self.tokens -= n
+        if self.tokens < 0:
+            await asyncio.sleep(-self.tokens / self.rate)
+
+
+@dataclass(eq=False)
+class Upload:
+    """One file a peer queued from us."""
+    username: str
+    filename: str          # virtual path, as the peer asked for it
+    real_path: Path
+    total_bytes: int
+    token: bytes | None = None
+    state: str = TransferState.QUEUED
+    offset: int = 0        # where the peer asked us to start
+    sent_bytes: int = 0    # sent on this connection (from offset)
+    queued_at: float = field(default_factory=time.time)
+    state_since: float = field(default_factory=time.time)
+    started_at: float | None = None  # data phase began
+    last_progress_at: float | None = None
+    ended_at: float | None = None
+    retry_at: float = 0.0  # don't ask the peer again before this (it said "Queued")
+    error: str | None = None
+    task: asyncio.Task | None = field(default=None, repr=False)
+    writer: Any = field(default=None, repr=False)
+
+    @property
+    def active(self) -> bool:
+        return self.task is not None and not self.task.done()
+
+    @property
+    def progress(self) -> float:
+        if self.total_bytes <= 0:
+            return 0.0
+        return min(1.0, (self.offset + self.sent_bytes) / self.total_bytes)
+
+    @property
+    def speed(self) -> float:
+        if not self.started_at:
+            return 0.0
+        elapsed = (self.ended_at or time.time()) - self.started_at
+        return self.sent_bytes / elapsed if elapsed > 0 else 0.0
+
+    @property
+    def eta_seconds(self) -> float | None:
+        if self.speed <= 0 or self.total_bytes <= 0:
+            return None
+        return max(0.0, self.total_bytes - self.offset - self.sent_bytes) / self.speed
+
+    def to_dict(self) -> dict:
+        eta = self.eta_seconds
+        return {
+            "direction": "upload",
+            "username": self.username,
+            "filename": self.filename,
+            "state": self.state,
+            "total_bytes": self.total_bytes,
+            # Bytes moved on this transfer, under the key the stats already sum.
+            "received_bytes": self.sent_bytes,
+            "sent_bytes": self.sent_bytes,
+            "offset": self.offset,
+            "progress": round(self.progress * 100, 1),
+            "speed": round(self.speed),
+            "eta_seconds": round(eta) if eta is not None else None,
+            "save_path": None,
+            "error": self.error,
+            "job_id": None,
+        }
+
+
+class UploadManager:
+    """Queue, slots, rate cap and the data phase for uploads.
+
+    get_peer(username) -> an object with `async send_raw(bytes)` (a PeerConnection).
+    open_file_connection(username) -> (reader, writer) of a fresh F connection,
+      already past PeerInit/PierceFirewall.
+    resolve(virtual_path) -> shares.SharedFile | None.
+    enabled() -> share_library, checked on every request, dispatch and sweep.
+    """
+
+    def __init__(
+        self,
+        *,
+        get_peer: Callable[[str], Awaitable[Any]],
+        open_file_connection: Callable[[str], Awaitable[tuple[asyncio.StreamReader, Any]]],
+        resolve: Callable[[str], Any] | None = None,
+        enabled: Callable[[], bool] = lambda: True,
+        slots: int = 2,
+        speed_limit_kbps: int = 1024,
+        on_change: Callable[[bool], Awaitable[None]] | None = None,
+    ):
+        if resolve is None:
+            from backend.soulseek.shares import resolve_shared_file
+            resolve = resolve_shared_file
+        self.get_peer = get_peer
+        self.open_file_connection = open_file_connection
+        self.resolve = resolve
+        self.enabled = enabled
+        self.slots = max(1, slots)
+        self.limiter = RateLimiter(speed_limit_kbps)
+        self.on_change = on_change
+        # (username, virtual path) -> Upload; insertion order is queue order.
+        self.uploads: dict[tuple[str, str], Upload] = {}
+        # (username, token) -> future for the peer's TransferResponse.
+        self._awaiting: dict[tuple[str, bytes], asyncio.Future] = {}
+        self._sweep_task: asyncio.Task | None = None
+        self._bg: set[asyncio.Task] = set()
+        self._closed = False
+
+    def start(self) -> None:
+        self._closed = False
+        self._sweep_task = asyncio.create_task(self._sweep_loop())
+
+    # --- Requests from peers ---
+
+    def queue(self, username: str, filename: str) -> str | None:
+        """A peer asked for a file. Returns None when it is queued (or already
+        was), else the reason to deny it with."""
+        if self._closed or not self.enabled():
+            return DENY_NOT_SHARING
+        shared = self.resolve(filename)
+        if shared is None:
+            log.info(f"[upload] {username} asked for an unshared file: {filename}")
+            return DENY_NOT_SHARED
+        key = (username, shared.virtual)
+        existing = self.uploads.get(key)
+        if existing is not None and existing.state not in TERMINAL_STATES:
+            return None
+        pending = [u for u in self.uploads.values() if u.state not in TERMINAL_STATES]
+        if (len(pending) >= MAX_QUEUED_TOTAL
+                or sum(1 for u in pending if u.username == username) >= MAX_QUEUED_PER_USER):
+            return DENY_TOO_MANY
+        self.uploads.pop(key, None)  # a finished entry for the same file goes to the back
+        self.uploads[key] = Upload(
+            username=username, filename=filename, real_path=shared.real, total_bytes=shared.size,
+        )
+        log.info(f"[upload] Queued for {username}: {filename}")
+        self._kick()
+        self._changed(force=True)
+        return None
+
+    def place_in_queue(self, username: str, filename: str) -> int | None:
+        """1-based place among the files waiting for a slot, 0 once it is being
+        served, None if we don't have it queued."""
+        shared = self.resolve(filename)
+        key = (username, shared.virtual if shared else filename.replace("/", "\\"))
+        target = self.uploads.get(key)
+        if target is None or target.state in TERMINAL_STATES:
+            return None
+        if target.state != TransferState.QUEUED:
+            return 0
+        place = 0
+        for u in self.uploads.values():
+            if u.state == TransferState.QUEUED:
+                place += 1
+            if u is target:
+                return place
+        return None
+
+    def handle_transfer_response(self, username: str, token: bytes, allowed: bool, reason: str = "") -> bool:
+        """The peer answered one of our upload TransferRequests. Returns False when
+        the token isn't one of ours (so the download side may look at it)."""
+        fut = self._awaiting.get((username, token))
+        if fut is None:
+            return False
+        if not fut.done():
+            fut.set_result((allowed, reason or ""))
+        return True
+
+    # --- Scheduling ---
+
+    def running(self) -> int:
+        return sum(1 for u in self.uploads.values() if u.active)
+
+    def _kick(self) -> None:
+        """Start queued uploads while slots are free: oldest first, one per peer."""
+        if self._closed or not self.enabled():
+            return
+        now = time.time()
+        free = self.slots - self.running()
+        if free <= 0:
+            return
+        busy_users = {u.username for u in self.uploads.values() if u.active}
+        for up in list(self.uploads.values()):
+            if free <= 0:
+                break
+            if up.state != TransferState.QUEUED or up.active or up.retry_at > now:
+                continue
+            if up.username in busy_users:
+                continue
+            busy_users.add(up.username)
+            free -= 1
+            up.task = asyncio.create_task(self._run(up))
+
+    def _set_state(self, up: Upload, state: str, error: str | None = None) -> None:
+        if state != up.state:
+            up.state_since = time.time()
+            if state in TERMINAL_STATES:
+                up.ended_at = up.state_since
+        up.state = state
+        if error is not None:
+            up.error = error
+
+    def _changed(self, force: bool = False) -> None:
+        if self.on_change is None or self._closed:
+            return
+        try:
+            task = asyncio.create_task(self.on_change(force))
+        except RuntimeError:
+            return
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+
+    # --- One upload ---
+
+    async def _run(self, up: Upload) -> None:
+        peer = None
+        accepted = False
+        try:
+            try:
+                st = await asyncio.to_thread(up.real_path.stat)
+            except OSError as e:
+                self._set_state(up, TransferState.FAILED, f"File missing: {e}")
+                peer = await self.get_peer(up.username)
+                await peer.send_raw(build_upload_denied(up.filename, DENY_NOT_SHARED))
+                return
+            up.total_bytes = st.st_size
+            up.token = os.urandom(4)
+            up.offset = up.sent_bytes = 0
+            peer = await self.get_peer(up.username)
+
+            key = (up.username, up.token)
+            fut = asyncio.get_running_loop().create_future()
+            self._awaiting[key] = fut
+            try:
+                self._set_state(up, TransferState.REQUESTED)
+                await peer.send_raw(build_transfer_request(
+                    TransferDirection.UPLOAD, up.token, up.filename, up.total_bytes,
+                ))
+                allowed, reason = await asyncio.wait_for(fut, RESPONSE_TIMEOUT)
+            finally:
+                if self._awaiting.get(key) is fut:
+                    del self._awaiting[key]
+            if not allowed:
+                if reason.strip().rstrip(".").lower() == "queued":
+                    # The peer has it queued on its side; offer it again later.
+                    self._set_state(up, TransferState.QUEUED)
+                    up.retry_at = time.time() + QUEUED_RETRY_SECONDS
+                    log.info(f"[upload] {up.username} has {up.filename} queued; retrying later")
+                else:
+                    self._set_state(up, TransferState.DENIED, reason or "Rejected by peer")
+                    log.info(f"[upload] {up.username} refused {up.filename}: {reason}")
+                return
+
+            accepted = True
+            self._set_state(up, TransferState.CONNECTED)
+            self._changed(force=True)
+            reader, writer = await self.open_file_connection(up.username)
+            await self._send_file(up, reader, writer)
+        except asyncio.CancelledError:
+            if up.state not in TERMINAL_STATES:
+                self._set_state(up, TransferState.FAILED, "Cancelled")
+            _close_quietly(up.writer)
+            raise
+        except Exception as e:
+            if up.state not in TERMINAL_STATES:
+                err = "No response from peer" if isinstance(e, asyncio.TimeoutError) else (str(e) or type(e).__name__)
+                self._set_state(up, TransferState.FAILED, err)
+            log.warning(f"[upload] {up.username} / {up.filename} failed: {up.error}")
+            if accepted and peer is not None and up.state == TransferState.FAILED:
+                try:
+                    await peer.send_raw(build_upload_failed(up.filename))
+                except Exception:
+                    pass
+        finally:
+            up.task = None
+            self._changed(force=True)
+            self._kick()
+
+    async def _send_file(self, up: Upload, reader: asyncio.StreamReader, writer: Any) -> None:
+        """FileTransferInit, FileOffset, then the bytes from that offset."""
+        up.writer = writer
+        try:
+            writer.write(build_file_transfer_init(up.token))
+            await asyncio.wait_for(writer.drain(), WRITE_TIMEOUT)
+            raw = await asyncio.wait_for(reader.readexactly(8), OFFSET_TIMEOUT)
+            offset = struct.unpack("<Q", raw)[0]
+            if offset > up.total_bytes:
+                raise ValueError(f"Offset {offset} past end of file ({up.total_bytes})")
+            up.offset = offset
+            up.started_at = up.last_progress_at = time.time()
+            self._set_state(up, TransferState.TRANSFERRING)
+            log.info(f"[upload] Sending {up.filename} to {up.username} from offset {offset}")
+            remaining = up.total_bytes - offset
+            async with aiofiles.open(up.real_path, "rb") as f:
+                if offset:
+                    await f.seek(offset)
+                while remaining > 0:
+                    chunk = await f.read(min(UPLOAD_CHUNK, remaining))
+                    if not chunk:
+                        break
+                    await self.limiter.acquire(len(chunk))
+                    writer.write(chunk)
+                    await asyncio.wait_for(writer.drain(), WRITE_TIMEOUT)
+                    up.sent_bytes += len(chunk)
+                    remaining -= len(chunk)
+                    up.last_progress_at = time.time()
+                    self._changed()
+            if remaining > 0:
+                raise IOError(f"File shrank: sent {up.sent_bytes}/{up.total_bytes - offset}")
+            # Let the downloader close first so the tail isn't cut off by our close.
+            try:
+                await asyncio.wait_for(_drain_until_eof(reader), FINISH_WAIT)
+            except (asyncio.TimeoutError, ConnectionError, OSError):
+                pass
+            self._set_state(up, TransferState.COMPLETED)
+            log.info(f"[upload] Completed {up.filename} to {up.username} ({up.sent_bytes} bytes)")
+        finally:
+            up.writer = None
+            _close_quietly(writer)
+
+    # --- Housekeeping ---
+
+    async def _sweep_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(SWEEP_INTERVAL)
+                self._sweep(time.time())
+        except asyncio.CancelledError:
+            return
+
+    def _sweep(self, now: float) -> None:
+        enabled = self.enabled()
+        for key, up in list(self.uploads.items()):
+            if up.state in TERMINAL_STATES:
+                if now - (up.ended_at or up.queued_at) > TERMINAL_KEEP_SECONDS:
+                    del self.uploads[key]
+            elif not enabled:
+                self.cancel(up, "Sharing turned off")
+            elif up.state == TransferState.QUEUED and not up.active and now - up.queued_at > QUEUE_MAX_AGE_SECONDS:
+                self._set_state(up, TransferState.FAILED, "Queue timeout")
+        self._kick()
+
+    def cancel(self, up: Upload, error: str) -> None:
+        if up.state not in TERMINAL_STATES:
+            self._set_state(up, TransferState.FAILED, error)
+        if up.active:
+            up.task.cancel()
+        _close_quietly(up.writer)
+
+    def get_all(self) -> list[dict]:
+        return [u.to_dict() for u in self.uploads.values()]
+
+    def active_usernames(self) -> set[str]:
+        return {u.username for u in self.uploads.values() if u.state not in TERMINAL_STATES}
+
+    def destroy(self) -> None:
+        self._closed = True
+        if self._sweep_task and not self._sweep_task.done():
+            self._sweep_task.cancel()
+        for up in list(self.uploads.values()):
+            self.cancel(up, "Shutting down")
+        for fut in self._awaiting.values():
+            if not fut.done():
+                fut.cancel()
+        self._awaiting.clear()
+        for task in list(self._bg):
+            task.cancel()
+
+
+async def _drain_until_eof(reader: asyncio.StreamReader) -> None:
+    while await reader.read(4096):
+        pass
+
+
+def _close_quietly(writer: Any) -> None:
+    if writer is None:
+        return
+    try:
+        writer.close()
+    except Exception:
+        pass

@@ -92,6 +92,7 @@ class Transfer:
 
     def to_dict(self) -> dict:
         return {
+            "direction": "download",
             "username": self.username,
             "filename": self.filename,
             "state": self.state,
@@ -128,6 +129,10 @@ class TransferManager:
         self.transfers: dict[str, Transfer] = {}  # keyed by "username:filename"
         self._cleanup_task: asyncio.Task | None = None
         self._bg: set[asyncio.Task] = set()  # on_complete calls scheduled by abort()
+        # The client's UploadManager, listed alongside downloads by get_all_transfers /
+        # get_active_transfers. Uploads never enter self.transfers, so no download
+        # lookup (by key, token or username) can ever pick one up.
+        self.uploads = None
 
     def start(self) -> None:
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
@@ -591,14 +596,14 @@ class TransferManager:
         return paths
 
     def get_all_transfers(self) -> list[dict]:
-        return [t.to_dict() for t in self.transfers.values()]
+        """Downloads, then uploads; each dict carries a `direction`."""
+        out = [t.to_dict() for t in self.transfers.values()]
+        if self.uploads is not None:
+            out.extend(self.uploads.get_all())
+        return out
 
     def get_active_transfers(self) -> list[dict]:
-        return [
-            t.to_dict() for t in self.transfers.values()
-            if t.state in (TransferState.REQUESTED, TransferState.QUEUED,
-                          TransferState.CONNECTED, TransferState.TRANSFERRING)
-        ]
+        return [t for t in self.get_all_transfers() if t["state"] in ACTIVE_STATES]
 
     async def _cleanup_loop(self) -> None:
         """Periodically clean up stuck/completed transfers."""
