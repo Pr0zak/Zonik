@@ -750,6 +750,14 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req):
             "id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1,
             "description": desc, **job_outcome(final_status, job.result),
         })
+        # The file has been imported (moved into the library) or rejected by
+        # now — drop this job's staging folder and anything a loser left in it.
+        try:
+            _client = get_client()
+            if _client is not None:
+                _client.transfers.discard_job(job_id)
+        except Exception as e:
+            log.debug(f"[download] Staging cleanup skipped for {job_id}: {e}")
 
 async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None) -> str:
     """Delegate a download to the web process, which owns the native Soulseek

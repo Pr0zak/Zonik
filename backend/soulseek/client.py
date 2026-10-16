@@ -31,11 +31,11 @@ class SoulseekClient:
         server_host: str = "server.slsknet.org",
         server_port: int = 2242,
         listen_port: int = 2234,
-        download_dir: str | None = None,
+        staging_dir: str | None = None,
     ):
-        if download_dir is None:
+        if staging_dir is None:
             from backend.config import get_settings
-            download_dir = get_settings().soulseek.download_dir
+            staging_dir = get_settings().soulseek.staging_dir
 
         self.server = ServerConnection(
             host=server_host,
@@ -49,7 +49,7 @@ class SoulseekClient:
             on_connection=self._handle_inbound_connection,
         )
         self.transfers = TransferManager(
-            download_dir=download_dir,
+            staging_dir=staging_dir,
             on_progress=self._on_transfer_progress,
             on_complete=self._on_transfer_complete,
         )

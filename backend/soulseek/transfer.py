@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import shutil
 import struct
 import time
 from dataclasses import dataclass, field
@@ -22,6 +24,8 @@ ACTIVE_STATES = (
     TransferState.REQUESTED, TransferState.QUEUED,
     TransferState.CONNECTED, TransferState.TRANSFERRING,
 )
+
+_SAFE_NAME = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 @dataclass
@@ -83,11 +87,14 @@ class TransferManager:
 
     def __init__(
         self,
-        download_dir: str = "/downloads",
+        staging_dir: str = "/opt/zonik/cache/staging",
         on_progress: Callable[[Transfer], Awaitable[None]] | None = None,
         on_complete: Callable[[Transfer], Awaitable[None]] | None = None,
     ):
-        self.download_dir = download_dir
+        # Transfers are staged on local disk, one folder per job, and the
+        # importer moves the finished file into the library. Nothing is written
+        # to the NAS download dir any more.
+        self.staging_dir = staging_dir
         self.on_progress = on_progress
         self.on_complete = on_complete
         self.transfers: dict[str, Transfer] = {}  # keyed by "username:filename"
@@ -154,6 +161,35 @@ class TransferManager:
     def remove_transfer(self, username: str, filename: str) -> None:
         self.transfers.pop(self._normalize_key(username, filename), None)
 
+    def job_dir(self, job_id: str) -> Path | None:
+        """The staging folder for one job, or None if the id isn't a safe folder name."""
+        if not job_id or not _SAFE_NAME.fullmatch(job_id):
+            return None
+        return Path(self.staging_dir) / job_id
+
+    def save_path_for(self, transfer: Transfer) -> Path:
+        """<staging_dir>/<job_id>/<token hex>/<basename> (or <token hex>/<basename>
+        without a job). The token level keeps two sources of one job that share a
+        basename — scene releases usually do — from writing into the same file."""
+        basename = transfer.filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
+        if basename in ("", ".", ".."):
+            basename = "download"
+        tok = transfer.token.hex() if transfer.token else f"t{id(transfer):x}"
+        base = self.job_dir(transfer.job_id) if transfer.job_id else None
+        if base is None:
+            base = Path(self.staging_dir)
+        return base / tok / basename
+
+    def discard_job(self, job_id: str) -> None:
+        """Remove a finished job's staging folder (after it imported or rejected its file)."""
+        folder = self.job_dir(job_id)
+        if folder is None or not folder.exists():
+            return
+        try:
+            shutil.rmtree(folder)
+        except OSError as e:
+            log.warning(f"[transfer] Could not remove staging folder {folder}: {e}")
+
     def update_state(self, transfer: Transfer, state: str, **kwargs) -> None:
         transfer.state = state
         for k, v in kwargs.items():
@@ -204,8 +240,8 @@ class TransferManager:
         await writer.drain()
 
         # Determine save path
-        short_name = transfer.filename.rsplit("\\", 1)[-1]
-        save_path = Path(self.download_dir) / short_name
+        save_path = self.save_path_for(transfer)
+        short_name = save_path.name
         save_path.parent.mkdir(parents=True, exist_ok=True)
         transfer.save_path = str(save_path)
 
@@ -300,8 +336,8 @@ class TransferManager:
         log.info(f"[transfer] Downloading from {transfer.username}: {transfer.filename}")
 
         # Determine save path
-        short_name = transfer.filename.rsplit("\\", 1)[-1]
-        save_path = Path(self.download_dir) / short_name
+        save_path = self.save_path_for(transfer)
+        short_name = save_path.name
         save_path.parent.mkdir(parents=True, exist_ok=True)
         transfer.save_path = str(save_path)
 
@@ -352,10 +388,16 @@ class TransferManager:
 
     def active_paths(self) -> list[str]:
         """Paths owned by transfers that are still in flight — cleanup must not touch them."""
-        return [
-            t.save_path for t in self.transfers.values()
-            if t.save_path and t.state in ACTIVE_STATES
-        ]
+        paths: list[str] = []
+        for t in self.transfers.values():
+            if t.state not in ACTIVE_STATES:
+                continue
+            if t.save_path:
+                paths.append(t.save_path)
+            folder = self.job_dir(t.job_id) if t.job_id else None
+            if folder is not None:
+                paths.append(str(folder))
+        return paths
 
     def get_all_transfers(self) -> list[dict]:
         return [t.to_dict() for t in self.transfers.values()]
