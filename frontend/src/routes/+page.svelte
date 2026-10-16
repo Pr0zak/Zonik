@@ -8,7 +8,7 @@
 		Music, Users, Disc3, HardDrive, Clock, RefreshCw, Wifi, Share2,
 		Activity, Heart, Copy, Calendar, Play, Zap,
 		Search, AudioWaveform, Sparkles, TrendingUp, ChevronDown, ChevronUp,
-		Download, Check, X, Loader2, FileSearch, BarChart3
+		Download, Check, X, Loader2, FileSearch, BarChart3, ArrowUp
 	} from 'lucide-svelte';
 	import PageHeader from '../components/ui/PageHeader.svelte';
 	import Card from '../components/ui/Card.svelte';
@@ -493,6 +493,15 @@
 								<p class="text-xs text-[var(--text-muted)]">{slsk.completed_transfers} done · {slsk.failed_transfers} failed</p>
 							</div>
 						</div>
+						{#if slsk.uploads}
+							<div class="flex items-center gap-3 col-span-2">
+								<ArrowUp class="w-4 h-4 flex-shrink-0 text-[var(--color-discover)]" />
+								<div>
+									<p class="text-sm font-semibold text-[var(--text-primary)]">{slsk.uploads.active} uploading · {slsk.uploads.queued} queued</p>
+									<p class="text-xs text-[var(--text-muted)]">{formatSize(slsk.uploads.bytes_sent)} sent · {slsk.uploads.completed} done · {slsk.uploads.failed} failed</p>
+								</div>
+							</div>
+						{/if}
 					</div>
 				</Card>
 			{/if}

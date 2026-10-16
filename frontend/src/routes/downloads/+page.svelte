@@ -2,10 +2,10 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
-	import { addToast, activeTransfers } from '$lib/stores.js';
+	import { addToast, activeTransfers, activeUploads } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA, formatDateTime } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Upload } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -509,6 +509,26 @@
 		if (e.key === 'Enter') searchSoulseek();
 	}
 
+	// Uploads: files peers pulled from our shared library. Live via the WebSocket
+	// `upload_progress` message; `sharing` mirrors the share_library setting.
+	let sharing = $state(false);
+	const UPLOAD_RANK = { transferring: 0, connected: 0, requested: 1, queued: 2, completed: 3, failed: 4, denied: 4 };
+	const UPLOAD_BADGE = { transferring: 'info', connected: 'info', requested: 'default', queued: 'default', completed: 'success', failed: 'error', denied: 'warning' };
+	const UPLOAD_LABEL = { transferring: 'sending', connected: 'connecting', requested: 'requested' };
+
+	// Queue order is list order; the place counts only files still waiting for a slot.
+	let uploadRows = $derived.by(() => {
+		let place = 0;
+		const rows = $activeUploads.map(u => ({ ...u, place: u.state === 'queued' ? ++place : 0 }));
+		return rows
+			.map((u, i) => [u, i])
+			.sort((a, b) => (UPLOAD_RANK[a[0].state] ?? 5) - (UPLOAD_RANK[b[0].state] ?? 5) || a[1] - b[1])
+			.map(([u]) => u);
+	});
+	let uploadSending = $derived($activeUploads.filter(u => u.state === 'transferring' || u.state === 'connected').length);
+	let uploadSpeed = $derived($activeUploads.reduce((n, u) => n + (u.state === 'transferring' ? (u.speed || 0) : 0), 0));
+	const baseName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || path;
+
 	let wsDescriptions = $state({});
 	let unsubJobUpdate;
 	let autoHideTimer;
@@ -529,7 +549,9 @@
 		loadJobs();
 		fetch('/api/download/status').then(r => r.json()).then(data => {
 			if (data.downloads?.length) activeTransfers.set(data.downloads);
+			activeUploads.set(data.uploads || []);
 		}).catch(() => {});
+		api.getServices().then(d => { sharing = !!d.slsk_share_library; }).catch(() => {});
 		unsubJobUpdate = onJobUpdate(async (wsJob) => {
 			if (wsJob.type === 'download' || wsJob.type === 'bulk_download') {
 				if (wsJob.description) wsDescriptions[wsJob.id] = wsJob.description;
@@ -1095,6 +1117,68 @@
 						</Button>
 					</div>
 				{/if}
+			{/if}
+		</Card>
+	{/if}
+
+	<!-- Uploads: shared library files peers are pulling from us -->
+	{#if uploadRows.length || sharing}
+		<Card padding="p-4" class="mb-6">
+			<div class="flex items-center justify-between mb-3">
+				<div class="flex items-center gap-2">
+					<Upload class="w-4 h-4 text-[var(--color-discover)]" />
+					<h2 class="text-base font-semibold text-[var(--text-primary)]">Uploads</h2>
+					{#if uploadRows.length}
+						<span class="text-xs text-[var(--text-muted)] font-mono">{uploadRows.length}</span>
+					{/if}
+				</div>
+				{#if uploadSending > 0}
+					<span class="text-xs text-[var(--text-muted)] font-mono">
+						{uploadSending} sending{uploadSpeed > 0 ? ` · ${formatSpeed(uploadSpeed)}` : ''}
+					</span>
+				{/if}
+			</div>
+			{#if uploadRows.length}
+				<div class="space-y-2">
+					{#each uploadRows as up (up.username + '\u0000' + up.filename)}
+						<div class="bg-[var(--surface-container)] rounded-lg overflow-hidden">
+							<div class="flex items-center gap-3 px-3 py-2.5">
+								<div class="flex-1 min-w-0">
+									<p class="text-sm text-[var(--text-primary)] truncate" title={up.filename}>{baseName(up.filename)}</p>
+									<div class="flex items-center gap-3 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
+										<span>to {up.username}</span>
+										{#if up.state === 'queued' && up.place > 0}
+											<span class="font-mono">place {up.place} in queue</span>
+										{/if}
+										{#if up.state === 'transferring' && up.speed > 0}
+											<span class="font-mono">{formatSpeed(up.speed)}</span>
+										{/if}
+										{#if up.state === 'transferring' && up.eta_seconds > 0}
+											<span class="font-mono">{formatETA(up.eta_seconds)}</span>
+										{/if}
+										{#if up.total_bytes > 0 && up.state !== 'queued' && up.state !== 'requested'}
+											<span class="font-mono">{formatSize((up.offset || 0) + (up.sent_bytes ?? up.received_bytes ?? 0))} / {formatSize(up.total_bytes)}</span>
+										{:else if up.total_bytes > 0}
+											<span class="font-mono">{formatSize(up.total_bytes)}</span>
+										{/if}
+										{#if up.error && (up.state === 'failed' || up.state === 'denied')}
+											<span class="text-red-400 truncate max-w-[240px]" title={up.error}>{up.error}</span>
+										{/if}
+									</div>
+								</div>
+								<Badge variant={UPLOAD_BADGE[up.state] || 'default'}>{UPLOAD_LABEL[up.state] || up.state}</Badge>
+							</div>
+							{#if up.state === 'transferring' || up.state === 'connected'}
+								<div class="h-1 bg-[var(--border-interactive)]">
+									<div class="h-full bg-[var(--color-discover)] transition-all duration-300"
+										style="width: {up.progress || 0}%"></div>
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<p class="text-sm text-[var(--text-muted)]">Sharing is on. Nobody is downloading from you right now.</p>
 			{/if}
 		</Card>
 	{/if}

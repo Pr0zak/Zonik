@@ -523,14 +523,18 @@ class UploadManager:
 
     def _sweep(self, now: float) -> None:
         enabled = self.enabled()
+        pruned = False
         for key, up in list(self.uploads.items()):
             if up.state in TERMINAL_STATES:
                 if now - (up.ended_at or up.queued_at) > TERMINAL_KEEP_SECONDS:
                     del self.uploads[key]
+                    pruned = True
             elif not enabled:
                 self.drop(up, "Sharing turned off", REASON_NOT_SHARED)
             elif up.state == TransferState.QUEUED and not up.active and now - up.queued_at > QUEUE_MAX_AGE_SECONDS:
                 self.drop(up, "Queue timeout", REASON_CANCELLED)
+        if pruned:
+            self._changed(force=True)  # finished rows leave the UI's list too
         waiting = self.active_usernames()
         for user, (_, until) in list(self._user_backoff.items()):
             if user not in waiting and until <= time.time():

@@ -71,6 +71,20 @@ async def broadcast_transfer_progress(transfers: list[dict]):
         _clients.pop(ws, None)
 
 
+async def broadcast_upload_progress(uploads: list[dict]):
+    """Broadcast the uploads we are serving to peers. A message type of its own,
+    so the download transfer list (transfer_progress) never carries an upload."""
+    message = json.dumps({"type": "upload_progress", "uploads": uploads})
+    disconnected = []
+    for ws in list(_clients.keys()):
+        try:
+            await ws.send_text(message)
+        except Exception:
+            disconnected.append(ws)
+    for ws in disconnected:
+        _clients.pop(ws, None)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -111,6 +125,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.send_text(json.dumps({
                         "type": "transfer_progress",
                         "transfers": transfers,
+                    }))
+                uploads = client.transfers.get_all_uploads()
+                if uploads:
+                    await websocket.send_text(json.dumps({
+                        "type": "upload_progress",
+                        "uploads": uploads,
                     }))
         except Exception:
             pass
