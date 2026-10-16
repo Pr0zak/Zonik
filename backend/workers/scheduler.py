@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -811,12 +811,38 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
             (Track.bitrate.isnot(None)) & (Track.bitrate < max_bitrate * 1000)
         )
 
-    query = query.order_by(Track.bitrate.asc().nullslast()).limit(count)
+    # Per-track failure history across ALL TrackUpgrade rows. Each scan used to insert a
+    # fresh row with attempts=0, so max_attempts never tripped for a track that kept failing.
+    from backend.models.upgrade import TrackUpgrade
+    from backend.services.download_attempts import backoff_days
+    max_attempts = int(cfg.get("max_attempts", 3))
+    fail_rows = (await db.execute(
+        select(
+            TrackUpgrade.track_id,
+            func.count(TrackUpgrade.id),
+            func.max(func.coalesce(TrackUpgrade.updated_at, TrackUpgrade.created_at)),
+        )
+        .where(TrackUpgrade.status == "failed")
+        .group_by(TrackUpgrade.track_id)
+    )).all()
+    now = datetime.utcnow()
+    retired_ids: set[str] = set()
+    backoff_ids: set[str] = set()
+    for tid, n_failed, last_failed in fail_rows:
+        if n_failed >= max_attempts:
+            retired_ids.add(tid)
+        elif last_failed and last_failed + timedelta(days=backoff_days(n_failed)) > now:
+            backoff_ids.add(tid)
+
+    # Over-fetch by the size of the skip set so skipped tracks don't starve the batch.
+    query = query.order_by(Track.bitrate.asc().nullslast()).limit(count + len(retired_ids) + len(backoff_ids))
     result = await db.execute(query)
-    tracks = result.scalars().all()
+    candidates = result.scalars().all()
+    skipped_retired = sum(1 for t in candidates if t.id in retired_ids)
+    skipped_backoff = sum(1 for t in candidates if t.id in backoff_ids)
+    tracks = [t for t in candidates if t.id not in retired_ids and t.id not in backoff_ids][:count]
 
     # Create TrackUpgrade records (idempotent — skip existing pending/queued/downloading)
-    from backend.models.upgrade import TrackUpgrade
     existing_upgrades = await db.execute(
         select(TrackUpgrade.track_id).where(
             TrackUpgrade.status.in_(["pending", "queued", "downloading"])
@@ -881,6 +907,8 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
         "mode": mode,
         "max_bitrate": max_bitrate if mode == "low_bitrate" else None,
         "tracks_found": len(tracks),
+        "skipped_retired": skipped_retired,
+        "skipped_backoff": skipped_backoff,
         "auto_download": cfg.get("auto_download", False),
     })
 
@@ -890,7 +918,10 @@ async def _run_upgrade_scan(db: AsyncSession, job: Job, count: int = 50, config:
         "description": f"Found {len(tracks)} tracks to upgrade",
     })
 
-    log.info(f"Upgrade scan ({mode}): found {len(tracks)} tracks")
+    log.info(
+        f"Upgrade scan ({mode}): found {len(tracks)} tracks "
+        f"(skipped {skipped_retired} retired, {skipped_backoff} in backoff)"
+    )
 
 
 async def _run_remix_discovery(db: AsyncSession, job: Job, count: int = 30, config: dict | None = None):
