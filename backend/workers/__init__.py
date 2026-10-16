@@ -105,11 +105,13 @@ async def run_scheduled_tasks(ctx: dict):
 
 
 async def download_track(ctx: dict, artist: str, track: str):
-    """Background download task. Routes through enqueue_download so the worker
-    delegates to the web process (which owns the native Soulseek client) instead
-    of running a client-less download itself."""
-    from backend.api.download import enqueue_download
-    return await enqueue_download(artist, track)
+    """Background download task, through the tracked path (backoff, duration gate,
+    outcome recorded). enqueue_download underneath delegates to the web process,
+    which owns the native Soulseek client. Returns the job id (None when skipped
+    or the library already has it)."""
+    from backend.services.auto_download import download_tracked
+    outcome = await download_tracked(artist, track, source="worker")
+    return outcome["job_id"]
 
 
 async def analyze_track(ctx: dict, track_id: str, file_path: str):
