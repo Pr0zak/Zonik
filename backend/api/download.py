@@ -784,11 +784,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             batch = candidates[:parallel_sources]
             usernames_str = ", ".join(c["username"] for c in batch)
             job.tracks = json.dumps([{
-                "artist": req.artist, "track": req.track, "status": "downloading",
+                "artist": req.artist, "track": req.track, "status": "queued",
                 "sources": len(batch),
             }])
             await _save_job()
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
+            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"Queued for slot: {desc} ({len(batch)} sources)"})
 
             # Start all downloads concurrently
             async def try_source(candidate):
@@ -802,6 +802,12 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                     async with native_client.peer_slot(dl_username, timeout=PEER_BUSY_WAIT), transfer_sem:
                         if job_id in cancelled_jobs:
                             return candidate, "cancelled", None, "Cancelled by user"
+                        job.tracks = json.dumps([{
+                            "artist": req.artist, "track": req.track, "status": "downloading",
+                            "sources": len(batch),
+                        }])
+                        await _save_job()
+                        await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
                         try:
                             transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                             log.info(f"[download] Multi-source queued: {dl_username}")
@@ -969,11 +975,11 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 attempt += 1
                 attempt_label = f"attempt {attempt}/{len(candidates)}"
                 job.tracks = json.dumps([{
-                    "artist": req.artist, "track": req.track, "status": "downloading",
+                    "artist": req.artist, "track": req.track, "status": "queued",
                     "username": dl_username, "filename": short_name,
                 }])
                 await _save_job()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
+                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"Queued for slot: {desc} — {short_name}"})
 
                 # One file at a time per peer (so two jobs never have two files
                 # queued with the same uploader), then a transfer slot. Both are
@@ -985,6 +991,12 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                         if job_id in cancelled_jobs:
                             status, save_path, error = "cancelled", None, "Cancelled by user"
                         else:
+                            job.tracks = json.dumps([{
+                                "artist": req.artist, "track": req.track, "status": "downloading",
+                                "username": dl_username, "filename": short_name,
+                            }])
+                            await _save_job()
+                            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
                             try:
                                 transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                                 log.info(f"[download] Transfer queued: {dl_username} / {short_name}")

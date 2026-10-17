@@ -5,7 +5,7 @@
 	import { addToast, activeTransfers, activeUploads } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA, formatDateTime } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Upload } from 'lucide-svelte';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Upload, Radio, Activity } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -140,16 +140,6 @@
 		})
 	);
 
-	// Split into active (non-queued) and queued jobs based on friendly status
-	function isQueued(j) {
-		if (j.status === 'pending') return true;
-		const transfer = getTransferForJob(j);
-		return friendlyStatus(j, transfer) === 'queued';
-	}
-	let activeJobs = $derived(visibleJobs.filter(j => !isQueued(j)));
-	let queuedJobs = $derived(visibleJobs.filter(j => isQueued(j)));
-	let queueExpanded = $state(false);
-
 	function parseJobResult(job) {
 		if (!job.result) return null;
 		try { return JSON.parse(job.result); } catch { return null; }
@@ -177,6 +167,56 @@
 	};
 	function sourceLabel(job) {
 		return SOURCE_LABELS[job.card] || '';
+	}
+
+	function formatJobTitle(raw) {
+		if (!raw) return 'Unknown Track';
+		let s = raw;
+		s = s.replace(/^Queued for slot:\s*/i, '');
+		s = s.replace(/^Queued:\s*/i, '');
+		s = s.replace(/\s*\(attempt\s+\d+.*?\)/i, '');
+		s = s.replace(/\s*—\s*\d+\s+sources/i, '');
+		return s.trim();
+	}
+
+	function getSearchQueryForJob(job) {
+		const t = parseJobTracks(job)?.[0] || jobDetails[job.id]?.[0];
+		if (t?.artist && t?.track) return `${t.artist} - ${t.track}`;
+		if (job.description) {
+			return formatJobTitle(job.description).replace(/\s*—\s*/, ' - ');
+		}
+		return '';
+	}
+
+	function friendlyFailure(job, jobResult) {
+		const raw = jobResult?.last_error || jobResult?.message || jobResult?.error || jobDetails[job.id]?.[0]?.error || '';
+		const rawLower = raw.toLowerCase();
+
+		if (!raw) {
+			return { title: 'Download failed', detail: 'Unknown error occurred', category: 'unknown' };
+		}
+		if (rawLower.includes('cancel')) {
+			return { title: 'Cancelled', detail: 'Cancelled by user', category: 'cancelled' };
+		}
+		if (rawLower.includes('no candidates') || rawLower.includes('no results') || rawLower.includes('not found') || rawLower.includes('no matches')) {
+			return { title: 'No peers online', detail: 'Track is not currently shared by any online Soulseek peers', category: 'not_found' };
+		}
+		if (rawLower.includes('already in library') || rawLower.includes('no better') || rawLower.includes('equal or better')) {
+			return { title: 'Already in library', detail: 'Existing library copy is equal or higher quality', category: 'no_better' };
+		}
+		if (rawLower.includes('timed out') || rawLower.includes('timeout') || rawLower.includes('connection reset') || rawLower.includes('closed by peer') || rawLower.includes('connectionrefused')) {
+			return { title: 'Peer offline / timed out', detail: 'The uploader disconnected or their client did not respond', category: 'timeout' };
+		}
+		if (rawLower.includes('queue') && (rawLower.includes('full') || rawLower.includes('limit'))) {
+			return { title: 'Peer upload queue full', detail: 'Uploader has reached their max simultaneous transfer limit', category: 'queue_full' };
+		}
+		if (rawLower.includes('leech') || rawLower.includes('share') || rawLower.includes('denied')) {
+			return { title: 'Access denied by peer', detail: 'Uploader restricts downloads to peers sharing files', category: 'denied' };
+		}
+		if (rawLower.includes('corrupt') || rawLower.includes('size mismatch') || rawLower.includes('eof')) {
+			return { title: 'File transfer incomplete', detail: 'File received was incomplete or truncated', category: 'corrupt' };
+		}
+		return { title: 'Transfer error', detail: raw, category: 'other' };
 	}
 
 	// Server-side counts (independent of pagination) — fetched alongside loadJobs.
@@ -230,12 +270,14 @@
 			if (s === 'queued' || s === 'requested') return 'queued';
 			return s;
 		}
-		const tracks = jobDetails[job.id];
+		const tracks = parseJobTracks(job) || jobDetails[job.id];
 		if (tracks?.length) {
 			const t = tracks[0];
 			if (t.status === 'downloading' || t.status === 'transferring') return 'downloading';
+			if (t.status === 'queued') return 'queued';
 		}
 		const wsDesc = wsDescriptions[job.id] || job.description || '';
+		if (wsDesc.includes('Queued for') || wsDesc.startsWith('Queued:')) return 'queued';
 		if (wsDesc.includes('(attempt')) return 'downloading';
 		return 'searching';
 	}
@@ -247,6 +289,102 @@
 		if (status === 'queued') return 'warning';
 		return 'default';
 	}
+
+	function getJobForTransfer(transfer) {
+		if (!transfer) return null;
+		if (transfer.job_id) {
+			const found = jobs.find(j => j.id === transfer.job_id);
+			if (found) return found;
+		}
+		return jobs.find(j => {
+			const t = jobDetails[j.id]?.[0];
+			if (t && t.username === transfer.username && transfer.filename?.includes(t.filename)) return true;
+			return false;
+		});
+	}
+
+	async function cancelActiveItem(item) {
+		if (item.job?.id) {
+			await cancelJob(item.job.id);
+		} else if (item.transfer) {
+			try {
+				await api.cancelTransfer(item.transfer.username, item.transfer.filename);
+				addToast('Transfer cancelled', 'success');
+			} catch { addToast('Cancel failed', 'error'); }
+		}
+	}
+
+	// Active live transfers (actually transferring or connected)
+	let liveTransfers = $derived(
+		$activeTransfers.filter(tr => tr.state === 'transferring' || tr.state === 'connected' || (tr.speed && tr.speed > 0))
+	);
+	let totalTransferSpeed = $derived(
+		liveTransfers.reduce((acc, tr) => acc + (tr.speed || 0), 0)
+	);
+
+	// Active hero cards items (active transfers in flight)
+	let activeHeroItems = $derived.by(() => {
+		const items = [];
+		const seenJobIds = new Set();
+
+		for (const tr of liveTransfers) {
+			if (tr.job_id) seenJobIds.add(tr.job_id);
+			items.push({
+				type: 'transfer',
+				transfer: tr,
+				job: getJobForTransfer(tr),
+				id: tr.job_id || `${tr.username}-${tr.filename}`,
+			});
+		}
+
+		for (const j of visibleJobs) {
+			if (j.status === 'running' && !seenJobIds.has(j.id)) {
+				const tr = getTransferForJob(j);
+				const status = friendlyStatus(j, tr);
+				if (status === 'downloading') {
+					seenJobIds.add(j.id);
+					items.push({
+						type: 'job',
+						transfer: tr,
+						job: j,
+						id: j.id,
+					});
+				}
+			}
+		}
+		return items;
+	});
+
+	let heroJobIds = $derived(new Set(activeHeroItems.map(item => item.job?.id).filter(Boolean)));
+
+	// Currently searching job (pacing query on Soulseek central server)
+	let searchingJob = $derived(
+		visibleJobs.find(j => j.status === 'running' && friendlyStatus(j, getTransferForJob(j)) === 'searching')
+	);
+
+	// Queue rank derivation for jobs waiting for slot (FIFO: oldest queued first)
+	let queuedJobsList = $derived(
+		visibleJobs
+			.filter(j => friendlyStatus(j, getTransferForJob(j)) === 'queued')
+			.sort((a, b) => {
+				const ta = a.started_at || a.created_at || '';
+				const tb = b.started_at || b.created_at || '';
+				return ta.localeCompare(tb);
+			})
+	);
+
+	function getQueueRank(jobId) {
+		const idx = queuedJobsList.findIndex(j => j.id === jobId);
+		return idx >= 0 ? idx + 1 : null;
+	}
+
+	let displayJobs = $derived.by(() => {
+		// When active transfer hero cards are shown on Active/All tab, exclude those active jobs from the rows below
+		if (activeHeroItems.length > 0 && (jobStatusFilter === 'active' || jobStatusFilter === 'all' || jobStatusFilter === null)) {
+			return visibleJobs.filter(j => !heroJobIds.has(j.id));
+		}
+		return visibleJobs;
+	});
 
 	function getResultInlineStatus(r) {
 		const key = r.username + r.filename;
@@ -602,7 +740,18 @@
 </script>
 
 <div class="max-w-6xl">
-	<PageHeader title="Downloads" icon={Download} color="var(--color-downloads)" />
+	<PageHeader
+		title="Downloads"
+		subtitle="P2P Transfer Queue: 2 concurrent download slots · Soulseek Server Pacer: 6 searches/min"
+		icon={Download}
+		color="var(--color-downloads)">
+		{#snippet actions()}
+			<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+				<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+				Soulseek Connected
+			</span>
+		{/snippet}
+	</PageHeader>
 
 	<!-- Search Bar -->
 	<div class="flex gap-2.5 mb-6">
@@ -877,45 +1026,169 @@
 			{#if jobsLoading && !jobs.length}
 				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
 			{:else}
-				<div class="space-y-2">
-					{#if (jobStatusCounts.queued > 0 || queuedJobs.length > 0) && jobStatusFilter === 'all'}
-						<button onclick={() => queueExpanded = !queueExpanded}
-							class="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-500/5 text-xs text-amber-400 hover:bg-amber-500/10 transition-colors">
-							<Clock class="w-3.5 h-3.5 flex-shrink-0" />
-							<span class="font-medium">{jobStatusCounts.queued || queuedJobs.length} queued</span>
-							<span class="text-amber-400/60">waiting for download slot</span>
-							<span class="ml-auto flex-shrink-0">
-								{#if queueExpanded}
-									<ChevronUp class="w-3.5 h-3.5" />
-								{:else}
-									<ChevronDown class="w-3.5 h-3.5" />
-								{/if}
+			<!-- TIER 1: ACTIVE TRANSFERS (Only what is moving data!) -->
+			{#if activeHeroItems.length > 0 && (jobStatusFilter === 'active' || jobStatusFilter === 'all' || jobStatusFilter === null)}
+				<div class="mb-5 p-4 rounded-xl bg-[var(--surface-container)] border border-[var(--border-subtle)] space-y-3">
+					<div class="flex items-center justify-between flex-wrap gap-2">
+						<div class="flex items-center gap-2">
+							<span class="inline-flex items-center justify-center w-5 h-5 rounded-md bg-sky-500/20 text-sky-400 text-xs font-bold font-mono">{activeHeroItems.length}</span>
+							<h3 class="text-sm font-semibold text-[var(--text-primary)]">Active Transfers</h3>
+							<span class="text-xs text-[var(--text-muted)] font-mono">
+								({activeHeroItems.length} of 2 slots active{#if totalTransferSpeed > 0} · {formatSpeed(totalTransferSpeed)} total{/if})
 							</span>
-						</button>
-						{#if queueExpanded}
-							<div class="space-y-1 pl-2 border-l-2 border-amber-500/20 ml-1">
-								{#each queuedJobs as job (job.id)}
-									<div class="flex items-center gap-2 px-3 py-1.5 rounded bg-amber-500/5 text-xs group/job">
-										<span class="text-[var(--text-primary)] truncate flex-1">{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}</span>
-										<Badge variant="warning"><Clock class="w-3 h-3 mr-0.5 inline-block" />queued</Badge>
+						</div>
+						<span class="text-xs text-sky-400/90 font-medium hidden sm:inline">Restricting concurrency to prevent peer choke</span>
+					</div>
+
+					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+						{#each activeHeroItems as item (item.id)}
+							{@const tr = item.transfer}
+							{@const job = item.job}
+							{@const fname = tr?.filename?.split(/[/\\]/).pop() || ''}
+							{@const ext = fileExtension(fname)}
+							{@const rawTitle = formatJobTitle(job?.description || fname || 'Downloading file')}
+							{@const peer = tr?.username || jobDetails[job?.id]?.[0]?.username || ''}
+							{@const progress = tr?.progress ?? (job?.total > 0 ? (job.progress / job.total) * 100 : 0)}
+							{@const speed = tr?.speed || 0}
+							{@const eta = tr?.eta_seconds || 0}
+							{@const received = tr?.received_bytes || 0}
+							{@const total = tr?.total_bytes || 0}
+
+							<div class="rounded-xl p-4 space-y-3 relative overflow-hidden bg-gradient-to-br from-sky-500/10 via-[var(--surface-container-high)] to-[var(--surface-container)] border border-sky-500/30 shadow-sm">
+								<div class="flex items-start justify-between gap-2">
+									<div class="min-w-0 flex-1">
+										<h4 class="text-sm font-semibold text-[var(--text-primary)] truncate" title={rawTitle}>
+											{rawTitle}
+										</h4>
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
+											{#if peer}
+												<span>Peer: <span class="text-[var(--text-secondary)] font-medium">{peer}</span></span>
+											{/if}
+											{#if ext}
+												{#if peer}<span>&middot;</span>{/if}
+												<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>
+													{ext.toUpperCase()}
+												</Badge>
+											{/if}
+											{#if sourceLabel(job)}
+												<span>&middot;</span>
+												<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium">{sourceLabel(job)}</span>
+											{/if}
+										</div>
 									</div>
-								{/each}
+									<button
+										onclick={() => cancelActiveItem(item)}
+										class="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--text-muted)] hover:text-rose-400 transition-colors flex-shrink-0 -mr-1 -mt-1"
+										title="Cancel download"
+									>
+										<X class="w-4 h-4" />
+									</button>
+								</div>
+
+								<div class="space-y-1.5">
+									<div class="flex justify-between items-center text-xs font-mono text-[var(--text-secondary)]">
+										<span>
+											{progress > 0 ? `${progress.toFixed(1)}%` : 'Connecting...'}
+											{#if total > 0}
+												<span class="text-[var(--text-muted)]">({formatSize(received)} / {formatSize(total)})</span>
+											{/if}
+										</span>
+										<span class="text-sky-400 font-semibold">
+											{#if speed > 0}
+												{formatSpeed(speed)}{#if eta > 0} · ETA: {formatETA(eta)}{/if}
+											{:else}
+												<span class="text-[var(--text-muted)]">negotiating slot</span>
+											{/if}
+										</span>
+									</div>
+									<div class="w-full bg-[var(--surface-lowest)] rounded-full h-2 overflow-hidden border border-[var(--border-subtle)]">
+										<div
+											class="bg-gradient-to-r from-sky-500 to-sky-400 h-2 rounded-full transition-all duration-300"
+											style="width: {Math.min(100, Math.max(progress > 0 ? 3 : 0, progress))}%"
+										></div>
+									</div>
+								</div>
 							</div>
-						{/if}
-					{/if}
-					{#each jobStatusFilter === 'all' ? activeJobs : visibleJobs as job (job.id)}
+						{/each}
+					</div>
+				</div>
+			{/if}
+
+			<!-- TIER 2: SEARCH PACER BANNER -->
+			{#if searchingJob && (jobStatusFilter === 'active' || jobStatusFilter === 'all' || jobStatusFilter === null)}
+				<div class="mb-4 rounded-xl p-3 flex items-center justify-between border border-indigo-500/25 bg-indigo-950/20 text-xs">
+					<div class="flex items-center gap-3 min-w-0">
+						<div class="relative flex items-center justify-center w-3 h-3 flex-shrink-0">
+							<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+							<span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+						</div>
+						<div class="truncate text-[var(--text-secondary)]">
+							<span class="text-white font-medium">Soulseek Central Server Pacer:</span>
+							<span class="ml-1">Currently querying <span class="text-indigo-300 font-medium">“{formatJobTitle(wsDescriptions[searchingJob.id] || searchingJob.description || searchingJob.type)}”</span></span>
+							<span class="text-[var(--text-muted)] hidden sm:inline ml-1">· Paced to protect central search quota (1 query / 8s)</span>
+						</div>
+					</div>
+					<span class="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono flex-shrink-0 ml-2">Server Safe</span>
+				</div>
+			{/if}
+
+			<!-- TIER 3: QUEUE & HISTORY ROWS -->
+			{#if displayJobs.length === 0}
+				{#if activeHeroItems.length > 0}
+					<p class="text-xs text-[var(--text-muted)] text-center py-4">No additional jobs in queue.</p>
+				{:else}
+					<EmptyState title="No downloads" description="No download jobs match the current filter.">
+						{#snippet icon()}<Download class="w-10 h-10" />{/snippet}
+					</EmptyState>
+				{/if}
+			{:else}
+				<div class="space-y-2">
+					{#each displayJobs as job (job.id)}
 						{@const transfer = getTransferForJob(job)}
 						{@const status = friendlyStatus(job, transfer)}
+						{@const queueRank = status === 'queued' ? getQueueRank(job.id) : null}
 						{@const jobResult = parseJobResult(job)}
 						{@const jobTracks = parseJobTracks(job)}
+						{@const title = formatJobTitle(wsDescriptions[job.id] || job.description || job.type)}
 						<div class="{status === 'completed' ? 'bg-emerald-500/5' : status === 'failed' ? 'bg-red-500/5' : status === 'downloading' ? 'bg-blue-500/5' : status === 'queued' ? 'bg-amber-500/5' : 'bg-[var(--surface-container)]'} rounded-lg overflow-hidden group/job">
 							<div class="flex items-center gap-3 px-4 py-3">
 								<div class="flex-1 min-w-0">
-									<p class="text-sm text-[var(--text-primary)] font-medium truncate">
-										{(wsDescriptions[job.id] || job.description || job.type).replace(/^Queued: /, '')}
-										{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
-									</p>
-									{#if job.status === 'completed' && (jobResult || jobTracks?.[0])}
+									<div class="flex items-center gap-2">
+										{#if queueRank}
+											<span class="text-xs font-bold font-mono px-2 py-0.5 rounded-md flex-shrink-0 {queueRank === 1 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : queueRank === 2 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-[var(--surface-container-high)] text-[var(--text-muted)] border border-[var(--border-subtle)]'}">
+												{queueRank === 1 ? '#1 NEXT' : queueRank === 2 ? '#2 IN LINE' : `#${queueRank}`}
+											</span>
+										{/if}
+										<p class="text-sm text-[var(--text-primary)] font-medium truncate">
+											{title}
+											{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
+										</p>
+									</div>
+
+									{#if status === 'queued'}
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
+											<span class="text-amber-400/90 font-medium">Waiting for transfer slot</span>
+											{#if jobTracks?.[0]?.username}
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+												<span>from {jobTracks[0].username}</span>
+											{/if}
+											{#if jobTracks?.[0]?.filename}
+												{@const ext = fileExtension(jobTracks[0].filename)}
+												{#if ext}
+													<span class="text-[var(--text-disabled)]">&middot;</span>
+													<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>{ext.toUpperCase()}</Badge>
+												{/if}
+											{/if}
+											<span class="text-[var(--text-disabled)]">&middot;</span>
+											<span>{job.created_at ? formatDateTime(job.created_at) : ''}</span>
+										</div>
+									{:else if status === 'searching'}
+										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5">
+											<span class="text-indigo-400 font-medium">Querying Soulseek network</span>
+											<span class="text-[var(--text-disabled)]">&middot;</span>
+											<span>Waiting for response from online peers</span>
+										</div>
+									{:else if job.status === 'completed' && (jobResult || jobTracks?.[0])}
 										{@const t = jobTracks?.[0]}
 										{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
 										{@const ext = fileExtension(fname)}
@@ -970,16 +1243,13 @@
 												<span>{job.progress || 0}/{job.total} tracks</span>
 											{/if}
 											{#if job.status === 'failed'}
-												{#if jobResult?.last_error}
-													<span class="text-red-400">{jobResult.last_error}</span>
-												{:else if jobResult?.message}
-													<span class="text-red-400">{jobResult.message}</span>
-												{:else if jobResult?.error}
-													<span class="text-red-400">{jobResult.error}</span>
-												{/if}
+												{@const fail = friendlyFailure(job, jobResult)}
+												<span class="text-rose-400 font-medium">{fail.title}</span>
+												<span class="text-[var(--text-disabled)]">&middot;</span>
+												<span class="text-[var(--text-muted)] truncate max-w-md">{fail.detail}</span>
 												{#if jobResult?.failed_sources?.length}
 													<span class="text-[var(--text-disabled)]">&middot;</span>
-													<span class="text-orange-400" title={jobResult.failed_sources.join(', ')}>{jobResult.failed_sources.length} source{jobResult.failed_sources.length > 1 ? 's' : ''} tried</span>
+													<span class="text-orange-400 font-mono" title={jobResult.failed_sources.join(', ')}>{jobResult.failed_sources.length} source{jobResult.failed_sources.length > 1 ? 's' : ''} tried</span>
 												{/if}
 												<span class="text-[var(--text-disabled)]">&middot;</span>
 											{/if}
@@ -1004,17 +1274,19 @@
 									</button>
 								{/if}
 								{#if job.status === 'failed'}
-									{#if jobTracks?.[0]?.artist && jobTracks?.[0]?.track}
+									{@const searchQ = getSearchQueryForJob(job)}
+									{#if searchQ}
 										<button onclick={() => {
-											searchQuery = `${jobTracks[0].artist} - ${jobTracks[0].track}`;
+											searchQuery = searchQ;
 											searchSoulseek();
+											window.scrollTo({ top: 0, behavior: 'smooth' });
 										}}
-											class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for new sources">
+											class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for alternative sources">
 											<Search class="w-3.5 h-3.5" />
 										</button>
 									{/if}
 									<button onclick={() => retryJob(job.id)}
-										class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry">
+										class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry download">
 										<RotateCcw class="w-3.5 h-3.5" />
 									</button>
 								{/if}
@@ -1024,7 +1296,7 @@
 									{:else if status === 'queued'}
 										<Clock class="w-3 h-3 mr-0.5 inline-block" />
 									{/if}
-									{status}
+									{status === 'queued' ? 'Queued for slot' : status}
 								</Badge>
 								{#if job.total > 1 || (job.status === 'failed' && jobResult?.source_errors?.length)}
 									<button onclick={() => toggleJobDetail(job.id)}
@@ -1048,7 +1320,7 @@
 									<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
 										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
 								</div>
-							{:else if job.status === 'running'}
+							{:else if job.status === 'running' && status === 'searching'}
 								<div class="h-1 bg-[var(--border-interactive)] overflow-hidden relative">
 									<div class="h-full animate-search"></div>
 								</div>
@@ -1057,7 +1329,7 @@
 							{#if expandedJob === job.id}
 								{#if jobResult?.source_errors?.length}
 									<!-- Per-source error breakdown (single download) -->
-									<div class="px-4 py-2 space-y-1  animate-fade-slide-in">
+									<div class="px-4 py-2 space-y-1 animate-fade-slide-in">
 										<p class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-1">Sources tried</p>
 										{#each jobResult.source_errors as se, i}
 											<div class="flex items-center gap-2 text-xs py-1">
@@ -1070,7 +1342,7 @@
 									</div>
 								{:else if jobDetails[job.id]}
 									<!-- Bulk track details -->
-									<div class="px-4 py-2 space-y-1  animate-fade-slide-in">
+									<div class="px-4 py-2 space-y-1 animate-fade-slide-in">
 										{#each jobDetails[job.id] as t, i}
 											<div class="flex items-center gap-2 text-xs py-1 flex-wrap">
 												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
@@ -1099,6 +1371,7 @@
 						</div>
 					{/each}
 				</div>
+			{/if}
 
 				<!-- Pagination -->
 				{#if jobs.length >= PAGE_LIMIT || jobsOffset > 0}
