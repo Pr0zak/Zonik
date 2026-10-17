@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MAX_QUERY_VARIANTS = 4
+MAX_QUERY_VARIANTS = 5
 DURATION_TOLERANCE = 3  # seconds a candidate's reported duration may differ from the target
 # A soft target (an outside length, e.g. Last.fm's, which may be another version's)
 # only penalises a candidate this far off; it never rejects one.
@@ -206,8 +206,8 @@ async def pick_best_results_native(
     return candidates
 
 
-def build_query_variants(artist: str, track: str) -> list[str]:
-    """The 1-4 distinct search queries tried for one track, most specific first."""
+def build_query_variants(artist: str, track: str, album: str | None = None) -> list[str]:
+    """The 1-5 distinct search queries tried for one track, most specific first."""
     queries = [f"{artist} {track}"]
     cleaned_track = strip_track_extras(track)
     cleaned_artist = clean_artist_name(artist)
@@ -219,11 +219,16 @@ def build_query_variants(artist: str, track: str) -> list[str]:
     first_artist = artist.split()[0] if artist.split() else artist
     if first_artist.lower() != cleaned_artist.lower():
         queries.append(f"{first_artist} {cleaned_track}")
+    if album:
+        cleaned_album = strip_track_extras(album)
+        if cleaned_album:
+            queries.append(f"{cleaned_artist} {cleaned_album}")
     out: list[str] = []
     for q in queries:
         if q not in out:
             out.append(q)
-    return out[:MAX_QUERY_VARIANTS]
+    cap = MAX_QUERY_VARIANTS if album else 4
+    return out[:cap]
 
 
 def merge_search_results(responses: list[list[SearchResult]]) -> list[SearchResult]:
@@ -254,6 +259,7 @@ async def search_multi_strategy_native(
     client: "SoulseekClient",
     artist: str,
     track: str,
+    album: str | None = None,
     better_than: tuple[str, int] | None = None,
     target_duration: int | None = None,
     strict_duration: bool = True,
@@ -292,16 +298,44 @@ async def search_multi_strategy_native(
     if candidates or len(queries) == 1:
         return candidates
     rest = await run(queries[1:])
-    return await rank(first + rest)
+    candidates = await rank(first + rest)
+    if candidates:
+        return candidates
+
+    # If all track-specific queries return no candidates, fall back to album query.
+    # Soulseek peers often share full album folders, where folder names match artist + album
+    # while files inside are named e.g. "05 - Song.flac".
+    target_album = album
+    if not target_album:
+        try:
+            from backend.services.lastfm import get_track_info
+            info = await get_track_info(artist, track)
+            if info and info.get("album"):
+                target_album = info["album"]
+                log.info(f"[native] Resolved album via Last.fm for '{artist} - {track}': {target_album}")
+        except Exception as e:
+            log.debug(f"[native] Last.fm album lookup failed: {e}")
+
+    if target_album:
+        cleaned_album = strip_track_extras(target_album)
+        cleaned_artist = clean_artist_name(artist)
+        album_query = f"{cleaned_artist} {cleaned_album}".strip()
+        if album_query and album_query not in queries:
+            log.info(f"[native] Fallback album search for '{artist} - {track}': {album_query}")
+            album_res = await run([album_query])
+            candidates = await rank(first + rest + album_res)
+
+    return candidates
 
 
 async def search_and_download_native(
     client: "SoulseekClient",
     artist: str,
     track: str,
+    album: str | None = None,
 ) -> dict:
     """Search and download best result using native client."""
-    candidates = await search_multi_strategy_native(client, artist, track)
+    candidates = await search_multi_strategy_native(client, artist, track, album=album)
     if not candidates:
         return {"status": "not_found", "message": f"No results for {artist} - {track}"}
 

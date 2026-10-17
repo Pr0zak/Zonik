@@ -170,7 +170,7 @@ def _tracked(source: str | None) -> bool:
 
 
 async def submit_tracked(
-    artist: str, track: str, *, source: str | None, target_track_id: str | None = None,
+    artist: str, track: str, *, album: str | None = None, source: str | None, target_track_id: str | None = None,
     expected_duration: int | None = None, skip_in_backoff: bool = True,
     job_id: str | None = None, wait: bool = True,
 ) -> dict:
@@ -200,10 +200,12 @@ async def submit_tracked(
         expected_duration = await lookup_duration(artist, track)  # soft target
 
     job_id = job_id or str(uuid.uuid4())
+    enqueue_kw = {"expected_duration": expected_duration, "wait": wait}
+    if album:
+        enqueue_kw["album"] = album
     try:
         returned = await enqueue_download(artist, track, job_id=job_id, source=source,
-                                          target_track_id=target_track_id,
-                                          expected_duration=expected_duration, wait=wait)
+                                          target_track_id=target_track_id, **enqueue_kw)
     except Exception as e:
         # enqueue_download only raises for our own trouble (database, web process),
         # never because of the track.
@@ -237,7 +239,7 @@ async def finish_tracked(
 
 
 async def download_tracked(
-    artist: str, track: str, *, source: str | None, target_track_id: str | None = None,
+    artist: str, track: str, *, album: str | None = None, source: str | None, target_track_id: str | None = None,
     expected_duration: int | None = None, skip_in_backoff: bool = True,
     job_id: str | None = None,
 ) -> dict:
@@ -246,7 +248,7 @@ async def download_tracked(
     Returns {artist, track, job_id, ok, error, skipped}; a skipped download (backoff)
     has ok=None and skipped=<reason>."""
     sub = await submit_tracked(
-        artist, track, source=source, target_track_id=target_track_id,
+        artist, track, album=album, source=source, target_track_id=target_track_id,
         expected_duration=expected_duration, skip_in_backoff=skip_in_backoff, job_id=job_id,
     )
     if sub["skipped"]:
@@ -260,7 +262,7 @@ async def download_tracked_many(
     items: list[dict], *, source: str | None = None, concurrency: int = 4,
     skip_in_backoff: bool = True,
 ) -> list[dict]:
-    """download_tracked for each {artist, track[, source, expected_duration]} item, at most `concurrency`
+    """download_tracked for each {artist, track[, album, source, expected_duration]} item, at most `concurrency`
     at a time (the search/transfer queues gate the real download concurrency).
     Items that normalise to the same attempt key are downloaded once. Never raises."""
     seen: set[str] = set()
@@ -281,7 +283,7 @@ async def download_tracked_many(
         async with sem:
             try:
                 return await download_tracked(
-                    it["artist"], it["track"], source=it.get("source", source),
+                    it["artist"], it["track"], album=it.get("album"), source=it.get("source", source),
                     expected_duration=it.get("expected_duration"),
                     skip_in_backoff=skip_in_backoff,
                 )

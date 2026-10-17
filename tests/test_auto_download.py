@@ -68,8 +68,8 @@ def fake_enqueue(monkeypatch):
     script: dict[str, tuple[str, dict | None]] = {}
 
     async def enqueue(artist, track, job_id=None, source=None, target_track_id=None, *,
-                      expected_duration=None, wait=True):
-        calls.append({"artist": artist, "track": track, "job_id": job_id, "source": source,
+                      album=None, expected_duration=None, wait=True, **kwargs):
+        calls.append({"artist": artist, "track": track, "album": album, "job_id": job_id, "source": source,
                       "expected_duration": expected_duration, "wait": wait})
         status, payload = script.get(track, ("completed", {"track_id": "t1"}))
         await write_job(job_id, status, payload)

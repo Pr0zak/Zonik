@@ -72,11 +72,22 @@ def clean_track_name(raw: str) -> str:
 
 
 def clean_artist_name(artist: str) -> str:
-    """Take first artist if multiple."""
-    for sep in [" / ", " & ", ", ", " x ", " X "]:
-        if sep in artist:
-            return artist.split(sep)[0].strip()
-    return artist
+    """Clean artist name for search: strip backing bands, featured artists, and disambiguations."""
+    if not artist:
+        return ""
+    a = artist.strip()
+    # Strip parenthetical or bracketed info e.g. "Artist (UK)", "Artist [Remaster]"
+    a = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", a)
+    # Strip backing bands like "& The Bad Seeds", "and the Heartbreakers", "+ The Machine", "& His Orchestra"
+    a = re.sub(r"\s+(?:and|&|\+)\s+(?:the|his|her|their)\s+.*$", "", a, flags=re.IGNORECASE)
+    # Strip featured artists / collaborations
+    a = re.sub(r"\s+(?:feat\.|ft\.|featuring|with|vs\.)\s+.*$", "", a, flags=re.IGNORECASE)
+    # Delimiter fallback (first artist if multiple)
+    for sep in [" / ", " & ", " and ", " + ", ", ", " x ", " X "]:
+        if sep in a:
+            a = a.split(sep)[0].strip()
+            break
+    return a.strip() or artist.strip()
 
 
 # Stopwords + noise tokens dropped before requiring a title match. Keeping these
@@ -116,6 +127,45 @@ def title_matches(track_title: str, filename: str) -> bool:
     if len(sig) <= 2:
         return matched == len(sig)
     return matched >= max(2, round(len(sig) * 0.8))
+
+
+def search_relevance_matches(artist: str, track: str, filename: str) -> bool:
+    """Relevance gate for Soulseek search results.
+
+    When track is known, requires the file to match the track title (or stripped title).
+    When track is empty (freeform multi-word query in artist), checks for significant word overlap,
+    preventing 70% whole-string rejections of valid tracks when artist and title are combined.
+    """
+    if track:
+        if words_match(track, filename) or words_match(strip_track_extras(track), filename):
+            return True
+        if title_matches(track, filename):
+            return True
+        return False
+
+    query = (artist or "").strip()
+    if not query:
+        return True
+
+    # Exact or 70%+ match against whole string
+    if words_match(query, filename):
+        return True
+
+    # Multi-word freeform search: check significant non-stopword tokens
+    tokens = [w for w in normalize_text(query).split() if len(w) > 1 and w not in TITLE_STOPWORDS and not w.isdigit()]
+    if not tokens:
+        tokens = [w for w in normalize_text(query).split() if len(w) > 1]
+    if not tokens:
+        return False
+
+    haystack_norm = normalize_text(filename)
+    matched = sum(1 for w in tokens if w in haystack_norm)
+
+    if len(tokens) <= 2:
+        return matched >= 1
+    # 3+ tokens (e.g. 'Nick Cave Red Right Hand'): at least 2 significant words or >= 40%
+    return matched >= 2 or matched >= len(tokens) * 0.4
+
 
 
 # --- Quality scoring ---
@@ -329,14 +379,14 @@ def _use_native() -> bool:
     return client is not None and client.logged_in
 
 
-async def search_multi_strategy(artist: str, track: str) -> list[dict]:
+async def search_multi_strategy(artist: str, track: str, album: str | None = None) -> list[dict]:
     """Try multiple search strategies, return best candidates.
     Routes to native client or slskd based on config.
     """
     if _use_native():
         from backend.soulseek import get_client
         from backend.soulseek.search import search_multi_strategy_native
-        return await search_multi_strategy_native(get_client(), artist, track)
+        return await search_multi_strategy_native(get_client(), artist, track, album=album)
 
     # Legacy slskd path
     client = get_slskd_client()
@@ -354,6 +404,10 @@ async def search_multi_strategy(artist: str, track: str) -> list[dict]:
     first_artist = artist.split()[0] if artist.split() else artist
     if first_artist.lower() != cleaned_artist.lower():
         queries.append(f"{first_artist} {cleaned_track}")
+    if album:
+        cleaned_album = strip_track_extras(album)
+        if cleaned_album:
+            queries.append(f"{cleaned_artist} {cleaned_album}")
 
     seen: set[str] = set()
     for q in queries:
@@ -370,14 +424,14 @@ async def search_multi_strategy(artist: str, track: str) -> list[dict]:
     return []
 
 
-async def search_and_download(artist: str, track: str) -> dict:
+async def search_and_download(artist: str, track: str, album: str | None = None) -> dict:
     """Search for a track and download the best result, with candidate fallback.
     Routes to native client or slskd based on config.
     """
     if _use_native():
         from backend.soulseek import get_client
         from backend.soulseek.search import search_and_download_native
-        return await search_and_download_native(get_client(), artist, track)
+        return await search_and_download_native(get_client(), artist, track, album=album)
 
     # Native client is unavailable in this process (not logged in, or this is the
     # worker which runs no client). The legacy slskd fallback is DECOMMISSIONED, so

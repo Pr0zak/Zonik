@@ -161,3 +161,57 @@ async def test_peer_slot_timeout_raises_peer_busy_and_cleans_up():
     # the slot is free again afterwards
     async with SoulseekClient.peer_slot(fake, "peer", timeout=0.02):
         pass
+
+
+def test_clean_artist_name_strips_bands_and_suffixes():
+    from backend.services.soulseek import clean_artist_name
+    assert clean_artist_name("Nick Cave & The Bad Seeds") == "Nick Cave"
+    assert clean_artist_name("Nick Cave and the Bad Seeds") == "Nick Cave"
+    assert clean_artist_name("Tom Petty and the Heartbreakers") == "Tom Petty"
+    assert clean_artist_name("Florence + The Machine") == "Florence"
+    assert clean_artist_name("Bob Marley & The Wailers") == "Bob Marley"
+    assert clean_artist_name("Bill Haley & His Comets") == "Bill Haley"
+    assert clean_artist_name("Calvin Harris feat. Rihanna") == "Calvin Harris"
+    assert clean_artist_name("David Bowie (UK)") == "David Bowie"
+    assert clean_artist_name("Daft Punk / Pharrell Williams") == "Daft Punk"
+    assert clean_artist_name("AC/DC") == "AC/DC"
+
+
+def test_search_relevance_matches():
+    from backend.services.soulseek import search_relevance_matches
+    # Track title match
+    assert search_relevance_matches("Nick Cave", "Red Right Hand", "05 - Red Right Hand.flac")
+    # Multi-word freeform search where track is not separated
+    assert search_relevance_matches("Nick Cave Red Right Hand", "", "Let Love In/05 - Red Right Hand.flac")
+    assert search_relevance_matches("The Edgar Winter Group Frankenstein", "", "Edgar Winter/06 - Frankenstein.flac")
+    assert search_relevance_matches("Frankenstein", "", "06 - Frankenstein.flac")
+    # Irrelevant files should not match
+    assert not search_relevance_matches("Nick Cave Red Right Hand", "", "Britney Spears/Toxic.flac")
+    assert not search_relevance_matches("Nick Cave Red Right Hand", "", "Various Artists/The Right Stuff.flac")
+
+
+def test_query_variants_with_album():
+    qs = build_query_variants("Nick Cave & The Bad Seeds", "Red Right Hand", album="Let Love In")
+    assert len(qs) == len(set(qs)) and 1 <= len(qs) <= 5
+    assert "Nick Cave Let Love In" in qs
+
+
+@pytest.mark.asyncio
+async def test_fallback_album_search_when_track_fails():
+    asked = []
+
+    async def search(q):
+        asked.append(q)
+        # All track queries return nothing / irrelevant songs
+        if "Let Love In" in q:
+            return [result("alice", "Nick Cave & The Bad Seeds\\Let Love In (1994)\\05 - Red Right Hand.flac")]
+        return []
+
+    client = SimpleNamespace(search=search, reputation=None)
+    picked = await search_multi_strategy_native(
+        client, "Nick Cave & The Bad Seeds", "Red Right Hand", album="Let Love In"
+    )
+    assert any("Let Love In" in q for q in asked)
+    assert len(picked) == 1
+    assert picked[0]["username"] == "alice"
+

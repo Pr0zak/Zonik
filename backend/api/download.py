@@ -228,6 +228,7 @@ class SearchRequest(BaseModel):
 class DownloadRequest(BaseModel):
     artist: str
     track: str
+    album: str | None = None
     username: str | None = None
     filename: str | None = None
     source: str | None = None  # manual, upgrade, discovery, similar, remix, playlist, library
@@ -334,10 +335,9 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
                         break
                 if not ext or fi.size < min_size:
                     continue
-                # Basic relevance: at least some query words should match
-                from backend.services.soulseek import words_match, strip_track_extras
-                match_term = track if track else artist
-                if not words_match(match_term, fn) and not words_match(strip_track_extras(match_term), fn):
+                # Basic relevance: match track or multi-word freeform search tokens
+                from backend.services.soulseek import search_relevance_matches
+                if not search_relevance_matches(artist, track, fn):
                     continue
                 users.add(sr.username)
                 results.append({
@@ -612,7 +612,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             candidates = [{"username": req.username, "filename": req.filename, "size": 0}]
             try:
                 from backend.soulseek.search import search_multi_strategy_native
-                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
+                fallbacks = await search_multi_strategy_native(native_client, req.artist, req.track, album=req.album,
+                                                               better_than=better_than,
                                                                target_duration=target_duration,
                                                                strict_duration=strict_duration)
                 # Add fallbacks excluding the already-requested source
@@ -625,7 +626,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
         elif native_ready:
             # Auto-download — get candidates from search
             from backend.soulseek.search import search_multi_strategy_native
-            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, better_than=better_than,
+            candidates = await search_multi_strategy_native(native_client, req.artist, req.track, album=req.album,
+                                                            better_than=better_than,
                                                             target_duration=target_duration,
                                                             strict_duration=strict_duration)
         elif native_client:
@@ -637,7 +639,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             candidates = []  # Skip native loop
         else:
             from backend.services.soulseek import search_and_download
-            result = await search_and_download(req.artist, req.track)
+            result = await search_and_download(req.artist, req.track, album=req.album)
             ok = result.get("ok") or result.get("status") == "downloading"
             job.status = "completed" if ok else "failed"
             job.result = json.dumps(result)
@@ -979,7 +981,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             log.debug(f"[download] Staging cleanup skipped for {job_id}: {e}")
 
 async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None,
-                                     expected_duration: int | None = None, wait: bool = True,
+                                     *, album: str | None = None, expected_duration: int | None = None, wait: bool = True,
                                      strict_duration: bool = False) -> str | None:
     """Delegate a download to the web process, which owns the native Soulseek
     client. The arq worker has no native client of its own (it can only bind the
@@ -1002,7 +1004,7 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
         timeout = httpx.Timeout(connect=10.0, read=1800.0 if wait else 60.0, write=30.0, pool=None)
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                url, json={"artist": artist, "track": track, "job_id": job_id,
+                url, json={"artist": artist, "track": track, "album": album, "job_id": job_id,
                            "source": source, "target_track_id": target_track_id,
                            "expected_duration": expected_duration, "wait": wait,
                            "strict_duration": strict_duration}
@@ -1073,12 +1075,12 @@ _background_downloads: set[asyncio.Task] = set()
 
 async def _create_download_job(artist: str, track: str, job_id: str | None, source: str | None,
                                target_track_id: str | None, expected_duration: int | None,
-                               strict_duration: bool = False):
+                               strict_duration: bool = False, album: str | None = None):
     """Write a download job's row and register it live. Returns what
     _run_download_job needs: (job_id, desc, request, search semaphore, initial status)."""
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
-    dl_req = DownloadRequest(artist=artist, track=track, source=source, target_track_id=target_track_id,
+    dl_req = DownloadRequest(artist=artist, track=track, album=album, source=source, target_track_id=target_track_id,
                              expected_duration=expected_duration, strict_duration=strict_duration)
     sem = _get_semaphore()
 
@@ -1146,7 +1148,7 @@ async def _run_download_job_detached(job_id: str, *args) -> None:
 
 
 async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
-                           *, expected_duration: int | None = None, wait: bool = True,
+                           *, album: str | None = None, expected_duration: int | None = None, wait: bool = True,
                            strict_duration: bool = False) -> str | None:
     """Create an individual download job with semaphore queuing. Returns job_id, or
     None when an automatic download was skipped because the library already has it.
@@ -1174,11 +1176,11 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     from backend.soulseek import get_client
     if get_client() is None:
         return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
-                                               expected_duration=expected_duration, wait=wait,
+                                               album=album, expected_duration=expected_duration, wait=wait,
                                                strict_duration=strict_duration)
 
     job_id, desc, dl_req, sem, initial_status = await _create_download_job(
-        artist, track, job_id, source, target_track_id, expected_duration, strict_duration)
+        artist, track, job_id, source, target_track_id, expected_duration, strict_duration, album=album)
     if not wait:
         task = asyncio.create_task(_run_download_job_detached(job_id, desc, dl_req, sem, initial_status))
         _background_downloads.add(task)
@@ -1191,6 +1193,7 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
 class InternalDownloadRequest(BaseModel):
     artist: str
     track: str
+    album: str | None = None
     job_id: str | None = None
     source: str | None = None
     target_track_id: str | None = None
@@ -1208,7 +1211,7 @@ async def internal_run_download(req: InternalDownloadRequest):
     downloads it cannot run itself. Localhost-only by deployment. With wait=false
     it answers once the job row exists and the download runs in the background."""
     jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
-                                 target_track_id=req.target_track_id,
+                                 target_track_id=req.target_track_id, album=req.album,
                                  expected_duration=req.expected_duration, wait=req.wait,
                                  strict_duration=req.strict_duration)
     return {"job_id": jid}
@@ -1221,8 +1224,9 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
     for t in req.tracks:
         artist = t.get("artist", "")
         track = t.get("track", "")
+        album = t.get("album")
         if artist and track:
-            queue.append((artist, track))
+            queue.append({"artist": artist, "track": track, "album": album})
 
     if queue:
         background_tasks.add_task(_process_bulk_download_queue, queue, req.source)
@@ -1230,11 +1234,11 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
     return {"ok": True, "total": len(queue)}
 
 
-async def _process_bulk_download_queue(queue: list[tuple[str, str]], source: str | None = None):
+async def _process_bulk_download_queue(queue: list[dict], source: str | None = None):
     """Run bulk downloads through the tracked path (backoff, duration gate, outcome
     recorded) with bounded concurrency; the search/transfer queues gate the rest."""
     from backend.services.auto_download import download_tracked_many
-    await download_tracked_many([{"artist": a, "track": t} for a, t in queue], source=source)
+    await download_tracked_many(queue, source=source)
 
 
 class CancelTransferRequest(BaseModel):
