@@ -164,6 +164,15 @@ class ZonikMediaService : MediaLibraryService() {
         private const val PLAYLIST_PREFIX = "playlist:"
         private const val TRACK_PREFIX = TRACK_ID_PREFIX
 
+        // Android Auto: play a whole playlist/album, in order or shuffled. The suffix is
+        // the collection's own id ("playlist:<id>" or "album:<id>").
+        private const val PLAY_ALL_PREFIX = "playall:"
+        private const val SHUFFLE_ALL_PREFIX = "shuffleall:"
+        // A track listed inside a playlist/album carries its collection after this
+        // separator, so tapping it plays the collection from that track instead of
+        // queueing the single song: "track:<id>|in|playlist:<pid>".
+        private const val IN_COLLECTION = "|in|"
+
         // Content style extras keys (Media3 / Android Auto)
         private const val CONTENT_STYLE_BROWSABLE_HINT =
             "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT"
@@ -928,12 +937,71 @@ class ZonikMediaService : MediaLibraryService() {
         )
 
     private fun playlistToMediaItem(playlist: Playlist): MediaItem =
-        buildBrowsableItem(
-            id = "$PLAYLIST_PREFIX${playlist.id}",
-            title = playlist.name,
-            subtitle = "${playlist.songCount} songs",
-            artworkUri = coverArtUri(playlist.coverArt)
+        withPlayable(
+            buildBrowsableItem(
+                id = "$PLAYLIST_PREFIX${playlist.id}",
+                title = playlist.name,
+                subtitle = "${playlist.songCount} songs",
+                artworkUri = coverArtUri(playlist.coverArt)
+            )
         )
+
+    /** Browsable and playable at once: Android Auto then offers a play action on the row
+     *  itself, and playing it queues the whole collection. */
+    private fun withPlayable(item: MediaItem): MediaItem =
+        item.buildUpon()
+            .setMediaMetadata(item.mediaMetadata.buildUpon().setIsPlayable(true).build())
+            .build()
+
+    /** "Play all" and "Shuffle" rows shown at the top of a playlist or album. */
+    private fun collectionActions(collectionId: String, count: Int): List<MediaItem> = listOf(
+        buildPlayableItem(
+            id = "$PLAY_ALL_PREFIX$collectionId", title = "Play all",
+            subtitle = "$count songs in order", artworkUri = iconUri(R.drawable.ic_auto_playlists)
+        ),
+        buildPlayableItem(
+            id = "$SHUFFLE_ALL_PREFIX$collectionId", title = "Shuffle",
+            subtitle = "$count songs shuffled", artworkUri = iconUri(R.drawable.ic_auto_shuffle)
+        ),
+    )
+
+    /** A track row inside a collection: tapping it plays the collection from this track. */
+    private fun trackInCollection(track: Track, collectionId: String): MediaItem {
+        val item = trackToMediaItem(track)
+        return item.buildUpon().setMediaId("${item.mediaId}$IN_COLLECTION$collectionId").build()
+    }
+
+    private fun collectionTracks(collectionId: String): List<Track> = runBlocking {
+        when {
+            collectionId.startsWith(PLAYLIST_PREFIX) ->
+                libraryRepository.getPlaylistTracks(collectionId.removePrefix(PLAYLIST_PREFIX))
+            collectionId.startsWith(ALBUM_PREFIX) ->
+                libraryRepository.getAlbumDetail(collectionId.removePrefix(ALBUM_PREFIX)).second
+            else -> emptyList()
+        }
+    }
+
+    private fun isCollectionPlay(id: String): Boolean =
+        id.startsWith(PLAY_ALL_PREFIX) || id.startsWith(SHUFFLE_ALL_PREFIX) || id.contains(IN_COLLECTION) ||
+            id.startsWith(PLAYLIST_PREFIX)
+
+    /** Expand a collection play request into the queue and the index to start at. */
+    private fun resolveCollectionPlay(id: String): Pair<List<MediaItem>, Int> {
+        return when {
+            id.contains(IN_COLLECTION) -> {
+                val (trackPart, collectionId) = id.split(IN_COLLECTION, limit = 2)
+                val trackId = trackPart.removePrefix(TRACK_PREFIX)
+                val tracks = collectionTracks(collectionId)
+                val start = tracks.indexOfFirst { it.id == trackId }.coerceAtLeast(0)
+                tracks.map { buildFullMediaItem(it) } to start
+            }
+            id.startsWith(SHUFFLE_ALL_PREFIX) ->
+                collectionTracks(id.removePrefix(SHUFFLE_ALL_PREFIX)).shuffled().map { buildFullMediaItem(it) } to 0
+            id.startsWith(PLAY_ALL_PREFIX) ->
+                collectionTracks(id.removePrefix(PLAY_ALL_PREFIX)).map { buildFullMediaItem(it) } to 0
+            else -> collectionTracks(id).map { buildFullMediaItem(it) } to 0  // the playlist row itself
+        }
+    }
 
     private fun trackToMediaItem(track: Track): MediaItem =
         buildPlayableItem(
@@ -1048,6 +1116,24 @@ class ZonikMediaService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> {
+            // A playlist/album (or a track inside one) played from Android Auto: queue the
+            // whole collection, starting at the tapped track.
+            if (mediaItems.size == 1 && isCollectionPlay(mediaItems[0].mediaId)) {
+                val id = mediaItems[0].mediaId
+                val future = SettableFuture.create<MediaSession.MediaItemsWithStartPosition>()
+                browseScope.launch {
+                    try {
+                        val (items, start) = resolveCollectionPlay(id)
+                        com.zonik.app.data.DebugLog.d("MediaService", "onSetMediaItems: collection $id -> ${items.size} items from $start")
+                        future.set(MediaSession.MediaItemsWithStartPosition(items, start, 0L))
+                    } catch (e: Exception) {
+                        com.zonik.app.data.DebugLog.w("MediaService", "Collection $id failed: ${e.message}")
+                        future.set(MediaSession.MediaItemsWithStartPosition(emptyList(), 0, 0L))
+                    }
+                }
+                return future
+            }
+
             // Mixes (Shuffle, Favorites, a genre, …) arrive as a single id and need the server
             // or the DB to expand, so that happens off the main thread.
             if (mediaItems.size == 1 && isMixId(mediaItems[0].mediaId)) {
@@ -1131,6 +1217,23 @@ class ZonikMediaService : MediaLibraryService() {
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>
         ): ListenableFuture<MutableList<MediaItem>> {
+            if (mediaItems.size == 1 && isCollectionPlay(mediaItems[0].mediaId)) {
+                val id = mediaItems[0].mediaId
+                val future = SettableFuture.create<MutableList<MediaItem>>()
+                browseScope.launch {
+                    future.set(
+                        try {
+                            val (items, start) = resolveCollectionPlay(id)
+                            // Adding a single track from a collection adds that track only.
+                            (if (id.contains(IN_COLLECTION)) items.drop(start).take(1) else items).toMutableList()
+                        } catch (e: Exception) {
+                            com.zonik.app.data.DebugLog.w("MediaService", "Collection $id failed: ${e.message}")
+                            mutableListOf()
+                        }
+                    )
+                }
+                return future
+            }
             if (mediaItems.size == 1 && isMixId(mediaItems[0].mediaId)) {
                 val id = mediaItems[0].mediaId
                 com.zonik.app.data.DebugLog.d("MediaService", "onAddMediaItems: resolving $id")
@@ -1817,7 +1920,7 @@ class ZonikMediaService : MediaLibraryService() {
                 val (_, tracks) = runBlocking {
                     libraryRepository.getAlbumDetail(albumId)
                 }
-                tracks.map { trackToMediaItem(it) }
+                collectionActions(parentId, tracks.size) + tracks.map { trackInCollection(it, parentId) }
             }
 
             parentId.startsWith(GENRE_PREFIX) -> {
@@ -1833,7 +1936,7 @@ class ZonikMediaService : MediaLibraryService() {
                 val tracks = runBlocking {
                     libraryRepository.getPlaylistTracks(playlistId)
                 }
-                tracks.map { trackToMediaItem(it) }
+                collectionActions(parentId, tracks.size) + tracks.map { trackInCollection(it, parentId) }
             }
 
             else -> emptyList()
@@ -1858,9 +1961,11 @@ class ZonikMediaService : MediaLibraryService() {
             mediaId == NEWLY_ADDED_ID -> buildPlayableItem(id = NEWLY_ADDED_ID, title = "Newly Added")
             mediaId == FAVORITES_ID -> buildPlayableItem(id = FAVORITES_ID, title = "Favorites")
             mediaId == NON_FAVORITES_ID -> buildPlayableItem(id = NON_FAVORITES_ID, title = "Non-Favorites")
+            mediaId.startsWith(PLAY_ALL_PREFIX) -> buildPlayableItem(id = mediaId, title = "Play all")
+            mediaId.startsWith(SHUFFLE_ALL_PREFIX) -> buildPlayableItem(id = mediaId, title = "Shuffle")
             mediaId.startsWith(TRACK_PREFIX) -> {
                 // For individual tracks, return a minimal playable item
-                buildPlayableItem(id = mediaId, title = mediaId.removePrefix(TRACK_PREFIX))
+                buildPlayableItem(id = mediaId, title = mediaId.substringBefore(IN_COLLECTION).removePrefix(TRACK_PREFIX))
             }
             mediaId.startsWith(ALBUM_PREFIX) -> {
                 buildBrowsableItem(id = mediaId, title = mediaId.removePrefix(ALBUM_PREFIX))
@@ -1872,7 +1977,7 @@ class ZonikMediaService : MediaLibraryService() {
                 buildPlayableItem(id = mediaId, title = mediaId.removePrefix(GENRE_PREFIX))
             }
             mediaId.startsWith(PLAYLIST_PREFIX) -> {
-                buildBrowsableItem(id = mediaId, title = mediaId.removePrefix(PLAYLIST_PREFIX))
+                withPlayable(buildBrowsableItem(id = mediaId, title = mediaId.removePrefix(PLAYLIST_PREFIX)))
             }
             else -> null
         }
