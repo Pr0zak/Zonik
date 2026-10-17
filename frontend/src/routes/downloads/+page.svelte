@@ -166,6 +166,7 @@
 		'dl:manual': 'Manual',
 	};
 	function sourceLabel(job) {
+		if (!job?.card) return '';
 		return SOURCE_LABELS[job.card] || '';
 	}
 
@@ -180,7 +181,8 @@
 	}
 
 	function getSearchQueryForJob(job) {
-		const t = parseJobTracks(job)?.[0] || jobDetails[job.id]?.[0];
+		if (!job) return '';
+		const t = parseJobTracks(job)?.[0] || (job.id ? jobDetails[job.id]?.[0] : null);
 		if (t?.artist && t?.track) return `${t.artist} - ${t.track}`;
 		if (job.description) {
 			return formatJobTitle(job.description).replace(/\s*—\s*/, ' - ');
@@ -189,7 +191,7 @@
 	}
 
 	function friendlyFailure(job, jobResult) {
-		const raw = jobResult?.last_error || jobResult?.message || jobResult?.error || jobDetails[job.id]?.[0]?.error || '';
+		const raw = jobResult?.last_error || jobResult?.message || jobResult?.error || (job?.id ? jobDetails[job.id]?.[0]?.error : '') || '';
 		const rawLower = raw.toLowerCase();
 
 		if (!raw) {
@@ -261,6 +263,15 @@
 	}
 
 	function friendlyStatus(job, transfer) {
+		if (!job) {
+			if (transfer) {
+				const s = transfer.state;
+				if (s === 'transferring' || s === 'connected') return 'downloading';
+				if (s === 'queued' || s === 'requested') return 'queued';
+				return s;
+			}
+			return 'downloading';
+		}
 		if (job.status === 'completed') return 'completed';
 		if (job.status === 'failed') return 'failed';
 		if (job.status === 'pending') return 'queued';
@@ -270,13 +281,13 @@
 			if (s === 'queued' || s === 'requested') return 'queued';
 			return s;
 		}
-		const tracks = parseJobTracks(job) || jobDetails[job.id];
+		const tracks = parseJobTracks(job) || (job.id ? jobDetails[job.id] : null);
 		if (tracks?.length) {
 			const t = tracks[0];
 			if (t.status === 'downloading' || t.status === 'transferring') return 'downloading';
 			if (t.status === 'queued') return 'queued';
 		}
-		const wsDesc = wsDescriptions[job.id] || job.description || '';
+		const wsDesc = (job.id ? wsDescriptions[job.id] : null) || job.description || '';
 		if (wsDesc.includes('Queued for') || wsDesc.startsWith('Queued:')) return 'queued';
 		if (wsDesc.includes('(attempt')) return 'downloading';
 		return 'searching';
@@ -1047,7 +1058,7 @@
 							{@const fname = tr?.filename?.split(/[/\\]/).pop() || ''}
 							{@const ext = fileExtension(fname)}
 							{@const rawTitle = formatJobTitle(job?.description || fname || 'Downloading file')}
-							{@const peer = tr?.username || jobDetails[job?.id]?.[0]?.username || ''}
+							{@const peer = tr?.username || (job?.id ? jobDetails[job.id]?.[0]?.username : '') || ''}
 							{@const progress = tr?.progress ?? (job?.total > 0 ? (job.progress / job.total) * 100 : 0)}
 							{@const speed = tr?.speed || 0}
 							{@const eta = tr?.eta_seconds || 0}
