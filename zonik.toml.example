@@ -29,8 +29,8 @@ transfer_max_minutes = 30
 # one show as "pending"), then each transfer attempt takes a transfer slot. On top
 # of that, only one file is ever queued with the same peer at a time.
 # Search pacing: the Soulseek server throttles clients that search in bursts.
-search_min_interval_s = 3.0
-searches_per_minute = 15
+search_min_interval_s = 8.0
+searches_per_minute = 6
 max_concurrent_searches = 3
 max_concurrent_downloads = 4
 preferred_formats = ["flac", "wav", "mp3"]
