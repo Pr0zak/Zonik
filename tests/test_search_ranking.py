@@ -215,3 +215,58 @@ async def test_fallback_album_search_when_track_fails():
     assert len(picked) == 1
     assert picked[0]["username"] == "alice"
 
+
+def test_title_matches_three_word_precision():
+    from backend.services.soulseek import title_matches
+    # Full match should pass
+    assert title_matches("Red Right Hand", "05 - Red Right Hand.flac")
+    assert title_matches("Red Right Hand", "Nick Cave & The Bad Seeds - Let Love In/05 - Red Right Hand.flac")
+    # Missing one of the 3 significant words should fail
+    assert not title_matches("Red Right Hand", "03 - Right Hand Man.flac")
+    assert not title_matches("Red Right Hand", "01 - Darker Lord's Right Hand.flac")
+
+
+@pytest.mark.asyncio
+async def test_search_soulseek_endpoint_fallback(monkeypatch):
+    from backend.api.download import search_soulseek, SearchRequest
+    from unittest.mock import AsyncMock
+
+    asked_queries = []
+
+    async def fake_search(query, timeout=25, max_responses=100):
+        asked_queries.append(query)
+        if query.lower() == "red right hand":
+            # Primary search produces 0 results (Soulseek token quirk)
+            return []
+        if "right hand" in query.lower() or "let love in" in query.lower():
+            return [
+                SearchResult(
+                    username="peer1",
+                    token="t",
+                    files=[FileInfo(filename="Nick Cave & The Bad Seeds\\05 - Red Right Hand.flac", size=45 * MB)],
+                    slots_free=True,
+                    avg_speed=5000000,
+                    queue_length=0,
+                )
+            ]
+        return []
+
+    mock_rep = AsyncMock()
+    mock_rep.get_score_adjustment.return_value = 0
+
+    fake_client = SimpleNamespace(
+        logged_in=True,
+        search=fake_search,
+        reputation=mock_rep,
+    )
+    monkeypatch.setattr("backend.soulseek.get_client", lambda: fake_client)
+    monkeypatch.setattr("backend.api.download.is_blacklisted", AsyncMock(return_value=None))
+    monkeypatch.setattr("backend.api.download.find_in_library", AsyncMock(return_value=None))
+
+    # Freeform search for "red right hand"
+    mock_db = AsyncMock()
+    res = await search_soulseek(SearchRequest(query="red right hand", timeout=5), db=mock_db)
+    assert res["count"] >= 1
+    assert any("Red Right Hand" in r["filename"] for r in res["results"])
+    assert any(q != "red right hand" for q in asked_queries)
+

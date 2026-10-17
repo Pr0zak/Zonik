@@ -214,15 +214,18 @@ def build_query_variants(artist: str, track: str, album: str | None = None) -> l
     q2 = f"{cleaned_artist} {cleaned_track}"
     if q2 != queries[0]:
         queries.append(q2)
+    if album:
+        cleaned_album = strip_track_extras(album)
+        if cleaned_album:
+            queries.append(f"{cleaned_artist} {cleaned_album}")
+    track_words = cleaned_track.split()
+    if len(track_words) >= 3:
+        queries.append(f"{cleaned_artist} {' '.join(track_words[-2:])}")
     if len(cleaned_track.split()) >= 2:
         queries.append(cleaned_track)
     first_artist = artist.split()[0] if artist.split() else artist
     if first_artist.lower() != cleaned_artist.lower():
         queries.append(f"{first_artist} {cleaned_track}")
-    if album:
-        cleaned_album = strip_track_extras(album)
-        if cleaned_album:
-            queries.append(f"{cleaned_artist} {cleaned_album}")
     out: list[str] = []
     for q in queries:
         if q not in out:

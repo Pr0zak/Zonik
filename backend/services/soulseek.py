@@ -126,7 +126,8 @@ def title_matches(track_title: str, filename: str) -> bool:
     matched = sum(1 for w in sig if w in hay)
     if len(sig) <= 2:
         return matched == len(sig)
-    return matched >= max(2, round(len(sig) * 0.8))
+    import math
+    return matched >= max(2, math.ceil(len(sig) * 0.8))
 
 
 def search_relevance_matches(artist: str, track: str, filename: str) -> bool:

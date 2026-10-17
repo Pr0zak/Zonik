@@ -321,6 +321,7 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
         # Native client — return all results
         query = f"{artist} {track}".strip()
         search_results = await client.search(query, timeout=req.timeout, max_responses=100)
+        log.warning(f"[search_soulseek] query='{query}' raw_results={len(search_results)} total_files={sum(len(sr.files) for sr in search_results)}")
 
         results = []
         users = set()
@@ -351,13 +352,126 @@ async def search_soulseek(req: SearchRequest, db: AsyncSession = Depends(get_db)
                     "queue_length": sr.queue_length,
                 })
 
+        if not results:
+            log.info(f"[search_soulseek] Primary query '{query}' yielded 0 results, running multi-strategy fallbacks")
+            resolved_artist = artist
+            resolved_track = track
+            resolved_album = None
+
+            # If track is empty and query is multi-word, attempt catalog resolution
+            if not resolved_track and resolved_artist:
+                try:
+                    from backend.services.catalog import search_catalog
+                    from backend.services.soulseek import normalize_text, words_match
+                    cat_res = await search_catalog(resolved_artist, limit=3)
+                    cat_tracks = cat_res.get("tracks", [])
+                    if cat_tracks:
+                        top = cat_tracks[0]
+                        q_words = [w for w in normalize_text(resolved_artist).split() if len(w) > 1]
+                        title_norm = normalize_text(top.get("title", ""))
+                        matched_words = sum(1 for w in q_words if w in title_norm)
+                        if matched_words >= max(1, len(q_words) // 2) or words_match(resolved_artist, top.get("title", "")):
+                            resolved_artist = top.get("artist") or resolved_artist
+                            resolved_track = top.get("title") or ""
+                            resolved_album = top.get("album")
+                            log.info(f"[search_soulseek] Catalog resolved '{artist}' -> artist='{resolved_artist}', track='{resolved_track}', album='{resolved_album}'")
+                except Exception as e:
+                    log.debug(f"[search_soulseek] Catalog resolution error: {e}")
+
+            # If artist and track are known, resolve album if missing
+            if resolved_artist and resolved_track and not resolved_album:
+                try:
+                    from backend.services.lastfm import get_track_info
+                    info = await get_track_info(resolved_artist, resolved_track)
+                    if info and info.get("album"):
+                        resolved_album = info["album"]
+                        log.info(f"[search_soulseek] Last.fm resolved album: '{resolved_album}'")
+                except Exception as e:
+                    log.debug(f"[search_soulseek] Last.fm album lookup error: {e}")
+
+            # Build fallback queries
+            from backend.soulseek.search import build_query_variants
+            from backend.services.soulseek import clean_artist_name, strip_track_extras, TITLE_STOPWORDS, normalize_text, words_match, search_relevance_matches
+            fallback_queries = []
+            if resolved_artist and resolved_track:
+                variants = build_query_variants(resolved_artist, resolved_track, album=resolved_album)
+                for v in variants:
+                    if v != query and v not in fallback_queries:
+                        fallback_queries.append(v)
+
+            # Token subsets for 3+ word queries (e.g. "red right hand" -> "right hand", "red right")
+            target_str = artist if not track else track
+            raw_words = [w for w in normalize_text(target_str).split() if len(w) > 1 and w not in TITLE_STOPWORDS and not w.isdigit()]
+            if len(raw_words) >= 3:
+                sub_end = " ".join(raw_words[-2:])
+                sub_start = " ".join(raw_words[:2])
+                if resolved_artist and resolved_artist != artist:
+                    c_art = clean_artist_name(resolved_artist)
+                    q_art_sub = f"{c_art} {sub_end}"
+                    if q_art_sub != query and q_art_sub not in fallback_queries:
+                        fallback_queries.append(q_art_sub)
+                if sub_end != query and sub_end not in fallback_queries:
+                    fallback_queries.append(sub_end)
+                if sub_start != query and sub_start not in fallback_queries:
+                    fallback_queries.append(sub_start)
+
+            # Execute fallback queries concurrently
+            if fallback_queries:
+                log.info(f"[search_soulseek] Running fallback queries: {fallback_queries[:4]}")
+                fb_timeout = min(req.timeout, 8)
+                fb_responses = await asyncio.gather(
+                    *(client.search(fq, timeout=fb_timeout, max_responses=50) for fq in fallback_queries[:4]),
+                    return_exceptions=True
+                )
+                seen_keys = set()
+                for resp in fb_responses:
+                    if isinstance(resp, BaseException) or not resp:
+                        continue
+                    for sr in resp:
+                        for fi in sr.files:
+                            fn = fi.filename
+                            key = (sr.username, fn)
+                            if key in seen_keys:
+                                continue
+                            ext = ""
+                            for e in [".flac", ".wav", ".alac", ".mp3", ".m4a", ".ogg", ".opus"]:
+                                if fn.lower().endswith(e):
+                                    ext = e[1:]
+                                    break
+                            if not ext or fi.size < min_size:
+                                continue
+                            if not search_relevance_matches(resolved_artist or artist, resolved_track or track, fn):
+                                continue
+                            seen_keys.add(key)
+                            users.add(sr.username)
+                            results.append({
+                                "username": sr.username,
+                                "filename": fn,
+                                "size": fi.size,
+                                "bitrate": fi.bitrate,
+                                "extension": ext,
+                                "slots_free": sr.slots_free,
+                                "speed": sr.avg_speed,
+                                "queue_length": sr.queue_length,
+                            })
+                if resolved_artist and resolved_track:
+                    artist, track = resolved_artist, resolved_track
+
         # Fetch reputation scores for sorting (recently-failed peers sort last)
         for r in results:
             r["rep_score"] = await client.reputation.get_score_adjustment(r["username"])
 
-        # Sort: reputation + format + slots + size
+        # Sort: artist match + format + reputation + slots + size
+        from backend.services.soulseek import clean_artist_name, words_match
         format_order = {"flac": 0, "wav": 1, "alac": 1, "mp3": 2, "m4a": 3, "ogg": 3, "opus": 3}
-        results.sort(key=lambda r: (format_order.get(r["extension"], 9), -r.get("rep_score", 0), not r["slots_free"], -r["size"]))
+        c_artist = clean_artist_name(artist) if artist else ""
+        results.sort(key=lambda r: (
+            0 if (c_artist and (words_match(c_artist, r["filename"]) or words_match(artist, r["filename"]))) else (1 if artist else 0),
+            format_order.get(r["extension"], 9),
+            -r.get("rep_score", 0),
+            not r["slots_free"],
+            -r["size"],
+        ))
 
         # Optional AI scoring
         from backend.config import get_settings
