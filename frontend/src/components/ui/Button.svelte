@@ -26,16 +26,19 @@
 		icon: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] rounded-md',
 	};
 
-	const sizes = {
+	let sizes = $derived({
 		sm: variant === 'icon' ? 'w-7 h-7' : 'px-2.5 py-1 text-xs gap-1.5',
 		md: variant === 'icon' ? 'w-8 h-8' : 'px-4 py-2 text-sm gap-2',
 		lg: variant === 'icon' ? 'w-10 h-10' : 'px-5 py-2.5 text-sm gap-2',
-	};
+	});
+
+	let variantClass = $derived(variants[variant] || variants.default);
+	let sizeClass = $derived(sizes[size] || sizes.md);
 </script>
 
 <button
 	{type}
-	class="{base} {variants[variant]} {sizes[size]} {className}"
+	class="{base} {variantClass} {sizeClass} {className}"
 	disabled={disabled || loading}
 	{onclick}
 	{...rest}
@@ -43,5 +46,5 @@
 	{#if loading}
 		<Loader2 class="w-4 h-4 animate-spin" />
 	{/if}
-	{@render children()}
+	{@render children?.()}
 </button>

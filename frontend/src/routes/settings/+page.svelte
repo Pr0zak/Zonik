@@ -521,21 +521,25 @@
 	     to be a single ~3,900px form; sections are deep-linkable as /settings#soulseek. -->
 	<div class="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-6 items-start">
 		<nav aria-label="Settings sections"
-			class="md:sticky md:top-0 flex md:flex-col gap-1 overflow-x-auto md:overflow-visible -mx-1 px-1 pb-1 md:pb-0">
+			class="md:sticky md:top-0 flex md:flex-col gap-1 overflow-x-auto md:overflow-visible bg-[var(--surface-container-low)] p-2 rounded-xl ghost-border">
 			{#each SECTION_GROUPS as group}
-				<p class="hidden md:block px-3 pt-3 pb-1 text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)]">{group}</p>
+				<p class="hidden md:block px-2.5 pt-2.5 pb-1 first:pt-1 text-[10px] font-mono font-semibold uppercase tracking-widest text-[var(--text-muted)]/80">{group}</p>
 				{#each SECTIONS.filter(x => x.group === group) as sec (sec.key)}
 					{@const st = sectionStatus(sec.key)}
+					{@const isActive = activeSection === sec.key}
 					<a href="#{sec.key}" onclick={(e) => { e.preventDefault(); showSection(sec.key); }}
-						aria-current={activeSection === sec.key ? 'page' : undefined}
-						class="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm whitespace-nowrap transition-colors
-							{activeSection === sec.key
-								? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]'
+						aria-current={isActive ? 'page' : undefined}
+						class="relative flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all
+							{isActive
+								? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm'
 								: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container)]'}">
+						{#if isActive}
+							<span class="hidden md:block absolute left-0 top-1/2 -translate-y-1/2 w-[2.5px] h-4 rounded-r bg-[var(--color-accent)]"></span>
+						{/if}
 						<span class="w-2 h-2 rounded-full flex-shrink-0 {STATUS_DOT[st.tone]}" aria-hidden="true"></span>
 						<span class="flex-1">{sec.label}</span>
 						{#if st.text}
-							<span class="hidden md:inline text-[11px] text-[var(--text-muted)]">{st.text}</span>
+							<span class="hidden md:inline text-[11px] font-mono text-[var(--text-muted)]">{st.text}</span>
 						{/if}
 					</a>
 				{/each}
@@ -545,57 +549,59 @@
 		<div class="min-w-0">
 		<div id="sec-library" class={activeSection === 'library' ? 'space-y-6' : 'hidden'}>
 		<!-- 1. Library & Storage -->
-		<Card padding="p-4">
+		<Card padding="p-5">
 			<div class="flex items-center justify-between mb-4">
 				<div class="flex items-center gap-3">
-					<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, var(--color-library) 15%, transparent)">
+					<div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: color-mix(in srgb, var(--color-library) 15%, transparent)">
 						<Music class="w-4 h-4" style="color: var(--color-library)" />
 					</div>
-					<h2 class="text-base font-semibold text-[var(--text-primary)]">Library & Storage</h2>
+					<div>
+						<h2 class="text-base font-semibold text-[var(--text-primary)]">Library &amp; Storage</h2>
+						<p class="text-xs text-[var(--text-muted)]">Core media directories, file naming rules, and P2P sharing</p>
+					</div>
 				</div>
+				<span class="hidden sm:inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono bg-[var(--surface-container-high)] text-[var(--text-muted)]">
+					zonik.toml
+				</span>
 			</div>
 
-			<div class="space-y-3 text-sm">
-				<div class="flex items-center justify-between">
-					<span class="text-[var(--text-secondary)]">Music Directory</span>
-					<span class="font-mono text-xs text-[var(--text-muted)]">Configured in zonik.toml</span>
-				</div>
-				{#if stats}
-					{#each [['Tracks', stats.tracks], ['Artists', stats.artists], ['Albums', stats.albums]] as [label, val]}
-						<div class="flex items-center justify-between">
-							<span class="text-[var(--text-secondary)]">{label}</span>
-							<span class="text-[var(--text-primary)] font-mono text-xs">{val?.toLocaleString()}</span>
+			{#if stats}
+				<div class="grid grid-cols-3 gap-3 mb-5">
+					{#each [['Tracks', stats.tracks, 'var(--color-library)'], ['Artists', stats.artists, 'var(--color-discover)'], ['Albums', stats.albums, 'var(--color-playlists)']] as [label, val, accent]}
+						<div class="rounded-xl bg-[var(--surface-container-high)]/70 p-3 ghost-border">
+							<p class="text-[11px] font-mono uppercase tracking-wider text-[var(--text-muted)]">{label}</p>
+							<p class="text-lg font-bold font-mono text-[var(--text-primary)] mt-0.5" style="color: {accent}">{val?.toLocaleString()}</p>
 						</div>
 					{/each}
-				{/if}
-			</div>
+				</div>
+			{/if}
 
-			<div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
 				<div>
-					<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">Download Directory</label>
+					<label class="block text-xs text-[var(--text-muted)] mb-1.5 font-mono uppercase tracking-wider">Download Directory</label>
 					<input type="text" bind:value={services.download_dir} oninput={markDirty}
 						placeholder="/music/Downloads" class={inputClass} />
 				</div>
 				<div>
-					<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">Cover Art Cache</label>
+					<label class="block text-xs text-[var(--text-muted)] mb-1.5 font-mono uppercase tracking-wider">Cover Art Cache</label>
 					<input type="text" bind:value={services.cover_cache_dir} oninput={markDirty}
 						placeholder="/opt/zonik/cache/covers" class={inputClass} />
 				</div>
 			</div>
 
-			<div class="mt-3">
-				<label class="block text-xs text-[var(--text-muted)] mb-1 font-mono uppercase tracking-wider">File Naming Scheme</label>
+			<div class="mt-3.5">
+				<label class="block text-xs text-[var(--text-muted)] mb-1.5 font-mono uppercase tracking-wider">File Naming Scheme</label>
 				<input type="text" bind:value={services.naming_scheme} oninput={markDirty}
 					placeholder={'{artist}/{album}/{track_number} - {title}'} class={inputClass} />
-				<p class="mt-1 text-xs text-[var(--text-disabled)]">
-					Variables: <code class="text-[var(--color-accent-light)]">{'{artist}'}</code>, <code class="text-[var(--color-accent-light)]">{'{album}'}</code>, <code class="text-[var(--color-accent-light)]">{'{track_number}'}</code>, <code class="text-[var(--color-accent-light)]">{'{title}'}</code> — used by Rename &amp; Sort
+				<p class="mt-1.5 text-xs text-[var(--text-disabled)]">
+					Variables: <code class="px-1 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--color-accent-light)]">{'{artist}'}</code>, <code class="px-1 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--color-accent-light)]">{'{album}'}</code>, <code class="px-1 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--color-accent-light)]">{'{track_number}'}</code>, <code class="px-1 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--color-accent-light)]">{'{title}'}</code> — used by Rename &amp; Sort
 				</p>
 			</div>
 
-			<div class="mt-4 flex items-center justify-between">
+			<div class="mt-4 pt-4 border-t border-white/[0.04] flex items-center justify-between gap-4">
 				<div>
-					<span class="text-sm text-[var(--text-secondary)]">Share Library</span>
-					<p class="text-xs text-[var(--text-disabled)]">Share your music library with Soulseek peers so others can browse and download from you</p>
+					<span class="text-sm font-medium text-[var(--text-primary)]">Share Library on Soulseek</span>
+					<p class="text-xs text-[var(--text-muted)] mt-0.5">Allow Soulseek peers to browse and download from your indexed music library</p>
 				</div>
 				<Toggle
 					checked={services.slsk_share_library}

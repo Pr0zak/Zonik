@@ -927,55 +927,98 @@
 		<!-- Processing Status -->
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
 			<Card padding="p-4">
-				<h3 class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider mb-2">Audio Analyzed</h3>
-				<p class="text-lg font-bold text-[var(--text-primary)]">{data.analyzed} <span class="text-sm text-[var(--text-muted)] font-normal">/ {data.tracks}</span></p>
+				<div class="flex items-center justify-between mb-2">
+					<h3 class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Audio Analyzed</h3>
+					{#if data.tracks > 0}
+						<span class="text-xs font-mono font-semibold text-[var(--color-accent-light)] bg-[var(--color-accent)]/15 px-2 py-0.5 rounded-full">
+							{(data.analyzed / data.tracks * 100).toFixed(1)}%
+						</span>
+					{/if}
+				</div>
+				<p class="text-xl font-bold text-[var(--text-primary)] font-mono">{data.analyzed.toLocaleString()} <span class="text-sm text-[var(--text-muted)] font-normal">/ {data.tracks.toLocaleString()}</span></p>
 				{#if data.tracks > 0}
-					<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+					<div class="mt-2.5 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
 						<div class="h-full bg-[var(--color-accent)] rounded-full transition-all" style="width: {(data.analyzed / data.tracks * 100).toFixed(1)}%"></div>
 					</div>
 				{/if}
 			</Card>
 			<Card padding="p-4">
-				<h3 class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider mb-2">Vibe Embeddings</h3>
-				<p class="text-lg font-bold text-[var(--text-primary)]">{data.embedded} <span class="text-sm text-[var(--text-muted)] font-normal">/ {data.tracks}</span></p>
+				<div class="flex items-center justify-between mb-2">
+					<h3 class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Vibe Embeddings</h3>
+					{#if data.tracks > 0}
+						<span class="text-xs font-mono font-semibold text-purple-300 bg-purple-500/15 px-2 py-0.5 rounded-full">
+							{(data.embedded / data.tracks * 100).toFixed(1)}%
+						</span>
+					{/if}
+				</div>
+				<p class="text-xl font-bold text-[var(--text-primary)] font-mono">{data.embedded.toLocaleString()} <span class="text-sm text-[var(--text-muted)] font-normal">/ {data.tracks.toLocaleString()}</span></p>
 				{#if data.tracks > 0}
-					<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
+					<div class="mt-2.5 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden">
 						<div class="h-full bg-purple-500 rounded-full transition-all" style="width: {(data.embedded / data.tracks * 100).toFixed(1)}%"></div>
 					</div>
 				{/if}
 			</Card>
-			<Card padding="p-4">
-				<h3 class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider mb-2">Playlists</h3>
-				<p class="text-lg font-bold text-[var(--text-primary)]">{data.playlists}</p>
+			<Card padding="p-4" class="flex flex-col justify-between">
+				<div class="flex items-center justify-between mb-2">
+					<h3 class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Curated Playlists</h3>
+					<a href="/playlists" class="text-xs text-[var(--color-playlists)] hover:underline font-medium">Manage →</a>
+				</div>
+				<p class="text-xl font-bold text-[var(--text-primary)] font-mono">{data.playlists} <span class="text-sm text-[var(--text-muted)] font-normal font-sans">active collections</span></p>
+				<div class="mt-2.5 flex items-center gap-2 text-xs text-[var(--text-muted)]">
+					<span class="inline-block w-2 h-2 rounded-full bg-[var(--color-playlists)]"></span>
+					<span>Smart &amp; manual playlists synced to clients</span>
+				</div>
 			</Card>
 		</div>
 
 		<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
 			<!-- Formats -->
-			<Card padding="p-4">
-				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Formats</h2>
-				<div class="space-y-2">
-					{#each Object.entries(data.formats).sort((a, b) => b[1] - a[1]) as [fmt, count]}
-						<div class="flex items-center gap-3 text-sm group">
-							<span class="w-16 text-right text-[var(--text-muted)] uppercase font-mono text-xs">{fmt}</span>
-							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
-								<div class="h-full {barColors.formats} rounded transition-colors" style="width: {barWidth(count, maxFmt)}"></div>
+			<Card padding="p-4" class="flex flex-col justify-between">
+				<div>
+					<div class="flex items-center justify-between mb-4">
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Formats</h2>
+						<span class="text-xs font-mono text-[var(--text-disabled)]">{Object.keys(data.formats).length} codecs</span>
+					</div>
+					<div class="space-y-2.5">
+						{#each Object.entries(data.formats).sort((a, b) => b[1] - a[1]) as [fmt, count]}
+							{@const pct = data.tracks ? ((count / data.tracks) * 100).toFixed(1) : '0.0'}
+							<div class="flex items-center gap-3 text-sm group">
+								<span class="w-14 text-right text-[var(--text-secondary)] uppercase font-mono text-xs font-semibold">{fmt}</span>
+								<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded-md overflow-hidden">
+									<div class="h-full {barColors.formats} rounded-md transition-colors" style="width: {barWidth(count, maxFmt)}"></div>
+								</div>
+								<span class="w-14 text-right text-[var(--text-primary)] text-xs font-mono">{count.toLocaleString()}</span>
+								<span class="w-11 text-right text-[var(--text-disabled)] text-[11px] font-mono">{pct}%</span>
 							</div>
-							<span class="w-12 text-right text-[var(--text-muted)] text-xs font-mono">{count}</span>
-						</div>
-					{/each}
+						{/each}
+					</div>
 				</div>
+				{#if data.tracks > 0}
+					{@const losslessCount = (data.formats.flac || 0) + (data.formats.wav || 0) + (data.formats.alac || 0) + (data.formats.aiff || 0)}
+					{@const losslessPct = ((losslessCount / data.tracks) * 100).toFixed(1)}
+					<div class="mt-6 pt-4 border-t border-white/[0.04]">
+						<div class="flex items-center justify-between text-xs mb-1.5">
+							<span class="text-emerald-400 font-medium">Lossless ({losslessPct}%)</span>
+							<span class="text-[var(--text-muted)]">Lossy ({(100 - parseFloat(losslessPct)).toFixed(1)}%)</span>
+						</div>
+						<div class="flex h-2 rounded-full overflow-hidden bg-[var(--surface-container-high)]">
+							<div class="bg-emerald-400 h-full" style="width: {losslessPct}%"></div>
+							<div class="bg-indigo-500/60 h-full flex-1"></div>
+						</div>
+					</div>
+				{/if}
 			</Card>
 
 			<!-- Top Artists -->
 			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Top Artists</h2>
 				<div class="space-y-2">
-					{#each data.top_artists as artist}
-						<div class="flex items-center gap-3 text-sm group">
+					{#each data.top_artists as artist, i}
+						<div class="flex items-center gap-2.5 text-sm group">
+							<span class="w-5 text-right text-[11px] font-mono text-[var(--text-disabled)]">{i + 1}</span>
 							<span class="w-32 truncate text-right text-[var(--text-body)]" title={artist.name}>{artist.name}</span>
-							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
-								<div class="h-full {barColors.artists} rounded transition-colors" style="width: {barWidth(artist.count, maxArt)}"></div>
+							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded-md overflow-hidden">
+								<div class="h-full {barColors.artists} rounded-md transition-colors" style="width: {barWidth(artist.count, maxArt)}"></div>
 							</div>
 							<span class="w-10 text-right text-[var(--text-muted)] text-xs font-mono">{artist.count}</span>
 						</div>
@@ -987,11 +1030,12 @@
 			<Card padding="p-4">
 				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-4">Top Genres</h2>
 				<div class="space-y-2">
-					{#each data.genres as genre}
-						<div class="flex items-center gap-3 text-sm group">
+					{#each data.genres as genre, i}
+						<div class="flex items-center gap-2.5 text-sm group">
+							<span class="w-5 text-right text-[11px] font-mono text-[var(--text-disabled)]">{i + 1}</span>
 							<span class="w-32 truncate text-right text-[var(--text-body)]" title={genre.name}>{genre.name}</span>
-							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded overflow-hidden">
-								<div class="h-full {barColors.genres} rounded transition-colors" style="width: {barWidth(genre.count, maxGenre)}"></div>
+							<div class="flex-1 h-5 bg-[var(--surface-container-high)] rounded-md overflow-hidden">
+								<div class="h-full {barColors.genres} rounded-md transition-colors" style="width: {barWidth(genre.count, maxGenre)}"></div>
 							</div>
 							<span class="w-10 text-right text-[var(--text-muted)] text-xs font-mono">{genre.count}</span>
 						</div>

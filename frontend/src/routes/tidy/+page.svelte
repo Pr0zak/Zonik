@@ -313,10 +313,10 @@
 	<Card>
 		<div class="flex flex-wrap items-center gap-3 mb-3">
 			<FilterPills value={filter} onchange={(v) => { filter = v; refilter(); }} options={[
-				{ value: 'move', label: 'To move', count: summary.status.move ?? 0 },
-				{ value: 'conflict', label: 'Conflicts', count: summary.status.conflict ?? 0 },
-				{ value: 'skip', label: 'Skipped', count: summary.status.skip ?? 0 },
-				{ value: 'unchanged', label: 'Already right', count: summary.status.unchanged ?? 0 },
+				{ value: 'move', label: 'To move', count: summary.status.move ?? 0, color: 'tidy' },
+				{ value: 'conflict', label: 'Conflicts', count: summary.status.conflict ?? 0, color: 'tidy' },
+				{ value: 'skip', label: 'Skipped', count: summary.status.skip ?? 0, color: 'tidy' },
+				{ value: 'unchanged', label: 'Already right', count: summary.status.unchanged ?? 0, color: 'tidy' },
 			]} />
 			<select class="{inputClass} !w-auto" bind:value={rule} onchange={refilter}>
 				<option value="">Every rule</option>
@@ -335,17 +335,25 @@
 			<p class="text-xs text-amber-300 flex items-center gap-1.5 mb-2"><AlertTriangle class="w-3.5 h-3.5" />Conflicts are left where they are. Most are duplicate copies; clearing them on the Duplicates page resolves them.</p>
 		{/if}
 
-		<div class="space-y-1">
+		<div class="space-y-1.5">
 			{#each rows as m (m.track_id)}
-				<div class="text-xs py-1.5 border-b border-[var(--border-subtle)] last:border-0">
-					<div class="flex items-center gap-2 mb-0.5">
-						<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[10px] text-[var(--text-muted)]">{RULES[m.rule] ?? m.rule}</span>
-						{#if m.status !== 'move'}<span class="text-[10px] {m.status === 'conflict' ? 'text-amber-400' : 'text-[var(--text-muted)]'}">{NOTES[m.status] ?? m.status}{m.note ? ` · ${m.note}` : ''}</span>{/if}
+				<div class="text-xs px-3 py-2 rounded-lg bg-[var(--surface-container-high)]/55 hover:bg-[var(--surface-container-high)] transition-colors">
+					<div class="flex items-center gap-2 mb-1">
+						<span class="px-2 py-0.5 rounded-md bg-[var(--surface-lowest)] font-medium text-[10px] text-[var(--text-secondary)]">{RULES[m.rule] ?? m.rule}</span>
+						{#if m.status !== 'move'}<span class="text-[10px] {m.status === 'conflict' ? 'text-amber-400 font-medium' : 'text-[var(--text-muted)]'}">{NOTES[m.status] ?? m.status}{m.note ? ` · ${m.note}` : ''}</span>{/if}
 						{#if m.favorite}<Heart class="w-3 h-3 text-red-400 fill-current" />{/if}
 						{#if m.playlists}<span class="text-[10px] text-[var(--text-muted)]">in {m.playlists} playlist{m.playlists > 1 ? 's' : ''}</span>{/if}
 					</div>
-					<div class="text-red-400 font-mono truncate" title={m.from}>- {m.from}</div>
-					{#if m.to !== m.from}<div class="text-emerald-400 font-mono truncate" title={m.to}>+ {m.to}</div>{/if}
+					<div class="flex items-center gap-2 text-red-300/90 font-mono truncate" title={m.from}>
+						<span class="w-3.5 text-center font-bold text-red-400 select-none">−</span>
+						<span class="truncate">{m.from}</span>
+					</div>
+					{#if m.to !== m.from}
+						<div class="flex items-center gap-2 text-emerald-300 font-mono truncate mt-0.5" title={m.to}>
+							<span class="w-3.5 text-center font-bold text-emerald-400 select-none">+</span>
+							<span class="truncate">{m.to}</span>
+						</div>
+					{/if}
 				</div>
 			{:else}
 				<p class="text-sm text-[var(--text-muted)] py-4">Nothing matches.</p>

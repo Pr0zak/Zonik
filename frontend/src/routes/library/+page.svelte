@@ -681,37 +681,27 @@
 		</ScheduleSection>
 	{/if}
 
-	<!-- Tabs row -->
-	<div class="flex items-center gap-1.5 mb-1 overflow-x-auto">
-		{#each tabs as t}
-			{@const Icon = t.icon}
-			<button onclick={() => switchTab(t.id)}
-				class="flex items-center gap-2 px-4 py-2 text-sm font-medium transition-all rounded-lg whitespace-nowrap
-					{tab === t.id
-						? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-ambient'
-						: 'text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--surface-container)]'}">
-				<Icon class="w-4 h-4" />
-				{t.label}
-			</button>
-		{/each}
-
-		<div class="flex-1"></div>
-
-		<!-- Search (desktop) -->
-		<div class="relative hidden sm:block">
-			<Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-disabled)]" />
-			<input type="text" placeholder="Search..."
-				bind:value={search} oninput={debouncedSearch}
-				class="bg-[var(--surface-lowest)] ghost-border rounded-lg pl-8 pr-3 py-1.5 text-sm w-48
-					placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
+	<!-- Unified Toolbar: Segmented Tabs + Search + Controls -->
+	<div class="flex flex-wrap items-center gap-2 mb-4 bg-[var(--surface-container-low)] p-1.5 rounded-xl ghost-border">
+		<!-- Segmented Tabs -->
+		<div class="flex items-center gap-1 bg-[var(--surface-lowest)] p-1 rounded-lg">
+			{#each tabs as t}
+				{@const Icon = t.icon}
+				{@const isActive = tab === t.id}
+				<button onclick={() => switchTab(t.id)}
+					class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold transition-all rounded-md whitespace-nowrap
+						{isActive
+							? 'bg-[var(--color-library)] text-white shadow-sm'
+							: 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}">
+					<Icon class="w-3.5 h-3.5" />
+					{t.label}
+				</button>
+			{/each}
 		</div>
-	</div>
 
-	<!-- Controls row: filters, per-page, view toggle, select -->
-	<div class="flex items-center gap-1.5 mb-4 mt-2 flex-wrap">
 		<!-- Active filter pills -->
 		{#if filterArtistId}
-			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] ghost-border rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-[var(--surface-container-high)] text-xs text-[var(--text-body)] ghost-border rounded-md px-2.5 py-1">
 				Artist: {filterArtistName}
 				<button onclick={() => { filterArtistId = ''; filterArtistName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -719,7 +709,7 @@
 			</span>
 		{/if}
 		{#if filterAlbumId}
-			<span class="inline-flex items-center gap-1 bg-[var(--surface-container)] text-xs text-[var(--text-body)] ghost-border rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-[var(--surface-container-high)] text-xs text-[var(--text-body)] ghost-border rounded-md px-2.5 py-1">
 				Album: {filterAlbumName}
 				<button onclick={() => { filterAlbumId = ''; filterAlbumName = ''; offset = 0; loadData(); }} class="text-[var(--text-muted)] hover:text-white ml-0.5">
 					<X class="w-3 h-3" />
@@ -727,7 +717,7 @@
 			</span>
 		{/if}
 		{#if flaggedFilter}
-			<span class="inline-flex items-center gap-1 bg-red-500/10 text-xs text-red-400 border border-red-500/30 rounded px-2 py-1">
+			<span class="inline-flex items-center gap-1 bg-red-500/15 text-xs text-red-400 border border-red-500/30 rounded-md px-2.5 py-1">
 				<Trash2 class="w-3 h-3" /> Flagged for Deletion
 				<button onclick={() => { flaggedFilter = false; offset = 0; loadData(); }} class="text-red-400/60 hover:text-red-300 ml-0.5">
 					<X class="w-3 h-3" />
@@ -737,22 +727,31 @@
 
 		<div class="flex-1"></div>
 
+		<!-- Search (desktop) -->
+		<div class="relative hidden sm:block">
+			<Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-disabled)]" />
+			<input type="text" placeholder="Filter {tab}..."
+				bind:value={search} oninput={debouncedSearch}
+				class="bg-[var(--surface-lowest)] ghost-border rounded-lg pl-8 pr-3 py-1.5 text-xs w-48 lg:w-56 text-[var(--text-body)]
+					placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" />
+		</div>
+
 		<!-- Per-page select -->
-		<select class="bg-[var(--surface-lowest)] text-[var(--text-body)] text-xs ghost-border rounded px-2 py-1 focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15" value={limit} onchange={(e) => handlePageChange(0, +e.target.value)}>
+		<select class="bg-[var(--surface-lowest)] text-[var(--text-secondary)] text-xs ghost-border rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-[var(--border-focus)]" value={limit} onchange={(e) => handlePageChange(0, +e.target.value)}>
 			{#each limitOptions as opt}
 				<option value={opt}>{opt}/page</option>
 			{/each}
 		</select>
 
 		<!-- View toggle -->
-		<div class="flex ghost-border rounded-md overflow-hidden">
-			<button onclick={() => viewMode = 'grid'}
-				class="p-2 sm:p-1.5 transition-colors {viewMode === 'grid' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
-				<Grid3x3 class="w-4 h-4" />
+		<div class="flex bg-[var(--surface-lowest)] p-0.5 rounded-lg ghost-border">
+			<button onclick={() => viewMode = 'grid'} title="Grid view"
+				class="p-1.5 rounded-md transition-colors {viewMode === 'grid' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+				<Grid3x3 class="w-3.5 h-3.5" />
 			</button>
-			<button onclick={() => viewMode = 'list'}
-				class="p-2 sm:p-1.5 transition-colors {viewMode === 'list' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
-				<List class="w-4 h-4" />
+			<button onclick={() => viewMode = 'list'} title="List view"
+				class="p-1.5 rounded-md transition-colors {viewMode === 'list' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">
+				<List class="w-3.5 h-3.5" />
 			</button>
 		</div>
 
@@ -760,9 +759,9 @@
 		{#if viewMode === 'list' && !$isMobile}
 			<div class="relative">
 				<button onclick={() => showColPicker = !showColPicker}
-					class="p-1.5 rounded-md transition-colors ghost-border {showColPicker ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
+					class="p-1.5 rounded-lg transition-colors ghost-border {showColPicker ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)]' : 'bg-[var(--surface-lowest)] text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}"
 					title="Toggle columns">
-					<Columns3 class="w-4 h-4" />
+					<Columns3 class="w-3.5 h-3.5" />
 				</button>
 				{#if showColPicker}
 					<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -852,25 +851,26 @@
 					{#each tracks as track}
 						<div class="group text-left transition-all">
 							<button class="w-full text-left" onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
-								<div class="relative aspect-square bg-[var(--surface-base)] rounded-lg overflow-hidden mb-2 ghost-border
+								<div class="relative aspect-square bg-[var(--surface-container)] rounded-xl overflow-hidden mb-2 ghost-border shadow-sm
 									{selectMode && selected.has(track.id) ? 'ring-2 ring-[var(--color-accent)]' : ''}">
+									<div class="flex items-center justify-center w-full h-full absolute inset-0"
+										style="background: radial-gradient(circle at 30% 30%, #2a283e, #151419 75%);">
+										<div class="w-16 h-16 rounded-full border border-white/10 bg-black/30 flex items-center justify-center">
+											<Disc3 class="w-7 h-7 text-[var(--color-library)]/60" />
+										</div>
+									</div>
 									{#if coverUrl(track.cover_art)}
-										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
-											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--surface-base)]">
-											<Music class="w-8 h-8 text-[var(--text-disabled)]" />
-										</div>
-									{:else}
-										<div class="flex items-center justify-center w-full h-full">
-											<Music class="w-8 h-8 text-[var(--text-disabled)]" />
-										</div>
+										<img src={coverUrl(track.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" loading="lazy"
+											onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 									{/if}
-									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-										<Play class="w-10 h-10 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center">
+										<div class="w-11 h-11 rounded-full bg-[var(--color-library)]/90 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all shadow-lg">
+											<Play class="w-5 h-5 ml-0.5" fill="currentColor" />
+										</div>
 									</div>
 									{#if track.format}
 										<div class="absolute top-1.5 right-1.5">
-											<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-black/60 text-white/80">{track.format}</span>
+											<span class="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-sm text-white/90 border border-white/10">{track.format}</span>
 										</div>
 									{/if}
 									{#if !track.analyzed}
@@ -931,11 +931,11 @@
 										{/if}
 									</div>
 								{/if}
-								<div class="w-10 h-10 rounded bg-[var(--surface-container)] overflow-hidden flex-shrink-0">
+								<div class="relative w-10 h-10 rounded bg-[var(--surface-container)] overflow-hidden flex-shrink-0">
+									<div class="flex items-center justify-center w-full h-full"><Music class="w-4 h-4 text-[var(--text-disabled)]" /></div>
 									{#if coverUrl(track.cover_art)}
-										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-									{:else}
-										<div class="flex items-center justify-center w-full h-full"><Music class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+										<img src={coverUrl(track.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 									{/if}
 								</div>
 								<div class="flex-1 min-w-0 text-left">
@@ -1000,11 +1000,11 @@
 								</td>
 							{/if}
 							<td class="px-3 py-2 w-10">
-								<div class="w-8 h-8 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+								<div class="relative w-8 h-8 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+									<div class="flex items-center justify-center w-full h-full"><Music class="w-4 h-4 text-[var(--text-disabled)]" /></div>
 									{#if coverUrl(track.cover_art)}
-										<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-									{:else}
-										<div class="flex items-center justify-center w-full h-full"><Music class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+										<img src={coverUrl(track.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 									{/if}
 								</div>
 							</td>
@@ -1100,11 +1100,11 @@
 				<ChevronLeft class="w-4 h-4" /> Back to Artists
 			</button>
 			<div class="flex items-center gap-4 mb-6">
-				<div class="w-20 h-20 rounded-full bg-[var(--surface-base)] overflow-hidden ghost-border flex-shrink-0">
+				<div class="relative w-20 h-20 rounded-full bg-[var(--surface-base)] overflow-hidden ghost-border flex-shrink-0">
+					<div class="flex items-center justify-center w-full h-full"><Users class="w-8 h-8 text-[var(--text-disabled)]" /></div>
 					{#if coverUrl(selectedArtist.cover_art)}
-						<img src={coverUrl(selectedArtist.cover_art)} alt="" class="w-full h-full object-cover" />
-					{:else}
-						<div class="flex items-center justify-center w-full h-full"><Users class="w-8 h-8 text-[var(--text-disabled)]" /></div>
+						<img src={coverUrl(selectedArtist.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover"
+							onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 					{/if}
 				</div>
 				<div class="flex-1">
@@ -1129,10 +1129,10 @@
 					{#each artistAlbums as album}
 						<button class="group text-left" onclick={() => openAlbum(album)}>
 							<div class="relative aspect-square bg-[var(--surface-base)] rounded-lg overflow-hidden mb-2 ghost-border">
+								<div class="flex items-center justify-center w-full h-full"><Disc3 class="w-8 h-8 text-[var(--text-disabled)]" /></div>
 								{#if coverUrl(album.cover_art)}
-									<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-								{:else}
-									<div class="flex items-center justify-center w-full h-full"><Disc3 class="w-8 h-8 text-[var(--text-disabled)]" /></div>
+									<img src={coverUrl(album.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+										onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 								{/if}
 								<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors"></div>
 							</div>
@@ -1151,11 +1151,11 @@
 							<div class="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface-container-high)] transition-colors group">
 								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => playTrack(track)}>
 									<span class="text-xs text-[var(--text-disabled)] font-mono w-6 text-right">{i + 1}</span>
-									<div class="w-8 h-8 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+									<div class="relative w-8 h-8 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+										<div class="flex items-center justify-center w-full h-full"><Music class="w-3 h-3 text-[var(--text-disabled)]" /></div>
 										{#if coverUrl(track.cover_art)}
-											<img src={coverUrl(track.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-										{:else}
-											<div class="flex items-center justify-center w-full h-full"><Music class="w-3 h-3 text-[var(--text-disabled)]" /></div>
+											<img src={coverUrl(track.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 										{/if}
 									</div>
 									<div class="flex-1 min-w-0">
@@ -1197,16 +1197,12 @@
 							<button class="w-full" onclick={() => openArtist(artist)}>
 								<div class="relative aspect-square bg-[var(--surface-base)] rounded-full overflow-hidden mb-2 ghost-border mx-auto
 									group-hover:border-[var(--color-accent)]/50 transition-colors">
+									<div class="flex items-center justify-center w-full h-full">
+										<Users class="w-8 h-8 text-[var(--text-disabled)]" />
+									</div>
 									{#if coverUrl(artist.cover_art)}
-										<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
-											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--surface-base)]">
-											<Users class="w-8 h-8 text-[var(--text-disabled)]" />
-										</div>
-									{:else}
-										<div class="flex items-center justify-center w-full h-full">
-											<Users class="w-8 h-8 text-[var(--text-disabled)]" />
-										</div>
+										<img src={coverUrl(artist.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 									{/if}
 								</div>
 							</button>
@@ -1227,11 +1223,11 @@
 						{#each artists as artist}
 							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors">
 								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => openArtist(artist)}>
-									<div class="w-10 h-10 rounded-full bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+									<div class="relative w-10 h-10 rounded-full bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+										<div class="flex items-center justify-center w-full h-full"><Users class="w-4 h-4 text-[var(--text-disabled)]" /></div>
 										{#if coverUrl(artist.cover_art)}
-											<img src={coverUrl(artist.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-										{:else}
-											<div class="flex items-center justify-center w-full h-full"><Users class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+											<img src={coverUrl(artist.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 										{/if}
 									</div>
 									<div class="flex-1 min-w-0">
@@ -1273,16 +1269,12 @@
 						<div class="group text-left">
 							<button class="w-full text-left" onclick={() => openAlbum(album)}>
 								<div class="relative aspect-square bg-[var(--surface-base)] rounded-lg overflow-hidden mb-2 ghost-border">
+									<div class="flex items-center justify-center w-full h-full">
+										<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
+									</div>
 									{#if coverUrl(album.cover_art)}
-										<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy"
-											onerror={(e) => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-										<div class="hidden items-center justify-center w-full h-full absolute inset-0 bg-[var(--surface-base)]">
-											<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
-										</div>
-									{:else}
-										<div class="flex items-center justify-center w-full h-full">
-											<Disc3 class="w-8 h-8 text-[var(--text-disabled)]" />
-										</div>
+										<img src={coverUrl(album.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 									{/if}
 									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors"></div>
 									{#if album.year}
@@ -1309,11 +1301,11 @@
 						{#each albums as album}
 							<div class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors">
 								<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => openAlbum(album)}>
-									<div class="w-10 h-10 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+									<div class="relative w-10 h-10 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+										<div class="flex items-center justify-center w-full h-full"><Disc3 class="w-4 h-4 text-[var(--text-disabled)]" /></div>
 										{#if coverUrl(album.cover_art)}
-											<img src={coverUrl(album.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
-										{:else}
-											<div class="flex items-center justify-center w-full h-full"><Disc3 class="w-4 h-4 text-[var(--text-disabled)]" /></div>
+											<img src={coverUrl(album.cover_art)} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 										{/if}
 									</div>
 									<div class="flex-1 min-w-0">
@@ -1613,9 +1605,13 @@
 	{#snippet children()}
 		{#if upgradeTrack}
 			<div class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-[var(--surface-base)]">
-				{#if coverUrl(upgradeTrack.id)}
-					<img src={coverUrl(upgradeTrack.id)} alt="" class="w-12 h-12 rounded object-cover" />
-				{/if}
+				<div class="relative w-12 h-12 rounded bg-[var(--surface-container)] overflow-hidden flex-shrink-0">
+					<div class="flex items-center justify-center w-full h-full"><Music class="w-5 h-5 text-[var(--text-disabled)]" /></div>
+					{#if coverUrl(upgradeTrack.cover_art || upgradeTrack.id)}
+						<img src={coverUrl(upgradeTrack.cover_art || upgradeTrack.id)} alt="" class="absolute inset-0 w-full h-full object-cover"
+							onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
+					{/if}
+				</div>
 				<div class="flex-1 min-w-0">
 					<p class="text-sm font-medium text-[var(--text-primary)] truncate">{upgradeTrack.title}</p>
 					<p class="text-xs text-[var(--text-muted)]">{upgradeTrack.artist_name || upgradeTrack.artist || 'Unknown'}</p>

@@ -866,15 +866,16 @@
 	{/if}
 
 	<!-- Tabs -->
-	<div class="flex gap-1.5 mb-4 overflow-x-auto pb-1 -mb-1">
+	<div class="inline-flex gap-1 mb-4 bg-[var(--surface-container-low)] p-1.5 rounded-xl ghost-border overflow-x-auto max-w-full">
 		{#each tabs as tab}
 			{@const Icon = tab.icon}
+			{@const isActive = activeTab === tab.key}
 			<button onclick={() => switchTab(tab.key)}
 				title={tab.title || tab.label} aria-label={tab.title || tab.label}
-				class="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap
-					{activeTab === tab.key
-						? 'bg-[var(--color-discover)] text-white'
-						: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-highest)]'}">
+				class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap
+					{isActive
+						? 'bg-[var(--color-discover)] text-white shadow-sm'
+						: 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-high)]'}">
 				<Icon class="w-3.5 h-3.5" />
 				{tab.label}
 			</button>
@@ -963,14 +964,18 @@
 					<button onclick={() => profileExpanded = !profileExpanded}
 						class="w-full flex items-center justify-between">
 						<div class="flex items-center gap-3">
-							<Sparkles class="w-4 h-4 text-[var(--color-discover)]" />
-							<span class="text-sm font-medium text-[var(--text-primary)]">Your Taste Profile</span>
+							<div class="w-7 h-7 rounded-lg flex items-center justify-center bg-[var(--color-discover)]/15">
+								<Sparkles class="w-3.5 h-3.5 text-[var(--color-discover)]" />
+							</div>
+							<span class="text-sm font-semibold text-[var(--text-primary)]">Your Taste Profile</span>
 							{#if recProfileComputedAt}
 								<span class="text-xs text-[var(--text-muted)] font-mono">{formatAge(recProfileComputedAt)}</span>
 							{/if}
 						</div>
-						<div class="flex items-center gap-3">
-							<span class="text-xs text-[var(--text-muted)]">{tasteProfile.track_count} tracks, {tasteProfile.favorite_count} favorites</span>
+						<div class="flex items-center gap-2">
+							<span class="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-xs font-mono bg-[var(--surface-container-high)] text-[var(--text-secondary)]">
+								{tasteProfile.track_count.toLocaleString()} tracks · {tasteProfile.favorite_count.toLocaleString()} ★
+							</span>
 							{#if profileExpanded}
 								<ChevronUp class="w-4 h-4 text-[var(--text-muted)]" />
 							{:else}
@@ -1049,7 +1054,7 @@
 			<Card padding="p-4" class="mb-4">
 				<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 					<div class="flex items-center gap-4">
-						<span class="text-2xl font-bold text-[var(--text-primary)]">{recTotal}</span>
+						<span class="text-2xl font-bold text-[var(--text-primary)] font-mono">{recTotal}</span>
 						<div class="flex flex-col">
 							<span class="text-xs text-[var(--text-muted)]">recommendations</span>
 							{#if recommendations.length && recommendations[0].created_at}
@@ -1091,7 +1096,7 @@
 				</div>
 				<!-- Stats bar -->
 				{#if recStats && recStats.total > 0}
-					<div class="flex items-center gap-3 text-xs flex-wrap">
+					<div class="flex items-center gap-3 text-xs flex-wrap mb-3">
 						<span class="text-[var(--text-muted)]">{recStats.total} recommended</span>
 						<span class="text-[var(--text-disabled)]">→</span>
 						<span class="text-[var(--color-downloads)]">{recStats.downloaded} downloaded</span>
@@ -1110,12 +1115,12 @@
 							{@const count = sourceFilterCount(sf.key)}
 							{#if count > 0 || sf.key === 'all'}
 								<button onclick={() => recFilter = sf.key}
-									class="px-2.5 py-1 rounded-full text-xs font-medium transition-colors
+									class="px-3 py-1 rounded-lg text-xs font-medium transition-colors
 										{recFilter === sf.key
-											? 'bg-[var(--color-discover)] text-white'
+											? 'bg-[var(--color-discover)] text-white shadow-sm'
 											: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-highest)]'}">
 									{sf.label}
-									<span class="ml-1 opacity-70">{count}</span>
+									<span class="ml-1 font-mono opacity-75">{count}</span>
 								</button>
 							{/if}
 						{/each}
@@ -1142,7 +1147,7 @@
 				</Card>
 			{:else if filteredRecs.length}
 				<Card padding="p-0">
-					<div class="space-y-0.5">
+					<div class="divide-y divide-white/[0.03]">
 						{#each filteredRecs as rec}
 							{@const recKey = `${rec.artist}::${rec.track}`.toLowerCase()}
 							{@const dlStatus = trackStatus[recKey] || null}
@@ -1150,13 +1155,14 @@
 								{rec.status === 'downloaded' ? 'bg-green-500/5' : ''}
 								{rec.feedback === 'thumbs_up' ? 'bg-green-500/5' : ''}">
 								<!-- Cover art -->
-								<div class="flex-shrink-0 w-10 h-10 rounded overflow-hidden bg-[var(--surface-container-high)] relative group">
+								<div class="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden bg-[var(--surface-container-high)] relative group ghost-border">
+									<div class="w-full h-full flex items-center justify-center"
+										style="background: radial-gradient(circle at 30% 30%, #2d2338, #141317 75%);">
+										<Music class="w-4 h-4 text-[var(--color-discover)]/60" />
+									</div>
 									{#if rec.image_url}
-										<img src={rec.image_url} alt="" class="w-full h-full object-cover" loading="lazy" />
-									{:else}
-										<div class="w-full h-full flex items-center justify-center">
-											<Music class="w-4 h-4 text-[var(--text-disabled)]" />
-										</div>
+										<img src={rec.image_url} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+											onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 									{/if}
 									{#if rec.preview_url}
 										<button onclick={() => togglePreview(rec)}
@@ -1172,11 +1178,11 @@
 
 								<!-- Score badge (clickable for breakdown). On phones it moves inline beside the
 								     title so the track info keeps its width. -->
-								<div class="hidden sm:block flex-shrink-0 w-12 text-center">
+								<div class="hidden sm:block flex-shrink-0 w-14 text-center">
 									<button onclick={() => expandedScoreId = expandedScoreId === rec.id ? null : rec.id}
-										class="inline-block px-2 py-0.5 rounded text-xs font-bold border cursor-pointer hover:opacity-80 transition-opacity {scoreBg(rec.score)} {scoreColor(rec.score)}"
+										class="inline-flex items-center justify-center px-2 py-1 rounded-md text-xs font-mono font-bold border cursor-pointer hover:opacity-80 transition-opacity {scoreBg(rec.score)} {scoreColor(rec.score)}"
 										title="Match score out of 100 — click for the breakdown">
-										{Math.round(rec.score * 100)}
+										{Math.round(rec.score * 100)}%
 									</button>
 								</div>
 
@@ -1184,19 +1190,19 @@
 								<div class="flex-1 min-w-0">
 									<div class="flex items-center gap-2 min-w-0">
 										<span class="font-medium text-sm text-[var(--text-primary)] truncate">{rec.track}</span>
-										<span class="hidden sm:inline text-xs text-[var(--text-muted)] px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] whitespace-nowrap">{sourceLabel(rec.source)}</span>
+										<span class="hidden sm:inline text-[11px] text-[var(--text-secondary)] px-2 py-0.5 rounded-full bg-[var(--surface-container-high)] whitespace-nowrap">{sourceLabel(rec.source)}</span>
 									</div>
 									<div class="flex items-center gap-2 mt-0.5 min-w-0">
 										<span class="text-xs text-[var(--text-secondary)] truncate">{rec.artist}</span>
 										{#if rec.lastfm_listeners}
-											<span class="hidden sm:inline text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">{rec.lastfm_listeners.toLocaleString()} listeners</span>
+											<span class="hidden sm:inline text-xs text-[var(--text-muted)] font-mono whitespace-nowrap">· {rec.lastfm_listeners.toLocaleString()} listeners</span>
 										{/if}
 									</div>
 									<!-- Phones: score and source share one compact line under the artist. -->
 									<div class="sm:hidden flex items-center gap-2 mt-1 text-xs">
 										<button onclick={() => expandedScoreId = expandedScoreId === rec.id ? null : rec.id}
-											class="px-1.5 rounded font-bold border {scoreBg(rec.score)} {scoreColor(rec.score)}"
-											title="Match score out of 100">{Math.round(rec.score * 100)}</button>
+											class="px-1.5 rounded font-mono font-bold border {scoreBg(rec.score)} {scoreColor(rec.score)}"
+											title="Match score out of 100">{Math.round(rec.score * 100)}%</button>
 										<span class="text-[var(--text-muted)] truncate">{sourceLabel(rec.source)}</span>
 									</div>
 									{#if rec.explanation}
@@ -1220,41 +1226,42 @@
 								</div>
 
 								<!-- Actions -->
-								<div class="flex items-center gap-0.5 sm:gap-1.5 flex-shrink-0">
+								<div class="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
 									{#if rec.status === 'downloaded' || dlStatus === 'completed'}
-										<span class="text-xs text-green-400 flex items-center gap-1">
+										<span class="text-xs text-green-400 flex items-center gap-1 px-2 py-1 rounded-md bg-green-500/10">
 											<Check class="w-3.5 h-3.5" /> <span class="hidden sm:inline">Downloaded</span>
 										</span>
 									{:else if dlStatus === 'downloading' || dlStatus === 'queued'}
-										<span class="text-xs text-blue-400 flex items-center gap-1">
+										<span class="text-xs text-blue-400 flex items-center gap-1 px-2 py-1 rounded-md bg-blue-500/10">
 											<Loader2 class="w-3.5 h-3.5 animate-spin" />
 											<span class="hidden sm:inline">{dlStatus === 'queued' ? 'Queued' : 'Downloading'}</span>
 										</span>
 									{:else if dlStatus === 'failed'}
-										<button onclick={() => downloadRec(rec)} class="text-xs text-red-400 hover:text-red-300 underline min-w-[44px] min-h-[44px] flex items-center justify-center">retry</button>
+										<button onclick={() => downloadRec(rec)} class="text-xs text-red-400 hover:text-red-300 underline px-2 py-1">retry</button>
 									{:else}
 										<button onclick={() => downloadRec(rec)}
-											class="min-w-[44px] min-h-[44px] flex items-center justify-center rounded hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
-											title="Download">
-											<Download class="w-4 h-4" />
+											class="px-2.5 py-1.5 flex items-center gap-1.5 rounded-lg bg-[var(--surface-container-high)] hover:bg-emerald-500/20 text-[var(--text-secondary)] hover:text-emerald-400 text-xs font-medium transition-colors"
+											title="Download track">
+											<Download class="w-3.5 h-3.5" />
+											<span class="hidden md:inline">Get</span>
 										</button>
 									{/if}
 
 									<button onclick={() => explainRec(rec)}
-									class="hidden sm:inline-flex p-1.5 rounded hover:bg-amber-500/20 text-[var(--text-muted)] hover:text-amber-400 transition-colors"
-									title="Why this?">
-									<HelpCircle class="w-4 h-4" />
-								</button>
-								{#if rec.feedback === 'thumbs_up'}
+										class="hidden sm:inline-flex p-1.5 rounded-lg hover:bg-amber-500/20 text-[var(--text-muted)] hover:text-amber-400 transition-colors"
+										title="Why this?">
+										<HelpCircle class="w-4 h-4" />
+									</button>
+									{#if rec.feedback === 'thumbs_up'}
 										<span class="p-1.5 text-green-400"><ThumbsUp class="w-4 h-4" /></span>
 									{:else if rec.feedback !== 'thumbs_down'}
 										<button onclick={() => recFeedback(rec, 'thumbs_up')}
-											class="p-1.5 rounded hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
+											class="p-1.5 rounded-lg hover:bg-green-500/20 text-[var(--text-muted)] hover:text-green-400 transition-colors"
 											title="Like">
 											<ThumbsUp class="w-4 h-4" />
 										</button>
 										<button onclick={() => recFeedback(rec, 'thumbs_down')}
-											class="p-1.5 rounded hover:bg-red-500/20 text-[var(--text-muted)] hover:text-red-400 transition-colors"
+											class="p-1.5 rounded-lg hover:bg-red-500/20 text-[var(--text-muted)] hover:text-red-400 transition-colors"
 											title="Not for me">
 											<ThumbsDown class="w-4 h-4" />
 										</button>
@@ -1353,12 +1360,12 @@
 								<div class="flex items-center gap-3">
 									<button onclick={() => playPreview(art?.preview, tKey)}
 										class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+										<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
+											<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+										</div>
 										{#if art?.image}
-											<img src={art.image} alt="" class="w-full h-full object-cover" />
-										{:else}
-											<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
-												<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-											</div>
+											<img src={art.image} alt="" class="absolute inset-0 w-full h-full object-cover"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 										{/if}
 										{#if art?.preview}
 											<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
@@ -1464,12 +1471,12 @@
 								<div class="flex items-center gap-3">
 									<button onclick={() => playPreview(art?.preview, tKey)}
 										class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+										<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
+											<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+										</div>
 										{#if art?.image}
-											<img src={art.image} alt="" class="w-full h-full object-cover" />
-										{:else}
-											<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
-												<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-											</div>
+											<img src={art.image} alt="" class="absolute inset-0 w-full h-full object-cover"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 										{/if}
 										{#if art?.preview}
 											<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === tKey ? 'opacity-100' : ''}">
@@ -1629,9 +1636,18 @@
 					<div class="space-y-0.5">
 						{#each similarArtists as a}
 							<div class="px-4 py-3 flex items-center justify-between hover:bg-[var(--surface-container-high)] transition-colors">
-								<div>
-									<span class="font-medium text-[var(--text-primary)]">{a.name}</span>
-									<span class="text-xs text-[var(--text-muted)] ml-2 font-mono">similar to {a.source_artist}</span>
+								<div class="flex items-center gap-3 min-w-0">
+									<div class="relative w-8 h-8 rounded-full bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0 overflow-hidden">
+										<Users class="w-4 h-4 text-[var(--text-disabled)]" />
+										{#if a.image_url || a.image || a.cover_url || a.cover_art}
+											<img src={a.image_url || a.image || a.cover_url || a.cover_art} alt="" class="absolute inset-0 w-full h-full object-cover" loading="lazy"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
+										{/if}
+									</div>
+									<div class="min-w-0">
+										<span class="font-medium text-[var(--text-primary)] truncate">{a.name}</span>
+										<span class="text-xs text-[var(--text-muted)] ml-2 font-mono">similar to {a.source_artist}</span>
+									</div>
 								</div>
 								<div class="flex items-center gap-2">
 									{#if a.in_library}
@@ -1750,12 +1766,12 @@
 								<div class="flex items-center gap-3">
 									<button onclick={() => playPreview(art?.preview, key)}
 										class="relative w-8 h-8 rounded overflow-hidden flex-shrink-0 group" disabled={!art?.preview}>
+										<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
+											<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+										</div>
 										{#if art?.image}
-											<img src={art.image} alt="" class="w-full h-full object-cover" />
-										{:else}
-											<div class="w-full h-full bg-[var(--surface-container)] flex items-center justify-center">
-												<Music class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
-											</div>
+											<img src={art.image} alt="" class="absolute inset-0 w-full h-full object-cover"
+												onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
 										{/if}
 										{#if art?.preview}
 											<div class="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity {previewKey === key ? 'opacity-100' : ''}">

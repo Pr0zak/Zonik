@@ -10,7 +10,7 @@
 	let hover = $state(null); // { label, count, x, y } | null
 
 	// --- wrapper measurement (fill the ~72vh relative container) ---
-	let wrap;
+	let wrap = $state(null);
 	let cellPx = $state(13); // computed square size in px (incl. gap budget)
 	let ro;
 

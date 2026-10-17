@@ -212,9 +212,9 @@
 
 	<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
 		<FilterPills value={filter} onchange={(v) => (filter = v)} options={[
-			{ value: 'all', label: 'All', count: effects.length },
-			{ value: 'on', label: 'On', count: onCount },
-			{ value: 'off', label: 'Off', count: effects.length - onCount },
+			{ value: 'all', label: 'All', count: effects.length, color: 'visualizer' },
+			{ value: 'on', label: 'On', count: onCount, color: 'visualizer' },
+			{ value: 'off', label: 'Off', count: effects.length - onCount, color: 'visualizer' },
 		]} />
 		<div class="flex items-center gap-2 flex-shrink-0">
 			<select class="{inputClass} !w-auto" bind:value={sort}>
@@ -245,12 +245,20 @@
 
 	{#each sections as section (section.title)}
 		{#if section.title}
-			<div class="flex items-center justify-between mt-6 mb-2">
-				<h2 class="text-sm font-semibold text-[var(--text-primary)]">{section.title}
-					<span class="text-[var(--text-muted)] font-normal">{section.items.length}</span></h2>
+			<div class="flex items-center justify-between mt-6 mb-2.5">
+				<div class="flex items-center gap-2">
+					<h2 class="text-sm font-semibold text-[var(--text-primary)]">{section.title}</h2>
+					<span class="text-xs font-mono px-1.5 py-0.5 rounded-full bg-[var(--surface-container-high)] text-[var(--text-muted)]">{section.items.length}</span>
+				</div>
 				<div class="flex gap-1.5">
-					<Button variant="ghost" size="sm" onclick={() => setGroup(section.items, true)}>All on</Button>
-					<Button variant="ghost" size="sm" onclick={() => setGroup(section.items, false)}>All off</Button>
+					<button onclick={() => setGroup(section.items, true)}
+						class="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-highest)] transition-colors">
+						All on
+					</button>
+					<button onclick={() => setGroup(section.items, false)}
+						class="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--surface-container)] text-[var(--text-muted)] hover:text-white hover:bg-[var(--surface-container-high)] transition-colors">
+						All off
+					</button>
 				</div>
 			</div>
 		{/if}
@@ -258,22 +266,26 @@
 			{#each section.items as e (e.id)}
 				{@const st = stats?.effects[e.id]}
 				{@const isOn = !off.has(e.id)}
-				<div class="bg-[var(--surface-container)] rounded-lg overflow-hidden transition-opacity {isOn ? '' : 'opacity-45'}">
-					<button class="block w-full aspect-video bg-black" onclick={() => (enlarged = e)} title="Show larger">
+				<div class="bg-[var(--surface-container)] rounded-xl overflow-hidden ghost-border transition-all {isOn ? 'hover:bg-[var(--surface-container-high)]' : 'opacity-45'}">
+					<button class="block w-full aspect-video bg-black relative group" onclick={() => (enlarged = e)} title="Show larger">
 						<canvas width="320" height="180" class="w-full h-full block" use:preview={e.id}></canvas>
+						{#if st?.fps != null}
+							<span class="absolute top-1.5 right-1.5 text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-sm {st.fps < LOW_FPS ? 'text-red-400' : 'text-emerald-400'}">
+								{st.fps} fps
+							</span>
+						{/if}
 					</button>
 					<div class="p-2.5">
 						<div class="flex items-center justify-between gap-2">
 							<span class="text-sm font-medium text-[var(--text-primary)] truncate">{e.label}</span>
 							<Toggle size="sm" checked={isOn} color={COLOR} onchange={(v) => setEffect(e.id, v)} />
 						</div>
-						<p class="text-[11px] text-[var(--text-muted)] mt-0.5 truncate">
+						<p class="text-[11px] text-[var(--text-muted)] mt-0.5 truncate font-mono">
 							{#if st}
-								<span class={st.fps != null && st.fps < LOW_FPS ? 'text-[var(--color-error)]' : ''}>{st.fps ?? '–'} fps</span>
-								· {fmtDuration(st.seconds)} · {st.shows}×
-								{#if st.kicks_per_min != null}· {Math.round(st.kicks_per_min)} kicks/min{/if}
+								{fmtDuration(st.seconds)} · {st.shows}×
+								{#if st.kicks_per_min != null}· {Math.round(st.kicks_per_min)} bpm{/if}
 							{:else}
-								Not shown yet
+								<span class="font-sans">Not shown yet</span>
 							{/if}
 						</p>
 					</div>

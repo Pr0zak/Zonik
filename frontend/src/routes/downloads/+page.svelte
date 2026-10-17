@@ -119,7 +119,7 @@
 	const PAGE_LIMIT = 20;
 
 	let hiddenJobIds = $state(new Set(
-		JSON.parse(localStorage.getItem('hiddenDownloadJobs') || '[]')
+		typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem('hiddenDownloadJobs') || '[]') : []
 	));
 
 	const STATUS_PRIORITY = { pending: 0, running: 1, completed: 2, failed: 3 };
@@ -605,9 +605,9 @@
 	<PageHeader title="Downloads" icon={Download} color="var(--color-downloads)" />
 
 	<!-- Search Bar -->
-	<div class="flex gap-3 mb-6">
+	<div class="flex gap-2.5 mb-6">
 		<div class="flex-1 relative">
-			<Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
+			<Search class="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-disabled)]" />
 			<input type="text" placeholder="Search P2P network... (e.g. Artist - Track)" bind:value={searchQuery} onkeydown={handleKeydown}
 				class="w-full bg-[var(--surface-base)] ghost-border rounded-lg pl-10 pr-4 py-2.5 text-sm text-[var(--text-body)]
 					placeholder-[var(--text-disabled)] focus:outline-none focus:ring-1 focus:border-[var(--color-downloads)]/50 focus:ring-[var(--color-downloads)]/20" />
@@ -616,8 +616,9 @@
 			<Search class="w-3.5 h-3.5" />
 			Search
 		</Button>
-		<Button variant="success" disabled={!searchQuery.trim()} onclick={autoDownload} title="Auto-pick best result">
+		<Button variant="success" disabled={!searchQuery.trim()} onclick={autoDownload} title="Auto-pick and download best match">
 			<Zap class="w-3.5 h-3.5" />
+			<span class="hidden sm:inline">Auto-Pick</span>
 		</Button>
 	</div>
 

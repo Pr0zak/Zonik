@@ -42,7 +42,13 @@
 
 <div class="flex items-center gap-3 py-2">
 	<!-- Toggle -->
-	<button onclick={onToggle}
+	<button
+		type="button"
+		role="switch"
+		aria-checked={enabled}
+		aria-label={label ? `Toggle ${label}` : 'Toggle schedule'}
+		title={label ? `${enabled ? 'Disable' : 'Enable'} ${label}` : (enabled ? 'Disable schedule' : 'Enable schedule')}
+		onclick={onToggle}
 		class="w-8 h-5 rounded-full transition-colors relative flex-shrink-0
 			{enabled ? 'bg-[var(--color-accent)]' : 'bg-[var(--border-interactive)]'}">
 		<span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow-sm
@@ -70,10 +76,13 @@
 
 	<!-- Auto-download toggle (inline) -->
 	{#if onToggleAutoDownload}
-		<button onclick={onToggleAutoDownload}
+		<button
+			type="button"
+			onclick={onToggleAutoDownload}
 			class="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium transition-colors flex-shrink-0
 				{autoDownload ? 'bg-green-500/15 text-green-400' : 'bg-[var(--surface-container-high)] text-[var(--text-disabled)] hover:text-[var(--text-muted)]'}"
-			title="{autoDownload ? 'Auto-download enabled — missing tracks will be downloaded after scan' : 'Enable auto-download of missing tracks after scan'}">
+			title="{autoDownload ? 'Auto-download enabled — missing tracks will be downloaded after scan' : 'Enable auto-download of missing tracks after scan'}"
+			aria-label="{autoDownload ? 'Auto-download enabled — missing tracks will be downloaded after scan' : 'Enable auto-download of missing tracks after scan'}">
 			<Download class="w-3 h-3" />
 			Auto
 		</button>
@@ -82,6 +91,7 @@
 	<div class="flex items-center gap-2 ml-auto flex-shrink-0">
 		<!-- Interval -->
 		<select value={intervalHours}
+			aria-label="Interval"
 			onchange={(e) => onUpdate({ interval_hours: parseInt(e.target.value) })}
 			class="bg-[var(--surface-lowest)] ghost-border rounded px-1.5 py-1 text-xs text-[var(--text-body)] focus:outline-none">
 			{#each intervalOptions as opt}
@@ -91,12 +101,14 @@
 
 		<!-- Time -->
 		<input type="time" value={runAt || ''}
+			aria-label="Run time"
 			onchange={(e) => onUpdate({ run_at: e.target.value })}
 			class="bg-[var(--surface-lowest)] ghost-border rounded px-1.5 py-1 text-xs text-[var(--text-body)] w-[70px] focus:outline-none" />
 
 		<!-- Day of week (for weekly tasks) -->
 		{#if dayOfWeek !== null && dayOfWeek !== undefined}
 			<select value={dayOfWeek}
+				aria-label="Day of week"
 				onchange={(e) => onUpdate({ day_of_week: parseInt(e.target.value) })}
 				class="bg-[var(--surface-lowest)] ghost-border rounded px-1.5 py-1 text-xs text-[var(--text-body)] focus:outline-none">
 				{#each dayOptions as opt}
@@ -110,11 +122,19 @@
 			<input type="number" value={count} min="1" max="1000"
 				onchange={(e) => onUpdate({ count: parseInt(e.target.value) })}
 				class="bg-[var(--surface-lowest)] ghost-border rounded px-1.5 py-1 text-xs text-[var(--text-body)] w-14 focus:outline-none"
-				title={countLabel} />
+				title={countLabel}
+				aria-label={countLabel} />
 		{/if}
 
 		<!-- Run -->
-		<Button variant="default" size="sm" loading={running} onclick={onRun}>
+		<Button
+			variant="default"
+			size="sm"
+			loading={running}
+			onclick={onRun}
+			title={label ? `Run ${label} now` : 'Run task now'}
+			aria-label={label ? `Run ${label} now` : 'Run task now'}
+		>
 			<Play class="w-3 h-3" />
 		</Button>
 	</div>

@@ -362,14 +362,14 @@
 				</select>
 			{/snippet}
 			{#snippet row2Left()}
-				<span class="text-[var(--text-secondary)] font-medium">{selected.size} selected</span>
-				<button onclick={selectAllInferior} class="text-[var(--color-accent)] hover:underline whitespace-nowrap">Select Inferior</button>
-				<button onclick={deselectAll} class="text-[var(--text-muted)] hover:underline whitespace-nowrap">Deselect</button>
+				<span class="text-xs text-[var(--text-secondary)] font-mono font-medium mr-1">{selected.size} selected</span>
+				<button onclick={selectAllInferior} class="px-2.5 py-1 rounded-md text-xs font-medium bg-[var(--color-accent)]/15 text-[var(--color-accent-light)] hover:bg-[var(--color-accent)]/25 transition-colors whitespace-nowrap">Select Inferior</button>
+				<button onclick={deselectAll} class="px-2.5 py-1 rounded-md text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors whitespace-nowrap">Deselect</button>
 				<span class="text-[var(--text-disabled)] hidden sm:inline">&middot;</span>
-				<button onclick={expandAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
+				<button onclick={expandAll} class="px-2.5 py-1 rounded-md text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors flex items-center gap-1 whitespace-nowrap">
 					<ChevronsDown class="w-3 h-3" /> Expand
 				</button>
-				<button onclick={collapseAll} class="text-[var(--text-secondary)] hover:underline flex items-center gap-0.5 whitespace-nowrap">
+				<button onclick={collapseAll} class="px-2.5 py-1 rounded-md text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors flex items-center gap-1 whitespace-nowrap">
 					<ChevronsUp class="w-3 h-3" /> Collapse
 				</button>
 			{/snippet}
@@ -405,30 +405,30 @@
 						class="w-full flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors text-left">
 						{#if group.tracks[0]?.album_id}
 							<img src="/rest/getCoverArt?id={group.tracks[0].album_id}&size=56" alt=""
-								class="w-12 h-12 rounded object-cover flex-shrink-0 bg-[var(--surface-container)]"
+								class="w-12 h-12 rounded-lg object-cover flex-shrink-0 bg-[var(--surface-container)] ghost-border"
 								onerror={(e) => e.target.style.display='none'} />
 						{:else}
-							<div class="w-12 h-12 rounded bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0">
+							<div class="w-12 h-12 rounded-lg bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0 ghost-border">
 								<Music class="w-6 h-6 text-[var(--text-disabled)]" />
 							</div>
 						{/if}
 						<div class="flex-1 min-w-0">
-							<p class="text-base font-semibold text-[var(--text-primary)] truncate">{group.artist} — {group.title}</p>
-							<p class="text-sm text-[var(--text-muted)]">
+							<p class="text-sm sm:text-base font-semibold text-[var(--text-primary)] truncate">{group.artist} — {group.title}</p>
+							<p class="text-xs sm:text-sm text-[var(--text-muted)] mt-0.5">
 								{group.count} copies
 								{#if group.best_format && group.worst_format && group.best_format !== group.worst_format}
 									<span class="mx-1.5 text-[var(--text-disabled)]">&middot;</span>
 									<span class="font-mono text-xs">
-										<span class="text-emerald-400">{group.best_format.toUpperCase()}{#if group.best_bitrate} {Math.round(group.best_bitrate / 1000)}k{/if}</span>
-										<span class="text-[var(--text-disabled)]"> vs </span>
-										<span class="text-red-400">{group.worst_format.toUpperCase()}{#if group.worst_bitrate} {Math.round(group.worst_bitrate / 1000)}k{/if}</span>
+										<span class="text-emerald-400 font-medium">{group.best_format.toUpperCase()}{group.best_bitrate ? ` ${Math.round(group.best_bitrate / 1000)}k` : ''}</span>
+										<span class="text-[var(--text-disabled)] mx-1">vs</span>
+										<span class="text-red-400 font-medium">{group.worst_format.toUpperCase()}{group.worst_bitrate ? ` ${Math.round(group.worst_bitrate / 1000)}k` : ''}</span>
 									</span>
 								{:else if group.best_bitrate && group.worst_bitrate && group.best_bitrate > group.worst_bitrate * 2}
 									<span class="mx-1.5 text-[var(--text-disabled)]">&middot;</span>
 									<span class="font-mono text-xs">
-										<span class="text-emerald-400">{Math.round(group.best_bitrate / 1000)}k</span>
-										<span class="text-[var(--text-disabled)]"> vs </span>
-										<span class="text-red-400">{Math.round(group.worst_bitrate / 1000)}k</span>
+										<span class="text-emerald-400 font-medium">{Math.round(group.best_bitrate / 1000)}k</span>
+										<span class="text-[var(--text-disabled)] mx-1">vs</span>
+										<span class="text-red-400 font-medium">{Math.round(group.worst_bitrate / 1000)}k</span>
 									</span>
 								{/if}
 							</p>

@@ -562,23 +562,35 @@
 	{:else if playlists.length}
 		<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 			{#each playlists as playlist}
+				{@const isSmart = /^(Weekly|Favorites|Unfavorites|Daily|Top)/i.test(playlist.name)}
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div onclick={() => openPlaylist(playlist)}>
 					<Card hover padding="p-4" class="cursor-pointer group">
-						<div class="flex items-center gap-3">
-							{#if coverUrl(playlist.cover_art)}
-								<img src={coverUrl(playlist.cover_art, 96)} alt="" loading="lazy"
-									class="w-12 h-12 rounded-lg object-cover flex-shrink-0 bg-[var(--surface-container)]" />
-							{:else}
-								<div class="w-12 h-12 rounded-lg bg-[var(--surface-container)] flex items-center justify-center flex-shrink-0 group-hover:bg-amber-500/10 transition-colors">
-									<ListMusic class="w-5 h-5 text-[var(--text-disabled)] group-hover:text-amber-400 transition-colors" />
+						<div class="flex items-center gap-3.5">
+							<div class="relative w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 bg-[var(--surface-container-high)] ghost-border shadow-sm">
+								{#if coverUrl(playlist.cover_art)}
+									<img src={coverUrl(playlist.cover_art, 112)} alt="" loading="lazy"
+										class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
+								{:else}
+									<div class="w-full h-full flex items-center justify-center"
+										style="background: radial-gradient(circle at 30% 30%, #33271a, #171513 75%);">
+										<ListMusic class="w-6 h-6 text-[var(--color-playlists)]/70" />
+									</div>
+								{/if}
+								<div class="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center">
+									<Play class="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="currentColor" />
 								</div>
-							{/if}
-							<div class="min-w-0">
-								<h3 class="font-medium text-[var(--text-primary)] truncate">{playlist.name}</h3>
-								<p class="text-xs text-[var(--text-muted)]">
-									{playlist.track_count.toLocaleString()} tracks{#if playlist.updated_at} · updated {formatRelativeTime(playlist.updated_at)}{/if}
+							</div>
+							<div class="flex-1 min-w-0">
+								<div class="flex items-center gap-2">
+									<h3 class="font-semibold text-sm text-[var(--text-primary)] truncate group-hover:text-white transition-colors">{playlist.name}</h3>
+									{#if isSmart}
+										<span class="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 flex-shrink-0">Auto</span>
+									{/if}
+								</div>
+								<p class="text-xs text-[var(--text-muted)] mt-0.5 font-mono">
+									{playlist.track_count.toLocaleString()} tracks{#if playlist.updated_at} <span class="font-sans text-[var(--text-disabled)]">· {formatRelativeTime(playlist.updated_at)}</span>{/if}
 								</p>
 							</div>
 						</div>

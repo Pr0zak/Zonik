@@ -3,7 +3,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, coverUrl } from '$lib/utils.js';
-	import { Heart, Music, Play, Upload } from 'lucide-svelte';
+	import { Heart, Music, Play, Upload, Shuffle, Search } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -20,6 +20,17 @@
 	let showImport = $state(false);
 	let importFile = $state(null);
 	let importing = $state(false);
+	let filterQuery = $state('');
+
+	let filteredFavorites = $derived(
+		filterQuery.trim()
+			? favorites.filter(f =>
+				(f.title || '').toLowerCase().includes(filterQuery.toLowerCase()) ||
+				(f.artist || '').toLowerCase().includes(filterQuery.toLowerCase()) ||
+				(f.album || '').toLowerCase().includes(filterQuery.toLowerCase())
+			)
+			: favorites
+	);
 
 	onMount(async () => {
 		await loadFavorites();
@@ -62,6 +73,13 @@
 		}
 	}
 
+	function playAllFavorites(shuffle = false) {
+		const playable = favorites.filter(f => f.track_id).map(f => ({ id: f.track_id, title: f.title, artist: f.artist }));
+		if (!playable.length) return;
+		const queue = shuffle ? [...playable].sort(() => Math.random() - 0.5) : playable;
+		storePlayTrack(queue[0], queue);
+	}
+
 	async function handleImport() {
 		if (!importFile) return;
 		importing = true;
@@ -87,8 +105,21 @@
 		title="Favorites"
 		icon={Heart}
 		color="var(--color-favorites)"
-		subtitle={!loading && total ? `${total} total` : ''}>
+		subtitle={!loading && total ? `${total} starred tracks` : ''}>
 		{#snippet actions()}
+			{#if favorites.length}
+				<div class="relative hidden sm:block">
+					<Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--text-disabled)]" />
+					<input type="text" bind:value={filterQuery} placeholder="Filter page..."
+						class="bg-[var(--surface-lowest)] ghost-border rounded-lg pl-8 pr-3 py-1.5 text-xs w-44 text-[var(--text-body)] placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)]" />
+				</div>
+				<Button variant="primary" size="sm" onclick={() => playAllFavorites(false)}>
+					<Play class="w-3.5 h-3.5" fill="currentColor" /> Play All
+				</Button>
+				<Button variant="secondary" size="sm" onclick={() => playAllFavorites(true)}>
+					<Shuffle class="w-3.5 h-3.5" /> Shuffle
+				</Button>
+			{/if}
 			<Button variant="secondary" size="sm" onclick={() => showImport = true}>
 				<Upload class="w-3.5 h-3.5" /> Import
 			</Button>
@@ -101,28 +132,30 @@
 		</Card>
 	{:else if favorites.length}
 		<Card padding="p-0">
-			<div class="space-y-0.5">
-				{#each favorites as fav}
-					<div class="flex items-center gap-3 px-4 py-3 hover:bg-[var(--surface-container-high)] transition-colors group">
+			<div class="divide-y divide-white/[0.03]">
+				{#each filteredFavorites as fav, idx}
+					<div class="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--surface-container-high)] transition-colors group">
+						<span class="w-6 text-right text-xs font-mono text-[var(--text-disabled)] select-none">{offset + idx + 1}</span>
 						<button class="flex items-center gap-3 flex-1 min-w-0 text-left" onclick={() => playTrack(fav)}>
-							<div class="relative w-10 h-10 rounded bg-[var(--surface-base)] overflow-hidden flex-shrink-0">
+							<div class="relative w-10 h-10 rounded-lg bg-[var(--surface-base)] overflow-hidden flex-shrink-0 ghost-border">
 								{#if coverUrl(fav.cover_art)}
 									<img src={coverUrl(fav.cover_art)} alt="" class="w-full h-full object-cover" loading="lazy" />
 								{:else}
-									<div class="flex items-center justify-center w-full h-full">
-										<Music class="w-4 h-4 text-[var(--text-disabled)]" />
+									<div class="flex items-center justify-center w-full h-full"
+										style="background: radial-gradient(circle at 30% 30%, #2a1f2d, #141316 75%);">
+										<Music class="w-4 h-4 text-[var(--color-favorites)]/60" />
 									</div>
 								{/if}
 								{#if fav.track_id}
-									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
-										<Play class="w-5 h-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+									<div class="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center">
+										<Play class="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="currentColor" />
 									</div>
 								{/if}
 							</div>
 							<div class="flex-1 min-w-0">
-								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{fav.title || 'Unknown'}</p>
+								<p class="text-sm font-medium text-[var(--text-primary)] truncate group-hover:text-white transition-colors">{fav.title || 'Unknown'}</p>
 								<p class="text-xs text-[var(--text-muted)] truncate">
-									{#if fav.artist}{fav.artist}{/if}
+									{#if fav.artist}<span class="text-[var(--text-secondary)]">{fav.artist}</span>{/if}
 									{#if fav.album}<span class="text-[var(--text-disabled)]"> &middot; {fav.album}</span>{/if}
 								</p>
 							</div>
@@ -131,7 +164,8 @@
 							{/if}
 						</button>
 						<button onclick={() => unstar(fav)}
-							class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center text-red-400 hover:text-red-300 transition-colors flex-shrink-0">
+							class="p-2 min-w-[40px] min-h-[40px] flex items-center justify-center text-[var(--color-favorites)] hover:scale-110 transition-transform flex-shrink-0"
+							title="Remove from favorites">
 							<Heart class="w-4 h-4" fill="currentColor" />
 						</button>
 					</div>

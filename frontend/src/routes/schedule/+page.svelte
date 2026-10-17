@@ -7,6 +7,7 @@
 	import Badge from '../../components/ui/Badge.svelte';
 	import Skeleton from '../../components/ui/Skeleton.svelte';
 	import EmptyState from '../../components/ui/EmptyState.svelte';
+	import StatTile from '../../components/ui/StatTile.svelte';
 
 	let tasks = $state([]);
 	let loading = $state(true);
@@ -84,33 +85,40 @@
 	}
 </script>
 
-<div class="max-w-4xl">
+<div class="max-w-6xl">
 	<PageHeader
 		title="Scheduled Tasks"
-		subtitle="Overview of all scheduled tasks. Configure each task on its respective page."
+		icon={Clock}
+		subtitle="Overview of all background tasks. Configure each schedule on its respective section page."
 		color="var(--color-schedule)" />
 
 	{#if loading}
 		<Skeleton variant="card" count={5} class="space-y-4" />
 	{:else if tasks.length}
-		<div class="space-y-4">
+		<div class="grid grid-cols-3 gap-4 mb-6">
+			<StatTile label="Total Tasks" value={tasks.length} color="var(--color-schedule)" />
+			<StatTile label="Enabled" value={tasks.filter(t => t.enabled).length} color="#10b981" detail="running on schedule" />
+			<StatTile label="Completed Runs" value={tasks.filter(t => t.last_run_at).length} color="#3b82f6" detail="ran at least once" />
+		</div>
+
+		<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 			{#each taskGroups as group}
 				{@const groupTasks = group.tasks.map(name => taskMap[name]).filter(Boolean)}
 				{#if groupTasks.length > 0}
 					<Card padding="p-0" hover>
 						<!-- svelte-ignore a11y_click_events_have_key_events -->
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<div onclick={() => goto(group.href)} class="cursor-pointer">
+						<div onclick={() => goto(group.href)} class="cursor-pointer h-full flex flex-col">
 							<div class="flex items-center gap-3 px-4 pt-4 pb-2">
 								<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background: color-mix(in srgb, {group.color} 15%, transparent)">
 									<group.icon class="w-4 h-4" style="color: {group.color}" />
 								</div>
 								<h3 class="text-sm font-semibold text-[var(--text-primary)] flex-1">{group.label}</h3>
-								<ExternalLink class="w-3.5 h-3.5 text-[var(--text-disabled)]" />
+								<span class="text-xs text-[var(--text-disabled)] flex items-center gap-1">Configure <ExternalLink class="w-3 h-3" /></span>
 							</div>
 
-							<div class="px-4 pb-3">
-								<div class="space-y-0.5">
+							<div class="px-4 pb-3 flex-1">
+								<div class="divide-y divide-white/[0.03]">
 									{#each groupTasks as task}
 										{@const danger = DANGER_TASKS.has(task.task_name)}
 										<div class="flex items-center gap-2 sm:gap-3 py-2 flex-wrap sm:flex-nowrap {danger ? 'opacity-75' : ''}">
@@ -121,10 +129,7 @@
 											{/if}
 											<span class="text-xs text-[var(--text-muted)] font-mono flex-shrink-0 hidden sm:inline">{formatLastRun(task.last_run_at)}</span>
 											<div class="flex items-center gap-2 ml-auto flex-shrink-0">
-												<span class="text-xs text-[var(--text-muted)] font-mono">{formatInterval(task.interval_hours)}</span>
-												{#if task.run_at}
-													<span class="text-xs text-[var(--text-muted)] font-mono">@ {task.run_at}</span>
-												{/if}
+												<span class="text-xs text-[var(--text-muted)] font-mono px-1.5 py-0.5 rounded bg-[var(--surface-container-high)]">{formatInterval(task.interval_hours)}{task.run_at ? ` @ ${task.run_at}` : ''}</span>
 												<Badge variant={task.enabled ? (danger ? 'warning' : 'success') : 'default'}>
 													{task.enabled ? 'On' : 'Off'}
 												</Badge>
@@ -137,12 +142,6 @@
 					</Card>
 				{/if}
 			{/each}
-		</div>
-
-		<div class="mt-6 flex items-center gap-4 text-xs text-[var(--text-muted)]">
-			<span>{tasks.filter(t => t.enabled).length} of {tasks.length} tasks enabled</span>
-			<span>&middot;</span>
-			<span>{tasks.filter(t => t.last_run_at).length} have run at least once</span>
 		</div>
 	{:else}
 		<EmptyState title="No scheduled tasks" description="No tasks are configured yet.">

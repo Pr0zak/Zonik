@@ -20,7 +20,7 @@
 	let showNotifications = $state(false);
 	let syncing = $state(false);
 	let inputEl;
-	let dropdownRef;
+	let dropdownRef = $state(null);
 
 	let runningJobs = $derived($activeJobs.filter(j => j.status === 'running'));
 
@@ -85,14 +85,16 @@
 			onkeydown={onKeydown}
 			onfocus={() => { if (query.trim()) showResults = true; }}
 			onblur={onBlur}
-			class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg pl-9 pr-8 py-2 text-sm text-[var(--text-body)]
-				placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15 ghost-border-focus"
+			class="w-full bg-[var(--surface-lowest)] ghost-border rounded-lg pl-9 pr-12 py-2 text-sm text-[var(--text-body)]
+				placeholder-[var(--text-disabled)] focus:outline-none focus:border-[var(--border-focus)] focus:ring-1 focus:ring-[var(--color-primary)]/15 ghost-border-focus transition-all"
 		/>
 		{#if query}
 			<button onclick={() => { query = ''; showResults = false; }}
-				class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-muted)] transition-colors">
+				class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-disabled)] hover:text-[var(--text-muted)] transition-colors">
 				<X class="w-3.5 h-3.5" />
 			</button>
+		{:else}
+			<kbd class="hidden sm:inline-flex items-center justify-center absolute right-2.5 top-1/2 -translate-y-1/2 px-1.5 py-0.5 text-[10px] font-mono text-[var(--text-disabled)] bg-[var(--surface-container)] rounded border border-white/[0.06] pointer-events-none">/</kbd>
 		{/if}
 	</div>
 
@@ -102,12 +104,13 @@
 </div>
 
 <!-- Action icons -->
-<div class="flex items-center gap-1">
+<div class="flex items-center gap-1.5 ml-auto">
 	<!-- Sync library -->
 	<button onclick={syncLibrary}
-		class="p-2 rounded-lg text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors"
-		title="Sync library">
-		<RefreshCw class="w-4 h-4 {syncing ? 'animate-spin' : ''}" />
+		class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] ghost-border transition-colors"
+		title="Scan & sync library">
+		<RefreshCw class="w-3.5 h-3.5 {syncing ? 'animate-spin text-[var(--color-library)]' : ''}" />
+		<span class="hidden md:inline">Sync</span>
 	</button>
 
 	<!-- Notifications / Activity -->

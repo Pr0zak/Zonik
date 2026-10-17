@@ -238,6 +238,29 @@
 		if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
 		return `${(bytes / 1048576).toFixed(1)} MB`;
 	}
+
+	const JOB_TYPE_LABELS = {
+		download: 'Download',
+		bulk_download: 'Bulk Download',
+		library_scan: 'Library Scan',
+		audio_analysis: 'Audio Analysis',
+		enrichment: 'Metadata Enrichment',
+		recommendation_refresh: 'AI Recommendations',
+		lastfm_top_tracks: 'Top Charts Scan',
+		discover_similar: 'Similar Tracks Scan',
+		discover_artists: 'Similar Artists Scan',
+		lastfm_sync: 'Last.fm Sync',
+		upgrade_scan: 'Quality Upgrade Scan',
+		playlist_weekly_top: 'Weekly Top Playlist',
+		playlist_weekly_discover: 'Weekly Discover Playlist',
+		playlist_favorites: 'Favorites Playlist',
+		playlist_unfavorites: 'Unfavorites Cleanup',
+	};
+
+	function formatJobType(type) {
+		if (!type) return 'Job';
+		return JOB_TYPE_LABELS[type] || type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+	}
 </script>
 
 <div class="max-w-6xl">
@@ -252,16 +275,16 @@
 		{/snippet}
 	</PageHeader>
 
-	<div class="flex gap-1 mb-4 bg-[var(--surface-base)] rounded-lg p-1 w-fit">
+	<div class="inline-flex gap-1 mb-4 bg-[var(--surface-container-low)] rounded-xl p-1.5 ghost-border">
 		<button onclick={() => switchView('jobs')}
-			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'jobs' ? 'bg-[var(--surface-container)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
-			<ScrollText class="w-3.5 h-3.5 inline -mt-0.5 mr-1" />Jobs
+			class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all {viewMode === 'jobs' ? 'bg-[var(--color-logs)] text-white shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}">
+			<ScrollText class="w-3.5 h-3.5 inline -mt-0.5 mr-1.5" />Jobs
 		</button>
 		<button onclick={() => switchView('app')}
-			class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors {viewMode === 'app' ? 'bg-[var(--surface-container)] text-[var(--text-body)]' : 'text-[var(--text-muted)] hover:text-[var(--text-body)]'}">
-			<Smartphone class="w-3.5 h-3.5 inline -mt-0.5 mr-1" />App Logs
+			class="px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all {viewMode === 'app' ? 'bg-[var(--color-logs)] text-white shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}">
+			<Smartphone class="w-3.5 h-3.5 inline -mt-0.5 mr-1.5" />App Logs
 			{#if appTotal > 0}
-				<span class="ml-1 text-xs bg-[var(--surface-container-high)] px-1.5 py-0.5 rounded-full">{appTotal}</span>
+				<span class="ml-1 text-[11px] font-mono bg-black/20 px-1.5 py-0.5 rounded-full">{appTotal}</span>
 			{/if}
 		</button>
 	</div>
@@ -296,16 +319,19 @@
 					{/snippet}
 					{#snippet row(job)}
 						<td class="px-3 sm:px-4 py-3">
-							<div class="flex items-center gap-2">
+							<div class="flex items-center gap-2.5">
 								{#if expandedJob === job.id}
 									<ChevronDown class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
 								{:else}
 									<ChevronRight class="w-3.5 h-3.5 text-[var(--text-muted)] flex-shrink-0" />
 								{/if}
 								<div class="min-w-0">
-									<p class="font-medium text-[var(--text-body)]">{job.type}</p>
+									<div class="flex items-center gap-2">
+										<p class="font-medium text-sm text-[var(--text-primary)]">{formatJobType(job.type)}</p>
+										<span class="hidden md:inline text-[10px] font-mono text-[var(--text-disabled)] px-1.5 py-0.5 rounded bg-[var(--surface-container-high)]">{job.type}</span>
+									</div>
 									{#if job.description}
-										<p class="text-xs text-[var(--text-muted)] truncate max-w-xs">{job.description}</p>
+										<p class="text-xs text-[var(--text-muted)] truncate max-w-xs mt-0.5">{job.description}</p>
 									{/if}
 									<p class="text-xs text-[var(--text-disabled)] sm:hidden">
 										{#if job.total}{job.progress}/{job.total} &middot; {/if}{job.started_at ? formatDateTime(job.started_at) : ''}

@@ -367,13 +367,16 @@
 				     Tries and Actions columns off the right edge. -->
 				<td class="px-3 py-2 max-w-0 w-full">
 					<div class="flex items-center gap-3 min-w-0">
-						{#if u.album_id}
-							<img src="/rest/getCoverArt?id={u.album_id}&size=40" alt=""
-								class="w-8 h-8 rounded object-cover flex-shrink-0"
-								onerror={(e) => e.target.style.display = 'none'} />
-						{/if}
+						<div class="relative w-8 h-8 rounded-md overflow-hidden flex-shrink-0 bg-[var(--surface-container-high)] flex items-center justify-center ghost-border">
+							<ArrowUpCircle class="w-3.5 h-3.5 text-[var(--color-upgrades)]/50" />
+							{#if u.album_id}
+								<img src="/rest/getCoverArt?id={u.album_id}&size=40" alt=""
+									class="absolute inset-0 w-full h-full object-cover"
+									onerror={(e) => { e.currentTarget.style.display = 'none'; }} />
+							{/if}
+						</div>
 						<div class="min-w-0">
-							<p class="text-[var(--text-primary)] truncate">{u.title || 'Unknown'}</p>
+							<p class="text-[var(--text-primary)] font-medium truncate">{u.title || 'Unknown'}</p>
 							<p class="text-xs text-[var(--text-muted)] truncate">{u.artist || 'Unknown'}</p>
 						</div>
 					</div>

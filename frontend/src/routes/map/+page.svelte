@@ -27,10 +27,11 @@
 <div class="max-w-[1600px]">
 	<PageHeader title="Music Map" icon={MapIcon} color="#22d3ee" subtitle={tab.subtitle} />
 
-	<div class="flex gap-1 mt-4 border-b border-[var(--border-subtle)] overflow-x-auto" role="tablist">
+	<div class="inline-flex gap-1 bg-[var(--surface-container-low)] p-1.5 rounded-xl ghost-border overflow-x-auto max-w-full" role="tablist">
 		{#each TABS as t (t.id)}
-			<button role="tab" aria-selected={tab.id === t.id} onclick={() => show(t.id)}
-				class="px-3 py-2 text-sm whitespace-nowrap border-b-2 -mb-px transition-colors {tab.id === t.id ? 'border-[#22d3ee] text-[var(--text-primary)] font-medium' : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text-secondary)]'}">{t.label}</button>
+			{@const isActive = tab.id === t.id}
+			<button role="tab" aria-selected={isActive} onclick={() => show(t.id)}
+				class="px-3.5 py-1.5 text-xs font-semibold rounded-lg whitespace-nowrap transition-all {isActive ? 'bg-[#22d3ee] text-black shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)]'}">{t.label}</button>
 		{/each}
 	</div>
 

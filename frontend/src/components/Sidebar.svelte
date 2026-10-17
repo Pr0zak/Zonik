@@ -89,34 +89,39 @@
 	fixed inset-y-0 left-0 z-50 md:static md:z-auto md:w-64 md:max-w-none">
 
 	<!-- Logo -->
-	<div class="px-5 pt-6 pb-5">
-		<h1 class="text-3xl font-bold tracking-editorial"><span class="bg-gradient-primary bg-clip-text text-transparent">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
-		<p class="text-xs font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
+	<div class="px-5 pt-4 pb-3">
+		<div class="flex items-baseline justify-between">
+			<h1 class="text-2xl font-bold tracking-editorial"><span class="bg-gradient-primary bg-clip-text text-transparent">Z</span><span class="text-[var(--text-primary)]">ONIK</span></h1>
+			{#if appVersion}
+				<span class="text-[10px] font-mono text-[var(--text-disabled)] px-1.5 py-0.5 rounded bg-[var(--surface-container)]">v{appVersion}</span>
+			{/if}
+		</div>
+		<p class="text-[10px] font-mono text-[var(--text-disabled)] uppercase tracking-wider mt-0.5">Music Backend</p>
 	</div>
 
-	<nav class="flex-1 px-3 overflow-y-auto space-y-4">
+	<nav class="flex-1 px-3 overflow-y-auto space-y-2.5">
 		{#each navGroups as group}
 			<div>
-				<p class="px-3 mb-1.5 text-[10px] font-medium uppercase tracking-widest text-[var(--text-muted)]">{group.label}</p>
+				<p class="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]/80">{group.label}</p>
 				<div class="space-y-0.5">
 					{#each group.items as item}
 						{@const active = isActive($page.url.pathname, item.href)}
 						{@const Icon = item.icon}
 						<a href={item.href}
 							onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}
-							class="group flex items-center gap-3 px-3 py-2 text-sm transition-all duration-200 rounded-md relative
+							class="group flex items-center gap-2.5 px-3 py-1.5 text-[13px] transition-all duration-150 rounded-md relative
 								{active
-									? 'text-[var(--text-primary)] bg-[var(--surface-container-high)]'
+									? 'text-[var(--text-primary)] bg-[var(--surface-container-high)] shadow-sm'
 									: 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container)]'}"
 						>
 							{#if active}
-								<div class="absolute left-0 top-1/2 -translate-y-1/2 w-[2px] h-4 rounded-r" style="background: {item.color}; box-shadow: 0 0 8px {item.color};"></div>
+								<div class="absolute left-0 top-1/2 -translate-y-1/2 w-[2.5px] h-4 rounded-r" style="background: {item.color}; box-shadow: 0 0 8px {item.color};"></div>
 							{/if}
 							<Icon
 								class="w-4 h-4 shrink-0 transition-colors"
 								style={active ? `color: ${item.color}` : ''}
 							/>
-							<span class="flex-1 font-medium">{item.label}</span>
+							<span class="flex-1 font-medium truncate">{item.label}</span>
 							{#if item.href === '/settings' && $updateAvailable}
 								<span class="w-2 h-2 rounded-full bg-[var(--color-warning)] animate-pulse" title="Update available"></span>
 							{/if}
@@ -128,7 +133,7 @@
 	</nav>
 
 	<!-- Footer -->
-	<div class="px-5 py-4">
+	<div class="px-5 py-2.5 border-t border-white/[0.04]">
 		{#if currentTransfer}
 			<a href="/downloads" class="block mb-2 -mx-2 px-2 py-1.5 hover:bg-white/5 rounded transition-colors"
 				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>
@@ -158,7 +163,7 @@
 			</a>
 		{/if}
 		<div class="flex items-center justify-between">
-			<p class="text-xs font-mono text-[var(--text-disabled)]">{appVersion ? `v${appVersion}` : 'OpenSubsonic'}</p>
+			<p class="text-[11px] font-mono text-[var(--text-disabled)]">OpenSubsonic API</p>
 			<a href="https://github.com/Pr0zak/Zonik" target="_blank" rel="noopener noreferrer"
 				class="flex items-center gap-1.5 text-[var(--text-disabled)] hover:text-[var(--text-secondary)] transition-colors group" title="View on GitHub">
 				<Github class="w-3.5 h-3.5 group-hover:text-white transition-colors" />

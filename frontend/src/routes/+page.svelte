@@ -154,28 +154,55 @@
 		<!-- Row 2: Quick Actions + Quality Score -->
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
 			<!-- Quick Actions -->
-			<Card padding="p-4" class="md:col-span-2">
-				<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Quick Actions</h2>
-				<div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+			<Card padding="p-4" class="md:col-span-2 flex flex-col justify-between">
+				<div class="flex items-center justify-between mb-3">
+					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Quick Actions</h2>
+					<span class="text-[11px] text-[var(--text-disabled)] font-mono">One-click tasks</span>
+				</div>
+				<div class="grid grid-cols-2 md:grid-cols-4 gap-2.5 flex-1">
 					<button onclick={quickScan}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
-						<RefreshCw class="w-5 h-5 text-[var(--color-library)]" />
-						<span class="text-xs text-[var(--text-secondary)]">Scan Library</span>
+						class="group flex flex-col items-start gap-2.5 p-3.5 rounded-xl bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] ghost-border transition-all text-left">
+						<div class="w-9 h-9 rounded-lg flex items-center justify-center transition-transform group-hover:scale-105"
+							style="background: color-mix(in srgb, var(--color-library) 16%, transparent);">
+							<RefreshCw class="w-4 h-4 text-[var(--color-library)]" />
+						</div>
+						<div>
+							<p class="text-xs font-semibold text-[var(--text-primary)]">Scan Library</p>
+							<p class="text-[11px] text-[var(--text-muted)] mt-0.5">Index new files</p>
+						</div>
 					</button>
 					<button onclick={quickRefreshRecs}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
-						<Sparkles class="w-5 h-5 text-[var(--color-discover)]" />
-						<span class="text-xs text-[var(--text-secondary)]">Refresh Recs</span>
+						class="group flex flex-col items-start gap-2.5 p-3.5 rounded-xl bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] ghost-border transition-all text-left">
+						<div class="w-9 h-9 rounded-lg flex items-center justify-center transition-transform group-hover:scale-105"
+							style="background: color-mix(in srgb, var(--color-discover) 16%, transparent);">
+							<Sparkles class="w-4 h-4 text-[var(--color-discover)]" />
+						</div>
+						<div>
+							<p class="text-xs font-semibold text-[var(--text-primary)]">Refresh Recs</p>
+							<p class="text-[11px] text-[var(--text-muted)] mt-0.5">AI taste match</p>
+						</div>
 					</button>
 					<button onclick={quickCharts}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
-						<TrendingUp class="w-5 h-5 text-[var(--color-downloads)]" />
-						<span class="text-xs text-[var(--text-secondary)]">Check Charts</span>
+						class="group flex flex-col items-start gap-2.5 p-3.5 rounded-xl bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] ghost-border transition-all text-left">
+						<div class="w-9 h-9 rounded-lg flex items-center justify-center transition-transform group-hover:scale-105"
+							style="background: color-mix(in srgb, var(--color-downloads) 16%, transparent);">
+							<TrendingUp class="w-4 h-4 text-[var(--color-downloads)]" />
+						</div>
+						<div>
+							<p class="text-xs font-semibold text-[var(--text-primary)]">Check Charts</p>
+							<p class="text-[11px] text-[var(--text-muted)] mt-0.5">Last.fm top tracks</p>
+						</div>
 					</button>
 					<button onclick={quickAnalysis}
-						class="flex flex-col items-center gap-1.5 p-3 rounded-lg bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] transition-colors">
-						<AudioWaveform class="w-5 h-5 text-[var(--color-analysis)]" />
-						<span class="text-xs text-[var(--text-secondary)]">Run Analysis</span>
+						class="group flex flex-col items-start gap-2.5 p-3.5 rounded-xl bg-[var(--surface-container-high)] hover:bg-[var(--surface-container-highest)] ghost-border transition-all text-left">
+						<div class="w-9 h-9 rounded-lg flex items-center justify-center transition-transform group-hover:scale-105"
+							style="background: color-mix(in srgb, var(--color-analysis) 16%, transparent);">
+							<AudioWaveform class="w-4 h-4 text-[var(--color-analysis)]" />
+						</div>
+						<div>
+							<p class="text-xs font-semibold text-[var(--text-primary)]">Run Analysis</p>
+							<p class="text-[11px] text-[var(--text-muted)] mt-0.5">BPM &amp; CLAP vibes</p>
+						</div>
 					</button>
 				</div>
 			</Card>
@@ -184,35 +211,47 @@
 			{#if dashboard?.quality}
 				{@const q = dashboard.quality}
 				<Card padding="p-4">
-					<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Library Quality</h2>
-					<div class="flex items-center gap-4 mb-3">
-						<div class="relative w-16 h-16">
-							<svg viewBox="0 0 36 36" class="w-16 h-16 -rotate-90">
-								<circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--bg-hover)" stroke-width="3" />
-								<circle cx="18" cy="18" r="15.9" fill="none" stroke-width="3"
+					<div class="flex items-center justify-between mb-3">
+						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Library Quality</h2>
+						<span class="text-[11px] font-mono text-[var(--text-muted)]">{Math.round(q.avg_bitrate / 1000)} kbps avg</span>
+					</div>
+					<div class="flex items-center gap-4">
+						<div class="relative w-20 h-20 flex-shrink-0">
+							<svg viewBox="0 0 36 36" class="w-20 h-20 -rotate-90">
+								<circle cx="18" cy="18" r="15.9" fill="none" stroke="var(--bg-hover)" stroke-width="3.2" />
+								<circle cx="18" cy="18" r="15.9" fill="none" stroke-width="3.2"
 									class="{qualityBarColor(q.score).replace('bg-', 'stroke-')}"
 									stroke-dasharray="{q.score}, 100"
 									stroke-linecap="round" />
 							</svg>
-							<span class="absolute inset-0 flex items-center justify-center text-lg font-bold {qualityColor(q.score)}">{Math.round(q.score)}</span>
+							<div class="absolute inset-0 flex flex-col items-center justify-center">
+								<span class="text-xl font-bold leading-none {qualityColor(q.score)}">{Math.round(q.score)}</span>
+								<span class="text-[9px] font-mono uppercase text-[var(--text-disabled)] mt-0.5">score</span>
+							</div>
 						</div>
-						<div class="space-y-1.5 flex-1">
-							<div class="flex justify-between text-xs">
-								<span class="text-[var(--text-muted)]">Lossless</span>
-								<span class="text-[var(--text-primary)] font-mono">{q.pct_lossless}%</span>
+						<div class="space-y-2 flex-1 min-w-0">
+							<div>
+								<div class="flex justify-between text-xs mb-0.5">
+									<span class="text-[var(--text-muted)]">Lossless</span>
+									<span class="text-[var(--text-primary)] font-mono">{q.pct_lossless}%</span>
+								</div>
+								<div class="h-1 bg-[var(--surface-container-high)] rounded-full overflow-hidden">
+									<div class="h-full bg-emerald-400 rounded-full" style="width: {q.pct_lossless}%"></div>
+								</div>
 							</div>
-							<div class="flex justify-between text-xs">
-								<span class="text-[var(--text-muted)]">Analyzed</span>
-								<span class="text-[var(--text-primary)] font-mono">{q.pct_analyzed}%</span>
-							</div>
-							<div class="flex justify-between text-xs">
-								<span class="text-[var(--text-muted)]">Avg Bitrate</span>
-								<span class="text-[var(--text-primary)] font-mono">{Math.round(q.avg_bitrate / 1000)} kbps</span>
+							<div>
+								<div class="flex justify-between text-xs mb-0.5">
+									<span class="text-[var(--text-muted)]">Analyzed</span>
+									<span class="text-[var(--text-primary)] font-mono">{q.pct_analyzed}%</span>
+								</div>
+								<div class="h-1 bg-[var(--surface-container-high)] rounded-full overflow-hidden">
+									<div class="h-full bg-[var(--color-accent)] rounded-full" style="width: {q.pct_analyzed}%"></div>
+								</div>
 							</div>
 							{#if q.low_quality_count > 0}
-								<div class="flex justify-between text-xs">
+								<div class="flex justify-between items-center text-xs pt-0.5">
 									<span class="text-amber-400">Low Quality</span>
-									<span class="text-amber-400 font-mono">{q.low_quality_count}</span>
+									<a href="/upgrades" class="text-amber-400 font-mono hover:underline">{q.low_quality_count} tracks →</a>
 								</div>
 							{/if}
 						</div>
@@ -252,27 +291,28 @@
 				<Card padding="p-4">
 					<div class="flex items-center justify-between mb-3">
 						<h2 class="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-muted)]">Storage Usage</h2>
-						<span class="text-sm font-bold text-[var(--text-primary)]">{formatSize(storage.total_size)}</span>
+						<span class="text-sm font-bold text-[var(--text-primary)] font-mono">{formatSize(storage.total_size)}</span>
 					</div>
 					<!-- Stacked bar -->
 					{@const fmtColors = FORMAT_HEX}
-					<div class="flex h-4 rounded-full overflow-hidden mb-3">
+					<div class="flex h-3.5 rounded-full overflow-hidden mb-3 gap-0.5 bg-[var(--surface-container-high)] p-0.5">
 						{#each storage.by_format as fmt}
 							{@const pct = (fmt.size / Math.max(storage.total_size, 1)) * 100}
 							{#if pct > 0.5}
 								<div style="width: {pct}%; background: {fmtColors[fmt.format] || '#6b7280'}"
 									title="{fmt.format.toUpperCase()}: {formatSize(fmt.size)} ({fmt.count} tracks)"
-									class="transition-all hover:opacity-80"></div>
+									class="transition-all hover:opacity-80 first:rounded-l-full last:rounded-r-full"></div>
 							{/if}
 						{/each}
 					</div>
-					<div class="flex flex-wrap gap-x-3 gap-y-1">
+					<div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
 						{#each storage.by_format.slice(0, 6) as fmt}
-							<div class="flex items-center gap-1.5">
-								<div class="w-2 h-2 rounded-full" style="background: {fmtColors[fmt.format] || '#6b7280'}"></div>
-								<span class="text-xs text-[var(--text-secondary)]">{fmt.format.toUpperCase()}</span>
-								<span class="text-xs text-[var(--text-muted)] font-mono">{fmt.count}</span>
-								<span class="text-xs text-[var(--text-disabled)] font-mono">{formatSize(fmt.size)}</span>
+							<div class="flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg bg-[var(--surface-container-high)]/60">
+								<div class="flex items-center gap-1.5 min-w-0">
+									<div class="w-2 h-2 rounded-full flex-shrink-0" style="background: {fmtColors[fmt.format] || '#6b7280'}"></div>
+									<span class="text-xs font-medium text-[var(--text-secondary)]">{fmt.format.toUpperCase()}</span>
+								</div>
+								<span class="text-[11px] text-[var(--text-muted)] font-mono">{formatSize(fmt.size)}</span>
 							</div>
 						{/each}
 					</div>

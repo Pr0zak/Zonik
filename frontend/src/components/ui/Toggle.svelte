@@ -21,11 +21,13 @@
 <label class="inline-flex items-center gap-2 {disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} {className}">
 	<button
 		type="button"
+		role="switch"
+		aria-checked={checked}
+		aria-label={label || 'Toggle'}
 		onclick={() => !disabled && onchange?.(!checked)}
 		{disabled}
 		class="{s.track} rounded-full transition-colors relative flex-shrink-0"
 		style="background: {checked ? color : 'var(--border-interactive)'}"
-		aria-pressed={checked}
 	>
 		<span class="absolute top-0.5 {s.thumb} bg-white rounded-full transition-transform shadow-sm
 			{checked ? s.on : s.off}"></span>

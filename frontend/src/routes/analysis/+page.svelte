@@ -236,26 +236,33 @@
 		</div>
 	{:else if stats}
 		<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-			<Card padding="p-4">
-				<div class="flex items-center gap-2 mb-2">
-					<AudioWaveform class="w-4 h-4 text-[var(--color-accent)]" />
-					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Audio Analyzed</span>
-				</div>
-				<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.analyzed} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.analyzable ?? stats.total_tracks}</span></p>
-				<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden flex">
-					<div class="h-full bg-[var(--color-accent)] transition-all" style="width: {stats.analyzable ? (stats.analyzed / stats.analyzable * 100) : stats.analysis_pct}%"></div>
+			<Card padding="p-4" class="flex flex-col justify-between">
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<div class="flex items-center gap-2">
+							<AudioWaveform class="w-4 h-4 text-[var(--color-accent)]" />
+							<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Audio Analyzed</span>
+						</div>
+						<span class="text-xs font-mono font-semibold text-[var(--color-accent-light)] bg-[var(--color-accent)]/15 px-2 py-0.5 rounded-full">
+							{stats.analyzable ? (stats.analyzed / stats.analyzable * 100).toFixed(1) : stats.analysis_pct}%
+						</span>
+					</div>
+					<p class="text-2xl font-bold text-[var(--text-primary)] font-mono">{stats.analyzed.toLocaleString()} <span class="text-sm text-[var(--text-muted)] font-normal">/ {(stats.analyzable ?? stats.total_tracks).toLocaleString()}</span></p>
+					<div class="mt-2.5 h-1.5 bg-[var(--border-interactive)] rounded-full overflow-hidden flex">
+						<div class="h-full bg-[var(--color-accent)] transition-all" style="width: {stats.analyzable ? (stats.analyzed / stats.analyzable * 100) : stats.analysis_pct}%"></div>
+						{#if stats.skipped > 0}
+							<div class="h-full bg-amber-600/60 transition-all" style="width: {stats.analyzable ? (stats.skipped / stats.total_tracks * 100) : 0}%"></div>
+						{/if}
+					</div>
 					{#if stats.skipped > 0}
-						<div class="h-full bg-amber-600/60 transition-all" style="width: {stats.analyzable ? (stats.skipped / stats.total_tracks * 100) : 0}%"></div>
+						<p class="text-xs text-amber-500 mt-1.5" title={Object.entries(stats.skipped_by_format || {}).map(([f, c]) => `${c} ${f}`).join(', ')}>
+							{stats.skipped} skipped — unsupported ({Object.keys(stats.skipped_by_format || {}).join(', ')})
+						</p>
 					{/if}
 				</div>
-				{#if stats.skipped > 0}
-					<p class="text-xs text-amber-500 mt-1" title={Object.entries(stats.skipped_by_format || {}).map(([f, c]) => `${c} ${f}`).join(', ')}>
-						{stats.skipped} skipped — unsupported format ({Object.keys(stats.skipped_by_format || {}).join(', ')})
-					</p>
-				{/if}
 				{#if analysisJob}
 					{@const ap = analysisProgress(analysisJob)}
-					<div class="mt-3 p-2 rounded bg-[var(--bg-primary)]">
+					<div class="mt-4 p-2 rounded bg-[var(--bg-primary)]">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-[var(--color-info)] font-medium animate-pulse">Running...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{ap.done}/{ap.total}</span>
@@ -265,45 +272,61 @@
 						</div>
 					</div>
 				{:else}
-					<Button variant="primary" size="sm" class="mt-3 w-full" onclick={startAnalysis} loading={startingAnalysis}>
+					<Button variant="primary" size="sm" class="mt-4 w-full" onclick={startAnalysis} loading={startingAnalysis}>
 						<AudioWaveform class="w-3.5 h-3.5" />
 						{startingAnalysis ? 'Starting...' : 'Run Analysis'}
 					</Button>
 				{/if}
 			</Card>
 
-			<Card padding="p-4">
-				<div class="flex items-center gap-2 mb-2">
-					<Sparkles class="w-4 h-4 text-[var(--color-analysis)]" />
-					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Vibe Embeddings</span>
+			<Card padding="p-4" class="flex flex-col justify-between">
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<div class="flex items-center gap-2">
+							<Sparkles class="w-4 h-4 text-[var(--color-analysis)]" />
+							<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Vibe Embeddings</span>
+						</div>
+						<span class="text-xs font-mono font-semibold text-purple-300 bg-purple-500/15 px-2 py-0.5 rounded-full">
+							{stats.embedding_pct}%
+						</span>
+					</div>
+					{#if embeddingsJob}
+						{@const ep = embeddingsProgress(embeddingsJob)}
+						<p class="text-2xl font-bold text-[var(--text-primary)] font-mono">{ep.done.toLocaleString()} <span class="text-sm text-[var(--text-muted)] font-normal">/ {ep.total.toLocaleString()}</span></p>
+						<div class="mt-2.5 h-1.5 bg-[var(--border-interactive)] rounded-full">
+							<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {ep.pct}%"></div>
+						</div>
+						<span class="text-xs text-[var(--color-analysis)] font-medium animate-pulse mt-2 block">Running...</span>
+					{:else}
+						<p class="text-2xl font-bold text-[var(--text-primary)] font-mono">{stats.with_embeddings.toLocaleString()} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.total_tracks.toLocaleString()}</span></p>
+						<div class="mt-2.5 h-1.5 bg-[var(--border-interactive)] rounded-full">
+							<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
+						</div>
+						<p class="text-xs text-[var(--text-muted)] mt-1.5">CLAP 512-dim sonic vectors</p>
+					{/if}
 				</div>
-				{#if embeddingsJob}
-					{@const ep = embeddingsProgress(embeddingsJob)}
-					<p class="text-2xl font-bold text-[var(--text-primary)]">{ep.done} <span class="text-sm text-[var(--text-muted)] font-normal">/ {ep.total}</span></p>
-					<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
-						<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {ep.pct}%"></div>
-					</div>
-					<span class="text-xs text-[var(--color-analysis)] font-medium animate-pulse mt-2 block">Running...</span>
-				{:else}
-					<p class="text-2xl font-bold text-[var(--text-primary)]">{stats.with_embeddings} <span class="text-sm text-[var(--text-muted)] font-normal">/ {stats.total_tracks}</span></p>
-					<div class="mt-2 h-1.5 bg-[var(--border-interactive)] rounded-full">
-						<div class="h-full bg-[var(--color-analysis)] rounded-full transition-all" style="width: {stats.embedding_pct}%"></div>
-					</div>
-					<Button variant="secondary" size="sm" class="mt-3 w-full" onclick={startEmbeddings} loading={startingEmbeddings}>
+				{#if !embeddingsJob}
+					<Button variant="secondary" size="sm" class="mt-4 w-full" onclick={startEmbeddings} loading={startingEmbeddings}>
 						<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
 						{startingEmbeddings ? 'Starting...' : 'Generate Embeddings'}
 					</Button>
 				{/if}
 			</Card>
 
-			<Card padding="p-4">
-				<div class="flex items-center gap-2 mb-2">
-					<Database class="w-4 h-4 text-emerald-400" />
-					<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Enrichment</span>
+			<Card padding="p-4" class="flex flex-col justify-between">
+				<div>
+					<div class="flex items-center justify-between mb-2">
+						<div class="flex items-center gap-2">
+							<Database class="w-4 h-4 text-emerald-400" />
+							<span class="text-xs text-[var(--text-muted)] font-mono uppercase tracking-wider">Enrichment</span>
+						</div>
+						<span class="text-xs font-mono font-semibold text-emerald-400 bg-emerald-500/15 px-2 py-0.5 rounded-full">Online Sync</span>
+					</div>
+					<p class="text-lg font-bold text-[var(--text-primary)]">Tags &amp; Artwork</p>
+					<p class="text-xs text-[var(--text-muted)] mt-1.5 leading-relaxed">Fill missing genres, release years, and album cover art from MusicBrainz &amp; Last.fm.</p>
 				</div>
-				<p class="text-sm text-[var(--text-muted)] mb-1">Fill missing genres, cover art, and metadata from online sources.</p>
 				{#if enrichmentJob}
-					<div class="mt-2 p-2 rounded bg-[var(--bg-primary)]">
+					<div class="mt-4 p-2 rounded bg-[var(--bg-primary)]">
 						<div class="flex items-center justify-between mb-1">
 							<span class="text-xs text-emerald-400 font-medium animate-pulse">Enriching...</span>
 							<span class="text-xs text-[var(--text-muted)] font-mono">{enrichmentJob.progress}/{enrichmentJob.total}</span>
@@ -313,7 +336,7 @@
 						</div>
 					</div>
 				{:else}
-					<Button variant="success" size="sm" class="mt-2 w-full" onclick={startEnrichment} loading={startingEnrichment}>
+					<Button variant="success" size="sm" class="mt-4 w-full" onclick={startEnrichment} loading={startingEnrichment}>
 						<Database class="w-3.5 h-3.5" />
 						{startingEnrichment ? 'Starting...' : 'Enrich Metadata'}
 					</Button>
@@ -327,7 +350,7 @@
 			<Search class="w-4 h-4 text-[var(--color-analysis)]" />
 			<h2 class="text-base font-semibold text-[var(--text-primary)]">Vibe Search</h2>
 		</div>
-		<p class="text-sm text-[var(--text-muted)] mb-4">Search by text description (requires CLAP embeddings)</p>
+		<p class="text-xs text-[var(--text-muted)] mb-3">Search your library using natural language sound descriptions powered by CLAP audio embeddings</p>
 		<div class="flex gap-3">
 			<FormInput
 				type="text"
@@ -336,10 +359,19 @@
 				onkeydown={(e) => { if (e.key === 'Enter') vibeSearch(); }}
 				class="flex-1"
 			/>
-			<Button variant="secondary" loading={searching} disabled={!vibeQuery} onclick={vibeSearch}>
-				<Sparkles class="w-3.5 h-3.5 text-[var(--color-analysis)]" />
+			<Button variant="primary" loading={searching} disabled={!vibeQuery} onclick={vibeSearch}>
+				<Sparkles class="w-3.5 h-3.5" />
 				Search Vibes
 			</Button>
+		</div>
+		<div class="flex items-center gap-1.5 flex-wrap mt-2.5">
+			<span class="text-[11px] text-[var(--text-disabled)] font-mono mr-1">Try:</span>
+			{#each ['late night synthwave', 'warm acoustic guitar', 'driving bassline techno', 'melancholic piano'] as sample}
+				<button onclick={() => { vibeQuery = sample; vibeSearch(); }}
+					class="text-xs px-2.5 py-1 rounded-full bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-white hover:bg-[var(--surface-container-highest)] transition-colors">
+					{sample}
+				</button>
+			{/each}
 		</div>
 
 		{#if vibeResults.length}
@@ -359,12 +391,26 @@
 
 	<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 		<Card padding="p-4">
-			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-2">Echo Match</h2>
-			<p class="text-sm text-[var(--text-muted)]">Find tracks with similar vibes to any track in your library. Use the vibe search above with a track ID, or click "Echo Match" on any track in the library.</p>
+			<div class="flex items-start gap-3">
+				<div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-purple-500/15">
+					<AudioWaveform class="w-4 h-4 text-purple-400" />
+				</div>
+				<div>
+					<h2 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Echo Match</h2>
+					<p class="text-xs text-[var(--text-muted)] leading-relaxed">Find tracks with similar sonic textures to any track in your library. Click "Echo Match" on any track in the <a href="/library" class="text-[var(--color-accent-light)] hover:underline">Library</a> to explore acoustic neighbors.</p>
+				</div>
+			</div>
 		</Card>
 		<Card padding="p-4">
-			<h2 class="text-base font-semibold text-[var(--text-primary)] mb-2">Steady Vibes</h2>
-			<p class="text-sm text-[var(--text-muted)]">Generate a playlist that maintains consistent energy and mood from a seed track. Uses CLAP embeddings to walk through vibe space.</p>
+			<div class="flex items-start gap-3">
+				<div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-indigo-500/15">
+					<Sparkles class="w-4 h-4 text-indigo-400" />
+				</div>
+				<div>
+					<h2 class="text-sm font-semibold text-[var(--text-primary)] mb-1">Steady Vibes</h2>
+					<p class="text-xs text-[var(--text-muted)] leading-relaxed">Generate a seamless mix that maintains consistent energy and mood from a seed track, or build a gradual sonic bridge in the <a href="/map?tab=journey" class="text-[var(--color-accent-light)] hover:underline">Music Map Journey</a>.</p>
+				</div>
+			</div>
 		</Card>
 	</div>
 </div>

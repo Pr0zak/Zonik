@@ -23,7 +23,6 @@
 	} = $props();
 
 	let Icon = $derived(icon);
-	let tag = $derived(href ? 'a' : onclick ? 'button' : 'div');
 	const toneBorder = {
 		default: 'border-[var(--border-subtle)]',
 		good: 'border-[var(--border-subtle)]',
@@ -36,20 +35,12 @@
 		warn: 'text-amber-300',
 		bad: 'text-red-300',
 	};
+	let baseClasses = $derived(
+		`block w-full text-left rounded-xl border bg-[var(--surface-container)] px-4 py-3 transition-colors ${toneBorder[tone] || toneBorder.default} ${active ? 'ring-1 ring-[var(--color-primary)]/50 bg-[var(--surface-container-high)]' : ''} ${className}`
+	);
 </script>
 
-<svelte:element
-	this={tag}
-	{href}
-	onclick={onclick}
-	type={tag === 'button' ? 'button' : undefined}
-	title={title || undefined}
-	class="block w-full text-left rounded-xl border bg-[var(--surface-container)] px-4 py-3 transition-colors
-		{toneBorder[tone] || toneBorder.default}
-		{active ? 'ring-1 ring-[var(--color-primary)]/50 bg-[var(--surface-container-high)]' : ''}
-		{href || onclick ? 'hover:bg-[var(--surface-container-high)] cursor-pointer' : ''}
-		{className}"
->
+{#snippet content()}
 	<div class="flex items-center gap-1.5 min-w-0">
 		{#if Icon}
 			<Icon class="w-3.5 h-3.5 flex-shrink-0" style="color: {color}" />
@@ -62,4 +53,31 @@
 	{#if detail}
 		<p class="text-xs text-[var(--text-muted)] truncate">{detail}</p>
 	{/if}
-</svelte:element>
+{/snippet}
+
+{#if href}
+	<a
+		{href}
+		{onclick}
+		title={title || undefined}
+		class="{baseClasses} hover:bg-[var(--surface-container-high)] cursor-pointer"
+	>
+		{@render content()}
+	</a>
+{:else if onclick}
+	<button
+		type="button"
+		{onclick}
+		title={title || undefined}
+		class="{baseClasses} hover:bg-[var(--surface-container-high)] cursor-pointer"
+	>
+		{@render content()}
+	</button>
+{:else}
+	<div
+		title={title || undefined}
+		class={baseClasses}
+	>
+		{@render content()}
+	</div>
+{/if}

@@ -184,115 +184,130 @@
 		{/snippet}
 	</PageHeader>
 
-	<!-- Connected clients -->
-	<section class="mb-6">
-		<div class="flex items-center gap-2 mb-2">
-			<Plug class="w-4 h-4" style="color: {SECTION_COLOR}" />
-			<h2 class="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wider">Connected Clients</h2>
-		</div>
-		<Card padding="p-0">
-			{#if loadingClients}
-				<Skeleton variant="list-item" count={3} />
-			{:else if !clients.ws_clients.length && !clients.api_clients.length}
-				<EmptyState
-					title="No clients connected"
-					description="Active WebSocket and Subsonic API clients will appear here."
-				>
-					{#snippet icon()}<Plug class="w-10 h-10" />{/snippet}
-				</EmptyState>
-			{:else}
-				<div class="divide-y divide-[var(--border-subtle)]">
-					{#each clients.ws_clients as ws}
-						<div class="flex items-center gap-3 px-4 py-3">
-							<div class="w-9 h-9 rounded-md bg-[var(--surface-container-high)] flex items-center justify-center flex-shrink-0">
-								<Globe class="w-4 h-4 text-[var(--text-secondary)]" />
-							</div>
-							<div class="flex-1 min-w-0">
-								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{deviceLabel(ws.user_agent)} (WebSocket)</p>
-								<p class="text-xs text-[var(--text-muted)] truncate">
-									{ws.ip || '—'} &middot; connected {formatRelativeTime(ws.connected_at)}
-								</p>
-							</div>
-							<Badge variant="success">WS</Badge>
-						</div>
-					{/each}
-					{#each clients.api_clients as api}
-						<div class="flex items-center gap-3 px-4 py-3">
-							<div class="w-9 h-9 rounded-md bg-[var(--surface-container-high)] flex items-center justify-center flex-shrink-0">
-								<Radio class="w-4 h-4" style="color: {SECTION_COLOR}" />
-							</div>
-							<div class="flex-1 min-w-0">
-								<p class="text-sm font-medium text-[var(--text-primary)] truncate">
-									{api.client_name || 'Subsonic'}
-									<span class="text-[var(--text-disabled)] font-normal">&middot; {api.username}</span>
-								</p>
-								<p class="text-xs text-[var(--text-muted)] truncate">
-									{api.ip || '—'} &middot; last activity {formatRelativeTime(api.last_seen)}
-								</p>
-							</div>
-							<span class="text-xs text-[var(--text-muted)] font-mono mr-2 hidden sm:inline">
-								{api.endpoint_count} calls
-							</span>
-							<Badge variant="info">API</Badge>
-						</div>
-					{/each}
+	<!-- Top row: Connected clients + Now playing side-by-side -->
+	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+		<!-- Connected clients -->
+		<section class="flex flex-col">
+			<div class="flex items-center justify-between mb-2">
+				<div class="flex items-center gap-2">
+					<Plug class="w-4 h-4" style="color: {SECTION_COLOR}" />
+					<h2 class="text-xs font-mono font-bold text-[var(--text-muted)] uppercase tracking-wider">Connected Clients</h2>
 				</div>
-			{/if}
-		</Card>
-	</section>
+				{#if !loadingClients}
+					<span class="text-xs font-mono text-[var(--text-disabled)]">{clients.ws_clients.length + clients.api_clients.length} active</span>
+				{/if}
+			</div>
+			<Card padding="p-0" class="flex-1 flex flex-col justify-center">
+				{#if loadingClients}
+					<Skeleton variant="list-item" count={2} />
+				{:else if !clients.ws_clients.length && !clients.api_clients.length}
+					<EmptyState
+						compact
+						title="No clients connected"
+						description="Active WebSocket and Subsonic API clients will appear here."
+					>
+						{#snippet icon()}<Plug class="w-6 h-6" />{/snippet}
+					</EmptyState>
+				{:else}
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each clients.ws_clients as ws}
+							<div class="flex items-center gap-3 px-4 py-3">
+								<div class="w-9 h-9 rounded-md bg-[var(--surface-container-high)] flex items-center justify-center flex-shrink-0">
+									<Globe class="w-4 h-4 text-[var(--text-secondary)]" />
+								</div>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm font-medium text-[var(--text-primary)] truncate">{deviceLabel(ws.user_agent)} (WebSocket)</p>
+									<p class="text-xs text-[var(--text-muted)] truncate">
+										{ws.ip || '—'} &middot; connected {formatRelativeTime(ws.connected_at)}
+									</p>
+								</div>
+								<Badge variant="success">WS</Badge>
+							</div>
+						{/each}
+						{#each clients.api_clients as api}
+							<div class="flex items-center gap-3 px-4 py-3">
+								<div class="w-9 h-9 rounded-md bg-[var(--surface-container-high)] flex items-center justify-center flex-shrink-0">
+									<Radio class="w-4 h-4" style="color: {SECTION_COLOR}" />
+								</div>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm font-medium text-[var(--text-primary)] truncate">
+										{api.client_name || 'Subsonic'}
+										<span class="text-[var(--text-disabled)] font-normal">&middot; {api.username}</span>
+									</p>
+									<p class="text-xs text-[var(--text-muted)] truncate">
+										{api.ip || '—'} &middot; last activity {formatRelativeTime(api.last_seen)}
+									</p>
+								</div>
+								<span class="text-xs text-[var(--text-muted)] font-mono mr-2 hidden sm:inline">
+									{api.endpoint_count} calls
+								</span>
+								<Badge variant="info">API</Badge>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</Card>
+		</section>
 
-	<!-- Now playing -->
-	<section class="mb-6">
-		<div class="flex items-center gap-2 mb-2">
-			<Disc3 class="w-4 h-4" style="color: {SECTION_COLOR}" />
-			<h2 class="text-sm font-semibold text-[var(--text-primary)] uppercase tracking-wider">Now Playing</h2>
-		</div>
-		<Card padding="p-0">
-			{#if loadingNow}
-				<Skeleton variant="list-item" count={2} />
-			{:else if !nowPlaying.length}
-				<EmptyState
-					title="Nothing playing"
-					description="Tracks that clients are actively streaming will show up here."
-				>
-					{#snippet icon()}<Disc3 class="w-10 h-10" />{/snippet}
-				</EmptyState>
-			{:else}
-				<div class="divide-y divide-[var(--border-subtle)]">
-					{#each nowPlaying as np}
-						<div class="flex items-center gap-3 px-4 py-3 group">
-							<button class="relative w-14 h-14 rounded-md bg-[var(--surface-base)] overflow-hidden flex-shrink-0"
-								onclick={() => play(np)}
-								title="Play">
-								{#if coverUrl(np.cover_art)}
-									<img src={coverUrl(np.cover_art, 56)} alt="" class="w-full h-full object-cover" loading="lazy" />
-								{:else}
-									<div class="flex items-center justify-center w-full h-full">
-										<Music class="w-5 h-5 text-[var(--text-disabled)]" />
-									</div>
-								{/if}
-							</button>
-							<div class="flex-1 min-w-0">
-								<p class="text-sm font-medium text-[var(--text-primary)] truncate">{np.title}</p>
-								<p class="text-xs text-[var(--text-muted)] truncate">
-									{np.artist || 'Unknown artist'}{#if np.album} &middot; {np.album}{/if}
-								</p>
-								<p class="text-xs text-[var(--text-disabled)] mt-0.5 truncate">
-									{np.username}{#if np.client} &middot; {np.client}{/if} &middot; started {formatRelativeTime(np.started_at)}
-								</p>
-							</div>
-							<button onclick={() => toggleStar(np)}
-								class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors flex-shrink-0
-									{np.starred ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-red-300'}"
-								title={np.starred ? 'Unstar' : 'Star'}>
-								<Heart class="w-4 h-4" fill={np.starred ? 'currentColor' : 'none'} />
-							</button>
-						</div>
-					{/each}
+		<!-- Now playing -->
+		<section class="flex flex-col">
+			<div class="flex items-center justify-between mb-2">
+				<div class="flex items-center gap-2">
+					<Disc3 class="w-4 h-4" style="color: {SECTION_COLOR}" />
+					<h2 class="text-xs font-mono font-bold text-[var(--text-muted)] uppercase tracking-wider">Now Playing</h2>
 				</div>
-			{/if}
-		</Card>
-	</section>
+				{#if !loadingNow}
+					<span class="text-xs font-mono text-[var(--text-disabled)]">{nowPlaying.length} streaming</span>
+				{/if}
+			</div>
+			<Card padding="p-0" class="flex-1 flex flex-col justify-center">
+				{#if loadingNow}
+					<Skeleton variant="list-item" count={2} />
+				{:else if !nowPlaying.length}
+					<EmptyState
+						compact
+						title="Nothing playing"
+						description="Tracks that clients are actively streaming will show up here."
+					>
+						{#snippet icon()}<Disc3 class="w-6 h-6" />{/snippet}
+					</EmptyState>
+				{:else}
+					<div class="divide-y divide-[var(--border-subtle)]">
+						{#each nowPlaying as np}
+							<div class="flex items-center gap-3 px-4 py-3 group">
+								<button class="relative w-14 h-14 rounded-md bg-[var(--surface-base)] overflow-hidden flex-shrink-0"
+									onclick={() => play(np)}
+									title="Play">
+									{#if coverUrl(np.cover_art)}
+										<img src={coverUrl(np.cover_art, 56)} alt="" class="w-full h-full object-cover" loading="lazy" />
+									{:else}
+										<div class="flex items-center justify-center w-full h-full">
+											<Music class="w-5 h-5 text-[var(--text-disabled)]" />
+										</div>
+									{/if}
+								</button>
+								<div class="flex-1 min-w-0">
+									<p class="text-sm font-medium text-[var(--text-primary)] truncate">{np.title}</p>
+									<p class="text-xs text-[var(--text-muted)] truncate">
+										{np.artist || 'Unknown artist'}{#if np.album} &middot; {np.album}{/if}
+									</p>
+									<p class="text-xs text-[var(--text-disabled)] mt-0.5 truncate">
+										{np.username}{#if np.client} &middot; {np.client}{/if} &middot; started {formatRelativeTime(np.started_at)}
+									</p>
+								</div>
+								<button onclick={() => toggleStar(np)}
+									class="p-2 min-w-[44px] min-h-[44px] flex items-center justify-center transition-colors flex-shrink-0
+										{np.starred ? 'text-red-400 hover:text-red-300' : 'text-[var(--text-muted)] hover:text-red-300'}"
+									title={np.starred ? 'Unstar' : 'Star'}>
+									<Heart class="w-4 h-4" fill={np.starred ? 'currentColor' : 'none'} />
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</Card>
+		</section>
+	</div>
 
 	<!-- Recently played -->
 	<section class="mb-6">
