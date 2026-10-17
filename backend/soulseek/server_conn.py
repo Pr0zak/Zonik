@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "server.slsknet.org"
 DEFAULT_PORT = 2242
-MAX_RECONNECT_DELAY = 300  # 5 minutes
+MAX_RECONNECT_DELAY = 900  # 15 minutes
 
 
 class ServerConnection:
@@ -166,10 +166,21 @@ class ServerConnection:
             if self._auto_reconnect and self._credentials:
                 self._schedule_reconnect()
 
-    def _schedule_reconnect(self) -> None:
-        if self._reconnect_task and not self._reconnect_task.done():
+    @staticmethod
+    def reconnect_delay(attempts: int) -> int:
+        """1, 2, 4 s for a plain drop; after that the server is probably throttling
+        us (it accepts the TCP connection but never answers the login), and quick
+        retries only prolong that, so wait 60 s, 2, 4, 8, then 15 minutes."""
+        if attempts < 3:
+            return 2 ** attempts
+        return min(60 * 2 ** (attempts - 3), MAX_RECONNECT_DELAY)
+
+    def _schedule_reconnect(self, from_reconnect: bool = False) -> None:
+        current = asyncio.current_task()
+        if (self._reconnect_task and not self._reconnect_task.done()
+                and not (from_reconnect and self._reconnect_task is current)):
             return
-        delay = min(2 ** self._reconnect_attempts, MAX_RECONNECT_DELAY)
+        delay = self.reconnect_delay(self._reconnect_attempts)
         self._reconnect_attempts += 1
         log.info(f"[server] Reconnecting in {delay}s (attempt {self._reconnect_attempts})")
         self._reconnect_task = asyncio.create_task(self._reconnect(delay))
@@ -185,8 +196,21 @@ class ServerConnection:
             self.total_reconnects += 1
             log.info("[server] Reconnected successfully")
         except Exception as e:
-            log.warning(f"[server] Reconnect failed: {e}")
-            self._schedule_reconnect()
+            log.warning(f"[server] Reconnect failed: {e!r}")
+            # Drop the half-open connection now (the server would close it ~30 s
+            # later) and schedule the next attempt from here; before, the attempt
+            # scheduled here was swallowed and retries waited on that late close.
+            self._drop_stream()
+            self._schedule_reconnect(from_reconnect=True)
+
+    def _drop_stream(self) -> None:
+        self._connected = False
+        self.logged_in = False
+        if self._read_task and not self._read_task.done() and self._read_task is not asyncio.current_task():
+            self._read_task.cancel()
+        if self._stream:
+            self._stream.close()
+            self._stream = None
 
     async def _keepalive_loop(self) -> None:
         """Send periodic status pings to keep the server connection alive."""

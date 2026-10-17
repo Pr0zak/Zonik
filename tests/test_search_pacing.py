@@ -26,3 +26,9 @@ async def test_searches_are_spaced_and_capped(monkeypatch):
     assert all(g >= 0.045 for g in gaps)
     with pytest.raises(asyncio.TimeoutError):
         await asyncio.wait_for(one(), 0.5)
+
+
+def test_reconnect_backs_off_once_logins_go_unanswered():
+    from backend.soulseek.server_conn import ServerConnection
+    assert [ServerConnection.reconnect_delay(n) for n in range(8)] == [1, 2, 4, 60, 120, 240, 480, 900]
+    assert ServerConnection.reconnect_delay(20) == 900
