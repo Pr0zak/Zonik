@@ -28,6 +28,9 @@ transfer_max_minutes = 30
 # Download queues. A job holds a search slot while it searches (jobs waiting for
 # one show as "pending"), then each transfer attempt takes a transfer slot. On top
 # of that, only one file is ever queued with the same peer at a time.
+# Search pacing: the Soulseek server throttles clients that search in bursts.
+search_min_interval_s = 3.0
+searches_per_minute = 15
 max_concurrent_searches = 3
 max_concurrent_downloads = 4
 preferred_formats = ["flac", "wav", "mp3"]

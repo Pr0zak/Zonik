@@ -231,10 +231,13 @@ class SoulseekClient:
         self._search_events[token] = event
         self._search_max[token] = max_responses
         loop = asyncio.get_running_loop()
-        started = loop.time()
-        self._search_last[token] = started
-
         try:
+            # Space out searches sent to the server. A burst of "Download all"
+            # clicks used to fire dozens of searches in seconds, after which the
+            # Soulseek server stopped answering logins for several minutes.
+            await self._pace_search()
+            started = loop.time()
+            self._search_last[token] = started
             await self.server.file_search(token, query)
             while True:
                 now = loop.time()
@@ -257,6 +260,32 @@ class SoulseekClient:
             self._search_max.pop(token, None)
             self._search_last.pop(token, None)
         return results_list[:max_responses]
+
+    async def _pace_search(self) -> None:
+        """Wait until at least `search_min_interval_s` has passed since the last
+        search this client sent, and no more than `searches_per_minute` went out
+        in the last 60 s. Callers queue on one lock, so they go out in order."""
+        if not hasattr(self, "_search_pace_lock"):
+            self._search_pace_lock = asyncio.Lock()
+            self._search_sent: list[float] = []
+        from backend.config import get_settings
+        cfg = get_settings().soulseek
+        gap = max(0.0, float(getattr(cfg, "search_min_interval_s", 3.0)))
+        per_min = max(1, int(getattr(cfg, "searches_per_minute", 15)))
+        async with self._search_pace_lock:
+            loop = asyncio.get_running_loop()
+            while True:
+                now = loop.time()
+                self._search_sent = [t for t in self._search_sent if now - t < 60]
+                wait = 0.0
+                if self._search_sent:
+                    wait = max(wait, self._search_sent[-1] + gap - now)
+                if len(self._search_sent) >= per_min:
+                    wait = max(wait, self._search_sent[0] + 60 - now)
+                if wait <= 0:
+                    break
+                await asyncio.sleep(wait)
+            self._search_sent.append(loop.time())
 
     async def download(self, username: str, filename: str, job_id: str | None = None) -> Transfer:
         """Initiate a download from a specific user. job_id links the transfer to its Job for progress sync."""

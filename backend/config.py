@@ -59,6 +59,8 @@ class SoulseekConfig(BaseModel):
     server_port: int = 2242
     use_native: bool = False
     max_concurrent_downloads: int = 4  # Max simultaneous transfer attempts (others queue)
+    search_min_interval_s: float = 3.0  # min gap between searches sent to the server
+    searches_per_minute: int = 15  # hard cap; bursts above this got the client throttled
     max_concurrent_searches: int = 3  # Max download jobs in their search phase at once (others show "pending")
     # Ceiling for one transfer: the poller gives up after this long, and the client's
     # cleanup drops a TRANSFERRING entry with no data for this long. A transfer that
