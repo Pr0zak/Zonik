@@ -45,6 +45,7 @@ class ServerConnection:
         self._credentials: tuple[str, str] | None = None
         self._reconnect_attempts = 0
         self._gen = 0  # bumped per connection; stale read loops compare against it
+        self._had_session = False  # set on the first successful login
         self.total_reconnects = 0
         self._auto_reconnect = True
         self._connected = False
@@ -98,6 +99,7 @@ class ServerConnection:
 
         import time
         self.logged_in = True
+        self._had_session = True
         self.connected_since = time.time()
         self._reconnect_attempts = 0
 
@@ -176,7 +178,10 @@ class ServerConnection:
                 log.info("[server] Disconnected")
                 if self.on_disconnect:
                     await self.on_disconnect()
-                if self._auto_reconnect and self._credentials:
+                # Reconnect only a connection that had logged in. During a first login
+                # the caller handles failure (start_client retries with backoff); a
+                # second, quick reconnect here was extra load on a throttling server.
+                if self._auto_reconnect and self._credentials and self._had_session:
                     self._schedule_reconnect()
 
     @staticmethod

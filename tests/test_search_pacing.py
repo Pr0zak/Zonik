@@ -45,6 +45,7 @@ async def test_stale_read_loop_does_not_start_a_second_reconnect_chain():
 
     conn = ServerConnection()
     conn._credentials = ("u", "p")
+    conn._had_session = True  # reconnects only follow a session that had logged in
     scheduled = []
     conn._schedule_reconnect = lambda *a, **k: scheduled.append(1)
     old = FakeStream()

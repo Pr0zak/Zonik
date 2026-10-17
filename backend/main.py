@@ -143,13 +143,27 @@ async def _native_keepalive_loop():
     if not get_settings().soulseek.username:
         return
     down_checks = 0
+    last_forced = 0.0
     while True:
         await asyncio.sleep(120)
         try:
+            import time as _time
+            from backend import soulseek as _slsk
             from backend.soulseek import get_client, start_client, stop_client
             c = get_client()
             if c is not None and c.logged_in:
                 down_checks = 0
+                continue
+            # A retry is already scheduled (startup retry loop, or the connection's own
+            # reconnect loop): leave it alone. Forcing a restart on top of it sends
+            # quick extra logins, and the server answers those by blocking our IP for
+            # longer — that is how one throttle turned into an hours-long block.
+            retry = getattr(_slsk, "_retry_task", None)
+            recon = getattr(getattr(c, "server", None), "_reconnect_task", None) if c else None
+            if (retry and not retry.done()) or (recon and not recon.done()):
+                down_checks += 1
+                if down_checks % 15 == 1:
+                    _log.info(f"[soulseek] Not logged in; a backed-off retry is pending ({down_checks} checks)")
                 continue
             down_checks += 1
             _log.warning(
@@ -157,16 +171,20 @@ async def _native_keepalive_loop():
                 f"built-in reconnect should be retrying"
             )
             # Last resort after ~16 min still down: the built-in backoff is stuck.
-            if down_checks >= 8:
+            if down_checks >= 8 and _time.monotonic() - last_forced > 3600:
+                last_forced = _time.monotonic()
                 _log.warning("[soulseek] Sustained outage — forcing client restart")
                 try:
                     await stop_client()
                 except Exception:
                     pass
-                await start_client()
+                down_checks = 0
+                try:
+                    await start_client()
+                except Exception as e:
+                    _log.warning(f"[soulseek] Forced restart could not log in ({e!r}); backed-off retry continues")
                 c2 = get_client()
                 _log.info(f"[soulseek] Forced restart complete — logged_in={bool(c2 and c2.logged_in)}")
-                down_checks = 0
         except asyncio.CancelledError:
             return
         except Exception as e:
