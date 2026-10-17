@@ -97,6 +97,10 @@ class PeerConnection:
         except Exception as e:
             log.debug(f"[peer:{self.username}] Read loop ended: {e}")
         finally:
+            # Close our side too. Without this every connection the peer hung up on
+            # stayed in CLOSE-WAIT forever (2,254 of them after one evening).
+            if self._stream:
+                self._stream.close()
             if self.on_close:
                 await self.on_close(self)
 

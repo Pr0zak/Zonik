@@ -626,7 +626,10 @@ class SoulseekClient:
                 await peer.send_upload_denied(msg["filename"], reason)
 
     async def _handle_peer_close(self, peer: PeerConnection) -> None:
-        self.peers.pop(peer.username, None)
+        # Only forget this connection if it is still the one on record: a newer
+        # connection to the same user must not be dropped by an old one closing.
+        if self.peers.get(peer.username) is peer:
+            self.peers.pop(peer.username, None)
 
     # --- Inbound connection handlers ---
 

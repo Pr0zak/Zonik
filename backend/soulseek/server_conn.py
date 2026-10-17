@@ -44,6 +44,7 @@ class ServerConnection:
         self._reconnect_task: asyncio.Task | None = None
         self._credentials: tuple[str, str] | None = None
         self._reconnect_attempts = 0
+        self._gen = 0  # bumped per connection; stale read loops compare against it
         self.total_reconnects = 0
         self._auto_reconnect = True
         self._connected = False
@@ -58,9 +59,12 @@ class ServerConnection:
     async def connect(self) -> None:
         """Establish TCP connection to server."""
         reader, writer = await asyncio.open_connection(self.host, self.port)
+        if self._stream is not None:
+            self._stream.close()
+        self._gen += 1
         self._stream = MessageStream(reader, writer)
         self._connected = True
-        self._read_task = asyncio.create_task(self._read_loop())
+        self._read_task = asyncio.create_task(self._read_loop(self._gen, self._stream))
         log.info(f"[server] Connected to {self.host}:{self.port}")
 
     async def login(self, username: str, password: str, timeout: float = 10.0) -> dict:
@@ -139,11 +143,13 @@ class ServerConnection:
             self._stream.write_message(data)
             await self._stream.drain()
 
-    async def _read_loop(self) -> None:
-        """Read messages from server until disconnected."""
+    async def _read_loop(self, gen: int, stream) -> None:
+        """Read messages from server until disconnected. `gen`/`stream` are captured
+        when the connection is made, so a loop that starts late still knows which
+        connection it belongs to."""
         try:
-            while self._connected and self._stream:
-                payload = await self._stream.read_message()
+            while self._connected and stream is not None and stream is self._stream:
+                payload = await stream.read_message()
                 if payload is None:
                     break
 
@@ -158,13 +164,20 @@ class ServerConnection:
         except Exception as e:
             log.error(f"[server] Read loop error: {e}")
         finally:
-            self._connected = False
-            self.logged_in = False
-            log.info("[server] Disconnected")
-            if self.on_disconnect:
-                await self.on_disconnect()
-            if self._auto_reconnect and self._credentials:
-                self._schedule_reconnect()
+            if stream is not None:
+                stream.close()
+            # Only the current connection's loop may change the client's state. An
+            # older loop ending late used to mark a fresh connection as down and start
+            # a second reconnect chain; two chains then logged in as the same account
+            # and kept kicking each other off the server.
+            if gen == self._gen:
+                self._connected = False
+                self.logged_in = False
+                log.info("[server] Disconnected")
+                if self.on_disconnect:
+                    await self.on_disconnect()
+                if self._auto_reconnect and self._credentials:
+                    self._schedule_reconnect()
 
     @staticmethod
     def reconnect_delay(attempts: int) -> int:
@@ -176,34 +189,33 @@ class ServerConnection:
         return min(60 * 2 ** (attempts - 3), MAX_RECONNECT_DELAY)
 
     def _schedule_reconnect(self, from_reconnect: bool = False) -> None:
-        current = asyncio.current_task()
-        if (self._reconnect_task and not self._reconnect_task.done()
-                and not (from_reconnect and self._reconnect_task is current)):
+        """Start the single reconnect loop if it is not already running."""
+        if self._reconnect_task and not self._reconnect_task.done():
             return
-        delay = self.reconnect_delay(self._reconnect_attempts)
-        self._reconnect_attempts += 1
-        log.info(f"[server] Reconnecting in {delay}s (attempt {self._reconnect_attempts})")
-        self._reconnect_task = asyncio.create_task(self._reconnect(delay))
+        self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
-    async def _reconnect(self, delay: float) -> None:
-        await asyncio.sleep(delay)
-        if not self._auto_reconnect or not self._credentials:
-            return
-
-        try:
-            await self.connect()
-            await self.login(*self._credentials)
-            self.total_reconnects += 1
-            log.info("[server] Reconnected successfully")
-        except Exception as e:
-            log.warning(f"[server] Reconnect failed: {e!r}")
-            # Drop the half-open connection now (the server would close it ~30 s
-            # later) and schedule the next attempt from here; before, the attempt
-            # scheduled here was swallowed and retries waited on that late close.
-            self._drop_stream()
-            self._schedule_reconnect(from_reconnect=True)
+    async def _reconnect_loop(self) -> None:
+        """One loop owns reconnecting: wait, connect, log in; on failure drop the
+        half-open connection and wait longer. Exits once logged in."""
+        while self._auto_reconnect and self._credentials and not self.logged_in:
+            delay = self.reconnect_delay(self._reconnect_attempts)
+            self._reconnect_attempts += 1
+            log.info(f"[server] Reconnecting in {delay}s (attempt {self._reconnect_attempts})")
+            await asyncio.sleep(delay)
+            if not self._auto_reconnect or not self._credentials or self.logged_in:
+                return
+            try:
+                await self.connect()
+                await self.login(*self._credentials)
+                self.total_reconnects += 1
+                log.info("[server] Reconnected successfully")
+                return
+            except Exception as e:
+                log.warning(f"[server] Reconnect failed: {e!r}")
+                self._drop_stream()
 
     def _drop_stream(self) -> None:
+        self._gen += 1  # the dropped connection's read loop must not touch state
         self._connected = False
         self.logged_in = False
         if self._read_task and not self._read_task.done() and self._read_task is not asyncio.current_task():
