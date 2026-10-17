@@ -56,7 +56,9 @@ async def list_playlists(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("")
-async def create_playlist(req: PlaylistCreate, user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+async def create_playlist(req: PlaylistCreate, user_id: str | None = None, db: AsyncSession = Depends(get_db)):
+    # No owner by default, like every existing playlist. The old default "admin" is a
+    # username, not a users.id, so with foreign keys on every create from the web UI failed.
     playlist = Playlist(
         id=str(uuid.uuid4()),
         name=req.name,
