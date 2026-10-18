@@ -478,3 +478,34 @@ async def test_tick_deadline_cuts_a_second_batch_short(db_ready, monkeypatch):
     assert [o["ok"] for o in first] == [None]
     second = await scheduler._auto_download_missing([{"artist": "A", "track": "Two"}], "lastfm_top_tracks")
     assert second == [] and submitted == ["One"]  # no new batch after the tick deadline
+
+
+# --- a blacklisted upgrade in the scheduled scan ------------------------------------
+
+async def test_blacklisted_upgrade_goes_back_to_pending(db_ready, monkeypatch):
+    """_prepare_upgrade moves the row to "downloading" before submit_tracked; a blacklist
+    skip starts no job, so the row must not stay stuck at "downloading"."""
+    from backend.models.blacklist import DownloadBlacklist
+    from backend.models.track import Track
+    from backend.models.upgrade import TrackUpgrade
+    from backend.workers import scheduler
+
+    async def ready():
+        return True
+    monkeypatch.setattr(scheduler, "_download_backend_ready", ready)
+
+    async with async_session() as s:
+        s.add(Track(id="trk-bl", title="Banned", file_path="/m/banned.mp3", format="mp3", bitrate=192))
+        s.add(TrackUpgrade(id="up-bl", track_id="trk-bl", original_format="mp3", reason="low_bitrate",
+                           status="pending", attempts=1, max_attempts=3))
+        s.add(DownloadBlacklist(id="bl-1", artist="A", track="Banned", reason="nope"))
+        await s.commit()
+
+    outs = await scheduler._auto_download_missing(
+        [{"artist": "A", "track": "Banned", "upgrade_id": "up-bl", "track_id": "trk-bl"}], "upgrade_scan")
+    assert outs == []
+    async with async_session() as s:
+        row = await s.get(TrackUpgrade, "up-bl")
+        jobs = (await s.execute(select(Job))).scalars().all()
+    assert row.status == "pending" and row.attempts == 1  # attempt refunded, not stuck downloading
+    assert jobs == []

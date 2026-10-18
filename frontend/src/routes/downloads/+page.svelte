@@ -269,6 +269,7 @@
 		if (!o) return '';
 		const added = (o.new || 0) + (o.replaced || 0);
 		const n = added + (o.already_had || 0);
+		if (!n) return '';
 		const parts = [`${n.toLocaleString()} finished ${scopeInfo.phrase}`];
 		const extra = [];
 		if (summary.bytes_added) extra.push(formatSize(summary.bytes_added));
@@ -1502,7 +1503,7 @@
 				<span class="md:text-center">{#if fmt}<FormatBadge format={fmt} class="!text-[10px] !py-0" />{/if}</span>
 				<span class="text-[var(--text-muted)] font-mono text-[11px] md:text-right truncate">{fsize > 0 ? formatSize(fsize) : '—'}</span>
 				<span class="text-[var(--text-muted)] text-[11px] truncate min-w-0" title={peer ? `from ${peer}${attemptNo > 1 ? ` (${ordinal(attemptNo)} peer tried)` : ''}` : ''}>
-					{peer || '—'}{#if peer && attemptNo > 1}<span class="text-[var(--text-disabled)]"> · {ordinal(attemptNo)} peer</span>{/if}
+					{peer || '—'}{#if peer && attemptNo > 1}<span class="text-[var(--text-disabled)]">{` · ${ordinal(attemptNo)} peer`}</span>{/if}
 				</span>
 				<span class="text-[var(--text-muted)] font-mono text-[11px] md:text-right whitespace-nowrap" title={timeIso ? formatDateTime(timeIso) : ''}>{timeIso ? whenShort(timeIso) : '—'}</span>
 				<span class="text-[var(--text-muted)] text-[11px] truncate">{playedText(job, outcome)}</span>
@@ -1600,12 +1601,12 @@
 					{@render extBadge(ext)}
 					{#if fsize > 0 || peer}
 						<span class="text-[11px] text-[var(--text-muted)] truncate min-w-0">
-							{#if fsize > 0}<span class="font-mono">{formatSize(fsize)}</span>{/if}{#if fsize > 0 && peer} · {/if}{#if peer}<span title="from {peer}">{peer}</span>{/if}
+							{#if fsize > 0}<span class="font-mono">{formatSize(fsize)}</span>{/if}{#if fsize > 0 && peer}{' · '}{/if}{#if peer}<span title="from {peer}">{peer}</span>{/if}
 						</span>
 					{/if}
 				</div>
 				<p class="mt-0.5 text-[11px] min-w-0 whitespace-normal leading-snug">
-					<span class="font-medium {COLOUR_TEXT[st.colour] || COLOUR_TEXT.muted}">{st.word}</span>{#if st.detail}<span class="text-[var(--text-muted)]"> · {st.detail}</span>{/if}
+					<span class="font-medium {COLOUR_TEXT[st.colour] || COLOUR_TEXT.muted}">{st.word}</span>{#if st.detail}<span class="text-[var(--text-muted)]">{` · ${st.detail}`}</span>{/if}
 				</p>
 				{#if st.stage === 'transferring' && st.progress != null}
 					<div class="mt-1 h-1 rounded-full overflow-hidden bg-[var(--border-interactive)]">
@@ -1844,7 +1845,7 @@
 							<span class="inline-flex items-center justify-center w-5 h-5 rounded-md bg-sky-500/20 text-sky-400 text-xs font-bold font-mono">{activeHeroItems.length}</span>
 							<h3 class="text-sm font-semibold text-[var(--text-primary)]">Active Transfers</h3>
 							<span class="text-xs text-[var(--text-muted)] font-mono">
-								({activeHeroItems.length}{#if limits?.transfer_slots != null} of {limits.transfer_slots}{/if} slots active{#if totalTransferSpeed > 0} · {formatSpeed(totalTransferSpeed)} total{/if})
+								{`(${activeHeroItems.length}${limits?.transfer_slots != null ? ` of ${limits.transfer_slots}` : ''} slots active${totalTransferSpeed > 0 ? ` · ${formatSpeed(totalTransferSpeed)} total` : ''})`}
 							</span>
 						</div>
 					</div>

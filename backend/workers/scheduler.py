@@ -531,6 +531,11 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
                                        job_id=job_id, wait=False)
         if sub["skipped"]:
             skipped_backoff += 1
+            if upgrade_id:
+                # _prepare_upgrade already moved the row to "downloading"; a skip (the
+                # track is blacklisted) starts no job, so put it back to pending with
+                # the attempt refunded instead of leaving it stuck until the reaper.
+                await finalize_upgrade(upgrade_id, None, None)
             return None
         return {"artist": artist, "track": track, "job_id": sub["job_id"],
                 "upgrade_id": upgrade_id, "error": sub["error"], "deduped": sub["deduped"]}

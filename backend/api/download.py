@@ -278,6 +278,12 @@ async def _set_stage(job, job_id: str, desc: str, req, *, stage: str | None = No
         ev = event_fields if event_fields is not None else {
             k: v for k, v in fields.items() if k not in ("stage", "stage_since")}
         _log_event(job, job_id, event, **ev)
+    if job_id in cancelled_jobs:
+        # The cancel route already wrote the row as failed ("Cancelled by user") and
+        # broadcast it. Saving this detached, still-running copy (search events and
+        # transfer state changes arrive until the task notices) would flip the row
+        # and the page back to running; the terminal write saves the timeline.
+        return doc
     await _save_job_obj(job)
     if broadcast:
         await broadcast_job_update(_job_payload(job, job_id, description if description is not None else desc, doc))

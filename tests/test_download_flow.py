@@ -309,6 +309,34 @@ async def test_cancel_during_transfer(db_ready, fake_slsk, imported):
     assert json.loads(row.tracks)[0]["status"] == "failed"
 
 
+async def test_stage_write_after_cancel_keeps_the_row_cancelled(db_ready, recorder):
+    """Once the cancel route has written the row as failed, a stage write from the
+    still-running task (a search event, a transfer state change) must not save the
+    detached running copy over it, nor broadcast it as running again."""
+    async with async_session() as s:
+        s.add(Job(id="job-c", type="download", card="dl:manual", status="failed",
+                  started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+                  result=json.dumps({"error": "Cancelled by user"}),
+                  tracks=json.dumps([{"artist": ARTIST, "track": TRACK, "status": "pending"}])))
+        await s.commit()
+    detached = Job(id="job-c", type="download", card="dl:manual", status="running",
+                   started_at=datetime.utcnow(),
+                   tracks=json.dumps([{"artist": ARTIST, "track": TRACK, "status": "pending"}]))
+    req = download.DownloadRequest(artist=ARTIST, track=TRACK, source="manual")
+    download.cancelled_jobs.add("job-c")
+    try:
+        await download._set_stage(detached, "job-c", f"{ARTIST} — {TRACK}", req, stage="searching",
+                                  search={"query_index": 2, "query_total": 4}, event="query_end",
+                                  event_fields={"i": 2, "n": 4})
+    finally:
+        download.cancelled_jobs.discard("job-c")
+        download._job_done("job-c")
+    async with async_session() as s:
+        row = await s.get(Job, "job-c")
+    assert row.status == "failed" and json.loads(row.result) == {"error": "Cancelled by user"}
+    assert recorder == []
+
+
 async def test_busy_peer_is_deferred_behind_other_sources(db_ready, fake_slsk, imported):
     fake_slsk.results = [result("alpha", fname(1), speed=2_000_000), result("beta", fname(2), speed=600_000)]
     busy = fake_slsk.slot("alpha")
