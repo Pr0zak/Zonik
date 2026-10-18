@@ -150,10 +150,11 @@
 		try { return JSON.parse(job.tracks); } catch { return null; }
 	}
 
+	const KNOWN_EXTENSIONS = new Set(['flac', 'mp3', 'wav', 'alac', 'm4a', 'ogg', 'opus', 'aiff', 'ape']);
 	function fileExtension(filename) {
-		if (!filename) return '';
-		const ext = filename.split('.').pop()?.toLowerCase() || '';
-		return ext;
+		if (!filename || typeof filename !== 'string' || !filename.includes('.')) return '';
+		const ext = filename.split('.').pop()?.toLowerCase().trim() || '';
+		return KNOWN_EXTENSIONS.has(ext) ? ext : '';
 	}
 
 	const SOURCE_LABELS = {
@@ -1229,7 +1230,7 @@
 							{@const t = jobTracks?.[0]}
 							{@const rawTitle = formatJobTitle(job.description || job.type)}
 							{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
-							{@const ext = fileExtension(fname || job.description)}
+							{@const ext = fileExtension(fname)}
 							{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
 							{@const peer = t?.username || jobResult?.username || ''}
 							{@const searchArtist = t?.artist || ''}
@@ -1657,7 +1658,7 @@
 						{@const t = jobTracks?.[0]}
 						{@const rawTitle = formatJobTitle(wsDescriptions[job.id] || job.description || job.type)}
 						{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
-						{@const ext = fileExtension(fname || job.description)}
+						{@const ext = fileExtension(fname)}
 						{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || transfer?.total_bytes || 0}
 						{@const peer = transfer?.username || t?.username || jobResult?.username || (job.id ? jobDetails[job.id]?.[0]?.username : '') || ''}
 						{@const timeIso = job.finished_at || job.started_at || job.created_at}
