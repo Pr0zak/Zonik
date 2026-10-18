@@ -1237,58 +1237,66 @@
 							{@const libQuery = searchArtist && searchTrack ? `${searchArtist} ${searchTrack}` : rawTitle}
 							{@const timeIso = job.finished_at || job.started_at || job.created_at}
 
-							<div class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] border border-[var(--border-subtle)]/40 transition-colors text-xs group/done">
-								<div class="flex items-center gap-2.5 min-w-0 flex-1">
-									<span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" title="Completed"></span>
-									<span class="font-medium text-[var(--text-primary)] truncate max-w-[280px] sm:max-w-[360px] md:max-w-[480px]" title={rawTitle}>
+							<div class="grid grid-cols-[16px_1fr_48px_60px_110px_70px_84px_24px] items-center gap-2.5 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs group/done">
+								<!-- Col 1: Status indicator -->
+								<span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" title="Completed"></span>
+
+								<!-- Col 2: Track Title & Source -->
+								<div class="min-w-0 flex items-center gap-2">
+									<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>
 										{rawTitle}
 									</span>
 									{#if sourceLabel(job)}
-										<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 hidden sm:inline">
+										<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 hidden lg:inline">
 											{sourceLabel(job)}
-										</span>
-									{/if}
-									{#if ext}
-										<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'} class="text-[10px] py-0 px-1.5 flex-shrink-0">
-											{ext.toUpperCase()}
-										</Badge>
-									{/if}
-									{#if fsize > 0}
-										<span class="text-[var(--text-muted)] font-mono text-[11px] flex-shrink-0 hidden md:inline">
-											{formatSize(fsize)}
-										</span>
-									{/if}
-									{#if peer}
-										<span class="text-[var(--text-muted)] text-[11px] truncate flex-shrink-0 hidden lg:inline">
-											from <span class="text-[var(--text-secondary)]">{peer}</span>
 										</span>
 									{/if}
 								</div>
 
-								<div class="flex items-center gap-3 flex-shrink-0">
-									{#if timeIso}
-										<span class="text-[var(--text-muted)] font-mono text-[11px] whitespace-nowrap" title={formatDateTime(timeIso)}>
-											{formatRelativeTime(timeIso)}
-										</span>
+								<!-- Col 3: Format Badge -->
+								<div class="text-center">
+									{#if ext}
+										<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'} class="text-[10px] py-0 px-1.5">
+											{ext.toUpperCase()}
+										</Badge>
 									{/if}
-									<a
-										href="/library?search={encodeURIComponent(libQuery)}"
-										class="text-sky-400 hover:text-sky-300 font-medium transition-colors flex items-center gap-0.5 whitespace-nowrap"
-										title="View in Library"
-									>
-										In Library <span aria-hidden="true">&rarr;</span>
-									</a>
-									<button
-										onclick={() => {
-											hiddenJobIds = new Set([...hiddenJobIds, job.id]);
-											localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-										}}
-										class="text-[var(--text-muted)] hover:text-rose-400 opacity-0 group-hover/done:opacity-100 transition-opacity p-0.5"
-										title="Dismiss from list"
-									>
-										<X class="w-3.5 h-3.5" />
-									</button>
 								</div>
+
+								<!-- Col 4: Size -->
+								<span class="text-[var(--text-muted)] font-mono text-[11px] text-right truncate">
+									{fsize > 0 ? formatSize(fsize) : '—'}
+								</span>
+
+								<!-- Col 5: Peer -->
+								<span class="text-[var(--text-muted)] text-[11px] truncate hidden md:inline" title={peer ? `from ${peer}` : ''}>
+									{peer ? peer : '—'}
+								</span>
+
+								<!-- Col 6: Relative Time -->
+								<span class="text-[var(--text-muted)] font-mono text-[11px] text-right whitespace-nowrap" title={timeIso ? formatDateTime(timeIso) : ''}>
+									{timeIso ? formatRelativeTime(timeIso) : '—'}
+								</span>
+
+								<!-- Col 7: In Library Link -->
+								<a
+									href="/library?search={encodeURIComponent(libQuery)}"
+									class="text-sky-400 hover:text-sky-300 font-medium transition-colors text-right flex items-center justify-end gap-0.5 whitespace-nowrap"
+									title="View in Library"
+								>
+									In Library <span aria-hidden="true">&rarr;</span>
+								</a>
+
+								<!-- Col 8: Dismiss Button -->
+								<button
+									onclick={() => {
+										hiddenJobIds = new Set([...hiddenJobIds, job.id]);
+										localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
+									}}
+									class="text-[var(--text-muted)] hover:text-rose-400 opacity-0 group-hover/done:opacity-100 transition-opacity p-0.5 flex items-center justify-center"
+									title="Dismiss from list"
+								>
+									<X class="w-3.5 h-3.5" />
+								</button>
 							</div>
 						{/each}
 					</div>
@@ -1639,232 +1647,146 @@
 					</EmptyState>
 				{/if}
 			{:else}
-				<div class="space-y-2">
+				<div class="space-y-1">
 					{#each displayJobs as job (job.id)}
 						{@const transfer = getTransferForJob(job)}
 						{@const status = friendlyStatus(job, transfer)}
 						{@const queueRank = status === 'queued' ? getQueueRank(job.id) : null}
 						{@const jobResult = parseJobResult(job)}
 						{@const jobTracks = parseJobTracks(job)}
-						{@const title = formatJobTitle(wsDescriptions[job.id] || job.description || job.type)}
-						<div class="{status === 'completed' ? 'bg-emerald-500/5' : status === 'failed' ? 'bg-red-500/5' : status === 'downloading' ? 'bg-blue-500/5' : status === 'queued' ? 'bg-amber-500/5' : 'bg-[var(--surface-container)]'} rounded-lg overflow-hidden group/job">
-							<div class="flex items-center gap-3 px-4 py-3">
-								<div class="flex-1 min-w-0">
-									<div class="flex items-center gap-2">
-										{#if queueRank}
-											<span class="text-xs font-bold font-mono px-2 py-0.5 rounded-md flex-shrink-0 {queueRank === 1 ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : queueRank === 2 ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-[var(--surface-container-high)] text-[var(--text-muted)] border border-[var(--border-subtle)]'}">
-												{queueRank === 1 ? '#1 NEXT' : queueRank === 2 ? '#2 IN LINE' : `#${queueRank}`}
-											</span>
-										{/if}
-										<p class="text-sm text-[var(--text-primary)] font-medium truncate">
-											{title}
-											{#if sourceLabel(job)}<span class="ml-1.5 text-xs font-medium px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)]">{sourceLabel(job)}</span>{/if}
-										</p>
-									</div>
+						{@const t = jobTracks?.[0]}
+						{@const rawTitle = formatJobTitle(wsDescriptions[job.id] || job.description || job.type)}
+						{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
+						{@const ext = fileExtension(fname || job.description)}
+						{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || transfer?.total_bytes || 0}
+						{@const peer = transfer?.username || t?.username || jobResult?.username || (job.id ? jobDetails[job.id]?.[0]?.username : '') || ''}
+						{@const timeIso = job.finished_at || job.started_at || job.created_at}
+						{@const fail = status === 'failed' ? friendlyFailure(job, jobResult) : null}
+						{@const searchQ = status === 'failed' ? getSearchQueryForJob(job) : ''}
+						{@const searchArtist = t?.artist || ''}
+						{@const searchTrack = t?.track || ''}
+						{@const libQuery = searchArtist && searchTrack ? `${searchArtist} ${searchTrack}` : rawTitle}
 
-									{#if status === 'queued'}
-										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
-											<span class="text-amber-400/90 font-medium">Waiting for transfer slot</span>
-											{#if jobTracks?.[0]?.username}
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-												<span>from {jobTracks[0].username}</span>
-											{/if}
-											{#if jobTracks?.[0]?.filename}
-												{@const ext = fileExtension(jobTracks[0].filename)}
-												{#if ext}
-													<span class="text-[var(--text-disabled)]">&middot;</span>
-													<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>{ext.toUpperCase()}</Badge>
-												{/if}
-											{/if}
-											<span class="text-[var(--text-disabled)]">&middot;</span>
-											<span>{job.created_at ? formatDateTime(job.created_at) : ''}</span>
-										</div>
-									{:else if status === 'searching'}
-										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5">
-											<span class="text-indigo-400 font-medium">Querying Soulseek network</span>
-											<span class="text-[var(--text-disabled)]">&middot;</span>
-											<span>Waiting for response from online peers</span>
-										</div>
-									{:else if job.status === 'completed' && (jobResult || jobTracks?.[0])}
-										{@const t = jobTracks?.[0]}
-										{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
-										{@const ext = fileExtension(fname)}
-										{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
-										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
-											{#if fname}
-												{@const searchTerm = t?.track ? (t?.artist ? `${t.artist} ${t.track}` : t.track) : fname.replace(/\.\w+$/, '')}
-												<a href="/library?search={encodeURIComponent(searchTerm)}"
-													class="text-[var(--text-secondary)] font-medium truncate max-w-[300px] hover:text-[var(--color-accent)] transition-colors"
-													title={jobResult?.filename || fname}>{fname}</a>
-											{/if}
-											{#if ext}
-												<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>{ext.toUpperCase()}</Badge>
-											{/if}
-											{#if fsize > 0}
-												<span class="font-mono">{formatSize(fsize)}</span>
-											{/if}
-											{#if t?.username || jobResult?.username}
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-												<span>from {t?.username || jobResult?.username}</span>
-											{/if}
-											{#if jobResult?.strategy}
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-												<span>{jobResult.sources_tried || 1} source{(jobResult.sources_tried || 1) > 1 ? 's' : ''}</span>
-											{:else if jobResult?.attempt > 1}
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-												<span>attempt {jobResult.attempt}</span>
-											{/if}
-											<span class="text-[var(--text-disabled)]">&middot;</span>
-											<span>{job.finished_at ? formatDateTime(job.finished_at) : ''}</span>
-										</div>
-									{:else}
-										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] flex-wrap">
-											{#if transfer?.username}
-												<span>from {transfer.username}</span>
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-											{:else if job.status === 'running' && jobDetails[job.id]?.[0]?.username}
-												<span>from {jobDetails[job.id][0].username}</span>
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-											{/if}
-											{#if transfer && transfer.speed > 0}
-												<span class="font-mono">{formatSpeed(transfer.speed)}</span>
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-											{/if}
-											{#if transfer?.eta_seconds > 0}
-												<span class="font-mono">{formatETA(transfer.eta_seconds)}</span>
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-											{/if}
-											{#if transfer && transfer.total_bytes > 0}
-												<span class="font-mono hidden sm:inline">{formatSize(transfer.received_bytes)} / {formatSize(transfer.total_bytes)}</span>
-											{:else if job.total > 1}
-												<span>{job.progress || 0}/{job.total} tracks</span>
-											{/if}
-											{#if job.status === 'failed'}
-												{@const fail = friendlyFailure(job, jobResult)}
-												<span class="text-rose-400 font-medium">{fail.title}</span>
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-												<span class="text-[var(--text-muted)] truncate max-w-md">{fail.detail}</span>
-												{#if jobResult?.failed_sources?.length}
-													<span class="text-[var(--text-disabled)]">&middot;</span>
-													<span class="text-orange-400 font-mono" title={jobResult.failed_sources.join(', ')}>{jobResult.failed_sources.length} source{jobResult.failed_sources.length > 1 ? 's' : ''} tried</span>
-												{/if}
-												<span class="text-[var(--text-disabled)]">&middot;</span>
-											{/if}
-											{#if job.status !== 'running'}
-												<span>{job.finished_at ? formatDateTime(job.finished_at) : job.started_at ? formatDateTime(job.started_at) : ''}</span>
-											{/if}
-										</div>
-									{/if}
-								</div>
-								{#if job.status === 'running'}
-									<button onclick={() => cancelJob(job.id)}
-										class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
-										<X class="w-3.5 h-3.5" />
-									</button>
+						<div class="grid grid-cols-[16px_1fr_48px_60px_110px_120px_84px_24px] items-center gap-2.5 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs group/job">
+							<!-- Col 1: Status indicator -->
+							{#if status === 'completed'}
+								<span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" title="Completed"></span>
+							{:else if status === 'failed'}
+								<span class="w-2 h-2 rounded-full bg-rose-400 flex-shrink-0" title="Failed"></span>
+							{:else if status === 'downloading'}
+								<span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse flex-shrink-0" title="Downloading"></span>
+							{:else if status === 'queued'}
+								<span class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Queued"></span>
+							{:else}
+								<span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" title="Searching"></span>
+							{/if}
+
+							<!-- Col 2: Track Title, Queue Rank, and Source -->
+							<div class="min-w-0 flex items-center gap-2">
+								{#if queueRank}
+									<span class="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded {queueRank === 1 ? 'bg-amber-500/20 text-amber-300' : 'bg-[var(--surface-container-high)] text-[var(--text-muted)]'} flex-shrink-0">
+										#{queueRank}
+									</span>
 								{/if}
-								{#if job.status === 'completed' || job.status === 'failed'}
-									<button onclick={() => {
-										hiddenJobIds = new Set([...hiddenJobIds, job.id]);
-										localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-									}} class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-red-400 transition-colors flex-shrink-0 opacity-0 group-hover/job:opacity-100" title="Dismiss">
-										<X class="w-3 h-3" />
-									</button>
+								<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>
+									{rawTitle}
+								</span>
+								{#if sourceLabel(job)}
+									<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 hidden lg:inline">
+										{sourceLabel(job)}
+									</span>
 								{/if}
-								{#if job.status === 'failed'}
-									{@const searchQ = getSearchQueryForJob(job)}
+							</div>
+
+							<!-- Col 3: Format Badge -->
+							<div class="text-center">
+								{#if ext}
+									<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'} class="text-[10px] py-0 px-1.5">
+										{ext.toUpperCase()}
+									</Badge>
+								{/if}
+							</div>
+
+							<!-- Col 4: Size -->
+							<span class="text-[var(--text-muted)] font-mono text-[11px] text-right truncate">
+								{fsize > 0 ? formatSize(fsize) : '—'}
+							</span>
+
+							<!-- Col 5: Peer -->
+							<span class="text-[var(--text-muted)] text-[11px] truncate hidden md:inline" title={peer ? `from ${peer}` : ''}>
+								{peer ? peer : '—'}
+							</span>
+
+							<!-- Col 6: Status / Time -->
+							<div class="text-right truncate font-mono text-[11px]">
+								{#if status === 'completed'}
+									<span class="text-[var(--text-muted)]" title={timeIso ? formatDateTime(timeIso) : ''}>
+										{timeIso ? formatRelativeTime(timeIso) : 'done'}
+									</span>
+								{:else if status === 'failed'}
+									<span class="text-rose-400 truncate" title={fail?.detail || ''}>
+										{fail?.title || 'failed'}
+									</span>
+								{:else if status === 'queued'}
+									<span class="text-amber-400">waiting for slot</span>
+								{:else if status === 'downloading'}
+									<span class="text-sky-400">
+										{transfer?.speed > 0 ? formatSpeed(transfer.speed) : 'transferring'}
+									</span>
+								{:else}
+									<span class="text-indigo-400">querying P2P</span>
+								{/if}
+							</div>
+
+							<!-- Col 7: Primary Action -->
+							<div class="flex items-center justify-end gap-1 flex-shrink-0">
+								{#if status === 'completed'}
+									<a
+										href="/library?search={encodeURIComponent(libQuery)}"
+										class="text-sky-400 hover:text-sky-300 font-medium transition-colors text-right whitespace-nowrap"
+										title="View in Library"
+									>
+										In Library <span aria-hidden="true">&rarr;</span>
+									</a>
+								{:else if status === 'failed'}
 									{#if searchQ}
-										<button onclick={() => {
-											searchQuery = searchQ;
-											searchSoulseek();
-											window.scrollTo({ top: 0, behavior: 'smooth' });
-										}}
-											class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Search P2P for alternative sources">
+										<button
+											onclick={() => { searchQuery = searchQ; searchSoulseek(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+											class="p-1 text-[var(--text-muted)] hover:text-sky-400 transition-colors"
+											title="Search P2P"
+										>
 											<Search class="w-3.5 h-3.5" />
 										</button>
 									{/if}
-									<button onclick={() => retryJob(job.id)}
-										class="min-w-[44px] min-h-[44px] flex items-center justify-center text-[var(--text-muted)] hover:text-[var(--color-downloads)] transition-colors flex-shrink-0" title="Retry download">
+									<button
+										onclick={() => retryJob(job.id)}
+										class="p-1 text-[var(--text-muted)] hover:text-emerald-400 transition-colors"
+										title="Retry"
+									>
 										<RotateCcw class="w-3.5 h-3.5" />
 									</button>
-								{/if}
-								<Badge variant={statusVariant(status)}>
-									{#if status === 'searching' || status === 'downloading'}
-										<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></span>
-									{:else if status === 'queued'}
-										<Clock class="w-3 h-3 mr-0.5 inline-block" />
-									{/if}
-									{status === 'queued' ? 'Queued for slot' : status}
-								</Badge>
-								{#if job.total > 1 || (job.status === 'failed' && jobResult?.source_errors?.length)}
-									<button onclick={() => toggleJobDetail(job.id)}
-										class="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors flex-shrink-0">
-										{#if expandedJob === job.id}
-											<ChevronUp class="w-3.5 h-3.5" />
-										{:else}
-											<ChevronDown class="w-3.5 h-3.5" />
-										{/if}
+								{:else if status === 'downloading' || status === 'queued' || job.status === 'running'}
+									<button
+										onclick={() => cancelJob(job.id)}
+										class="p-1 text-[var(--text-muted)] hover:text-rose-400 transition-colors"
+										title="Cancel"
+									>
+										<X class="w-3.5 h-3.5" />
 									</button>
 								{/if}
 							</div>
-							<!-- Progress bar -->
-							{#if transfer && (status === 'downloading' || job.status === 'running')}
-								<div class="h-1 bg-[var(--border-interactive)]">
-									<div class="h-full bg-[var(--color-downloads)] transition-all duration-300"
-										style="width: {transfer.progress}%"></div>
-								</div>
-							{:else if job.status === 'running' && job.total > 1}
-								<div class="h-1 bg-[var(--border-interactive)]">
-									<div class="h-full bg-[var(--color-downloads)] transition-all duration-500"
-										style="width: {((job.progress || 0) / job.total) * 100}%"></div>
-								</div>
-							{:else if job.status === 'running' && status === 'searching'}
-								<div class="h-1 bg-[var(--border-interactive)] overflow-hidden relative">
-									<div class="h-full animate-search"></div>
-								</div>
-							{/if}
-							<!-- Expanded details -->
-							{#if expandedJob === job.id}
-								{#if jobResult?.source_errors?.length}
-									<!-- Per-source error breakdown (single download) -->
-									<div class="px-4 py-2 space-y-1 animate-fade-slide-in">
-										<p class="text-xs font-mono uppercase tracking-wider text-[var(--text-muted)] mb-1">Sources tried</p>
-										{#each jobResult.source_errors as se, i}
-											<div class="flex items-center gap-2 text-xs py-1">
-												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
-												<span class="text-[var(--text-body)] truncate max-w-[160px]">{se.user}</span>
-												<span class="text-red-400 flex-1 truncate" title={se.error}>{se.error}</span>
-												<Badge variant="error">failed</Badge>
-											</div>
-										{/each}
-									</div>
-								{:else if jobDetails[job.id]}
-									<!-- Bulk track details -->
-									<div class="px-4 py-2 space-y-1 animate-fade-slide-in">
-										{#each jobDetails[job.id] as t, i}
-											<div class="flex items-center gap-2 text-xs py-1 flex-wrap">
-												<span class="w-4 text-center text-[var(--text-disabled)]">{i + 1}</span>
-												<span class="flex-1 min-w-0 truncate text-[var(--text-body)]">
-													{t.artist} — {t.track}
-												</span>
-												{#if t.username}
-													<span class="text-[var(--text-disabled)] hidden md:inline">from {t.username}</span>
-												{/if}
-												{#if t.error}
-													<span class="text-red-400 truncate max-w-[200px]" title={t.error}>{t.error}</span>
-												{:else if t.reason}
-													<span class="text-orange-400 truncate max-w-[200px]" title={t.reason}>{t.reason}</span>
-												{/if}
-												<Badge variant={
-													t.status === 'downloaded' ? 'success' :
-													t.status === 'downloading' || t.status === 'transferring' ? 'info' :
-													t.status === 'pending' ? 'default' :
-													t.status === 'skipped' ? 'warning' : 'error'
-												}>{t.status}</Badge>
-											</div>
-										{/each}
-									</div>
-								{/if}
-							{/if}
+
+							<!-- Col 8: Dismiss Button -->
+							<button
+								onclick={() => {
+									hiddenJobIds = new Set([...hiddenJobIds, job.id]);
+									localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
+								}}
+								class="text-[var(--text-muted)] hover:text-rose-400 opacity-0 group-hover/job:opacity-100 transition-opacity p-0.5 flex items-center justify-center"
+								title="Dismiss"
+							>
+								<X class="w-3.5 h-3.5" />
+							</button>
 						</div>
 					{/each}
 				</div>
