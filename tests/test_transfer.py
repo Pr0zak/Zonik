@@ -387,3 +387,84 @@ async def test_stall_with_unknown_size_fails(tmp_path):
     t = make_transfer(tm, total=0)
     await tm._receive(t, reader_with(b"f" * 10, eof=False), FakeWriter())
     assert t.state == TransferState.FAILED
+
+
+# --- timestamps, truthful speed, queue place ------------------------------------
+
+async def test_speed_measured_from_transferring_since(tmp_path):
+    import time as _time
+    tm, _ = make_manager(tmp_path)
+    t = make_transfer(tm, total=100 * 1024 * 1024)
+    now = _time.time()
+    t.state = TransferState.TRANSFERRING
+    t.started_at = now - 100          # 90 s of that was queueing at the peer
+    t.transferring_since = now - 10
+    t.received_bytes = 10 * 1024 * 1024
+    assert t.speed == pytest.approx(1024 * 1024, rel=0.05)
+    d = t.to_dict()
+    assert isinstance(d["speed"], int)
+    assert d["speed"] == pytest.approx(1024 * 1024, rel=0.05)
+    assert isinstance(d["eta_seconds"], int) and d["eta_seconds"] == pytest.approx(90, abs=5)
+    # Without transferring_since the old rule (from creation) applies.
+    t.transferring_since = None
+    assert t.speed == pytest.approx(1024 * 1024 / 10, rel=0.05)
+
+
+async def test_update_state_sets_transferring_since_once(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    t = tm.create_transfer("peer", "Music\\a.flac", job_id="job-1")
+    assert t.transferring_since is None
+    tm.update_state(t, TransferState.QUEUED)
+    assert t.transferring_since is None
+    tm.update_state(t, TransferState.CONNECTED)
+    tm.update_state(t, TransferState.TRANSFERRING)
+    first = t.transferring_since
+    assert first is not None and first == t.state_since
+    # A second connection / repeat transition must not reset it.
+    tm.update_state(t, TransferState.CONNECTED)
+    tm.update_state(t, TransferState.TRANSFERRING)
+    assert t.transferring_since == first
+    tm.update_state(t, TransferState.COMPLETED)
+    assert t.transferring_since == first and t.ended_at is not None
+
+
+async def test_to_dict_has_timestamps_and_queue_place(tmp_path):
+    tm, _ = make_manager(tmp_path)
+    t = tm.create_transfer("peer", "Music\\a.flac", job_id="job-1")
+    d = t.to_dict()
+    for key in ("direction", "username", "filename", "state", "total_bytes", "received_bytes",
+                "progress", "speed", "eta_seconds", "save_path", "error", "job_id"):
+        assert key in d  # existing keys untouched
+    assert isinstance(d["state_since"], float)
+    assert isinstance(d["last_progress_at"], float)
+    assert d["transferring_since"] is None and d["ended_at"] is None and d["queue_place"] is None
+    t.queue_place = 4
+    tm.update_state(t, TransferState.TRANSFERRING)
+    d = t.to_dict()
+    assert d["queue_place"] == 4 and isinstance(d["transferring_since"], float)
+
+
+async def test_sweep_splits_queue_timeout_strings(tmp_path):
+    tm, calls = make_manager(tmp_path)
+    now = 10_000.0
+    silent = make_transfer(tm, filename="Music\\silent.flac", token=b"\x01\x00\x00\x00")
+    silent.state = TransferState.REQUESTED
+    silent.started_at = now - 181
+    queued = make_transfer(tm, filename="Music\\queued.flac", token=b"\x02\x00\x00\x00")
+    queued.state = TransferState.QUEUED
+    queued.queue_place = 4
+    queued.started_at = now - 181
+    unknown = make_transfer(tm, filename="Music\\unknown.flac", token=b"\x03\x00\x00\x00")
+    unknown.state = TransferState.QUEUED
+    unknown.started_at = now - 181
+    young = make_transfer(tm, filename="Music\\young.flac", token=b"\x04\x00\x00\x00")
+    young.state = TransferState.REQUESTED
+    young.started_at = now - 60
+    tm._sweep(now)
+    await asyncio.sleep(0)
+    assert silent.state == TransferState.FAILED
+    assert silent.error == "Peer never answered in 180 s"
+    assert queued.error == "Peer queued us (place 4) but did not start in 180 s"
+    assert unknown.error == "Peer queued us but did not start in 180 s"
+    assert young.state == TransferState.REQUESTED and tm.is_tracked(young)
+    assert {t for t, _ in calls} == {silent, queued, unknown}

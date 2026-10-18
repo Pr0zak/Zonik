@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import uuid
+from collections import Counter
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -30,10 +31,34 @@ cancelled_jobs: set[str] = set()
 live_download_jobs: set[str] = set()
 
 
+# Fine stage of every live download job (tracks[0].stage), kept in memory so
+# /api/download/status can count stages over ALL active jobs without reading the
+# rows. stage_counts[stage] == number of jobs in _job_stage at that stage.
+STAGES = ("queue_search", "searching", "peer_lock", "waiting_slot", "connecting",
+          "queued_at_peer", "transferring", "importing")
+stage_counts: Counter[str] = Counter()
+_job_stage: dict[str, str] = {}
+
+# Each live download job's timeline (the list stored as JSON in Job.log), so a
+# stage write appends without re-reading the row.
+_timelines: dict[str, list] = {}
+
+
+def _forget_stage(job_id: str) -> None:
+    """Take a job out of the stage counters (idempotent)."""
+    old = _job_stage.pop(job_id, None)
+    if old is not None:
+        stage_counts[old] -= 1
+        if stage_counts[old] <= 0:
+            del stage_counts[old]
+
+
 def _job_done(job_id: str) -> None:
     """Forget a download job's in-memory flags once its task has finished."""
     live_download_jobs.discard(job_id)
     cancelled_jobs.discard(job_id)
+    _forget_stage(job_id)
+    _timelines.pop(job_id, None)
 
 # How long a job waits for a peer that another job is downloading from before it
 # moves on to its next candidate (the busy one is retried once at the end).
@@ -92,6 +117,175 @@ class _SearchSlot:
         if self._held:
             self._held = False
             self._sem.release()
+
+
+# --- stage writer + timeline (tracks[0] / Job.log of a download row) -----------
+
+# tracks[0].status keeps exactly these values (jobs.py decides retryability from
+# them); the fine-grained position lives in tracks[0].stage.
+TRACK_STATUSES = ("queued", "pending", "downloading", "downloaded", "failed")
+# tracks[0] keys carried over from one rewrite of the row to the next.
+_STICKY_TRACK_KEYS = ("stage", "stage_since", "attempt", "of", "username", "filename", "queue_place",
+                      "source_errors", "search", "origin", "batch", "file_size", "track_id", "error")
+TIMELINE_CAP = 200
+
+
+def _utc_iso() -> str:
+    """Naive UTC ISO timestamp, the same shape as Job.started_at."""
+    return datetime.utcnow().isoformat()
+
+
+def _prev_track(job) -> dict | None:
+    """tracks[0] of a job row as a dict, or None."""
+    try:
+        tracks = json.loads(job.tracks) if job.tracks else None
+    except (TypeError, ValueError):
+        return None
+    if isinstance(tracks, list) and tracks and isinstance(tracks[0], dict):
+        return tracks[0]
+    return None
+
+
+def _track_doc(req, status: str, *, prev: dict | None = None, **fields) -> dict:
+    """Build tracks[0] for a download row: artist/track from req (or fields/prev),
+    the sticky keys from prev, then fields on top. A field passed as None removes
+    that key. `search` only survives while stage == "searching"."""
+    if status not in TRACK_STATUSES:
+        raise ValueError(f"tracks status {status!r} not in {TRACK_STATUSES}")
+    prev = prev or {}
+    doc: dict = {
+        "artist": req.artist if req is not None else fields.pop("artist", prev.get("artist", "")),
+        "track": req.track if req is not None else fields.pop("track", prev.get("track", "")),
+        "status": status,
+    }
+    fields.pop("artist", None)
+    fields.pop("track", None)
+    for k in _STICKY_TRACK_KEYS:
+        if k in prev:
+            doc[k] = prev[k]
+    for k, v in fields.items():
+        if v is None:
+            doc.pop(k, None)
+        else:
+            doc[k] = v
+    if doc.get("stage") != "searching":
+        doc.pop("search", None)
+    return doc
+
+
+def _timeline(job, job_id: str) -> list:
+    """The in-memory timeline of a job, seeded from Job.log when that already
+    holds a list of events (a list of strings is another job type's log)."""
+    tl = _timelines.get(job_id)
+    if tl is None:
+        tl = []
+        try:
+            existing = json.loads(job.log) if getattr(job, "log", None) else None
+        except (TypeError, ValueError):
+            existing = None
+        if isinstance(existing, list) and all(isinstance(e, dict) for e in existing):
+            tl = existing
+        _timelines[job_id] = tl
+    return tl
+
+
+def _log_event(job, job_id: str, kind: str, **fields) -> None:
+    """Append {"t", "k", ...fields} to the job's timeline and mirror it into job.log
+    (persisted by the next save). Keeps the first event (submitted) plus the
+    newest ones within TIMELINE_CAP."""
+    tl = _timeline(job, job_id)
+    tl.append({"t": _utc_iso(), "k": kind, **fields})
+    if len(tl) > TIMELINE_CAP:
+        del tl[1:len(tl) - TIMELINE_CAP + 1]
+    job.log = json.dumps(tl)
+
+
+def _note_stage(job_id: str, stage: str) -> None:
+    """Move a job to `stage` in the in-memory counters."""
+    old = _job_stage.get(job_id)
+    if old == stage:
+        return
+    if old is not None:
+        stage_counts[old] -= 1
+        if stage_counts[old] <= 0:
+            del stage_counts[old]
+    _job_stage[job_id] = stage
+    stage_counts[stage] += 1
+
+
+def _job_payload(job, job_id: str, description: str, doc: dict | None, *, progress: int = 0, total: int = 1) -> dict:
+    """A running download's job_update: today's keys plus the stage fields (DC-3)."""
+    doc = doc or {}
+    return {
+        "id": job_id, "type": "download", "status": job.status, "progress": progress, "total": total,
+        "description": description, "card": getattr(job, "card", None),
+        "stage": doc.get("stage"), "stage_since": doc.get("stage_since"),
+        "attempt": doc.get("attempt"), "of": doc.get("of"), "username": doc.get("username"),
+        "queue_place": doc.get("queue_place"), "search": doc.get("search"),
+    }
+
+
+def _initial_row(job_id: str, req, card: str, initial_status: str) -> tuple[str, str]:
+    """tracks + log JSON for a new download row (stage queue_search while it waits
+    for a search slot, searching otherwise), registered in the stage counters."""
+    stage = "queue_search" if initial_status == "pending" else "searching"
+    doc = _track_doc(req, "queued" if initial_status == "pending" else "pending",
+                     stage=stage, stage_since=_utc_iso())
+    _note_stage(job_id, stage)
+    tl = [{"t": _utc_iso(), "k": "submitted", "card": card, "source": req.source}]
+    _timelines[job_id] = tl
+    return json.dumps([doc]), json.dumps(tl)
+
+
+async def _set_stage(job, job_id: str, desc: str, req, *, stage: str | None = None, status: str | None = None,
+                     event: str | None = None, event_fields: dict | None = None, description: str | None = None,
+                     broadcast: bool = True, **fields) -> dict:
+    """Rewrite tracks[0] of a live download row, save it and (broadcast) send a
+    job_update. stage_since changes only when the stage does; status None keeps
+    the current tracks status. event is appended to the timeline with
+    event_fields (default: fields). Never touches job.result."""
+    prev = _prev_track(job) or {}
+    if status is None:
+        status = prev.get("status") if prev.get("status") in TRACK_STATUSES else "pending"
+    if stage is not None:
+        if stage not in STAGES:
+            raise ValueError(f"unknown stage {stage!r}")
+        if stage != prev.get("stage") or not prev.get("stage_since"):
+            fields["stage_since"] = _utc_iso()
+        fields["stage"] = stage
+        _note_stage(job_id, stage)
+    doc = _track_doc(req, status, prev=prev, **fields)
+    job.tracks = json.dumps([doc])
+    if event:
+        ev = event_fields if event_fields is not None else {
+            k: v for k, v in fields.items() if k not in ("stage", "stage_since")}
+        _log_event(job, job_id, event, **ev)
+    await _save_job_obj(job)
+    if broadcast:
+        await broadcast_job_update(_job_payload(job, job_id, description if description is not None else desc, doc))
+    return doc
+
+
+def _terminal_event(job, job_id: str) -> None:
+    """Log done / cancelled / failed for a job whose status and result are final."""
+    try:
+        result = json.loads(job.result) if job.result else {}
+    except (TypeError, ValueError):
+        result = {}
+    if not isinstance(result, dict):
+        result = {}
+    if job.status == "completed":
+        _log_event(job, job_id, "done", track_id=result.get("track_id"), file_size=result.get("file_size"),
+                   already_in_library=bool(result.get("already_in_library")), attempt=result.get("attempt"))
+    elif result.get("error") == "Cancelled by user":
+        _log_event(job, job_id, "cancelled")
+    else:
+        try:
+            from backend.services.download_failures import failure_class
+            cls = failure_class(job.status, job.result, job.tracks)
+        except Exception:
+            cls = None
+        _log_event(job, job_id, "failed", error=job_outcome(job.status, job.result).get("error"), **{"class": cls})
 
 
 # Seconds between two looks at a transfer in poll_transfer (tests shrink it).
@@ -573,16 +767,17 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
     # arrives between the commit and the registration is still seen.
     live_download_jobs.add(job_id)
     try:
+        tracks_json, log_json = _initial_row(job_id, req, card, initial_status)
         async with async_session() as job_sess:
             job = Job(
                 id=job_id, type="download", card=card, status=initial_status,
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": req.artist, "track": req.track, "status": "queued" if initial_status == "pending" else "pending"}]),
+                started_at=datetime.utcnow(), tracks=tracks_json, log=log_json,
             )
             job_sess.add(job)
             await job_sess.commit()
             job_sess.expunge(job)
-        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+        await broadcast_job_update(_job_payload(job, job_id, f"Queued: {desc}" if initial_status == "pending" else desc,
+                                                _prev_track(job)))
     except Exception:
         _job_done(job_id)
         raise
@@ -591,11 +786,20 @@ async def trigger_download(req: DownloadRequest, background_tasks: BackgroundTas
         # Wait for a search slot — no DB session held
         slot = _SearchSlot(sem)
         try:
+            import time as _time
+            t0 = _time.monotonic()
             await slot.acquire()
-            if job.status == "pending":
+            was_pending = job.status == "pending"
+            if was_pending:
                 job.status = "running"
-                await _save_job_obj(job)
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
+            try:
+                await _set_stage(job, job_id, desc, req, stage="searching", status="pending", event="search_slot",
+                                 event_fields={"waited_s": round(_time.monotonic() - t0, 1)},
+                                 description=desc, broadcast=was_pending)
+            except Exception as e:
+                # _do_download_inner retries the write inside its own error handling.
+                log.warning(f"[download] Could not mark {job_id} searching: {e}")
+                _forget_stage(job_id)
             await _do_download_inner(None, job, job_id, desc, req, search_slot=slot)
         finally:
             slot.release()
@@ -675,6 +879,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             job.status = "failed"
             job.result = json.dumps({"error": "Cancelled by user"})
             return
+        if _job_stage.get(job_id) != "searching":
+            # Entered without the caller's slot write (a direct call): start the stage here.
+            await _set_stage(job, job_id, desc, req, stage="searching", status="pending",
+                             event="search_slot", event_fields={"waited_s": 0.0}, description=desc)
         native_client = get_client()
         from backend.config import get_settings as _get_settings
         dl_settings = _get_settings()
@@ -749,7 +957,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             # clear, recognizable error instead of falling through to slskd.
             job.status = "failed"
             job.result = json.dumps({"error": "Soulseek server not connected — try again later"})
-            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": "Soulseek server not connected"}])
+            job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job), error="Soulseek server not connected")])
             candidates = []  # Skip native loop
         else:
             from backend.services.soulseek import search_and_download
@@ -757,7 +965,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
             ok = result.get("ok") or result.get("status") == "downloading"
             job.status = "completed" if ok else "failed"
             job.result = json.dumps(result)
-            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded" if ok else "failed"}])
+            job.tracks = json.dumps([_track_doc(req, "downloaded" if ok else "failed", prev=_prev_track(job))])
             candidates = []  # Skip native loop
 
         if req.exclude_users and candidates:
@@ -777,18 +985,15 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 msg = (f"No other sources for {req.artist} - {req.track}" if req.exclude_users
                        else f"No results for {req.artist} - {req.track}")
             job.result = json.dumps({"message": msg})
-            job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+            job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job))])
 
         if candidates and native_ready and parallel_sources > 1:
             # === Multi-source parallel download ===
             batch = candidates[:parallel_sources]
             usernames_str = ", ".join(c["username"] for c in batch)
-            job.tracks = json.dumps([{
-                "artist": req.artist, "track": req.track, "status": "queued",
-                "sources": len(batch),
-            }])
-            await _save_job()
-            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"Queued for slot: {desc} ({len(batch)} sources)"})
+            await _set_stage(job, job_id, desc, req, stage="peer_lock", status="queued", sources=len(batch), event="peer_lock",
+                             event_fields={"users": [c["username"] for c in batch]},
+                             description=f"Queued for slot: {desc} ({len(batch)} sources)")
 
             # Start all downloads concurrently
             async def try_source(candidate):
@@ -802,12 +1007,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                     async with native_client.peer_slot(dl_username, timeout=PEER_BUSY_WAIT), transfer_sem:
                         if job_id in cancelled_jobs:
                             return candidate, "cancelled", None, "Cancelled by user"
-                        job.tracks = json.dumps([{
-                            "artist": req.artist, "track": req.track, "status": "downloading",
-                            "sources": len(batch),
-                        }])
-                        await _save_job()
-                        await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {len(batch)} sources"})
+                        await _set_stage(job, job_id, desc, req, stage="connecting", status="downloading",
+                                         sources=len(batch), event="connecting",
+                                         event_fields={"user": dl_username},
+                                         description=f"{desc} — {len(batch)} sources")
                         try:
                             transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                             log.info(f"[download] Multi-source queued: {dl_username}")
@@ -865,6 +1068,9 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 if winner:
                     cand, save_path = winner
                     short = cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+                    await _set_stage(job, job_id, desc, req, stage="importing", sources=len(batch), event="importing",
+                                     event_fields={"user": cand["username"], "bytes": _file_size(save_path)},
+                                     description=f"{desc} — {len(batch)} sources")
                     track_id, fsize, import_err, peer_fault = await _import_or_fail(save_path)
                     if import_err:
                         log.warning(f"[download] {cand['username']} / {short}: {import_err}")
@@ -872,17 +1078,17 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                             await native_client.reputation.record_failure(cand["username"])
                         job.status = "failed"
                         job.result = json.dumps({"message": import_err, "username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first"})
-                        job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": import_err}])
+                        job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job), error=import_err)])
                         return
                     job.status = "completed"
                     job.result = json.dumps({"username": cand["username"], "filename": cand["filename"], "save_path": save_path, "file_size": fsize, "sources_tried": len(batch), "strategy": "first", "track_id": track_id})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
+                    job.tracks = json.dumps([_track_doc(req, "downloaded", prev=_prev_track(job), username=cand["username"], filename=short, file_size=fsize, track_id=track_id)])
                 else:
                     failed_users = [c["username"] for c in batch]
                     last_err = source_errors[-1]["error"] if source_errors else "unknown"
                     job.status = "failed"
                     job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "first", "failed_sources": failed_users, "source_errors": source_errors})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
+                    job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job), error=last_err)])
 
             else:
                 # "best" strategy — wait for all, keep highest quality
@@ -913,6 +1119,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                         return score
 
                     completed.sort(key=_quality_score, reverse=True)
+                    await _set_stage(job, job_id, desc, req, stage="importing", sources=len(batch), event="importing",
+                                     event_fields={"user": completed[0][0]["username"],
+                                                   "bytes": _file_size(completed[0][1])},
+                                     description=f"{desc} — {len(batch)} sources")
 
                     # Import in quality order and keep the first file that
                     # survives import. _quality_score ranks on the peer's
@@ -944,13 +1154,13 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                     short = best_cand["filename"].rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
                     job.status = "completed"
                     job.result = json.dumps({"username": best_cand["username"], "filename": best_cand["filename"], "save_path": best_path, "file_size": fsize, "sources_tried": len(batch), "sources_completed": len(completed), "strategy": "best", "track_id": track_id})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": best_cand["username"], "filename": short, "file_size": fsize, "track_id": track_id}])
+                    job.tracks = json.dumps([_track_doc(req, "downloaded", prev=_prev_track(job), username=best_cand["username"], filename=short, file_size=fsize, track_id=track_id)])
                 else:
                     failed_users = [c["username"] for c in batch]
                     last_err = source_errors[-1]["error"] if source_errors else "unknown"
                     job.status = "failed"
                     job.result = json.dumps({"message": f"All {len(batch)} parallel sources failed", "last_error": last_err, "strategy": "best", "failed_sources": failed_users, "source_errors": source_errors})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": last_err}])
+                    job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job), error=last_err)])
 
         elif candidates and native_ready:
             # === Sequential download (parallel_sources == 1, original behavior) ===
@@ -966,7 +1176,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 if job_id in cancelled_jobs:
                     job.status = "failed"
                     job.result = json.dumps({"error": "Cancelled by user"})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                    job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job))])
                     break
                 dl_username = candidate["username"]
                 dl_filename = candidate["filename"]
@@ -974,12 +1184,14 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
 
                 attempt += 1
                 attempt_label = f"attempt {attempt}/{len(candidates)}"
-                job.tracks = json.dumps([{
-                    "artist": req.artist, "track": req.track, "status": "queued",
-                    "username": dl_username, "filename": short_name,
-                }])
-                await _save_job()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"Queued for slot: {desc} — {short_name}"})
+                await _set_stage(job, job_id, desc, req, stage="peer_lock", status="queued",
+                                 username=dl_username, filename=short_name, attempt=attempt, of=len(candidates),
+                                 event="attempt",
+                                 event_fields={"i": attempt, "of": len(candidates), "user": dl_username,
+                                               "filename": short_name, "size": candidate.get("size"),
+                                               "ext": candidate.get("extension")
+                                               or (short_name.rsplit(".", 1)[-1].lower() if "." in short_name else None)},
+                                 description=f"Queued for slot: {desc} — {short_name}")
 
                 # One file at a time per peer (so two jobs never have two files
                 # queued with the same uploader), then a transfer slot. Both are
@@ -991,12 +1203,10 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                         if job_id in cancelled_jobs:
                             status, save_path, error = "cancelled", None, "Cancelled by user"
                         else:
-                            job.tracks = json.dumps([{
-                                "artist": req.artist, "track": req.track, "status": "downloading",
-                                "username": dl_username, "filename": short_name,
-                            }])
-                            await _save_job()
-                            await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": f"{desc} — {short_name} ({attempt_label})"})
+                            await _set_stage(job, job_id, desc, req, stage="connecting", status="downloading",
+                                             username=dl_username, filename=short_name,
+                                             event="connecting", event_fields={"user": dl_username},
+                                             description=f"{desc} — {short_name} ({attempt_label})")
                             try:
                                 transfer = await native_client.download(dl_username, dl_filename, job_id=job_id)
                                 log.info(f"[download] Transfer queued: {dl_username} / {short_name}")
@@ -1007,6 +1217,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                                 log.warning(f"[download] Could not reach {dl_username}: {e}")
                                 last_error = f"Connection {'timeout' if timeout_like else 'failed'}: {e}"
                                 source_errors.append({"user": dl_username, "error": last_error})
+                                _log_event(job, job_id, "peer_failed", user=dl_username, error=last_error)
                                 # Only the peer's fault while our own server link is up; with it
                                 # down (reconnect in flight) no peer can be reached at all.
                                 if native_client.logged_in:
@@ -1022,6 +1233,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                         status, save_path, error = "cancelled", None, "Cancelled by user"
                     elif not deferred:
                         log.info(f"[download] {dl_username} is busy with another download — trying other sources first")
+                        _log_event(job, job_id, "peer_busy", user=dl_username, deferred=True)
                         work.append((candidate, True))
                         continue
                     elif not work:
@@ -1032,10 +1244,14 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                     else:
                         last_error = "Peer busy with another download"
                         source_errors.append({"user": dl_username, "error": last_error})
+                        _log_event(job, job_id, "peer_busy", user=dl_username, deferred=False)
                         continue
                 log.info(f"[download] Result: {dl_username} / {short_name} → {status} ({error or 'ok'})")
 
                 if status == "completed":
+                    await _set_stage(job, job_id, desc, req, stage="importing", event="importing",
+                                     event_fields={"user": dl_username, "bytes": _file_size(save_path)},
+                                     description=f"{desc} — {short_name} ({attempt_label})")
                     track_id, fsize, import_err, peer_fault = await _import_or_fail(save_path)
                     if import_err:
                         # The transfer "succeeded" but produced nothing usable. Blame
@@ -1046,20 +1262,22 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                             await native_client.reputation.record_failure(dl_username)
                         last_error = import_err
                         source_errors.append({"user": dl_username, "error": import_err})
+                        _log_event(job, job_id, "peer_failed", user=dl_username, error=import_err)
                         continue
                     job.status = "completed"
                     job.result = json.dumps({"username": dl_username, "filename": dl_filename, "save_path": save_path, "file_size": fsize, "attempt": attempt, "sources_tried": len(source_errors) + 1, "track_id": track_id})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "downloaded", "username": dl_username, "filename": short_name, "file_size": fsize, "track_id": track_id}])
+                    job.tracks = json.dumps([_track_doc(req, "downloaded", prev=_prev_track(job), username=dl_username, filename=short_name, file_size=fsize, track_id=track_id)])
                     break
                 elif status == "cancelled":
                     job.status = "failed"
                     job.result = json.dumps({"error": "Cancelled by user"})
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed"}])
+                    job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job))])
                     break
                 else:
                     # Already recorded once by the client's on_complete.
                     last_error = error or status
                     source_errors.append({"user": dl_username, "error": last_error})
+                    _log_event(job, job_id, "peer_failed", user=dl_username, error=last_error)
 
             else:
                 if candidates and job.status != "failed":
@@ -1072,7 +1290,7 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                         "failed_sources": failed_users,
                         "source_errors": source_errors,
                     })
-                    job.tracks = json.dumps([{"artist": req.artist, "track": req.track, "status": "failed", "error": err_detail}])
+                    job.tracks = json.dumps([_track_doc(req, "failed", prev=_prev_track(job), error=err_detail)])
 
     except Exception as e:
         log.warning(f"[download] Job {job_id} exception: {e}", exc_info=True)
@@ -1090,12 +1308,28 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
                 job.result = json.dumps({**json.loads(job.result or "{}"), **outcome})
             except (TypeError, ValueError):
                 pass
+        if job.status == "completed":
+            # The row keeps the imported file's size as progress/total (capped to
+            # the INTEGER column); the WS message below still says 1/1.
+            try:
+                fsize = int((json.loads(job.result or "{}") or {}).get("file_size") or 0)
+            except (TypeError, ValueError, AttributeError):
+                fsize = 0
+            job.progress = job.total = min(max(fsize, 0), 2**31 - 1)
+        try:
+            _terminal_event(job, job_id)
+        except Exception as e:
+            log.debug(f"[download] Could not log the end of {job_id}: {e}")
+        last_stage = (_prev_track(job) or {}).get("stage")
         # Capture status before save (avoid reading from detached ORM object later)
         final_status = job.status
         await _save_job()
+        _forget_stage(job_id)
+        _timelines.pop(job_id, None)
         await broadcast_job_update({
             "id": job_id, "type": "download", "status": final_status, "progress": 1, "total": 1,
             "description": desc, **job_outcome(final_status, job.result),
+            "card": getattr(job, "card", None), "stage": last_stage,
         })
         # The file has been imported (moved into the library) or rejected by
         # now — drop this job's staging folder and anything a loser left in it.
@@ -1155,7 +1389,7 @@ async def _record_delegation_failure(job_id: str, artist: str, track: str, sourc
             # while the web is still actively downloading that same job_id.
             if row is not None and row.status not in ("pending",):
                 return
-            tracks = json.dumps([{"artist": artist, "track": track, "status": "failed"}])
+            tracks = json.dumps([_track_doc(None, "failed", artist=artist, track=track)])
             result = json.dumps({"error": msg, "last_error": msg})
             if row:
                 row.status = "failed"
@@ -1217,17 +1451,21 @@ async def _create_download_job(artist: str, track: str, job_id: str | None, sour
     # arrives between the commit and the registration is still seen.
     live_download_jobs.add(job_id)
     try:
+        tracks_json, log_json = _initial_row(job_id, dl_req, card, initial_status)
         async with async_session() as sess:
             job = Job(
                 id=job_id, type="download", card=card, status=initial_status,
-                started_at=datetime.utcnow(),
-                tracks=json.dumps([{"artist": artist, "track": track, "status": "queued" if initial_status == "pending" else "pending"}]),
+                started_at=datetime.utcnow(), tracks=tracks_json, log=log_json,
             )
             sess.add(job)
             await sess.commit()
     except Exception:
         _job_done(job_id)
         raise
+    # The row's first job_update (sent here rather than when its task starts, so it
+    # can carry the stage fields of the row just written).
+    await broadcast_job_update(_job_payload(job, job_id, f"Queued: {desc}" if initial_status == "pending" else desc,
+                                            _prev_track(job)))
     return job_id, desc, dl_req, sem, initial_status
 
 
@@ -1237,16 +1475,26 @@ async def _run_download_job(job_id: str, desc: str, dl_req: DownloadRequest, sem
     job's in-memory flags when it returns."""
     slot = _SearchSlot(sem)
     try:
-        await broadcast_job_update({"id": job_id, "type": "download", "status": initial_status, "progress": 0, "total": 1, "description": f"Queued: {desc}" if initial_status == "pending" else desc})
+        import time as _time
+        t0 = _time.monotonic()
         await slot.acquire()
         async with async_session() as sess:
             job = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one()
-            if job.status == "pending":
-                job.status = "running"
-                await sess.commit()
-                await broadcast_job_update({"id": job_id, "type": "download", "status": "running", "progress": 0, "total": 1, "description": desc})
             sess.expunge(job)
         # job is now detached — _do_download_inner uses its own short-lived sessions
+        was_pending = job.status == "pending"
+        if was_pending:
+            job.status = "running"
+        if job.status == "running":
+            # One save: status running (when it was pending) + stage searching.
+            try:
+                await _set_stage(job, job_id, desc, dl_req, stage="searching", status="pending", event="search_slot",
+                                 event_fields={"waited_s": round(_time.monotonic() - t0, 1)},
+                                 description=desc, broadcast=was_pending)
+            except Exception as e:
+                # _do_download_inner retries the write inside its own error handling.
+                log.warning(f"[download] Could not mark {job_id} searching: {e}")
+                _forget_stage(job_id)
         await _do_download_inner(None, job, job_id, desc, dl_req, search_slot=slot)
     finally:
         slot.release()
@@ -1261,6 +1509,8 @@ async def _run_download_job_detached(job_id: str, *args) -> None:
         await _run_download_job(job_id, *args)
     except Exception as e:
         log.warning(f"[download] Background job {job_id} failed: {e}", exc_info=True)
+        _forget_stage(job_id)
+        _timelines.pop(job_id, None)
         try:
             async with async_session() as sess:
                 row = (await sess.execute(select(Job).where(Job.id == job_id))).scalar_one_or_none()

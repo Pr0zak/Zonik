@@ -228,6 +228,8 @@ def test_infra_error_unchanged_and_reexported():
     assert auto.is_infra_error("Soulseek download backend unreachable: connection refused")
     assert auto.is_infra_error("Soulseek server not connected — try again later")
     assert auto.is_infra_error("Cancelled by user")
+    assert auto.is_infra_error("Soulseek native client not available (not logged in); "
+                               "slskd fallback is decommissioned")
     assert not auto.is_infra_error("Cancelled")
     assert not auto.is_infra_error("[Errno 107] Transport endpoint is not connected")
     assert not auto.is_infra_error("Peer did not respond in time")

@@ -48,6 +48,10 @@ class Transfer:
     state_since: float = field(default_factory=time.time)  # when `state` last changed
     last_progress_at: float = field(default_factory=time.time)  # last chunk received
     ended_at: float | None = None  # when it reached a terminal state
+    # First time the state became TRANSFERRING: speed is measured from here, so
+    # time spent queued at the peer doesn't drag the rate down.
+    transferring_since: float | None = None
+    queue_place: int | None = None  # our place in the peer's upload queue, when it said
     save_path: str | None = None
     error: str | None = None
     job_id: str | None = None  # links transfer back to the originating Job
@@ -74,8 +78,10 @@ class Transfer:
 
     @property
     def speed(self) -> float:
-        """Bytes per second."""
-        elapsed = time.time() - self.started_at
+        """Bytes per second, measured from the moment bytes started to flow
+        (falls back to creation when the transfer never reached TRANSFERRING)."""
+        end = self.ended_at or time.time()
+        elapsed = end - (self.transferring_since or self.started_at)
         if elapsed <= 0:
             return 0.0
         return self.received_bytes / elapsed
@@ -104,6 +110,11 @@ class Transfer:
             "save_path": self.save_path,
             "error": self.error,
             "job_id": self.job_id,
+            "state_since": self.state_since,
+            "transferring_since": self.transferring_since,
+            "last_progress_at": self.last_progress_at,
+            "ended_at": self.ended_at,
+            "queue_place": self.queue_place,
         }
 
 
@@ -237,6 +248,8 @@ class TransferManager:
             transfer.state_since = time.time()
             if state in TERMINAL_STATES:
                 transfer.ended_at = transfer.state_since
+            elif state == TransferState.TRANSFERRING and transfer.transferring_since is None:
+                transfer.transferring_since = transfer.state_since
         transfer.state = state
         for k, v in kwargs.items():
             setattr(transfer, k, v)
@@ -630,7 +643,8 @@ class TransferManager:
             elif transfer.state in (TransferState.REQUESTED, TransferState.QUEUED):
                 if now - transfer.started_at > QUEUE_TIMEOUT_SECONDS:
                     log.warning(f"[transfer] Queue timeout: {transfer.filename} ({transfer.state})")
-                    to_abort.append((transfer, "Queue timeout"))
+                    to_abort.append((transfer, queue_timeout_error(
+                        transfer.state, transfer.queue_place, QUEUE_TIMEOUT_SECONDS)))
             elif transfer.state == TransferState.CONNECTED:
                 if now - transfer.state_since > CONNECTED_TIMEOUT_SECONDS:
                     log.warning(f"[transfer] Connected timeout: {transfer.filename}")
@@ -654,6 +668,17 @@ class TransferManager:
             if t.task is not None and not t.task.done():
                 t.task.cancel()
         self.transfers.clear()
+
+
+def queue_timeout_error(state: str, place: int | None, seconds: int | float) -> str:
+    """The give-up sentence for a transfer the peer never started: it either never
+    answered our request (REQUESTED) or queued us and never got to us (QUEUED)."""
+    secs = int(seconds)
+    if state == TransferState.QUEUED:
+        if place is not None:
+            return f"Peer queued us (place {place}) but did not start in {secs} s"
+        return f"Peer queued us but did not start in {secs} s"
+    return f"Peer never answered in {secs} s"
 
 
 def _owned_elsewhere(transfer: Transfer) -> bool:

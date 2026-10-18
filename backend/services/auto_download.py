@@ -66,6 +66,7 @@ def is_infra_error(err: str | None) -> bool:
         or e == "Cancelled by user"
         or e.startswith("Interrupted by restart")  # reaped by the boot / stuck-job reaper
         or e.startswith("Internal error:")  # our own exception, e.g. "database is locked"
+        or e.startswith("Soulseek native client not available")  # worker had no client to delegate to
     )
 
 

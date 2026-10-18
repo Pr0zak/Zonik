@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Callable, Awaitable
 
 from backend.soulseek.protocol.stream import MessageStream
@@ -52,10 +53,22 @@ class ServerConnection:
         self.logged_in = False
         self.username: str | None = None
         self.connected_since: float | None = None
+        # Epoch seconds the current outage began; None while logged in (or before
+        # the first connection). Set once per outage, cleared on a successful login.
+        self.disconnected_since: float | None = None
 
     @property
     def connected(self) -> bool:
         return self._connected and self._stream is not None
+
+    @property
+    def reconnecting(self) -> bool:
+        """True while the single reconnect loop is running."""
+        return self._reconnect_task is not None and not self._reconnect_task.done()
+
+    def _mark_disconnected(self) -> None:
+        if self.disconnected_since is None:
+            self.disconnected_since = time.time()
 
     async def connect(self) -> None:
         """Establish TCP connection to server."""
@@ -97,10 +110,10 @@ class ServerConnection:
         if not result.get("success"):
             raise ConnectionError(f"Login failed: {result.get('reason', 'unknown')}")
 
-        import time
         self.logged_in = True
         self._had_session = True
         self.connected_since = time.time()
+        self.disconnected_since = None
         self._reconnect_attempts = 0
 
         # Post-login handshake
@@ -175,6 +188,7 @@ class ServerConnection:
             if gen == self._gen:
                 self._connected = False
                 self.logged_in = False
+                self._mark_disconnected()
                 log.info("[server] Disconnected")
                 if self.on_disconnect:
                     await self.on_disconnect()
@@ -223,6 +237,7 @@ class ServerConnection:
         self._gen += 1  # the dropped connection's read loop must not touch state
         self._connected = False
         self.logged_in = False
+        self._mark_disconnected()
         if self._read_task and not self._read_task.done() and self._read_task is not asyncio.current_task():
             self._read_task.cancel()
         if self._stream:

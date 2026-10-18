@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from backend.config import get_settings
 from backend.soulseek.protocol.types import SearchResult
@@ -22,6 +22,13 @@ DURATION_TOLERANCE = 3  # seconds a candidate's reported duration may differ fro
 # A soft target (an outside length, e.g. Last.fm's, which may be another version's)
 # only penalises a candidate this far off; it never rejects one.
 SOFT_DURATION_MISS = 10
+# Funnel stats: why files found by a search did not become candidates.
+REJECT_REASONS = ("size", "ext", "quality", "title", "duration", "score", "artist_path")
+MAX_STAT_CANDIDATES = 5
+
+
+def _empty_rejected() -> dict[str, int]:
+    return {k: 0 for k in REJECT_REASONS}
 
 
 def beats_quality(ext: str, size: int, current: tuple[str, int]) -> bool:
@@ -45,6 +52,7 @@ async def pick_best_results_native(
     better_than: tuple[str, int] | None = None,
     target_duration: int | None = None,
     strict_duration: bool = True,
+    stats: dict | None = None,
 ) -> list[dict]:
     """Score and rank search results from native client. Returns flat file list.
 
@@ -57,7 +65,12 @@ async def pick_best_results_native(
     duration earns a bonus. With strict_duration=False (a length from outside the
     library, which may be another version's) nothing is rejected: a match within
     DURATION_TOLERANCE still earns the bonus, one more than SOFT_DURATION_MISS off
-    loses a little."""
+    loses a little.
+
+    stats, when given, is filled in place with the funnel for this ranking:
+    peers_seen, files_seen, rejected {size, ext, quality, title, duration, score,
+    artist_path} and kept (files that scored above zero, before the one-per-peer
+    cut). Existing keys are overwritten, so the last ranking wins."""
     settings = get_settings()
     min_size = settings.soulseek.min_file_size_mb * 1024 * 1024
 
@@ -65,13 +78,19 @@ async def pick_best_results_native(
     rejected_title = 0
     rejected_quality = 0
     rejected_duration = 0
+    rejected_size = 0
+    rejected_ext = 0
+    rejected_score = 0
+    files_seen = 0
     want_duration = int(target_duration) if target_duration and target_duration > 0 else None
     for search_result in results:
         for file_info in search_result.files:
+            files_seen += 1
             filename = file_info.filename
             size = file_info.size
 
             if size < min_size:
+                rejected_size += 1
                 continue
 
             ext = ""
@@ -80,6 +99,7 @@ async def pick_best_results_native(
                     ext = e
                     break
             if not ext:
+                rejected_ext += 1
                 continue
 
             if better_than is not None and not beats_quality(ext, size, better_than):
@@ -173,12 +193,17 @@ async def pick_best_results_native(
                 scored.append((score, {
                     "username": search_result.username,
                     "filename": filename,
+                    "extension": ext.lstrip(".").lower(),
                     "size": size,
                     "bitRate": bitrate,
                     "slots_free": search_result.slots_free,
+                    "queue_length": ql,
                     "avg_speed": search_result.avg_speed,
                     "duration": file_info.duration,
+                    "score": score,
                 }))
+            else:
+                rejected_score += 1
 
     if rejected_title:
         log.info(f"[native] title gate skipped {rejected_title} file(s) not matching '{track}'")
@@ -187,6 +212,15 @@ async def pick_best_results_native(
     if rejected_duration:
         log.info(f"[native] duration gate skipped {rejected_duration} file(s) not within "
                  f"{DURATION_TOLERANCE}s of {want_duration}s")
+
+    if stats is not None:
+        rejected = _empty_rejected()
+        rejected.update(size=rejected_size, ext=rejected_ext, quality=rejected_quality,
+                        title=rejected_title, duration=rejected_duration, score=rejected_score)
+        stats["peers_seen"] = len(results)
+        stats["files_seen"] = files_seen
+        stats["rejected"] = rejected
+        stats["kept"] = len(scored)
 
     if not scored:
         return []
@@ -272,6 +306,9 @@ async def search_multi_strategy_native(
     better_than: tuple[str, int] | None = None,
     target_duration: int | None = None,
     strict_duration: bool = True,
+    *,
+    stats: dict | None = None,
+    on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> list[dict]:
     """Search the most specific query first; only if it gives no usable
     candidate, search the remaining variants at once, merge everything and rank
@@ -280,17 +317,66 @@ async def search_multi_strategy_native(
     The first query usually succeeds, so most tracks cost one search (the
     Soulseek server is believed to throttle heavy searchers). For a hard track
     the fallbacks run concurrently — each client.search uses its own token — so
-    it costs two search timeouts instead of up to four in a row."""
-    queries = build_query_variants(artist, track)
+    it costs two search timeouts instead of up to four in a row.
 
-    async def run(qs: list[str]) -> list[list[SearchResult]]:
+    stats, when given, is filled in place with the search funnel: queries
+    [{q, kind, peers, files} | {q, kind, peers, files, error}], album_query,
+    peers_seen, files_seen, rejected, kept (from the last ranking, over every
+    response so far), wanted_duration, strict and candidates (the first five
+    returned). on_event, when given, is awaited with
+    {"event": "query_start", i, n, q, kind} before each query and
+    {"event": "query_end", i, n, q, kind, peers, files} after it (i is 1-based;
+    n grows by one when the album fallback runs); its exceptions are logged and
+    swallowed."""
+    queries = build_query_variants(artist, track)
+    total = len(queries)
+    if stats is not None:
+        stats["queries"] = []
+        stats["album_query"] = None
+        stats["peers_seen"] = 0
+        stats["files_seen"] = 0
+        stats["rejected"] = _empty_rejected()
+        stats["kept"] = 0
+        stats["wanted_duration"] = (int(target_duration)
+                                    if target_duration and target_duration > 0 else None)
+        stats["strict"] = bool(strict_duration)
+        stats["candidates"] = []
+
+    async def emit(event: dict[str, Any]) -> None:
+        if on_event is None:
+            return
+        try:
+            await on_event(event)
+        except Exception as e:
+            log.warning(f"[native] search on_event callback failed: {e}")
+
+    async def one(i: int, q: str, kind: str, n: int):
+        await emit({"event": "query_start", "i": i, "n": n, "q": q, "kind": kind})
+        try:
+            r = await client.search(q)
+        except Exception as e:
+            await emit({"event": "query_end", "i": i, "n": n, "q": q, "kind": kind,
+                        "peers": 0, "files": 0, "error": str(e)})
+            raise
+        await emit({"event": "query_end", "i": i, "n": n, "q": q, "kind": kind,
+                    "peers": len(r), "files": sum(len(sr.files) for sr in r)})
+        return r
+
+    async def run(qs: list[str], first_index: int, kind: str, n: int) -> list[list[SearchResult]]:
         log.info(f"[native] Search strategies: {qs}")
-        responses = await asyncio.gather(*(client.search(q) for q in qs), return_exceptions=True)
+        responses = await asyncio.gather(
+            *(one(first_index + k, q, kind, n) for k, q in enumerate(qs)), return_exceptions=True,
+        )
         ok: list[list[SearchResult]] = []
         for q, r in zip(qs, responses):
             if isinstance(r, BaseException):
                 log.warning(f"[native] Search '{q}' failed: {r}")
+                if stats is not None:
+                    stats["queries"].append({"q": q, "kind": kind, "peers": 0, "files": 0, "error": str(r)})
                 continue
+            if stats is not None:
+                stats["queries"].append({"q": q, "kind": kind, "peers": len(r),
+                                         "files": sum(len(sr.files) for sr in r)})
             ok.append(r)
         return ok
 
@@ -300,22 +386,32 @@ async def search_multi_strategy_native(
             return []
         found = await pick_best_results_native(merged, artist, track, reputation=client.reputation,
                                                better_than=better_than, target_duration=target_duration,
-                                               strict_duration=strict_duration)
+                                               strict_duration=strict_duration, stats=stats)
         if len(strip_track_extras(track).split()) == 1:
             # A one-word title matches many unrelated songs; keep files whose path
             # names the artist.
             artist_name = clean_artist_name(artist)
+            before = len(found)
             found = [c for c in found if words_match(artist_name, c["filename"]) or words_match(artist, c["filename"])]
+            dropped = before - len(found)
+            if stats is not None and dropped:
+                stats["rejected"]["artist_path"] = stats["rejected"].get("artist_path", 0) + dropped
+                stats["kept"] = max(0, stats.get("kept", 0) - dropped)
         return found
 
-    first = await run(queries[:1])
+    def finish(candidates: list[dict]) -> list[dict]:
+        if stats is not None:
+            stats["candidates"] = [dict(c) for c in candidates[:MAX_STAT_CANDIDATES]]
+        return candidates
+
+    first = await run(queries[:1], 1, "variant", total)
     candidates = await rank(first)
     if candidates or len(queries) == 1:
-        return candidates
-    rest = await run(queries[1:])
+        return finish(candidates)
+    rest = await run(queries[1:], 2, "variant", total)
     candidates = await rank(first + rest)
     if candidates:
-        return candidates
+        return finish(candidates)
 
     # If all track-specific queries return no candidates, fall back to album query.
     # Soulseek peers often share full album folders, where folder names match artist + album
@@ -337,10 +433,12 @@ async def search_multi_strategy_native(
         album_query = f"{cleaned_artist} {cleaned_album}".strip()
         if album_query and album_query not in queries:
             log.info(f"[native] Fallback album search for '{artist} - {track}': {album_query}")
-            album_res = await run([album_query])
+            if stats is not None:
+                stats["album_query"] = album_query
+            album_res = await run([album_query], total + 1, "album", total + 1)
             candidates = await rank(first + rest + album_res)
 
-    return candidates
+    return finish(candidates)
 
 
 async def search_and_download_native(

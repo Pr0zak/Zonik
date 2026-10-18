@@ -10,6 +10,10 @@ export const showShortcuts = writable(false);
 export const activeTransfers = writable([]);
 // Uploads we are serving to Soulseek peers (WebSocket `upload_progress`, kept apart from downloads).
 export const activeUploads = writable([]);
+// Live state of the /api/ws socket, written by lib/websocket.js. `lastMessageAt` is the
+// Date.now() of the last frame of any type (pings included); `reconnects` counts re-opens
+// after the first successful connect.
+export const wsState = writable({ connected: false, reconnecting: false, lastMessageAt: 0, reconnects: 0 });
 export const trackQueue = writable([]);
 export const queueIndex = writable(-1);
 export const discoverTrackStatus = writable({});

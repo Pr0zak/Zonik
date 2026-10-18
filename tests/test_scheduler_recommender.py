@@ -165,6 +165,9 @@ def test_infra_error_matches_only_zoniks_own_messages():
     assert _is_infra_error("Soulseek download backend unreachable: connection refused")
     assert _is_infra_error("Soulseek server not connected — try again later")
     assert _is_infra_error("Cancelled by user")
+    # The worker had no client to delegate to: an outage, not the track's fault.
+    assert _is_infra_error("Soulseek native client not available (not logged in); "
+                           "slskd fallback is decommissioned")
     # A peer's own refusal reason or an OS error text is a real per-track failure.
     assert not _is_infra_error("Cancelled")
     assert not _is_infra_error("[Errno 107] Transport endpoint is not connected")

@@ -21,6 +21,11 @@ function buildUrl(path, params = {}) {
 	return qs ? `${path}?${qs}` : path;
 }
 
+// `&since=<ISO>` (URL-encoded) or '' — for the string-built download routes.
+function sinceParam(since) {
+	return since ? `&since=${encodeURIComponent(since)}` : '';
+}
+
 export const api = {
 	// TV visualizer (Google TV app): shared settings and per-effect stats
 	getTvVisualizerConfig: () => request('/tv/visualizer/config'),
@@ -66,6 +71,13 @@ export const api = {
 	getJob: (id) => request(`/jobs/${id}`),
 	retryJob: (id) => request(`/jobs/${id}/retry`, { method: 'POST' }),
 	cancelJob: (id) => request(`/jobs/${id}/cancel`, { method: 'POST' }),
+	// Full detail for one job (R2: parsed timeline, funnel, ledger, peers).
+	getJobDetail: (id) => request(`/jobs/${encodeURIComponent(id)}?detail=1`),
+	// Remove one finished download row on the server ({deleted:1} | {error}).
+	deleteJob: (id) => request(`/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+	// Blacklist the track, drop its retry ledger row, skip pending upgrades.
+	stopTrying: (id, remove = false) =>
+		request(`/jobs/${encodeURIComponent(id)}/stop-trying`, { method: 'POST', body: JSON.stringify({ remove }) }),
 
 	// Discovery / Similar
 	getSimilarTracks: (artist, track, limit = 20) =>
@@ -76,14 +88,42 @@ export const api = {
 	// Transfers
 	cancelTransfer: (username, filename) =>
 		request('/download/cancel-transfer', { method: 'POST', body: JSON.stringify({ username, filename }) }),
-	getDownloadHistory: (offset = 0, limit = 20, status = null, reason = null, timeframe = null) =>
+	getDownloadHistory: (offset = 0, limit = 20, status = null, reason = null, timeframe = null, since = null) =>
 		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`
-			+ (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : '') + (timeframe ? `&timeframe=${timeframe}` : '')),
-	getDownloadFailures: () => request('/jobs/failures?type=download,bulk_download'),
-	retryFailedDownloads: (reason = null) =>
-		request('/jobs/retry-failed?type=download,bulk_download' + (reason ? `&reason=${reason}` : ''), { method: 'POST' }),
-	clearDownloadHistory: (status = null, reason = null) =>
-		request('/jobs/clear?type=download,bulk_download' + (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : ''), { method: 'DELETE' }),
+			+ (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : '') + (timeframe ? `&timeframe=${timeframe}` : '')
+			+ sinceParam(since)),
+	getDownloadFailures: (since = null) => request('/jobs/failures?type=download,bulk_download' + sinceParam(since)),
+	retryFailedDownloads: (reason = null, since = null) =>
+		request('/jobs/retry-failed?type=download,bulk_download' + (reason ? `&reason=${reason}` : '') + sinceParam(since), { method: 'POST' }),
+	clearDownloadHistory: (status = null, reason = null, since = null) =>
+		request('/jobs/clear?type=download,bulk_download' + (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : '') + sinceParam(since), { method: 'DELETE' }),
+
+	// Downloads page: live status, counts, summary
+	getDownloadStatus: () => request('/download/status'),
+	getSoulseekStats: () => request('/download/soulseek-stats'),
+	getJobCounts: (type = 'download,bulk_download', since = null) => request(buildUrl('/jobs/counts', { type, since })),
+	getJobsSummary: (since = null, type = 'download,bulk_download') => request(buildUrl('/jobs/summary', { type, since })),
+
+	// Download retry ledger (backoff schedule)
+	getDownloadAttempts: (dueBefore = null, limit = 200) =>
+		request(buildUrl('/download/attempts', { due_before: dueBefore, limit })),
+	getAttemptsSummary: (dueBefore = null) => request(buildUrl('/download/attempts/summary', { due_before: dueBefore })),
+	runDueRetries: (dueBefore = null) =>
+		request(buildUrl('/download/attempts/run', { due_before: dueBefore }), { method: 'POST' }),
+
+	// Failure incidents (restart / outage / cancel waves)
+	getIncidents: (since = null, type = 'download,bulk_download') => request(buildUrl('/jobs/incidents', { type, since })),
+	retryIncident: (id, since = null) =>
+		request(buildUrl(`/jobs/incidents/${encodeURIComponent(id)}/retry`, { since }), { method: 'POST' }),
+	dismissIncident: (id, since = null) =>
+		request(buildUrl(`/jobs/incidents/${encodeURIComponent(id)}/dismiss`, { since }), { method: 'POST' }),
+
+	// Failed tracks, runs, batches (Release 2)
+	getFailedTracks: (since = null, cls = null, type = 'download,bulk_download') =>
+		request(buildUrl('/jobs/failed-tracks', { type, since, class: cls })),
+	getDownloadRuns: (since = null, type = 'download,bulk_download') => request(buildUrl('/jobs/runs', { type, since })),
+	getDownloadBatches: () => request('/download/batches'),
+	cancelBatch: (id) => request(`/download/batches/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 
 	// Blacklist
 	addToBlacklist: (artist, track = null, reason = null) =>

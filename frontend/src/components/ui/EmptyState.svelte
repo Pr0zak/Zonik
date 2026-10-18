@@ -10,7 +10,7 @@
 
 <div class="flex flex-col items-center justify-center {compact ? 'py-6' : 'py-10'} px-4 text-center">
 	{#if icon}
-		<div class="text-[var(--text-disabled)] {compact ? 'mb-2 p-2.5' : 'mb-3 p-3.5'} rounded-2xl bg-[var(--surface-container-high)]/60">
+		<div class="text-[var(--text-disabled)] {compact ? 'mb-2 p-2.5' : 'mb-3 p-3.5'} rounded-2xl bg-[var(--surface-container-high)]">
 			{@render icon()}
 		</div>
 	{/if}

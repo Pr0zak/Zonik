@@ -85,6 +85,22 @@ async def broadcast_upload_progress(uploads: list[dict]):
         _clients.pop(ws, None)
 
 
+def _download_replay_fields(tracks_json: str | None) -> dict:
+    """description ("Artist — Track"), stage and stage_since of a download row
+    for the on-connect replay, read from its tracks[0] (parsed inline so this
+    module doesn't import the jobs/download routers)."""
+    try:
+        tracks = json.loads(tracks_json) if tracks_json else None
+    except (TypeError, ValueError):
+        tracks = None
+    first = tracks[0] if isinstance(tracks, list) and tracks and isinstance(tracks[0], dict) else {}
+    artist, track = first.get("artist") or "", first.get("track") or ""
+    out: dict = {"stage": first.get("stage"), "stage_since": first.get("stage_since")}
+    if artist or track:
+        out["description"] = f"{artist} — {track}" if artist and track else (artist or track)
+    return out
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -104,15 +120,19 @@ async def websocket_endpoint(websocket: WebSocket):
             )
             active_jobs = result.scalars().all()
             for job in active_jobs:
+                payload = {
+                    "id": job.id,
+                    "type": job.type,
+                    "status": job.status,
+                    "progress": job.progress,
+                    "total": job.total,
+                    "card": job.card,
+                }
+                if job.type == "download":
+                    payload.update(_download_replay_fields(job.tracks))
                 await websocket.send_text(json.dumps({
                     "type": "job_update",
-                    "job": {
-                        "id": job.id,
-                        "type": job.type,
-                        "status": job.status,
-                        "progress": job.progress,
-                        "total": job.total,
-                    }
+                    "job": payload,
                 }))
 
         # Send current transfers on connect

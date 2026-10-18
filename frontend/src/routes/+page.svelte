@@ -333,7 +333,7 @@
 				{#if transfers.length}
 					<div class="space-y-2">
 						{#each transfers.slice(0, 5) as t}
-							{@const pct = t.file_size ? Math.round((t.received_bytes / t.file_size) * 100) : 0}
+							{@const pct = t.total_bytes ? Math.min(100, Math.round((t.received_bytes / t.total_bytes) * 100)) : 0}
 							<div class="p-2 rounded bg-[var(--surface-container-high)]">
 								<div class="flex items-center justify-between mb-1">
 									<span class="text-xs text-[var(--text-primary)] truncate flex-1">{t.filename?.split(/[\\/]/).pop() || 'Unknown'}</span>

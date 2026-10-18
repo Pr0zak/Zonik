@@ -1,7 +1,9 @@
-import { activeJobs, activeTransfers, activeUploads } from './stores.js';
+import { activeJobs, activeTransfers, activeUploads, wsState } from './stores.js';
 
 let ws = null;
 let reconnectDelay = 1000;
+// True once any socket has opened, so a later open counts as a reconnect.
+let hasOpened = false;
 const MAX_RECONNECT_DELAY = 30000;
 const _jobListeners = new Set();
 
@@ -44,9 +46,19 @@ export function connectWebSocket() {
 
 	ws.onopen = () => {
 		reconnectDelay = 1000;
+		const isReconnect = hasOpened;
+		hasOpened = true;
+		wsState.update(s => ({
+			...s,
+			connected: true,
+			reconnecting: false,
+			reconnects: s.reconnects + (isReconnect ? 1 : 0),
+		}));
 	};
 
 	ws.onmessage = (event) => {
+		// Any frame (ping included) proves the socket is alive.
+		wsState.update(s => ({ ...s, lastMessageAt: Date.now() }));
 		try {
 			const data = JSON.parse(event.data);
 			if (data.type === 'transfer_progress') {
@@ -76,6 +88,7 @@ export function connectWebSocket() {
 	};
 
 	ws.onclose = () => {
+		wsState.update(s => ({ ...s, connected: false, reconnecting: true }));
 		setTimeout(connectWebSocket, reconnectDelay);
 		reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
 	};

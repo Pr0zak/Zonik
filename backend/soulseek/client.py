@@ -99,6 +99,10 @@ class SoulseekClient:
         self._file_tasks: set[asyncio.Task] = set()
         # Per-peer lock: [semaphore, holders+waiters]; entries are pruned when idle.
         self._peer_slots: dict[str, list] = {}
+        # Searches blocked in _pace_search right now (read by /api/download/status).
+        self.pacer_waiting = 0
+        # Downloads finished since this process started (soulseek-stats `session`).
+        self.session_totals = {"completed": 0, "failed": 0, "bytes": 0}
 
     @property
     def logged_in(self) -> bool:
@@ -272,20 +276,48 @@ class SoulseekClient:
         cfg = get_settings().soulseek
         gap = max(0.0, float(getattr(cfg, "search_min_interval_s", 3.0)))
         per_min = max(1, int(getattr(cfg, "searches_per_minute", 15)))
-        async with self._search_pace_lock:
-            loop = asyncio.get_running_loop()
-            while True:
-                now = loop.time()
-                self._search_sent = [t for t in self._search_sent if now - t < 60]
-                wait = 0.0
-                if self._search_sent:
-                    wait = max(wait, self._search_sent[-1] + gap - now)
-                if len(self._search_sent) >= per_min:
-                    wait = max(wait, self._search_sent[0] + 60 - now)
-                if wait <= 0:
-                    break
-                await asyncio.sleep(wait)
-            self._search_sent.append(loop.time())
+        self.pacer_waiting = getattr(self, "pacer_waiting", 0) + 1
+        try:
+            async with self._search_pace_lock:
+                loop = asyncio.get_running_loop()
+                while True:
+                    now = loop.time()
+                    self._search_sent = [t for t in self._search_sent if now - t < 60]
+                    wait = self._pace_wait(now, gap, per_min)
+                    if wait <= 0:
+                        break
+                    await asyncio.sleep(wait)
+                self._search_sent.append(loop.time())
+        finally:
+            self.pacer_waiting -= 1
+
+    def _pace_wait(self, now: float, gap: float, per_min: int) -> float:
+        """Seconds until the next search may go out (<= 0 when it may go now)."""
+        sent = [t for t in getattr(self, "_search_sent", []) if now - t < 60]
+        wait = 0.0
+        if sent:
+            wait = max(wait, sent[-1] + gap - now)
+        if len(sent) >= per_min:
+            wait = max(wait, sent[0] + 60 - now)
+        return wait
+
+    def pacer_status(self) -> dict:
+        """The search pacer right now: callers waiting, searches sent in the last
+        60 s, and seconds until the next one may go out (0.0 when free)."""
+        from backend.config import get_settings
+        cfg = get_settings().soulseek
+        gap = max(0.0, float(getattr(cfg, "search_min_interval_s", 3.0)))
+        per_min = max(1, int(getattr(cfg, "searches_per_minute", 15)))
+        try:
+            now = asyncio.get_running_loop().time()
+        except RuntimeError:
+            now = time.monotonic()  # the default loop clock
+        sent = [t for t in getattr(self, "_search_sent", []) if now - t < 60]
+        return {
+            "waiting": getattr(self, "pacer_waiting", 0),
+            "sent_last_minute": len(sent),
+            "next_slot_in_s": round(max(0.0, self._pace_wait(now, gap, per_min)), 1),
+        }
 
     async def download(self, username: str, filename: str, job_id: str | None = None) -> Transfer:
         """Initiate a download from a specific user. job_id links the transfer to its Job for progress sync."""
@@ -566,6 +598,7 @@ class SoulseekClient:
                     self.transfers.update_state(transfer, TransferState.CONNECTED)
                     await peer.send_transfer_response(msg["token"], True)
                     log.info(f"[client] Accepted transfer from {peer.username}: {msg['filename']} ({msg.get('size', 0)} bytes)")
+                    await self._broadcast_transfers()
                 else:
                     await peer.send_transfer_response(msg["token"], False, "File not queued")
                     active = [f"{t.filename}" for t in self.transfers.transfers.values() if t.username == peer.username]
@@ -579,9 +612,12 @@ class SoulseekClient:
         elif kind == "place_in_queue_response":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
             if transfer:
+                place = msg.get("place")
+                if isinstance(place, int):
+                    transfer.queue_place = place
                 if transfer.state == TransferState.REQUESTED:
                     self.transfers.update_state(transfer, TransferState.QUEUED)
-                # Update queue position info (could add to Transfer dataclass)
+                await self._broadcast_transfers()
 
         elif kind == "upload_denied":
             transfer = self.transfers.get_transfer(peer.username, msg["filename"])
@@ -806,9 +842,16 @@ class SoulseekClient:
 
     async def _on_transfer_complete(self, transfer: Transfer) -> None:
         """Called when download completes or fails."""
+        totals = getattr(self, "session_totals", None)
+        if totals is None:
+            totals = self.session_totals = {"completed": 0, "failed": 0, "bytes": 0}
         if transfer.state == TransferState.COMPLETED:
+            totals["completed"] += 1
+            totals["bytes"] += transfer.received_bytes
             await self.reputation.record_success(transfer.username)
         elif transfer.blame_peer:  # not when we gave up ourselves (cancel, another source won)
+            if transfer.state in (TransferState.FAILED, TransferState.DENIED):
+                totals["failed"] += 1
             await self.reputation.record_failure(transfer.username)
         await self._sync_job_progress(transfer)
         await self._broadcast_transfers()

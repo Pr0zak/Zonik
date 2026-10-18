@@ -82,9 +82,31 @@ async def test_first_variant_alone_when_it_finds_candidates():
         return [result("alice", "X\\Song Title.flac")]
 
     client = SimpleNamespace(search=search, reputation=None)
-    picked = await search_multi_strategy_native(client, ARTIST, TRACK)
+    stats, events = {}, []
+
+    async def on_event(ev):
+        events.append(ev)
+
+    picked = await search_multi_strategy_native(client, ARTIST, TRACK, stats=stats, on_event=on_event)
     assert asked == build_query_variants(ARTIST, TRACK)[:1]
     assert [c["username"] for c in picked] == ["alice"]
+    # funnel stats
+    assert len(stats["queries"]) == 1
+    assert stats["queries"][0] == {"q": asked[0], "kind": "variant", "peers": 1, "files": 1}
+    assert stats["files_seen"] > 0 and stats["peers_seen"] == 1
+    assert stats["kept"] == len(picked)
+    assert stats["album_query"] is None
+    assert stats["strict"] is True and stats["wanted_duration"] is None
+    assert set(stats["rejected"]) == {"size", "ext", "quality", "title", "duration", "score", "artist_path"}
+    assert stats["candidates"][0]["score"] > 0
+    assert stats["candidates"][0]["extension"] == "flac"
+    assert stats["candidates"][0]["queue_length"] == 0
+    assert picked[0]["score"] == stats["candidates"][0]["score"]
+    # events alternate start/end
+    assert [e["event"] for e in events] == ["query_start", "query_end"]
+    n = len(build_query_variants(ARTIST, TRACK))
+    assert events[0] == {"event": "query_start", "i": 1, "n": n, "q": asked[0], "kind": "variant"}
+    assert events[1]["peers"] == 1 and events[1]["files"] == 1
 
 
 @pytest.mark.asyncio
@@ -108,12 +130,119 @@ async def test_fallback_variants_run_concurrently_and_merge():
         return [result(f"peer{len(asked)}", "X\\Song Title.flac"), result("shared", "X\\Song Title.flac")]
 
     client = SimpleNamespace(search=search, reputation=None)
-    picked = await search_multi_strategy_native(client, ARTIST, TRACK)
+    stats, events = {}, []
+
+    async def on_event(ev):
+        events.append(ev)
+
+    picked = await search_multi_strategy_native(client, ARTIST, TRACK, stats=stats, on_event=on_event)
     assert asked[0] == variants[0] and sorted(asked[1:]) == sorted(variants[1:])
     assert peak == len(variants) - 1  # every fallback in flight at once
     users = [c["username"] for c in picked]
     assert len(users) == len(set(users))
     assert "shared" in users and "nobody-useful" not in users
+    # funnel stats cover every query, in query order
+    assert len(stats["queries"]) == len(variants) >= 3
+    assert [q["q"] for q in stats["queries"]] == variants
+    assert stats["files_seen"] > 0
+    assert stats["rejected"]["title"] >= 1  # nobody-useful's file
+    assert stats["kept"] == len(picked)
+    assert stats["candidates"][0]["score"] > 0
+    assert [c["username"] for c in stats["candidates"]] == users[:5]
+    # one start and one end per query; the first query finishes before the fallbacks start
+    assert [e["event"] for e in events[:2]] == ["query_start", "query_end"]
+    starts = [e for e in events if e["event"] == "query_start"]
+    ends = [e for e in events if e["event"] == "query_end"]
+    assert sorted(e["i"] for e in starts) == sorted(e["i"] for e in ends) == list(range(1, len(variants) + 1))
+    for e in events:
+        assert e["n"] == len(variants) and e["kind"] == "variant"
+    for i in range(1, len(variants) + 1):
+        si = next(k for k, e in enumerate(events) if e["event"] == "query_start" and e["i"] == i)
+        ei = next(k for k, e in enumerate(events) if e["event"] == "query_end" and e["i"] == i)
+        assert si < ei
+
+
+@pytest.mark.asyncio
+async def test_album_fallback_recorded_in_stats(monkeypatch):
+    import backend.services.lastfm as lastfm
+
+    async def fake_track_info(artist, track):
+        return {"album": "Let Love In"}
+
+    monkeypatch.setattr(lastfm, "get_track_info", fake_track_info)
+
+    async def search(q):
+        if "Let Love In" in q:
+            return [result("alice", "Nick Cave\\Let Love In (1994)\\05 - Red Right Hand.flac")]
+        if q == "Nick Cave Red Right Hand":
+            raise RuntimeError("search timed out")
+        return []
+
+    client = SimpleNamespace(search=search, reputation=None)
+    stats, events = {}, []
+
+    async def on_event(ev):
+        events.append(ev)
+
+    picked = await search_multi_strategy_native(client, "Nick Cave & The Bad Seeds", "Red Right Hand",
+                                                stats=stats, on_event=on_event)
+    assert [c["username"] for c in picked] == ["alice"]
+    assert stats["album_query"] == "Nick Cave Let Love In"
+    album = [q for q in stats["queries"] if q["kind"] == "album"]
+    assert album == [{"q": "Nick Cave Let Love In", "kind": "album", "peers": 1, "files": 1}]
+    # a failed query is kept in the list with its error
+    failed = [q for q in stats["queries"] if "error" in q]
+    assert failed and failed[0]["q"] == "Nick Cave Red Right Hand" and "timed out" in failed[0]["error"]
+    n_variants = len(build_query_variants("Nick Cave & The Bad Seeds", "Red Right Hand"))
+    assert len(stats["queries"]) == n_variants + 1
+    album_events = [e for e in events if e["kind"] == "album"]
+    assert [e["event"] for e in album_events] == ["query_start", "query_end"]
+    assert album_events[0]["i"] == album_events[0]["n"] == n_variants + 1
+    assert stats["candidates"][0]["username"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_on_event_exception_does_not_break_search():
+    async def search(q):
+        return [result("alice", "X\\Song Title.flac")]
+
+    async def on_event(ev):
+        raise RuntimeError("boom")
+
+    client = SimpleNamespace(search=search, reputation=None)
+    stats = {}
+    picked = await search_multi_strategy_native(client, ARTIST, TRACK, stats=stats, on_event=on_event)
+    assert [c["username"] for c in picked] == ["alice"]
+    assert len(stats["queries"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_pick_best_stats_count_size_ext_and_artist_path():
+    results = [
+        result("small", "A\\Song.flac", size=1),            # below min size
+        result("doc", "A\\Song.pdf"),                       # not audio
+        result("other", "A\\Different.flac"),               # title gate
+        result("ok", "Artist\\Song.flac"),
+    ]
+    stats = {}
+    picked = await pick_best_results_native(results, "Artist", "Song", stats=stats)
+    assert [c["username"] for c in picked] == ["ok"]
+    assert stats["peers_seen"] == 4 and stats["files_seen"] == 4
+    assert stats["rejected"]["size"] == 1
+    assert stats["rejected"]["ext"] == 1
+    assert stats["rejected"]["title"] == 1
+    assert stats["kept"] == 1
+
+    # one-word title: a candidate whose path does not name the artist is dropped and counted
+    async def search(q):
+        return [result("named", "Rihanna\\Disturbia.flac"), result("unnamed", "Misc\\Disturbia.flac")]
+
+    client = SimpleNamespace(search=search, reputation=None)
+    stats = {}
+    picked = await search_multi_strategy_native(client, "Rihanna", "Disturbia", stats=stats)
+    assert [c["username"] for c in picked] == ["named"]
+    assert stats["rejected"]["artist_path"] == 1
+    assert stats["kept"] == len(picked)
 
 
 # --- per-peer slot ----------------------------------------------------------------

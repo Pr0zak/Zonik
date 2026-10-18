@@ -370,8 +370,36 @@
 		}
 	}
 
+	// `?track=<id>` (e.g. "Open track" on the Downloads page): look the track up, search the
+	// tracks list for "artist title" and highlight its row. Remembered so a re-run of the effect
+	// (it also reads `search`) doesn't re-trigger it for the same id.
+	let highlightTrackId = $state(null);
+	let handledTrackParam = null;
+
+	async function openTrackParam(id) {
+		handledTrackParam = id;
+		highlightTrackId = id;
+		try {
+			const t = await api.getTrack(id);
+			search = `${t?.artist || ''} ${t?.title || ''}`.trim();
+		} catch (e) {
+			console.error('Track lookup failed:', e);
+			addToast('That track is no longer in the library', 'error');
+		}
+		viewMode = 'list';
+		tab = 'tracks';
+		offset = 0;
+		await loadData();
+	}
+
 	// React to URL search param changes (TopBar navigation, even if already on /library)
 	$effect(() => {
+		const trackParam = $page.url.searchParams.get('track');
+		if (trackParam) {
+			if (trackParam !== handledTrackParam) openTrackParam(trackParam);
+			return;
+		}
+		handledTrackParam = null;
 		const searchParam = $page.url.searchParams.get('search');
 		if (searchParam && searchParam !== search) {
 			search = searchParam;
@@ -383,13 +411,21 @@
 	});
 
 	onMount(async () => {
-		// Handle search param on initial mount
+		// Handle track / search param on initial mount
+		const trackParam = $page.url.searchParams.get('track');
 		const searchParam = $page.url.searchParams.get('search');
-		if (searchParam) {
-			search = searchParam;
-			viewMode = 'list';
+		if (trackParam) {
+			await Promise.all([
+				trackParam !== handledTrackParam ? openTrackParam(trackParam) : Promise.resolve(),
+				loadFavoriteIds(),
+			]);
+		} else {
+			if (searchParam) {
+				search = searchParam;
+				viewMode = 'list';
+			}
+			await Promise.all([loadData(), loadFavoriteIds()]);
 		}
-		await Promise.all([loadData(), loadFavoriteIds()]);
 		try {
 			const active = await api.getActiveJobs();
 			if (active.some(j => j.type === 'library_scan')) scanTriggered = true;
@@ -921,7 +957,7 @@
 					<div class="space-y-1">
 						{#each tracks as track}
 							<button class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-[var(--surface-container-high)] transition-colors
-								{selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10 ring-1 ring-[var(--color-accent)]' : 'bg-[var(--surface-base)]'}"
+								{selectMode && selected.has(track.id) ? 'bg-[var(--color-accent)]/10 ring-1 ring-[var(--color-accent)]' : highlightTrackId === track.id ? 'bg-sky-500/[0.08] ring-1 ring-sky-500/50' : 'bg-[var(--surface-base)]'}"
 								onclick={() => selectMode ? toggleSelect(track.id) : playTrack(track)}>
 								{#if selectMode}
 									<div class="w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0
@@ -969,7 +1005,7 @@
 						rows={tracks}
 						rowKey={(t) => t.id}
 						onrowclick={(track) => selectMode ? toggleSelect(track.id) : playTrack(track)}
-						rowClass={() => 'group'}>
+						rowClass={(t) => highlightTrackId === t.id ? 'group bg-sky-500/[0.08]' : 'group'}>
 						{#snippet header()}
 							{#if selectMode}
 								<th class="px-3 py-2.5 w-10">

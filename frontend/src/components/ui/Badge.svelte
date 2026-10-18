@@ -1,6 +1,7 @@
 <script>
 	let {
 		variant = 'default',
+		size = 'md', // 'md' | 'sm' (compact, for dense rows)
 		class: className = '',
 		children,
 	} = $props();
@@ -12,8 +13,13 @@
 		info: 'bg-blue-500/10 text-blue-400 ring-blue-500/20',
 		default: 'bg-[var(--surface-container-high)] text-[var(--text-secondary)] ring-[var(--outline-variant)]/30',
 	};
+	// Size classes are chosen, not appended, so `sm` never fights the `md` padding/text in the CSS cascade.
+	const sizes = {
+		md: 'px-2 py-0.5 text-xs',
+		sm: 'text-[10px] px-1.5 py-0 leading-4',
+	};
 </script>
 
-<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ring-1 {variants[variant]} {className}">
+<span class="inline-flex items-center rounded-full font-medium ring-1 {sizes[size] || sizes.md} {variants[variant]} {className}">
 	{@render children()}
 </span>

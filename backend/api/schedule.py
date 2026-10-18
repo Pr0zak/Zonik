@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
@@ -79,6 +79,101 @@ TASK_DESCRIPTIONS = {
 }
 
 
+# Scheduled tasks that feed the download pipeline, mapped to the `source`
+# string their auto-downloads carry (DownloadAttempt.source / Downloads chips).
+DOWNLOAD_TASK_SOURCES = {
+    "lastfm_top_tracks": "discovery",
+    "discover_similar": "similar",
+    "remix_discovery": "remix",
+    "recommendation_refresh": "recommendation",
+    "upgrade_scan": "upgrade",
+}
+
+
+def _naive_utc(dt: datetime) -> datetime:
+    """Naive UTC, like the DB columns and the worker's datetime.utcnow()."""
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def _parse_run_at(run_at: str) -> tuple[int, int]:
+    """Parse "HH:MM" exactly as the worker does (map(int, split(":"))).
+    Raises ValueError where the worker would ignore run_at."""
+    run_hour, run_min = map(int, run_at.split(":"))
+    return run_hour, run_min
+
+
+def next_run(task, now: datetime) -> datetime | None:
+    """When the worker's scheduler tick will next pick this task up (naive UTC).
+
+    Mirrors ``run_scheduled_tasks`` in ``backend/workers/__init__.py``:
+    a task is due once ``interval_hours`` have passed since ``last_run_at``
+    (or immediately when it never ran) and, if ``run_at`` "HH:MM" is set, only
+    when the UTC wall clock is at that hour:minute (the worker allows ±5 min
+    around it and ticks every 15 min). A ``run_at`` the worker cannot parse is
+    ignored, as the worker ignores it.
+
+    ``day_of_week`` is deliberately ignored: the worker ignores it too, so a
+    weekly task runs on whatever day its interval elapses.
+
+    Returns None when the task is disabled, or when its ``run_at`` hour can
+    never match (the worker would never run it).
+    """
+    if not getattr(task, "enabled", False):
+        return None
+    now = _naive_utc(now)
+    base = now
+    last = getattr(task, "last_run_at", None)
+    if last is not None:
+        interval = getattr(task, "interval_hours", None) or 0
+        base = max(now, _naive_utc(last) + timedelta(hours=interval))
+
+    run_at = getattr(task, "run_at", None)
+    if not run_at:
+        return base
+    try:
+        hour, minute = _parse_run_at(run_at)
+    except ValueError:
+        return base  # worker skips the run_at check on a parse error
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    if (base.hour, base.minute) == (hour, minute):
+        return base
+    slot = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if slot < base:
+        slot += timedelta(days=1)
+    return slot
+
+
+def next_download_runs(tasks, now: datetime) -> list[dict]:
+    """Next run of every download-feeding task, soonest first.
+
+    Items are ``{task_name, label, source, next_run_at}`` with ``next_run_at``
+    a naive UTC ISO string; tasks that will not run (disabled) are left out.
+    """
+    runs = []
+    for t in tasks:
+        source = DOWNLOAD_TASK_SOURCES.get(t.task_name)
+        if source is None:
+            continue
+        at = next_run(t, now)
+        if at is None:
+            continue
+        runs.append({
+            "task_name": t.task_name,
+            "label": TASK_LABELS.get(t.task_name, t.task_name),
+            "source": source,
+            "next_run_at": at,
+        })
+    runs.sort(key=lambda r: r["next_run_at"])
+    for r in runs:
+        r["next_run_at"] = r["next_run_at"].isoformat()
+    return runs
+
+
+
 @router.get("")
 async def list_schedule(db: AsyncSession = Depends(get_db)):
     """Get all scheduled tasks with their config."""
@@ -107,6 +202,12 @@ async def list_schedule(db: AsyncSession = Depends(get_db)):
             result = await db.execute(select(ScheduleTask).order_by(ScheduleTask.task_name))
             tasks = result.scalars().all()
 
+    now = datetime.now(timezone.utc)
+
+    def _next_iso(t):
+        at = next_run(t, now)
+        return at.isoformat() if at else None
+
     return [
         {
             "task_name": t.task_name,
@@ -119,6 +220,8 @@ async def list_schedule(db: AsyncSession = Depends(get_db)):
             "count": t.count,
             "config": json.loads(t.config) if t.config else {},
             "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
+            "next_run_at": _next_iso(t),
+            "download_source": DOWNLOAD_TASK_SOURCES.get(t.task_name),
         }
         for t in tasks
     ]

@@ -14,6 +14,7 @@
 		color = 'var(--text-muted)',
 		icon = null,
 		detail = '',
+		detailLines = 1,
 		tone = 'default',
 		href = null,
 		onclick = null,
@@ -36,7 +37,7 @@
 		bad: 'text-red-300',
 	};
 	let baseClasses = $derived(
-		`block w-full text-left rounded-xl border bg-[var(--surface-container)] px-4 py-3 transition-colors ${toneBorder[tone] || toneBorder.default} ${active ? 'ring-1 ring-[var(--color-primary)]/50 bg-[var(--surface-container-high)]' : ''} ${className}`
+		`block w-full text-left rounded-xl border bg-[var(--surface-container)] px-4 py-3 transition-colors ${toneBorder[tone] || toneBorder.default} ${active ? 'ring-1 ring-sky-500/50 bg-[var(--surface-container-high)]' : ''} ${className}`
 	);
 </script>
 
@@ -51,7 +52,7 @@
 	</div>
 	<p class="mt-1 text-2xl font-bold tabular-nums tracking-tight truncate {toneValue[tone] || toneValue.default}">{value}</p>
 	{#if detail}
-		<p class="text-xs text-[var(--text-muted)] truncate">{detail}</p>
+		<p class="text-xs text-[var(--text-muted)] {detailLines >= 2 ? 'whitespace-normal line-clamp-2' : 'truncate'}">{detail}</p>
 	{/if}
 {/snippet}
 
