@@ -278,7 +278,8 @@ async def _download_recs(rec_ids: list[str]) -> None:
         recs = (await db.execute(select(Recommendation).where(Recommendation.id.in_(rec_ids)))).scalars().all()
         items = [{"artist": r.artist, "track": r.track} for r in recs]
 
-    outcomes = await download_tracked_many(items, source="recommendation")
+    outcomes = await download_tracked_many(items, source="recommendation", label="Recommendations",
+                                           kind="recommendation")
     by_key = {attempt_key(o["artist"], o["track"]): o for o in outcomes}
 
     async with async_session() as db:

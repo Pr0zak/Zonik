@@ -99,11 +99,13 @@ export function shortDate(iso) {
 	return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function plural(n, one, many = `${one}s`) {
+/** "1 file", "3 files". */
+export function plural(n, one, many = `${one}s`) {
 	return `${n} ${n === 1 ? one : many}`;
 }
 
-function mb(bytes) {
+/** Bytes -> "29.4" (MiB, one decimal, no unit). */
+export function mb(bytes) {
 	return (Math.max(0, Number(bytes) || 0) / 1048576).toFixed(1);
 }
 
@@ -111,7 +113,19 @@ function mb(bytes) {
 // Job field access (list item, WS job_update payload or job detail)
 // ---------------------------------------------------------------------------
 
-function parseMaybe(v) {
+/** A JSON text column (or an already-parsed value) as a value; null when unparseable. */
+/**
+ * A speed short enough for the 224 px live cell: whole KB/s ("310 KB/s"), one
+ * decimal from MB/s up ("2.4 MB/s"); '' for no speed.
+ */
+export function compactSpeed(bytesPerSec) {
+	const v = Number(bytesPerSec);
+	if (!Number.isFinite(v) || v <= 0) return '';
+	if (v < 1024 * 1024) return `${Math.max(1, Math.round(v / 1024))} KB/s`;
+	return formatSpeed(v);
+}
+
+export function parseMaybe(v) {
 	if (v == null) return null;
 	if (typeof v !== 'string') return v;
 	try { return JSON.parse(v); } catch { return null; }
@@ -426,7 +440,8 @@ export function doneOutcome(job) {
 	return { kind: 'new', label: 'New', badgeVariant: 'success' };
 }
 
-function relativeIn(atIso, nowMs) {
+/** "in 3 days", "in 1 hour", "with the next run" (past) or '' for a bad time. */
+export function relativeIn(atIso, nowMs) {
 	const at = parseUTC(atIso);
 	if (!at || Number.isNaN(at.getTime())) return '';
 	const diffS = (at.getTime() - nowMs) / 1000;
@@ -470,7 +485,8 @@ function attemptLine(attempt, of) {
 	return '';
 }
 
-function slotsBusy(n) {
+/** "both slots busy", "all 3 slots busy", "the transfer slot is busy". */
+export function slotsBusy(n) {
 	if (n === 1) return 'the transfer slot is busy';
 	if (n === 2) return 'both slots busy';
 	return n ? `all ${n} slots busy` : 'all slots busy';
@@ -637,7 +653,7 @@ export function resolveStage(job, transfer, limits, nowMs = Date.now(), ctx = {}
 			} else {
 				const bits = [];
 				if (pct != null) bits.push(`${pct} %`);
-				if (speed > 0) bits.push(formatSpeed(speed));
+				if (speed > 0) bits.push(compactSpeed(speed));
 				if (eta != null && eta > 0) bits.push(`${formatDurationWords(eta)} left`);
 				out.big = bits.length ? bits.join(' · ') : elapsed;
 			}
@@ -654,4 +670,164 @@ export function resolveStage(job, transfer, limits, nowMs = Date.now(), ctx = {}
 			break;
 	}
 	return out;
+}
+
+// ---------------------------------------------------------------------------
+// Group copy (Release 2 instrument panel): names, dots and reason clauses
+// ---------------------------------------------------------------------------
+
+/** Live groups, pipeline order (closest to done first). */
+export const LIVE_GROUP_ORDER = ['transferring', 'at_peer', 'searching', 'waiting_slot', 'queue_search', 'backlog'];
+
+/** Live stage -> Live group key. */
+export const GROUP_OF_STAGE = {
+	importing: 'transferring',
+	transferring: 'transferring',
+	queued_at_peer: 'at_peer',
+	connecting: 'at_peer',
+	searching: 'searching',
+	waiting_slot: 'waiting_slot',
+	peer_lock: 'waiting_slot',
+	queue_search: 'queue_search',
+};
+
+/** How many tracks a batch hands to the download queue at once (auto_download concurrency). */
+export const HANDOVER_DEFAULT = 4;
+/** Track queries a search runs before the album fallback (search.py variants). */
+export const QUERY_TOTAL_DEFAULT = 4;
+
+function secondsWord(v) {
+	const n = Number(v);
+	if (!Number.isFinite(n)) return '';
+	return Number.isInteger(n) ? String(n) : n.toFixed(1).replace(/\.0$/, '');
+}
+
+const BATCH_SUBJECT = {
+	playlist: 'the import',
+	scheduled: 'the run',
+	bulk: 'the batch',
+	recommendation: 'the batch',
+};
+
+/**
+ * Live group copy: `{name, dot, reason(ctx)}`. `ctx` = `{limits, count, busy,
+ * stages: Set<stage>, queryTotal, handover, batchKind}`; every reason reads its
+ * numbers from DC-12 `limits` (defaults when absent), never hard-coded copy.
+ */
+export const STAGE_COPY = {
+	transferring: {
+		name: 'Transferring',
+		dot: 'sky',
+		reason: ({ limits, busy, count } = {}) => {
+			const slots = Number(limits?.transfer_slots) || 0;
+			const k = Number.isFinite(Number(busy)) ? Number(busy) : Number(count) || 0;
+			if (slots) return `${Math.min(k, slots)} of ${slots} ${slots === 1 ? 'slot' : 'slots'} busy`;
+			return `${plural(k, 'slot')} busy`;
+		},
+	},
+	at_peer: {
+		name: 'At the peer',
+		dot: 'amber',
+		reason: ({ stages } = {}) => {
+			if (stages && stages.size && !stages.has('queued_at_peer')) return 'connecting, direct and relayed';
+			return 'asked, waiting for the upload to start';
+		},
+	},
+	searching: {
+		name: 'Searching',
+		dot: 'indigo',
+		reason: ({ queryTotal } = {}) => {
+			const q = Number(queryTotal) || QUERY_TOTAL_DEFAULT;
+			return `up to ${q} ${q === 1 ? 'query' : 'queries'}, then an album query`;
+		},
+	},
+	waiting_slot: {
+		name: 'Waiting for a transfer slot',
+		dot: 'amber',
+		reason: ({ limits, stages } = {}) => {
+			if (stages && stages.size && !stages.has('waiting_slot')) {
+				return 'file picked, the peer is busy with another of your downloads';
+			}
+			return `file picked, ${slotsBusy(Number(limits?.transfer_slots) || 0)}`;
+		},
+	},
+	queue_search: {
+		name: 'Waiting to search',
+		dot: 'muted',
+		reason: ({ limits } = {}) => {
+			const spm = Number(limits?.searches_per_minute) || 0;
+			const gap = Number(limits?.search_min_interval_s) || 0;
+			if (spm && gap) return `pacer allows ${spm} searches a minute, ${secondsWord(gap)} s apart`;
+			if (spm) return `pacer allows ${spm} searches a minute`;
+			const slots = Number(limits?.search_slots) || 0;
+			return slots ? `waiting for one of the ${slots} search slots` : 'waiting for a search slot';
+		},
+	},
+	backlog: {
+		name: 'Not yet submitted',
+		dot: 'muted',
+		reason: ({ handover, batchKind } = {}) => {
+			const n = Number(handover) || HANDOVER_DEFAULT;
+			const who = BATCH_SUBJECT[batchKind] || 'the batch';
+			return `${who} hands tracks over ${n} at a time`;
+		},
+	},
+};
+
+/** Reason clause for a Live group key (empty for an unknown key). */
+export function stageGroupReason(key, ctx = {}) {
+	const copy = STAGE_COPY[key];
+	return copy ? copy.reason(ctx) : '';
+}
+
+/** Failed groups in display order; `rejected` also holds `no_better`, `infra` holds cancelled and orphan. */
+export const FAILED_GROUP_ORDER = ['not_found', 'peer', 'rejected', 'infra'];
+
+/** failure_class -> Failed group key. */
+export const GROUP_OF_CLASS = {
+	not_found: 'not_found',
+	peer: 'peer',
+	rejected: 'rejected',
+	no_better: 'rejected',
+	infra: 'infra',
+	cancelled: 'infra',
+	orphan: 'infra',
+};
+
+/** Failure class -> `{name, dot}` for pills and group headers. */
+export const CLASS_COPY = {
+	not_found: { name: 'Not found', dot: 'muted' },
+	peer: { name: 'Peer problems', dot: 'rose' },
+	rejected: { name: 'Not imported', dot: 'rose' },
+	no_better: { name: 'Nothing better', dot: 'muted' },
+	infra: { name: "Not the track's fault", dot: 'amber' },
+	cancelled: { name: 'Cancelled', dot: 'amber' },
+	orphan: { name: 'No reason recorded', dot: 'amber' },
+};
+
+/**
+ * The reason clause after a Failed group's name. `ctx.incidentNote` (e.g.
+ * "yesterday's 142 are in the banner") is appended to the infra clause.
+ */
+export function classSentence(cls, ctx = {}) {
+	switch (cls) {
+		case 'not_found':
+			return 'a normal outcome: no peer shared a file that passed the title, length and quality checks';
+		case 'peer':
+			return 'a file was found, every peer that had it failed';
+		case 'rejected':
+			return 'the file arrived but was not imported: a duplicate, the wrong song or not better than yours';
+		case 'no_better':
+			return 'copies were found, none better than the file you have';
+		case 'rejected+no_better':
+			return 'not imported, or no copy better than yours';
+		case 'infra':
+		case 'cancelled':
+		case 'orphan': {
+			const base = 'cancelled, restart or outage · not counted against the track';
+			return ctx.incidentNote ? `${base} · ${ctx.incidentNote}` : base;
+		}
+		default:
+			return '';
+	}
 }

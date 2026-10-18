@@ -125,9 +125,16 @@ export const api = {
 	getDownloadBatches: () => request('/download/batches'),
 	cancelBatch: (id) => request(`/download/batches/${encodeURIComponent(id)}/cancel`, { method: 'POST' }),
 
+	// Start downloads: one track (same body as the page's trigger fetch) or a labelled batch.
+	triggerDownload: (body) => request('/download/trigger', { method: 'POST', body: JSON.stringify(body) }),
+	bulkDownload: (tracks, { source = null, label = null } = {}) =>
+		request('/download/bulk', { method: 'POST', body: JSON.stringify({ tracks, source, label }) }),
+
 	// Blacklist
+	getBlacklist: () => request('/download/blacklist'),
 	addToBlacklist: (artist, track = null, reason = null) =>
 		request('/download/blacklist', { method: 'POST', body: JSON.stringify({ artist, track, reason }) }),
+	removeFromBlacklist: (id) => request(`/download/blacklist/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
 	// Ratings
 	setRating: (trackId, rating) => request(`/tracks/${trackId}/rating?rating=${rating}`, { method: 'PUT' }),

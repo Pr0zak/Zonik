@@ -18,7 +18,7 @@ from backend.config import get_settings
 from backend.database import async_session, init_db
 from backend.models.user import User
 from backend.models.job import Job
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer, tidy as tidy_api, download_attempts
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer, tidy as tidy_api, download_attempts, download_batches
 from backend.subsonic import router as subsonic_router
 
 
@@ -307,6 +307,7 @@ app.include_router(playlists.router, prefix="/api/playlists", tags=["playlists"]
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(download.router, prefix="/api/download", tags=["download"])
 app.include_router(download_attempts.router, prefix="/api/download/attempts", tags=["download-attempts"])
+app.include_router(download_batches.router, prefix="/api/download/batches", tags=["download-batches"])
 app.include_router(discovery.router, prefix="/api/discovery", tags=["discovery"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 app.include_router(schedule.router, prefix="/api/schedule", tags=["schedule"])

@@ -29,6 +29,13 @@ def fresh_duration_cache():
     auto._duration_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def fresh_batches():
+    auto._batches.clear()
+    yield
+    auto._batches.clear()
+
+
 @pytest.fixture
 def no_lastfm(monkeypatch):
     """Last.fm configured but answering nothing (records which tracks were asked)."""
@@ -70,7 +77,8 @@ def fake_enqueue(monkeypatch):
     async def enqueue(artist, track, job_id=None, source=None, target_track_id=None, *,
                       album=None, expected_duration=None, wait=True, **kwargs):
         calls.append({"artist": artist, "track": track, "album": album, "job_id": job_id, "source": source,
-                      "expected_duration": expected_duration, "wait": wait})
+                      "expected_duration": expected_duration, "wait": wait,
+                      "batch": kwargs.get("batch"), "origin": kwargs.get("origin")})
         status, payload = script.get(track, ("completed", {"track_id": "t1"}))
         await write_job(job_id, status, payload)
         return job_id
@@ -218,6 +226,90 @@ async def test_download_tracked_many_dedupes_and_bounds(db_ready, fake_enqueue, 
     outs = await auto.download_tracked_many(items, source="playlist", concurrency=2)
     assert sorted(o["track"] for o in outs) == ["Song", "Two"]
     assert all(c["source"] == "playlist" for c in fake_enqueue.calls)
+
+
+# --- batch / origin stamping (DC-21) ------------------------------------------------
+
+async def test_download_tracked_many_forwards_batch(db_ready, fake_enqueue, no_lastfm):
+    b = {"id": "b-1", "label": "Road trip", "kind": "playlist"}
+    await auto.download_tracked_many([{"artist": "A", "track": "One"}, {"artist": "B", "track": "Two"}],
+                                     source="playlist", batch=b)
+    assert [c["batch"] for c in fake_enqueue.calls] == [b, b]
+
+    # label / batch_id / kind build the dict; a missing id gets a fresh one.
+    fake_enqueue.calls.clear()
+    await auto.download_tracked_many([{"artist": "C", "track": "Three"}, {"artist": "D", "track": "Four"}],
+                                     source="playlist", label="Download all", kind="bulk")
+    got = [c["batch"] for c in fake_enqueue.calls]
+    assert got[0] == got[1] and got[0]["label"] == "Download all" and got[0]["kind"] == "bulk"
+    assert got[0]["id"]
+
+    # No batch asked for (retries, the attempts router): none passed on.
+    fake_enqueue.calls.clear()
+    await auto.download_tracked_many([{"artist": "E", "track": "Five", "origin": "weekly-radar:row"}],
+                                     source="playlist")
+    assert fake_enqueue.calls[0]["batch"] is None
+    assert fake_enqueue.calls[0]["origin"] == "weekly-radar:row"
+
+
+async def test_make_batch():
+    assert auto.make_batch() is None
+    assert auto.make_batch(label="X", batch_id="id-1", kind="bulk") == {"id": "id-1", "label": "X", "kind": "bulk"}
+    assert auto.make_batch({"label": "Y", "kind": "playlist"})["id"]  # id filled in
+    assert auto.make_batch({"id": "k", "label": "Z"}, kind="bulk") == {"id": "k", "label": "Z", "kind": "bulk"}
+
+
+async def test_bulk_route_runs_one_labelled_batch(db_ready, fake_enqueue, no_lastfm):
+    await download._process_bulk_download_queue(
+        [{"artist": "A", "track": "One"}, {"artist": "B", "track": "Two"}], "similar", "  ")
+    got = [c["batch"] for c in fake_enqueue.calls]
+    assert got[0] == got[1] and got[0]["label"] == "Download all" and got[0]["kind"] == "bulk"
+    fake_enqueue.calls.clear()
+    await download._process_bulk_download_queue([{"artist": "C", "track": "Three"}], "similar", "Weekly Radar")
+    assert fake_enqueue.calls[0]["batch"]["label"] == "Weekly Radar"
+
+
+async def test_scheduler_batch_carries_the_sched_job_id(db_ready, monkeypatch):
+    from backend.workers import scheduler
+
+    async def ready():
+        return True
+    monkeypatch.setattr(scheduler, "_download_backend_ready", ready)
+    seen = []
+
+    async def submit(artist, track, *, source, job_id=None, batch=None, **_):
+        seen.append(batch)
+        await write_job(job_id, "completed", {"track_id": "t"})
+        return {"job_id": job_id, "skipped": None, "error": None, "deduped": False}
+    monkeypatch.setattr(auto, "submit_tracked", submit)
+
+    await scheduler._auto_download_missing([{"artist": "A", "track": "One"}], "discover_similar",
+                                           batch_id="sched-1")
+    assert seen == [{"id": "sched-1", "label": "Similar Tracks Scan", "kind": "scheduled"}]
+    seen.clear()
+    await scheduler._auto_download_missing([{"artist": "A", "track": "Two"}], "discover_similar")
+    assert seen == [None]  # no batch id: nothing stamped
+
+
+async def test_internal_run_stamps_batch_into_the_row(db_ready, fake_slsk, no_lastfm, monkeypatch):
+    """The worker→web hop: InternalDownloadRequest.batch reaches tracks[0] and the
+    submitted event of the row the web writes."""
+    async def idle(job_id, *args):
+        return None
+    monkeypatch.setattr(download, "_run_download_job", idle)
+    b = {"id": "sched-9", "label": "Top Charts Scan", "kind": "scheduled"}
+    resp = await download.internal_run_download(download.InternalDownloadRequest(
+        artist="Test Artist", track="Test Song", job_id="job-b", source="manual", wait=False,
+        batch=b, origin="schedule"))
+    assert resp == {"job_id": "job-b"}
+    await asyncio.gather(*download._background_downloads)
+    async with async_session() as s:
+        row = await s.get(Job, "job-b")
+    doc = json.loads(row.tracks)[0]
+    assert doc["batch"] == b and doc["origin"] == "schedule"
+    sub = json.loads(row.log)[0]
+    assert sub["k"] == "submitted" and sub["batch"] == b and sub["origin"] == "schedule"
+    download._job_done("job-b")
 
 
 # --- blacklist (DC-22) ------------------------------------------------------------
@@ -509,3 +601,91 @@ async def test_blacklisted_upgrade_goes_back_to_pending(db_ready, monkeypatch):
         jobs = (await s.execute(select(Job))).scalars().all()
     assert row.status == "pending" and row.attempts == 1  # attempt refunded, not stuck downloading
     assert jobs == []
+
+
+# --- batch registry (DC-21, R2-B3) --------------------------------------------------
+
+@pytest.fixture
+def gated_enqueue(monkeypatch):
+    """enqueue_download that blocks until gate is set, then completes the job."""
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    async def enqueue(artist, track, job_id=None, source=None, target_track_id=None, **kwargs):
+        started.append(track)
+        await gate.wait()
+        await write_job(job_id, "completed", {"track_id": "t"})
+        return job_id
+    monkeypatch.setattr(download, "enqueue_download", enqueue)
+    enqueue.started = started
+    enqueue.gate = gate
+    return enqueue
+
+
+async def wait_for(cond, tries=300):
+    for _ in range(tries):
+        if cond():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition not reached")
+
+
+TEN = [{"artist": "A", "track": f"Song {i}"} for i in range(10)]
+
+
+async def test_batch_registry_shows_the_backlog(db_ready, gated_enqueue, no_lastfm):
+    task = asyncio.create_task(auto.download_tracked_many(
+        TEN, source="playlist", concurrency=4, batch_id="b-reg", label="Road trip", kind="playlist"))
+    await wait_for(lambda: len(gated_enqueue.started) == 4)
+    entry = auto.get_batch("b-reg")
+    assert len(entry.pending_titles) == 6 and entry.pending_titles[0] == "A — Song 4"
+    assert entry.submitted == 4 and entry.live == 4 and entry.done == 0
+    d = entry.to_dict()
+    assert d["pending"] == 6 and d["total"] == 10 and d["label"] == "Road trip" and d["kind"] == "playlist"
+    assert d["source"] == "playlist" and d["finished_at"] is None
+
+    gated_enqueue.gate.set()
+    outs = await task
+    assert len(outs) == 10 and all(o["ok"] is True for o in outs)
+    assert entry.done == 10 and entry.live == 0 and entry.pending_titles == []
+    assert entry.finished_at is not None
+    assert [b.id for b in auto.list_batches()] == ["b-reg"]  # still listed for a while
+
+    entry.finished_mono -= auto.BATCH_KEEP_S + 1
+    assert auto.get_batch("b-reg") is None and auto.list_batches() == []  # dropped after 10 min
+
+
+async def test_batch_cancel_stops_submissions(db_ready, gated_enqueue, no_lastfm):
+    task = asyncio.create_task(auto.download_tracked_many(
+        TEN, source="playlist", concurrency=4, batch_id="b-cancel", label="Mix", kind="playlist"))
+    await wait_for(lambda: len(gated_enqueue.started) == 4)
+    assert auto.cancel_batch("b-cancel") == 6
+    entry = auto.get_batch("b-cancel")
+    assert entry.skipped == 6 and entry.pending_titles == [] and entry.cancel.is_set()
+    assert auto.cancel_batch("b-cancel") == 0  # idempotent: nothing left
+
+    gated_enqueue.gate.set()
+    outs = await task
+    assert len(gated_enqueue.started) == 4  # nothing submitted after the cancel
+    assert sum(1 for o in outs if o["ok"] is True) == 4
+    assert sum(1 for o in outs if o["skipped"] == "cancelled") == 6
+    assert entry.done == 4 and entry.skipped == 6 and entry.live == 0 and entry.cancelled
+    assert auto.cancel_batch("nope") is None
+
+
+async def test_batch_counts_failures_and_skips(db_ready, fake_enqueue, no_lastfm):
+    fake_enqueue.script["Bad"] = ("failed", {"message": "No results for A - Bad"})
+    async with async_session() as s:
+        s.add(DownloadAttempt(key=attempt_key("A", "Later"), artist="A", track="Later", attempts=1,
+                              next_retry_at=datetime.utcnow() + timedelta(days=1)))
+        await s.commit()
+    await auto.download_tracked_many(
+        [{"artist": "A", "track": t} for t in ("Good", "Bad", "Later")], source="playlist", batch_id="b-mix",
+        kind="bulk")
+    d = auto.get_batch("b-mix").to_dict()
+    assert (d["done"], d["failed"], d["skipped"], d["live"], d["pending"]) == (1, 1, 1, 0, 0)
+
+
+async def test_no_batch_registers_nothing(db_ready, fake_enqueue, no_lastfm):
+    await auto.download_tracked_many([{"artist": "A", "track": "One"}], source="playlist")
+    assert auto.list_batches() == []

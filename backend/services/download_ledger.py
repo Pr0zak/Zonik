@@ -268,3 +268,267 @@ async def enrich_items(db: AsyncSession, items: list[dict], now: datetime | None
         it["track"] = tracks.get(tid) if tid else None
         it["outcome"] = outcome_for(it, urow)
     return items
+
+
+# --- R2-A1: the drawer's detail payload (DC-19) ------------------------------------
+
+PEERS_MAX = 20
+
+
+def timeline_of(log_text) -> list[dict]:
+    """Job.log parsed as the DC-2 event list: only dict entries survive; a NULL,
+    unparseable or non-list log (e.g. an upgrade job's list of strings) → []."""
+    data = _loads(log_text)
+    if not isinstance(data, list):
+        return []
+    return [e for e in data if isinstance(e, dict)]
+
+
+def usernames_of(result: dict | None, t0: dict | None) -> list[str]:
+    """Every peer a row mentions, first-seen order: candidates, source_errors (result
+    and tracks[0]), result.username, tracks[0].username. Capped at PEERS_MAX."""
+    result = result if isinstance(result, dict) else {}
+    t0 = t0 if isinstance(t0, dict) else {}
+    names: list = []
+    for c in result.get("candidates") or []:
+        if isinstance(c, dict):
+            names.append(c.get("username"))
+    for errs in (result.get("source_errors"), t0.get("source_errors")):
+        for e in errs if isinstance(errs, list) else []:
+            if isinstance(e, dict):
+                names.append(e.get("user") or e.get("username"))
+    names += [result.get("username"), t0.get("username")]
+    out: list[str] = []
+    for n in names:
+        if isinstance(n, str) and n and n not in out:
+            out.append(n)
+    return out[:PEERS_MAX]
+
+
+async def peers_for(usernames: Iterable[str], client=None) -> dict[str, dict]:
+    """{username: {successes, failures, score, recent_failure}} from the native
+    client's in-memory reputation, for the peers it has tracked (reputation resets on
+    restart, so an untracked peer is left out rather than shown as 0/0). {} when
+    there is no client or the reputation can't be read."""
+    rep = getattr(client, "reputation", None) if client is not None else None
+    if rep is None:
+        return {}
+    try:
+        summary = rep.get_summary() or {}
+        tracked = {p.get("username"): p for p in summary.get("peers") or [] if isinstance(p, dict)}
+    except Exception:
+        return {}
+    out: dict[str, dict] = {}
+    for name in usernames:
+        p = tracked.get(name)
+        if p is None:
+            continue
+        try:
+            score = await rep.get_score_adjustment(name)
+        except Exception:
+            score = None
+        try:
+            recent = bool(await rep.has_recent_failure(name))
+        except Exception:
+            recent = False
+        out[name] = {"successes": p.get("successes", 0) or 0, "failures": p.get("failures", 0) or 0,
+                     "score": score, "recent_failure": recent}
+    return out
+
+
+# --- R2-B5: failed tracks and runs (DC-20) -------------------------------------------
+# Both are pure over enriched items: the dicts /api/jobs builds (id, card, status,
+# result, tracks, started_at/finished_at as ISO strings) plus failure_class,
+# source_errors, search and enrich_items' joins.
+
+# Failed groups in pipeline order: peer trouble first (most actionable), then not
+# found, then importer refusals, then not-the-track's-fault.
+CLASS_ORDER = {"peer": 0, "not_found": 1, "rejected": 2, "no_better": 2, "infra": 3, "cancelled": 3, "orphan": 3}
+RUN_GAP_MINUTES = 20
+
+# Mirrors the page's SOURCE_LABELS (frontend/src/lib/downloads/stage.js) so a run
+# without a batch label still has one.
+CARD_LABELS = {
+    "dl:upgrade": "Upgrade", "dl:discovery": "Discovery", "dl:similar": "Similar", "dl:remix": "Remix",
+    "dl:recommendation": "For You", "dl:playlist": "Playlist", "dl:manual": "Manual",
+    "dl:weekly-radar": "Weekly Radar", "dl:radar": "Radar", "dl:new-releases": "New Releases",
+    "dl:search": "Search", "dl:worker": "Worker", "dl": "Phone", "dl:library": "Library",
+    "dl:upgrade_scan": "Upgrade scan",
+}
+
+
+def card_label(card: str | None) -> str:
+    if card in CARD_LABELS:
+        return CARD_LABELS[card]
+    bare = (card or "").removeprefix("dl:")
+    return bare or "Download"
+
+
+def _dt(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _when(item: dict) -> datetime:
+    """finished_at, else started_at, else the epoch (sorts last)."""
+    return _dt(item.get("finished_at")) or _dt(item.get("started_at")) or datetime.min
+
+
+def _epoch(value) -> float:
+    d = _dt(value)
+    return (d - datetime(1970, 1, 1)).total_seconds() if d else 0.0
+
+
+def _class_of(item: dict) -> str | None:
+    if "failure_class" in item:
+        return item["failure_class"]
+    return download_failures.failure_class(item.get("status"), item.get("result"), item.get("tracks"))
+
+
+def _message_of(item: dict) -> str | None:
+    text = download_failures.failure_text(item.get("result"))
+    if not text:
+        err = _t0(item).get("error")
+        text = err if isinstance(err, str) else ""
+    return text or None
+
+
+def group_failed_tracks(items: list[dict]) -> list[dict]:
+    """One entry per track (attempt_key; a row with no artist/track stands alone)
+    over failed rows: the newest row is `last_job` and decides `class`; `count` and
+    `job_ids` are the failed rows in scope. Sorted by CLASS_ORDER, then
+    times_failed_30d desc, then newest first."""
+    groups: dict[str, list[dict]] = {}
+    for it in items:
+        if it.get("status") != "failed":
+            continue
+        groups.setdefault(key_of(it) or f"job:{it.get('id')}", []).append(it)
+    out = []
+    for gkey, rows in groups.items():
+        rows.sort(key=_when, reverse=True)
+        last = rows[0]
+        t0 = _t0(last)
+        cls = _class_of(last)
+        source_errors = last.get("source_errors")
+        if not isinstance(source_errors, list):
+            source_errors = []
+        out.append({
+            "attempt_key": None if gkey.startswith("job:") else gkey,
+            "artist": t0.get("artist"),
+            "track": t0.get("track"),
+            "card": last.get("card"),
+            "class": cls,
+            "bucket": download_failures.BUCKET_OF_CLASS.get(cls or ""),
+            "times_failed_30d": last.get("times_failed_30d", 0),
+            "count": len(rows),
+            "job_ids": [r.get("id") for r in rows],
+            "last_job": {
+                "id": last.get("id"),
+                "finished_at": last.get("finished_at"),
+                "message": _message_of(last),
+                "source_errors": source_errors,
+                "search": last.get("search") if isinstance(last.get("search"), dict) else None,
+            },
+            "ledger": last.get("ledger"),
+            "upgrade": last.get("upgrade"),
+            "next": last.get("next") or {"kind": "none", "at": None, "attempts": 0, "max_attempts": None},
+        })
+    out.sort(key=lambda g: (CLASS_ORDER.get(g["class"] or "", 9), -(g["times_failed_30d"] or 0),
+                            -_epoch(g["last_job"]["finished_at"])))
+    return out
+
+
+def failed_totals(groups: list[dict]) -> dict:
+    """{retry, retired, none, by_class} over failed-track entries (per track, not
+    per row)."""
+    totals = {"retry": 0, "retired": 0, "none": 0, "by_class": {}}
+    for g in groups:
+        totals[next_bucket(g["next"] or {})] += 1
+        cls = g["class"] or "unknown"
+        totals["by_class"][cls] = totals["by_class"].get(cls, 0) + 1
+    return totals
+
+
+def _batch_of(item: dict) -> dict | None:
+    b = _t0(item).get("batch")
+    if isinstance(b, dict) and b.get("id"):
+        return b
+    return None
+
+
+def _run(rid: str, rows: list[dict], batch: dict | None) -> dict:
+    rows.sort(key=lambda r: _dt(r.get("started_at")) or datetime.min)
+    cards = [r.get("card") for r in rows]
+    card = max(set(cards), key=cards.count) if cards else None
+    counts = {"total": len(rows), "new": 0, "replaced": 0, "already_had": 0, "not_found": 0, "peer": 0,
+              "rejected": 0, "no_better": 0, "infra": 0, "live": 0}
+    for r in rows:
+        status = r.get("status")
+        if status in ("pending", "running"):
+            counts["live"] += 1
+        elif status == "completed":
+            outcome = r.get("outcome") or outcome_for(r, None) or "new"
+            counts[outcome] = counts.get(outcome, 0) + 1
+        elif status == "failed":
+            bucket = download_failures.BUCKET_OF_CLASS.get(_class_of(r) or "", "infra")
+            counts[bucket] += 1
+    starts = [d for d in (_dt(r.get("started_at")) for r in rows) if d]
+    ends = [_when(r) for r in rows if _when(r) != datetime.min]
+    label = None
+    if batch:
+        label = next((b["label"] for b in map(_batch_of, rows) if b and b.get("label")), None)
+    return {
+        "id": rid,
+        "label": label or card_label(card),
+        "kind": batch.get("kind") if batch else None,
+        "card": card,
+        "start": _iso(min(starts)) if starts else None,
+        "end": _iso(max(ends)) if ends else None,
+        "counts": counts,
+        "job_ids": [r.get("id") for r in rows],
+    }
+
+
+def group_runs(items: list[dict], gap_minutes: int = RUN_GAP_MINUTES) -> list[dict]:
+    """Runs of download rows, newest first: rows stamped with the same
+    tracks[0].batch.id form one run; the rest are grouped per card, a new run
+    starting when a row was submitted more than `gap_minutes` after the run's last
+    activity (latest finished_at, or started_at while unfinished)."""
+    batched: dict[str, list[dict]] = {}
+    by_card: dict[str | None, list[dict]] = {}
+    for it in items:
+        b = _batch_of(it)
+        if b:
+            batched.setdefault(str(b["id"]), []).append(it)
+        else:
+            by_card.setdefault(it.get("card"), []).append(it)
+    runs = [_run(bid, rows, _batch_of(rows[0])) for bid, rows in batched.items()]
+    gap = timedelta(minutes=gap_minutes)
+
+    def start_of(r: dict) -> datetime:
+        return _dt(r.get("started_at")) or _when(r)
+
+    def close(card, rows: list[dict]) -> None:
+        # Stable id: the card and the first row's submit time.
+        runs.append(_run(f"{card or 'dl'}@{_iso(start_of(rows[0]))}", rows, None))
+
+    for card, rows in by_card.items():
+        rows.sort(key=start_of)
+        current: list[dict] = []
+        latest = datetime.min
+        for r in rows:
+            if current and start_of(r) - latest > gap:
+                close(card, current)
+                current, latest = [], datetime.min
+            current.append(r)
+            latest = max(latest, _when(r))
+        if current:
+            close(card, current)
+    runs.sort(key=lambda r: r["start"] or "", reverse=True)
+    return runs

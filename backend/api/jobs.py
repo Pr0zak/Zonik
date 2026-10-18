@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Query
 from pydantic import BaseModel
 from sqlalchemy import select, delete, func, case, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -434,6 +435,62 @@ async def jobs_summary(type: str | None = None, since: str | None = None, db: As
         "next": nxt,
         "last_finished": last_finished,
     }
+
+
+# Rows /failed-tracks and /runs load per request (newest first); enough for a week
+# of scheduler runs, bounded so a long scope can't load the whole table.
+SCOPED_ROWS_MAX = 1000
+
+
+async def _scoped_download_items(db: AsyncSession, type: str | None, since: str | None,
+                                 status: str | None = None) -> list[dict]:
+    """Download rows in scope as enriched list items (the same keys /api/jobs gives
+    them), newest first, at most SCOPED_ROWS_MAX."""
+    q = select(Job).where(Job.type.in_(DOWNLOAD_TYPES))
+    if status:
+        q = q.where(Job.status == status)
+    q = _since_filter(_type_filter(q, type), since)
+    q = q.order_by(func.coalesce(Job.finished_at, Job.started_at).desc()).limit(SCOPED_ROWS_MAX)
+    rows = (await db.execute(q)).scalars().all()
+    items = []
+    for j in rows:
+        item = {
+            "id": j.id, "type": j.type, "card": j.card, "status": j.status,
+            "started_at": j.started_at.isoformat() if j.started_at else None,
+            "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+            "result": j.result, "tracks": j.tracks,
+        }
+        item.update(job_outcome(j.status, j.result))
+        item.update(_download_fields(j))
+        items.append(item)
+    if items:
+        await download_ledger.enrich_items(db, items)
+    return items
+
+
+@router.get("/failed-tracks")
+async def failed_tracks(type: str | None = None, since: str | None = None,
+                        cls: Annotated[str | None, Query(alias="class")] = None,
+                        db: AsyncSession = Depends(get_db)):
+    """Failed downloads folded per track (DC-20): one entry per attempt_key with the
+    newest failed row as `last_job`, its class, how often the track failed in 30 days,
+    its ledger/upgrade row and what happens next. `class` filters by a failure class
+    or by a bucket (`infra` = cancelled + infra + orphan). `totals` count the entries
+    returned (per track, not per row)."""
+    items = await _scoped_download_items(db, type, since, status="failed")
+    groups = download_ledger.group_failed_tracks(items)
+    if cls:
+        groups = [g for g in groups if cls in (g["class"], g["bucket"])]
+    return {"items": groups, "totals": download_ledger.failed_totals(groups)}
+
+
+@router.get("/runs")
+async def download_runs(type: str | None = None, since: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Download rows grouped into runs (DC-20), newest first: by tracks[0].batch.id,
+    else per card split on a 20-minute gap, with outcome / failure-bucket / live
+    counts and the member job ids."""
+    items = await _scoped_download_items(db, type, since)
+    return {"items": download_ledger.group_runs(items)}
 
 
 async def _retry_downloads(items: list[dict]) -> None:
@@ -904,14 +961,20 @@ async def stop_trying(job_id: str, body: StopTryingRequest | None = None, db: As
 
 
 @router.get("/{job_id}")
-async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
+async def get_job(job_id: str, detail: bool = False, db: AsyncSession = Depends(get_db)):
+    """One job. Every key the pollers (discover, WeeklyRadar, lib/download.js, the
+    phone) read keeps its name and type; `card` is always added. `?detail=1` adds the
+    drawer's payload (DC-19): parsed copies of result/tracks/log, the funnel, the
+    candidates, the failure class and stage, the ledger/upgrade/track joins and the
+    peers' reputation. The joins only run with detail=1."""
     result = await db.execute(select(Job).where(Job.id == job_id))
     job = result.scalar_one_or_none()
     if not job:
         return {"error": "Job not found"}
-    return {
+    out = {
         "id": job.id,
         "type": job.type,
+        "card": job.card,
         "status": job.status,
         "progress": job.progress,
         "total": job.total,
@@ -922,3 +985,51 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
         **job_outcome(job.status, job.result),
     }
+    if detail:
+        out.update(await _job_detail(db, job, out))
+    return out
+
+
+async def _job_detail(db: AsyncSession, job: Job, base: dict) -> dict:
+    """The DC-19 additions for get_job(detail=1). Null-safe on every column."""
+    from backend.soulseek import get_client
+
+    result = _loads(job.result)
+    tracks = _loads(job.tracks)
+    res = result if isinstance(result, dict) else {}
+    t0 = _first_track(job.tracks)
+    fields = _download_fields(job)
+    outcome = job_outcome(job.status, job.result, job.tracks)
+    candidates = res.get("candidates")
+    extra = {
+        "result_json": result,
+        "tracks_json": tracks,
+        "timeline": download_ledger.timeline_of(job.log),
+        "search": fields["search"],
+        "candidates": [c for c in candidates if isinstance(c, dict)] if isinstance(candidates, list) else [],
+        "source_errors": outcome.get("source_errors", []),
+        "failure_class": outcome.get("failure_class"),
+        "stage": outcome.get("stage"),
+        "stage_since": outcome.get("stage_since"),
+        "attempt": fields["attempt"],
+        "of": fields["of"],
+        "ledger": None,
+        "upgrade": None,
+        "track": None,
+        "outcome": None,
+        "times_failed_30d": 0,
+        "next": {"kind": "none", "at": None, "attempts": 0, "max_attempts": None},
+        "peers": {},
+    }
+    if job.type in DOWNLOAD_TYPES:
+        item = {k: base.get(k) for k in ("id", "type", "card", "status", "result", "tracks",
+                                          "track_id", "already_in_library")}
+        await download_ledger.enrich_items(db, [item])
+        for k in ("ledger", "upgrade", "track", "outcome", "times_failed_30d", "next"):
+            extra[k] = item.get(k, extra[k])
+        try:
+            extra["peers"] = await download_ledger.peers_for(
+                download_ledger.usernames_of(res, t0), get_client())
+        except Exception:
+            extra["peers"] = {}
+    return extra

@@ -103,7 +103,8 @@ async def import_playlist(req: ImportRequest, background_tasks: BackgroundTasks,
                 })
         if items:
             from backend.services.auto_download import download_tracked_many
-            background_tasks.add_task(download_tracked_many, items, source="playlist")
+            background_tasks.add_task(download_tracked_many, items, source="playlist",
+                                      label=req.name or "Playlist import", kind="playlist")
         download_jobs = len(items)
 
     return {

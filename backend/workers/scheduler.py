@@ -314,7 +314,7 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                 if row:
                     missing = json.loads(row)
                     if missing:
-                        await _auto_download_missing(missing, task_name)
+                        await _auto_download_missing(missing, task_name, batch_id=job_id)
             except Exception as e:
                 log.error(f"Auto-download after {task_name} failed: {e}")
 
@@ -328,13 +328,15 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                 min_score = task_config.get("min_score", 0.5)
                 max_downloads = task_config.get("max_downloads", 10)
                 async with async_session() as dl_db:
-                    await _auto_download_recommendations(dl_db, min_score, max_downloads)
+                    await _auto_download_recommendations(dl_db, min_score, max_downloads, batch_id=job_id)
             except Exception as e:
                 log.error(f"Auto-download recommendations failed: {e}")
 
 
-async def _auto_download_recommendations(db: AsyncSession, min_score: float, max_downloads: int):
-    """Auto-download top pending recommendations above score threshold."""
+async def _auto_download_recommendations(db: AsyncSession, min_score: float, max_downloads: int,
+                                         batch_id: str | None = None):
+    """Auto-download top pending recommendations above score threshold. batch_id:
+    the scheduled job's id, stamped into each download as its batch (DC-21)."""
     from sqlalchemy import select
     from backend.models.recommendation import Recommendation
 
@@ -356,7 +358,7 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     missing = [{"artist": r.artist, "track": r.track, "rec_id": r.id} for r in recs]
     log.info(f"Auto-downloading {len(missing)} recommendations (score >= {min_score})")
 
-    outcomes = await _auto_download_missing(missing, "recommendation_refresh")
+    outcomes = await _auto_download_missing(missing, "recommendation_refresh", batch_id=batch_id)
     by_key = {attempt_key(o["artist"], o["track"]): o for o in outcomes}
 
     # Only recs whose download actually succeeded are "downloaded"; failures become "failed"
@@ -443,7 +445,7 @@ def tick_deadline() -> float | None:
     return _tick_deadline.get()
 
 
-async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]:
+async def _auto_download_missing(missing: list[dict], source: str, batch_id: str | None = None) -> list[dict]:
     """Download each missing track through the tracked path (backoff, duration gate,
     outcome recording — backend.services.auto_download) without blocking on any one.
 
@@ -463,6 +465,9 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
     those untouched). `ok` is True (done), False (the search failed) or None (unknown:
     still running at the deadline, or an infrastructure failure) — None is never
     recorded in download_attempts. Upgrade entries return no outcomes.
+
+    batch_id (the scheduled task's own job id) is stamped into every download as
+    tracks[0].batch = {id, label: the task's label, kind: "scheduled"} (DC-21).
     """
     import asyncio
     import uuid as _uuid
@@ -511,6 +516,9 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
     outstanding: list[dict] = []  # submitted, job not settled: {artist, track, job_id, upgrade_id, error}
     skipped_backoff = 0
     sem = asyncio.Semaphore(4)  # concurrent submissions (backoff check, Last.fm, web call)
+    # (not "batch": the submit loop below uses that name for its slice of the queue)
+    run_batch = ({"id": batch_id, "label": _TASK_LABELS.get(source, source), "kind": "scheduled"}
+                 if batch_id else None)
 
     async def submit(t: dict) -> dict | None:
         """Submit one track. Returns its in-flight record, or None when not started."""
@@ -527,8 +535,9 @@ async def _auto_download_missing(missing: list[dict], source: str) -> list[dict]
                 go, target_track_id = await _prepare_upgrade(upgrade_id, job_id)
                 if not go:
                     return None
+            sub_kw = {"batch": run_batch} if run_batch else {}
             sub = await submit_tracked(artist, track, source=dl_source, target_track_id=target_track_id,
-                                       job_id=job_id, wait=False)
+                                       job_id=job_id, wait=False, **sub_kw)
         if sub["skipped"]:
             skipped_backoff += 1
             if upgrade_id:

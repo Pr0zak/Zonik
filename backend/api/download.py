@@ -149,6 +149,21 @@ def _utc_iso() -> str:
     return datetime.utcnow().isoformat()
 
 
+def clean_batch(batch) -> dict | None:
+    """A request's batch (DC-21) as stamped into tracks[0].batch and the submitted
+    event: {id, label, kind} as strings (label/kind may be None), or None when it is
+    not a dict or has no id."""
+    if not isinstance(batch, dict):
+        return None
+    bid = batch.get("id")
+    if bid is None or not str(bid).strip():
+        return None
+    label, kind = batch.get("label"), batch.get("kind")
+    return {"id": str(bid).strip()[:64],
+            "label": str(label)[:200] if label not in (None, "") else None,
+            "kind": str(kind)[:32] if kind not in (None, "") else None}
+
+
 def _prev_track(job) -> dict | None:
     """tracks[0] of a job row as a dict, or None."""
     try:
@@ -177,6 +192,13 @@ def _track_doc(req, status: str, *, prev: dict | None = None, **fields) -> dict:
     for k in _STICKY_TRACK_KEYS:
         if k in prev:
             doc[k] = prev[k]
+    if req is not None:
+        # origin / batch come from the request when the row does not carry them yet
+        # (a row written before its first stage write); once there they are sticky.
+        for k, v in (("origin", getattr(req, "origin", None) or None),
+                     ("batch", clean_batch(getattr(req, "batch", None)))):
+            if v is not None and k not in doc:
+                doc[k] = v
     for k, v in fields.items():
         if v is None:
             doc.pop(k, None)
@@ -244,12 +266,15 @@ def _initial_row(job_id: str, req, card: str, initial_status: str) -> tuple[str,
     for a search slot, searching otherwise), registered in the stage counters."""
     stage = "queue_search" if initial_status == "pending" else "searching"
     origin = getattr(req, "origin", None) or None
+    batch = clean_batch(getattr(req, "batch", None))
     doc = _track_doc(req, "queued" if initial_status == "pending" else "pending",
-                     stage=stage, stage_since=_utc_iso(), origin=origin)
+                     stage=stage, stage_since=_utc_iso(), origin=origin, batch=batch)
     _note_stage(job_id, stage)
     submitted = {"t": _utc_iso(), "k": "submitted", "card": card, "source": req.source}
     if origin:
         submitted["origin"] = origin
+    if batch:
+        submitted["batch"] = batch
     tl = [submitted]
     _timelines[job_id] = tl
     return json.dumps([doc]), json.dumps(tl)
@@ -467,11 +492,16 @@ class DownloadRequest(BaseModel):
     # Where in the app the request came from (free text, e.g. "weekly-radar:row"),
     # stamped into tracks[0].origin and the submitted event. Optional.
     origin: str | None = None
+    # The run this download belongs to (DC-21): {id, label, kind: scheduled|playlist|
+    # bulk|recommendation}, stamped into tracks[0].batch and the submitted event. Optional.
+    batch: dict | None = None
 
 
 class BulkDownloadRequest(BaseModel):
     tracks: list[dict]  # [{artist, track}, ...]
     source: str | None = None
+    # Shown as the batch label on the Downloads page; default "Download all".
+    label: str | None = None
 
 
 async def find_in_library(db: AsyncSession, artist: str, track: str) -> str | None:
@@ -1499,7 +1529,8 @@ async def _do_download_inner(db_ignored, job, job_id, desc, req, search_slot: "_
 
 async def _delegate_download_to_web(artist: str, track: str, job_id: str | None, source: str | None, target_track_id: str | None = None,
                                      *, album: str | None = None, expected_duration: int | None = None, wait: bool = True,
-                                     strict_duration: bool = False, origin: str | None = None) -> str | None:
+                                     strict_duration: bool = False, origin: str | None = None,
+                                     batch: dict | None = None) -> str | None:
     """Delegate a download to the web process, which owns the native Soulseek
     client. The arq worker has no native client of its own (it can only bind the
     listen port in one process), so any download it initiates must run where the
@@ -1524,7 +1555,7 @@ async def _delegate_download_to_web(artist: str, track: str, job_id: str | None,
                 url, json={"artist": artist, "track": track, "album": album, "job_id": job_id,
                            "source": source, "target_track_id": target_track_id,
                            "expected_duration": expected_duration, "wait": wait,
-                           "strict_duration": strict_duration, "origin": origin}
+                           "strict_duration": strict_duration, "origin": origin, "batch": batch}
             )
             if resp.status_code == 200:
                 body = resp.json()
@@ -1598,13 +1629,14 @@ _background_downloads: set[asyncio.Task] = set()
 async def _create_download_job(artist: str, track: str, job_id: str | None, source: str | None,
                                target_track_id: str | None, expected_duration: int | None,
                                strict_duration: bool = False, album: str | None = None,
-                               origin: str | None = None):
+                               origin: str | None = None, batch: dict | None = None):
     """Write a download job's row and register it live. Returns what
     _run_download_job needs: (job_id, desc, request, search semaphore, initial status)."""
     job_id = job_id or str(uuid.uuid4())
     desc = f"{artist} — {track}"
     dl_req = DownloadRequest(artist=artist, track=track, album=album, source=source, target_track_id=target_track_id,
-                             expected_duration=expected_duration, strict_duration=strict_duration, origin=origin)
+                             expected_duration=expected_duration, strict_duration=strict_duration, origin=origin,
+                             batch=clean_batch(batch))
     sem = _get_semaphore()
 
     # Create job with short-lived session (don't hold connection while waiting for semaphore)
@@ -1688,7 +1720,8 @@ async def _run_download_job_detached(job_id: str, *args) -> None:
 
 async def enqueue_download(artist: str, track: str, job_id: str | None = None, source: str | None = None, target_track_id: str | None = None,
                            *, album: str | None = None, expected_duration: int | None = None, wait: bool = True,
-                           strict_duration: bool = False, origin: str | None = None) -> str | None:
+                           strict_duration: bool = False, origin: str | None = None,
+                           batch: dict | None = None) -> str | None:
     """Create an individual download job with semaphore queuing. Returns job_id, or
     None when an automatic download was skipped because the library already has it.
     Raises BlacklistedTrack (no job row) when the artist or track is blacklisted —
@@ -1696,7 +1729,10 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
 
     wait=True (the default) returns once the download has finished. wait=False
     returns as soon as the job row exists and runs the download as a background
-    task; the caller reads the outcome from the job row."""
+    task; the caller reads the outcome from the job row.
+
+    origin / batch (DC-21) are stamped into tracks[0] and the submitted event; a
+    deduped call keeps the existing job's own."""
     # Dedup: skip if same artist+track already pending/running
     async with async_session() as check_sess:
         existing = await _find_existing_download(check_sess, artist, track)
@@ -1726,11 +1762,12 @@ async def enqueue_download(artist: str, track: str, job_id: str | None = None, s
     if get_client() is None:
         return await _delegate_download_to_web(artist, track, job_id, source, target_track_id,
                                                album=album, expected_duration=expected_duration, wait=wait,
-                                               strict_duration=strict_duration, origin=origin)
+                                               strict_duration=strict_duration, origin=origin,
+                                               batch=clean_batch(batch))
 
     job_id, desc, dl_req, sem, initial_status = await _create_download_job(
         artist, track, job_id, source, target_track_id, expected_duration, strict_duration, album=album,
-        origin=origin)
+        origin=origin, batch=batch)
     if not wait:
         task = asyncio.create_task(_run_download_job_detached(job_id, desc, dl_req, sem, initial_status))
         _background_downloads.add(task)
@@ -1753,6 +1790,7 @@ class InternalDownloadRequest(BaseModel):
     # worker's batches poll the job rows instead of holding a request per download).
     wait: bool = True
     origin: str | None = None
+    batch: dict | None = None
 
 
 @router.post("/internal-run")
@@ -1765,7 +1803,8 @@ async def internal_run_download(req: InternalDownloadRequest):
         jid = await enqueue_download(req.artist, req.track, job_id=req.job_id, source=req.source,
                                      target_track_id=req.target_track_id, album=req.album,
                                      expected_duration=req.expected_duration, wait=req.wait,
-                                     strict_duration=req.strict_duration, origin=req.origin)
+                                     strict_duration=req.strict_duration, origin=req.origin,
+                                     batch=req.batch)
     except BlacklistedTrack as e:
         # The worker re-raises this from _delegate_download_to_web (no failed row).
         return {"job_id": None, "blacklisted": True, "reason": e.reason}
@@ -1784,16 +1823,18 @@ async def bulk_download(req: BulkDownloadRequest, background_tasks: BackgroundTa
             queue.append({"artist": artist, "track": track, "album": album})
 
     if queue:
-        background_tasks.add_task(_process_bulk_download_queue, queue, req.source)
+        background_tasks.add_task(_process_bulk_download_queue, queue, req.source, req.label)
 
     return {"ok": True, "total": len(queue)}
 
 
-async def _process_bulk_download_queue(queue: list[dict], source: str | None = None):
+async def _process_bulk_download_queue(queue: list[dict], source: str | None = None, label: str | None = None):
     """Run bulk downloads through the tracked path (backoff, duration gate, outcome
-    recorded) with bounded concurrency; the search/transfer queues gate the rest."""
+    recorded) with bounded concurrency; the search/transfer queues gate the rest.
+    The run is one batch (DC-21) labelled `label` (default "Download all")."""
     from backend.services.auto_download import download_tracked_many
-    await download_tracked_many(queue, source=source)
+    await download_tracked_many(queue, source=source, label=(label or "").strip() or "Download all",
+                                batch_id=str(uuid.uuid4()), kind="bulk")
 
 
 class CancelTransferRequest(BaseModel):

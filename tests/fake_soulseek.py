@@ -66,15 +66,28 @@ class FakeTransfers:
 class FakeReputation:
     def __init__(self):
         self.failures: list[str] = []
+        self.successes: list[str] = []
+        self.scores: dict[str, int] = {}  # username -> scripted get_score_adjustment
+        self.recent: set[str] = set()  # usernames has_recent_failure() reports
 
     async def record_failure(self, username: str) -> None:
         self.failures.append(username)
 
     async def record_success(self, username: str) -> None:
-        pass
+        self.successes.append(username)
 
     async def get_score_adjustment(self, username: str) -> int:
-        return 0
+        return self.scores.get(username, 0)
+
+    async def has_recent_failure(self, username: str) -> bool:
+        return username in self.recent
+
+    def get_summary(self) -> dict:
+        """Same shape as PeerReputation.get_summary: every peer seen by a record_*."""
+        names = list(dict.fromkeys(self.successes + self.failures))
+        peers = [{"username": n, "successes": self.successes.count(n), "failures": self.failures.count(n)}
+                 for n in names]
+        return {"tracked_peers": len(peers), "peers": peers}
 
 
 class FakeClient:

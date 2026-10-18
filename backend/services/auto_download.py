@@ -24,7 +24,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
 
 from sqlalchemy import select
 
@@ -171,6 +174,21 @@ def _tracked(source: str | None) -> bool:
     return source in TRACKED_SOURCES
 
 
+def make_batch(batch: dict | None = None, *, label: str | None = None, batch_id: str | None = None,
+               kind: str | None = None) -> dict | None:
+    """A run's batch dict {id, label, kind} (DC-21): `batch` itself when given (an
+    id filled in if it lacks one), else built from label / batch_id / kind; None when
+    none of them is given."""
+    if batch is None and label is None and batch_id is None and kind is None:
+        return None
+    b = dict(batch or {})
+    b.setdefault("label", label)
+    b.setdefault("kind", kind)
+    if not b.get("id"):
+        b["id"] = batch_id or str(uuid.uuid4())
+    return {"id": str(b["id"]), "label": b.get("label"), "kind": b.get("kind")}
+
+
 def _blacklisted_skip(reason: str) -> dict:
     """submit_tracked's answer for a blacklisted track (DC-22): a skip, never an
     error, so nothing is recorded against the track."""
@@ -182,6 +200,7 @@ async def submit_tracked(
     artist: str, track: str, *, album: str | None = None, source: str | None, target_track_id: str | None = None,
     expected_duration: int | None = None, skip_in_backoff: bool = True,
     job_id: str | None = None, wait: bool = True,
+    batch: dict | None = None, origin: str | None = None,
 ) -> dict:
     """Start one automatic download. Returns {job_id, skipped, error, deduped}:
 
@@ -195,7 +214,10 @@ async def submit_tracked(
       job's; its owner records the outcome, so finish_tracked must not do it again.
 
     With wait=True (the default) this returns once the download has finished, as
-    enqueue_download always did; with wait=False it returns once the job row exists."""
+    enqueue_download always did; with wait=False it returns once the job row exists.
+
+    batch ({id, label, kind}) and origin are passed on to enqueue_download, which
+    stamps them into the job row (DC-21); both optional."""
     from backend.api.download import enqueue_download
 
     try:
@@ -224,6 +246,10 @@ async def submit_tracked(
     enqueue_kw = {"expected_duration": expected_duration, "wait": wait}
     if album:
         enqueue_kw["album"] = album
+    if batch:
+        enqueue_kw["batch"] = batch
+    if origin:
+        enqueue_kw["origin"] = origin
     try:
         returned = await enqueue_download(artist, track, job_id=job_id, source=source,
                                           target_track_id=target_track_id, **enqueue_kw)
@@ -266,7 +292,7 @@ async def finish_tracked(
 async def download_tracked(
     artist: str, track: str, *, album: str | None = None, source: str | None, target_track_id: str | None = None,
     expected_duration: int | None = None, skip_in_backoff: bool = True,
-    job_id: str | None = None,
+    job_id: str | None = None, batch: dict | None = None, origin: str | None = None,
 ) -> dict:
     """Submit one automatic download, wait for it, then read and record its outcome.
 
@@ -275,6 +301,7 @@ async def download_tracked(
     sub = await submit_tracked(
         artist, track, album=album, source=source, target_track_id=target_track_id,
         expected_duration=expected_duration, skip_in_backoff=skip_in_backoff, job_id=job_id,
+        batch=batch, origin=origin,
     )
     if sub["skipped"]:
         return {"artist": artist, "track": track, "job_id": None,
@@ -285,11 +312,18 @@ async def download_tracked(
 
 async def download_tracked_many(
     items: list[dict], *, source: str | None = None, concurrency: int = 4,
-    skip_in_backoff: bool = True,
+    skip_in_backoff: bool = True, batch: dict | None = None,
+    label: str | None = None, batch_id: str | None = None, kind: str | None = None,
+    origin: str | None = None,
 ) -> list[dict]:
     """download_tracked for each {artist, track[, album, source, expected_duration]} item, at most `concurrency`
     at a time (the search/transfer queues gate the real download concurrency).
-    Items that normalise to the same attempt key are downloaded once. Never raises."""
+    Items that normalise to the same attempt key are downloaded once. Never raises.
+
+    The run is one batch (DC-21) when `batch` ({id, label, kind}) is given, or built
+    from label / batch_id / kind (a missing id gets a fresh uuid); every job of the
+    run carries it in tracks[0].batch. None of them given: no batch (retries)."""
+    batch = make_batch(batch, label=label, batch_id=batch_id, kind=kind)
     seen: set[str] = set()
     unique: list[dict] = []
     for it in items:
@@ -303,21 +337,162 @@ async def download_tracked_many(
         unique.append({**it, "artist": artist, "track": track})
 
     sem = asyncio.Semaphore(max(1, concurrency))
+    entry = _register_batch(batch, source, [_title(it) for it in unique]) if batch else None
+
+    def cancelled(it: dict) -> dict | None:
+        """The skip outcome of an item the batch's cancel reached before it started
+        (cancel_batch already counted it as skipped), else None."""
+        if entry is None or not entry.cancel.is_set():
+            return None
+        return {"artist": it["artist"], "track": it["track"], "job_id": None,
+                "ok": None, "error": None, "skipped": "cancelled"}
 
     async def one(it: dict) -> dict | None:
+        if (skip := cancelled(it)) is not None:
+            return skip
         async with sem:
+            if (skip := cancelled(it)) is not None:
+                return skip
+            if entry is not None:
+                entry.start(_title(it))  # no await since the cancel check: atomic
+            out = None
             try:
-                return await download_tracked(
+                out = await download_tracked(
                     it["artist"], it["track"], album=it.get("album"), source=it.get("source", source),
                     expected_duration=it.get("expected_duration"),
-                    skip_in_backoff=skip_in_backoff,
+                    skip_in_backoff=skip_in_backoff, batch=batch, origin=it.get("origin", origin),
                 )
+                return out
             except Exception as e:
                 log.warning(f"[auto-download] {it['artist']} — {it['track']} failed: {e}")
                 return None
+            finally:
+                if entry is not None:
+                    entry.settle(out)
 
-    results = await asyncio.gather(*(one(it) for it in unique))
+    try:
+        results = await asyncio.gather(*(one(it) for it in unique))
+    finally:
+        if entry is not None:
+            entry.finish()
     return [r for r in results if r is not None]
+
+
+# --- batch registry (DC-21) ------------------------------------------------------
+#
+# download_tracked_many runs that carry a batch (bulk "Download all", playlist
+# import, recommendations) register here, so the Downloads page can show the
+# hidden backlog (items not yet handed to the download queue) and cancel it.
+# In-memory and per process: only runs started in the web process are listed;
+# the scheduler's batches run in the worker and are not.
+
+# Seconds a finished batch stays listed.
+BATCH_KEEP_S = 600
+# pending_titles returned by the API (the count is always complete).
+BATCH_TITLES_MAX = 10
+
+
+def _title(it: dict) -> str:
+    return f"{it['artist']} — {it['track']}"
+
+
+@dataclass
+class Batch:
+    id: str
+    label: str | None
+    kind: str | None
+    source: str | None
+    total: int
+    submitted: int = 0  # handed to download_tracked
+    done: int = 0  # downloaded (or the library already had it)
+    failed: int = 0  # the download failed or its outcome is unknown
+    skipped: int = 0  # backoff / blacklist, or never started because of a cancel
+    live: int = 0  # started and not finished
+    pending_titles: list[str] = field(default_factory=list)  # not started yet, in order
+    started_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    finished_at: str | None = None
+    cancelled: bool = False
+    cancel: asyncio.Event = field(default_factory=asyncio.Event)
+    finished_mono: float | None = None
+
+    def start(self, title: str) -> None:
+        try:
+            self.pending_titles.remove(title)
+        except ValueError:
+            pass
+        self.submitted += 1
+        self.live += 1
+
+    def settle(self, out: dict | None) -> None:
+        self.live = max(0, self.live - 1)
+        if out is None:
+            self.failed += 1
+        elif out.get("skipped"):
+            self.skipped += 1
+        elif out.get("ok") is True:
+            self.done += 1
+        else:
+            self.failed += 1
+
+    def finish(self) -> None:
+        self.finished_at = datetime.utcnow().isoformat()
+        self.finished_mono = time.monotonic()
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "label": self.label, "kind": self.kind, "source": self.source,
+            "total": self.total, "submitted": self.submitted, "done": self.done, "failed": self.failed,
+            "skipped": self.skipped, "live": self.live, "pending": len(self.pending_titles),
+            "pending_titles": self.pending_titles[:BATCH_TITLES_MAX], "started_at": self.started_at,
+            "finished_at": self.finished_at, "cancelled": self.cancelled,
+        }
+
+
+_batches: dict[str, Batch] = {}
+
+
+def _prune_batches(now: float | None = None) -> None:
+    now = time.monotonic() if now is None else now
+    for bid in [bid for bid, b in _batches.items()
+                if b.finished_mono is not None and now - b.finished_mono > BATCH_KEEP_S]:
+        _batches.pop(bid, None)
+
+
+def _register_batch(batch: dict, source: str | None, titles: list[str]) -> Batch:
+    _prune_batches()
+    entry = Batch(id=str(batch["id"]), label=batch.get("label"), kind=batch.get("kind"), source=source,
+                  total=len(titles), pending_titles=list(titles))
+    _batches[entry.id] = entry
+    return entry
+
+
+def get_batch(batch_id: str) -> Batch | None:
+    _prune_batches()
+    return _batches.get(batch_id)
+
+
+def list_batches() -> list[Batch]:
+    """Registered batches, running ones first, newest first within each."""
+    _prune_batches()
+    items = sorted(_batches.values(), key=lambda b: b.started_at, reverse=True)
+    return sorted(items, key=lambda b: b.finished_at is not None)
+
+
+def cancel_batch(batch_id: str) -> int | None:
+    """Stop a batch handing out more items: the ones not started yet are counted as
+    skipped at once and never submitted; downloads already started run to their
+    end. Returns how many were stopped, or None for an unknown batch."""
+    entry = get_batch(batch_id)
+    if entry is None:
+        return None
+    remaining = len(entry.pending_titles)
+    if not entry.cancel.is_set():
+        entry.cancel.set()
+        entry.cancelled = True
+        entry.skipped += remaining
+        entry.pending_titles.clear()
+        log.info(f"[auto-download] Batch {entry.label or entry.id} cancelled: {remaining} not submitted")
+    return remaining
 
 
 async def finalize_upgrade(upgrade_id: str, ok: bool | None, err: str | None) -> None:

@@ -555,3 +555,63 @@ async def test_ws_replay_carries_description_card_and_stage(db_ready):
     assert out == {"description": "A — T", "stage": "queue_search", "stage_since": "2026-10-18T07:00:00"}
     assert ws._download_replay_fields(None) == {"stage": None, "stage_since": None}
     assert ws._download_replay_fields("not json") == {"stage": None, "stage_since": None}
+
+
+# --- batch / origin stamping (DC-21) --------------------------------------------
+
+BATCH = {"id": "b-42", "label": "Road trip", "kind": "playlist"}
+
+
+async def test_batch_survives_to_the_terminal_row(db_ready, fake_slsk, imported, recorder):
+    """A request carrying a batch on a row written without one (run_job): the first
+    stage write stamps it and every later rewrite keeps it."""
+    fake_slsk.results = [result("alpha", fname())]
+    async with async_session() as s:
+        job = Job(id="job-bt", type="download", card="dl:playlist", status="running",
+                  started_at=datetime.utcnow(),
+                  tracks=json.dumps([{"artist": ARTIST, "track": TRACK, "status": "pending"}]))
+        s.add(job)
+        await s.commit()
+        s.expunge(job)
+    req = download.DownloadRequest(artist=ARTIST, track=TRACK, source="playlist", batch=BATCH, origin="import")
+    await download._do_download_inner(None, job, "job-bt", f"{ARTIST} — {TRACK}", req)
+    async with async_session() as s:
+        row = await s.get(Job, "job-bt")
+    assert row.status == "completed"
+    doc = json.loads(row.tracks)[0]
+    assert doc["batch"] == BATCH and doc["origin"] == "import" and doc["status"] == "downloaded"
+
+
+async def test_enqueue_stamps_batch_in_row_and_submitted_event(db_ready, fake_slsk, imported, recorder):
+    fake_slsk.results = [result("alpha", fname())]
+    jid = await download.enqueue_download(ARTIST, TRACK, job_id="job-eb", source="manual",
+                                          batch={**BATCH, "extra": "dropped"})
+    async with async_session() as s:
+        row = await s.get(Job, jid)
+    assert row.status == "completed"
+    assert json.loads(row.tracks)[0]["batch"] == BATCH  # sticky to the terminal write
+    first = json.loads(row.log)[0]
+    assert first["k"] == "submitted" and first["batch"] == BATCH
+
+
+async def test_batch_without_id_is_ignored():
+    assert download.clean_batch({"label": "x"}) is None
+    assert download.clean_batch("nope") is None
+    assert download.clean_batch({"id": 7}) == {"id": "7", "label": None, "kind": None}
+
+
+async def test_retried_job_has_no_batch(db_ready, fake_slsk, imported):
+    from backend.api import jobs
+    fake_slsk.results = [result("alpha", fname())]
+    async with async_session() as s:
+        s.add(Job(id="job-old", type="download", card="dl:manual", status="failed",
+                  started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+                  result=json.dumps({"message": "All 1 sources failed"}),
+                  tracks=json.dumps([{"artist": ARTIST, "track": TRACK, "status": "failed", "batch": BATCH}])))
+        await s.commit()
+    await jobs._retry_downloads([{"artist": ARTIST, "track": TRACK, "source": "manual", "job_id": "job-old"}])
+    async with async_session() as s:
+        rows = (await s.execute(select(Job).where(Job.id != "job-old"))).scalars().all()
+    assert len(rows) == 1 and rows[0].status == "completed"
+    assert "batch" not in json.loads(rows[0].tracks)[0]
+    assert "batch" not in json.loads(rows[0].log)[0]

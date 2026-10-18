@@ -610,3 +610,333 @@ async def test_incidents_since_scope(db_ready):
 async def test_incident_routes_declared_before_job_id():
     paths = [(r.path, sorted(r.methods)) for r in jobs.router.routes]
     assert paths.index(("/incidents", ["GET"])) < paths.index(("/{job_id}", ["GET"]))
+
+
+# --- R2-A1: GET /api/jobs/{id}?detail=1 ----------------------------------------------
+
+LEGACY_GET_KEYS = {"id", "type", "status", "progress", "total", "result", "log", "tracks",
+                   "started_at", "finished_at"}
+
+
+async def _seed_detail():
+    from backend.models.download_attempt import DownloadAttempt
+    from backend.services.download_attempts import attempt_key
+
+    log = [
+        {"t": "2026-10-18T07:00:00", "k": "submitted", "card": "dl:similar", "source": "similar"},
+        {"t": "2026-10-18T07:00:05", "k": "query_start", "i": 1, "n": 2, "q": "bublé home", "kind": "variant"},
+        {"t": "2026-10-18T07:00:30", "k": "searched", "funnel": {"files_seen": 14, "kept": 0}},
+        "a stray string entry",  # not a DC-2 event: dropped from the timeline
+        {"t": "2026-10-18T07:01:00", "k": "failed", "error": "No results for x", "class": "not_found"},
+    ]
+    result = {
+        "message": "All 2 sources failed", "last_error": "Peer never answered in 120 s",
+        "search": {"queries": [{"q": "bublé home", "kind": "variant", "peers": 11, "files": 23}],
+                   "files_seen": 23, "kept": 2, "rejected": {"title": 21}},
+        "candidates": [{"username": "dblbbr", "filename": "a.flac", "score": 58},
+                       {"username": "piaga", "filename": "b.mp3", "score": 40}, "junk"],
+        "source_errors": [{"user": "dblbbr", "error": "Peer never answered in 120 s", "at": "2026-10-18T07:05:00"}],
+        "username": "piaga",
+    }
+    tracks = [{"artist": "Michael Bublé", "track": "Home", "status": "failed", "stage": "queued_at_peer",
+               "stage_since": "2026-10-18T07:04:00", "attempt": 2, "of": 2, "username": "piaga",
+               "error": "Peer never answered in 120 s",
+               "source_errors": [{"user": "dblbbr", "error": "Peer never answered in 120 s",
+                                  "at": "2026-10-18T07:05:00"},
+                                 {"user": "piaga", "error": "Peer never answered in 120 s",
+                                  "at": "2026-10-18T07:07:00"}]}]
+    async with async_session() as s:
+        s.add(DownloadAttempt(key=attempt_key("Michael Bublé", "Home"), artist="Michael Bublé", track="Home",
+                              attempts=2, next_retry_at=NOW + timedelta(days=7), last_error="All 2 sources failed"))
+        await s.commit()
+    await seed(
+        {"id": "det", "status": "failed", "card": "dl:similar", "result": json.dumps(result),
+         "tracks": json.dumps(tracks), "log": json.dumps(log)},
+        {"id": "det-old", "status": "failed", "card": "dl:similar", "result": json.dumps(result),
+         "tracks": json.dumps(tracks), "finished_at": NOW - timedelta(days=2), "started_at": NOW - timedelta(days=2)},
+        {"id": "nolog", "status": "running", "card": "dl:manual", "result": None, "log": None,
+         "tracks": _tracks("N", "Nolog", status="downloading", stage="searching",
+                           search={"query_index": 1, "query_total": 4, "files_seen": 3, "kept": 0})},
+        {"id": "bare", "status": "failed", "card": None, "result": "not json {", "log": "nor this",
+         "tracks": None},
+        {"id": "upg-log", "type": "upgrade", "status": "completed", "card": None, "result": None,
+         "log": json.dumps(["step one", "step two"]), "tracks": None},
+    )
+
+
+async def test_get_job_plain_is_legacy_plus_card(db_ready):
+    await _seed_detail()
+    async with async_session() as db:
+        out = await jobs.get_job("det", db=db)
+    outcome_keys = set(jobs.job_outcome("failed", out["result"]))
+    assert set(out) == LEGACY_GET_KEYS | {"card"} | outcome_keys
+    assert out["card"] == "dl:similar"
+    assert isinstance(out["result"], str) and isinstance(out["tracks"], str) and isinstance(out["log"], str)
+    assert isinstance(out["progress"], int) and isinstance(out["total"], int)
+    assert out["failed_sources"] == ["piaga"] and isinstance(out["error"], str)
+    for k in ("timeline", "peers", "ledger", "failure_class", "result_json"):
+        assert k not in out
+
+
+async def test_get_job_detail_adds_parsed_siblings(db_ready, fake_slsk):
+    await _seed_detail()
+    rep = fake_slsk.reputation
+    for _ in range(9):
+        await rep.record_success("dblbbr")
+    for _ in range(3):
+        await rep.record_failure("piaga")
+    rep.scores["dblbbr"] = 10
+    rep.scores["piaga"] = -14
+    rep.recent.add("piaga")
+
+    async with async_session() as db:
+        plain = await jobs.get_job("det", db=db)
+    async with async_session() as db:
+        out = await jobs.get_job("det", detail=True, db=db)
+    # Every plain key, same value and type.
+    assert {k: out[k] for k in plain} == plain
+
+    assert out["result_json"]["message"] == "All 2 sources failed"
+    assert out["tracks_json"][0]["artist"] == "Michael Bublé"
+    assert [e["k"] for e in out["timeline"]] == ["submitted", "query_start", "searched", "failed"]
+    assert out["search"]["files_seen"] == 23
+    assert [c["username"] for c in out["candidates"]] == ["dblbbr", "piaga"]  # non-dicts dropped
+    assert [e["user"] for e in out["source_errors"]] == ["dblbbr", "piaga"]  # live tracks[0] list wins
+    assert out["failure_class"] == "peer"
+    assert (out["stage"], out["stage_since"]) == ("queued_at_peer", "2026-10-18T07:04:00")
+    assert (out["attempt"], out["of"]) == (2, 2)
+    assert out["ledger"]["attempts"] == 2 and out["ledger"]["retired"] is False
+    assert out["next"]["kind"] == "retry" and out["next"]["attempts"] == 2
+    assert out["times_failed_30d"] == 2  # itself + det-old
+    assert out["outcome"] is None and out["track"] is None and out["upgrade"] is None
+    assert out["peers"] == {
+        "dblbbr": {"successes": 9, "failures": 0, "score": 10, "recent_failure": False},
+        "piaga": {"successes": 0, "failures": 3, "score": -14, "recent_failure": True},
+    }
+
+
+async def test_get_job_detail_null_and_malformed_columns(db_ready, fake_slsk):
+    await _seed_detail()
+    async with async_session() as db:
+        out = await jobs.get_job("nolog", detail=True, db=db)
+    assert out["timeline"] == [] and out["result_json"] is None and out["candidates"] == []
+    assert out["search"] == {"query_index": 1, "query_total": 4, "files_seen": 3, "kept": 0}
+    assert out["stage"] == "searching" and out["failure_class"] is None
+    assert out["peers"] == {} and out["next"]["kind"] == "none" and out["card"] == "dl:manual"
+
+    async with async_session() as db:
+        out = await jobs.get_job("bare", detail=True, db=db)
+    assert out["timeline"] == [] and out["result_json"] is None and out["tracks_json"] is None
+    assert out["failure_class"] == "orphan" and out["source_errors"] == [] and out["card"] is None
+
+    # A non-download job: its own log shape is not a DC-2 timeline; no joins.
+    async with async_session() as db:
+        out = await jobs.get_job("upg-log", detail=True, db=db)
+    assert out["timeline"] == [] and out["log"] == json.dumps(["step one", "step two"])
+    assert out["ledger"] is None and out["peers"] == {}
+
+
+async def test_get_job_detail_without_client(db_ready, monkeypatch):
+    import backend.soulseek as soulseek
+    monkeypatch.setattr(soulseek, "get_client", lambda: None)
+    await _seed_detail()
+    async with async_session() as db:
+        out = await jobs.get_job("det", detail=True, db=db)
+    assert out["peers"] == {} and out["ledger"]["attempts"] == 2
+    async with async_session() as db:
+        assert await jobs.get_job("missing", detail=True, db=db) == {"error": "Job not found"}
+
+
+# --- R2-B5: GET /failed-tracks and GET /runs -----------------------------------------
+
+async def _seed_failed_tracks():
+    from backend.models.download_attempt import DownloadAttempt
+    from backend.services.download_attempts import attempt_key
+
+    nf = json.dumps({"message": "No results for Rep - Eat"})
+    stalled = json.dumps({"message": "All 1 sources failed", "last_error": "Transfer stalled",
+                          "source_errors": [{"user": "u9", "error": "Transfer stalled"}]})
+    async with async_session() as s:
+        s.add(DownloadAttempt(key=attempt_key("Rep", "Eat"), artist="Rep", track="Eat", attempts=3,
+                              next_retry_at=NOW + timedelta(days=30)))
+        await s.commit()
+    await seed(
+        # One track failing three times (case and spacing differ; same attempt_key).
+        {"id": "rep1", "status": "failed", "card": "dl:similar", "result": nf, "tracks": _tracks("Rep", "Eat"),
+         "finished_at": NOW - timedelta(hours=3)},
+        {"id": "rep2", "status": "failed", "card": "dl:similar", "result": nf, "tracks": _tracks("rep", "eat"),
+         "finished_at": NOW - timedelta(hours=2)},
+        {"id": "rep3", "status": "failed", "card": "dl:similar", "result": stalled,
+         "tracks": _tracks("Rep", "Eat ", error="Transfer stalled",
+                           source_errors=[{"user": "u9", "error": "Transfer stalled", "at": "x"}]),
+         "finished_at": NOW - timedelta(hours=1)},
+        {"id": "nf1", "status": "failed", "card": "dl:discovery", "result": nf, "tracks": _tracks("Solo", "Once")},
+        {"id": "rs1", "status": "failed", "card": "dl:playlist", "result": json.dumps({"error": "Interrupted by restart"}),
+         "tracks": _tracks("Re", "Start", status="downloading")},
+        {"id": "cx1", "status": "failed", "card": "dl:manual", "result": json.dumps({"error": "Cancelled by user"}),
+         "tracks": _tracks("Can", "Celled")},
+        {"id": "notrack", "status": "failed", "card": "dl:manual", "result": nf, "tracks": None},
+        {"id": "ok1", "status": "completed", "card": "dl:similar", "result": json.dumps({"track_id": "t"}),
+         "tracks": json.dumps([{"artist": "Fine", "track": "Song", "status": "downloaded"}])},
+        {"id": "old", "status": "failed", "card": "dl:similar", "result": nf, "tracks": _tracks("Rep", "Eat"),
+         "finished_at": OLD, "started_at": OLD},  # outside SINCE
+    )
+
+
+async def test_failed_tracks_collapse_per_track(db_ready):
+    await _seed_failed_tracks()
+    async with async_session() as db:
+        out = await jobs.failed_tracks(type="download,bulk_download", since=SINCE_ISO, db=db)
+    items = out["items"]
+    by_key = {(i["artist"], i["track"]): i for i in items}
+
+    rep = next(i for i in items if i["count"] == 3)
+    assert sorted(rep["job_ids"]) == ["rep1", "rep2", "rep3"]
+    assert rep["last_job"]["id"] == "rep3" and rep["class"] == "peer"  # the newest row decides
+    assert rep["times_failed_30d"] == 4  # three in scope + the 2-day-old row (30-day window)
+    assert rep["last_job"]["message"] == "All 1 sources failed"
+    assert rep["last_job"]["source_errors"][0]["user"] == "u9"
+    assert rep["ledger"]["attempts"] == 3 and rep["next"]["kind"] == "retry"
+    assert rep["attempt_key"] and rep["card"] == "dl:similar"
+
+    assert by_key[("Solo", "Once")]["class"] == "not_found"
+    assert by_key[("Solo", "Once")]["next"]["kind"] == "none"
+    assert by_key[("Re", "Start")]["class"] == "infra" and by_key[("Re", "Start")]["times_failed_30d"] == 0
+    assert by_key[("Can", "Celled")]["class"] == "cancelled"
+    lone = next(i for i in items if i["attempt_key"] is None)
+    assert lone["job_ids"] == ["notrack"] and lone["class"] == "not_found"
+    assert len(items) == 5  # completed row and out-of-scope row excluded
+
+    # Pipeline order: peer, not_found (2), then infra-bucket entries.
+    assert [i["class"] for i in items][:3] == ["peer", "not_found", "not_found"]
+    assert {i["class"] for i in items[3:]} == {"infra", "cancelled"}
+
+    t = out["totals"]
+    assert t["retry"] + t["retired"] + t["none"] == len(items)
+    assert t["retry"] == 1 and t["by_class"] == {"peer": 1, "not_found": 2, "infra": 1, "cancelled": 1}
+    assert sum(i["count"] for i in items) == 7
+
+    # class filter: a class, or a bucket name.
+    async with async_session() as db:
+        nf = await jobs.failed_tracks(since=SINCE_ISO, cls="not_found", db=db)
+    assert {i["class"] for i in nf["items"]} == {"not_found"} and nf["totals"]["by_class"] == {"not_found": 2}
+    async with async_session() as db:
+        infra = await jobs.failed_tracks(since=SINCE_ISO, cls="infra", db=db)
+    assert {i["class"] for i in infra["items"]} == {"infra", "cancelled"}
+
+
+async def test_failed_tracks_sorted_by_times_failed_inside_class(db_ready):
+    nf = json.dumps({"message": "No results for x"})
+    await seed(
+        {"id": "a1", "status": "failed", "result": nf, "tracks": _tracks("A", "One")},
+        {"id": "b1", "status": "failed", "result": nf, "tracks": _tracks("B", "Two")},
+        {"id": "b2", "status": "failed", "result": nf, "tracks": _tracks("B", "Two"),
+         "finished_at": NOW - timedelta(minutes=3)},
+    )
+    async with async_session() as db:
+        out = await jobs.failed_tracks(db=db)
+    assert [(i["artist"], i["times_failed_30d"]) for i in out["items"]] == [("B", 2), ("A", 1)]
+
+
+def _batched(artist, batch, status="downloaded"):
+    return json.dumps([{"artist": artist, "track": "S", "status": status, "batch": batch}])
+
+
+async def test_runs_group_by_batch_then_card_gap(db_ready):
+    t0 = NOW - timedelta(hours=5)
+    pl = {"id": "b-1", "label": "Road Trip", "kind": "playlist"}
+    nf = json.dumps({"message": "No results for x"})
+    await seed(
+        # A stamped playlist batch: two done (one already had), one not found, one live.
+        {"id": "p1", "status": "completed", "card": "dl:playlist", "result": json.dumps({"track_id": "x"}),
+         "tracks": _batched("P1", pl), "started_at": t0, "finished_at": t0 + timedelta(minutes=2)},
+        {"id": "p2", "status": "completed", "card": "dl:playlist",
+         "result": json.dumps({"already_in_library": True}), "tracks": _batched("P2", pl),
+         "started_at": t0 + timedelta(minutes=1), "finished_at": t0 + timedelta(minutes=3)},
+        {"id": "p3", "status": "failed", "card": "dl:playlist", "result": nf,
+         "tracks": _batched("P3", pl, "failed"), "started_at": t0 + timedelta(minutes=50),  # no gap split in a batch
+         "finished_at": t0 + timedelta(minutes=51)},
+        {"id": "p4", "status": "running", "card": "dl:playlist", "result": None,
+         "tracks": _batched("P4", pl, "downloading"), "started_at": t0 + timedelta(minutes=52)},
+        # Unstamped similar rows: 0, +10 min (same run), +45 min (25 min after the last finish: new run).
+        {"id": "s1", "status": "completed", "card": "dl:similar", "result": json.dumps({"track_id": "y"}),
+         "tracks": _tracks("S1", "x", status="downloaded"), "started_at": t0, "finished_at": t0 + timedelta(minutes=5)},
+        {"id": "s2", "status": "failed", "card": "dl:similar", "result": json.dumps({"error": "Interrupted by restart"}),
+         "tracks": _tracks("S2", "x"), "started_at": t0 + timedelta(minutes=10),
+         "finished_at": t0 + timedelta(minutes=20)},
+        {"id": "s3", "status": "failed", "card": "dl:similar",
+         "result": json.dumps({"message": "All 1 sources failed"}), "tracks": _tracks("S3", "x"),
+         "started_at": t0 + timedelta(minutes=45), "finished_at": t0 + timedelta(minutes=46)},
+        # A 15-minute gap after the last activity stays in the same run.
+        {"id": "s4", "status": "completed", "card": "dl:similar", "result": json.dumps({"track_id": "z"}),
+         "tracks": _tracks("S4", "x", status="downloaded"), "started_at": t0 + timedelta(minutes=61),
+         "finished_at": t0 + timedelta(minutes=62)},
+        # Another card at the same time is its own run.
+        {"id": "m1", "status": "failed", "card": "dl:manual", "result": nf, "tracks": _tracks("M", "x"),
+         "started_at": t0 + timedelta(minutes=1), "finished_at": t0 + timedelta(minutes=2)},
+    )
+    async with async_session() as db:
+        out = await jobs.download_runs(type="download,bulk_download", db=db)
+    runs = out["items"]
+    by_first = {r["job_ids"][0]: r for r in runs}
+    assert len(runs) == 4
+
+    b = by_first["p1"]
+    assert b["id"] == "b-1" and b["label"] == "Road Trip" and b["kind"] == "playlist" and b["card"] == "dl:playlist"
+    assert b["job_ids"] == ["p1", "p2", "p3", "p4"]
+    assert b["counts"] == {"total": 4, "new": 1, "replaced": 0, "already_had": 1, "not_found": 1, "peer": 0,
+                           "rejected": 0, "no_better": 0, "infra": 0, "live": 1}
+    assert b["start"] == t0.isoformat()
+
+    first = by_first["s1"]
+    assert first["job_ids"] == ["s1", "s2"] and first["kind"] is None and first["label"] == "Similar"
+    assert first["counts"]["new"] == 1 and first["counts"]["infra"] == 1 and first["counts"]["total"] == 2
+    assert first["id"] == f"dl:similar@{t0.isoformat()}"
+    assert first["end"] == (t0 + timedelta(minutes=20)).isoformat()
+    second = by_first["s3"]
+    assert second["job_ids"] == ["s3", "s4"] and second["counts"]["peer"] == 1 and second["counts"]["new"] == 1
+
+    assert by_first["m1"]["label"] == "Manual" and by_first["m1"]["counts"]["not_found"] == 1
+    # Newest first.
+    assert [r["start"] for r in runs] == sorted((r["start"] for r in runs), reverse=True)
+
+    # Ids are stable across reloads.
+    async with async_session() as db:
+        again = await jobs.download_runs(type="download,bulk_download", db=db)
+    assert [r["id"] for r in again["items"]] == [r["id"] for r in runs]
+
+
+async def test_runs_and_failed_tracks_respect_since(db_ready):
+    nf = json.dumps({"message": "No results for x"})
+    await seed({"id": "o", "status": "failed", "result": nf, "tracks": _tracks("O", "x"),
+                "started_at": OLD, "finished_at": OLD})
+    async with async_session() as db:
+        assert (await jobs.download_runs(since=SINCE_ISO, db=db))["items"] == []
+    async with async_session() as db:
+        out = await jobs.failed_tracks(since=SINCE_ISO, db=db)
+    assert out == {"items": [], "totals": {"retry": 0, "retired": 0, "none": 0, "by_class": {}}}
+
+
+async def test_failed_tracks_and_runs_declared_before_job_id():
+    paths = [(r.path, sorted(r.methods)) for r in jobs.router.routes]
+    for p in ("/failed-tracks", "/runs"):
+        assert paths.index((p, ["GET"])) < paths.index(("/{job_id}", ["GET"]))
+
+
+async def test_query_params_over_http(db_ready):
+    """`?detail=1` and `?class=` parse through FastAPI (direct calls above bypass it)."""
+    import httpx
+    from fastapi import FastAPI
+
+    await _seed_failed_tracks()
+    app = FastAPI()
+    app.include_router(jobs.router, prefix="/api/jobs")
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        plain = (await c.get("/api/jobs/rep3")).json()
+        detail = (await c.get("/api/jobs/rep3", params={"detail": "1"})).json()
+        nf = (await c.get("/api/jobs/failed-tracks", params={"class": "not_found"})).json()
+        runs = (await c.get("/api/jobs/runs")).json()
+    assert "timeline" not in plain and plain["card"] == "dl:similar"
+    assert detail["timeline"] == [] and detail["failure_class"] == "peer" and detail["times_failed_30d"] == 4
+    assert nf["items"] and {i["class"] for i in nf["items"]} == {"not_found"}
+    assert runs["items"]

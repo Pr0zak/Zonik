@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	SOURCE_LABELS,
+	compactSpeed,
 	sourceLabel,
 	ordinal,
 	formatDurationWords,
@@ -14,6 +15,14 @@ import {
 	peerErrorClause,
 	doneOutcome,
 	nextSentence,
+	STAGE_COPY,
+	stageGroupReason,
+	classSentence,
+	CLASS_COPY,
+	GROUP_OF_STAGE,
+	GROUP_OF_CLASS,
+	LIVE_GROUP_ORDER,
+	LIVE_STAGES,
 } from './stage.js';
 
 const NOW = Date.UTC(2026, 9, 18, 7, 12, 30); // 2026-10-18T07:12:30Z
@@ -189,7 +198,7 @@ describe('resolveStage — live stages', () => {
 			speed: 310 * 1024, eta_seconds: 113, last_progress_at: epoch(200), state_since: epoch(10_000),
 		}, LIMITS, NOW, { medianSpeed: 4 * 1048576 });
 		expect(s.detail).toBe('3.0 of 38.1 MB · slow');
-		expect(s.big).toBe('7 % · 310.0 KB/s · 1 m 53 s left');
+		expect(s.big).toBe('7 % · 310 KB/s · 1 m 53 s left');
 		expect(s.amber).toBe(false);
 	});
 
@@ -435,5 +444,52 @@ describe('clockTime', () => {
 		const expected = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 		expect(clockTime('2026-10-18T06:51:00')).toBe(expected);
 		expect(clockTime(null)).toBe('');
+	});
+});
+
+describe('group copy (R2)', () => {
+	const L = { transfer_slots: 2, search_slots: 3, searches_per_minute: 6, search_min_interval_s: 8.0 };
+
+	it('every live stage maps to a group with copy', () => {
+		for (const s of LIVE_STAGES) expect(STAGE_COPY[GROUP_OF_STAGE[s]]).toBeTruthy();
+		for (const k of LIVE_GROUP_ORDER) expect(STAGE_COPY[k].name).toBeTruthy();
+	});
+
+	it('reason clauses read the limits', () => {
+		expect(stageGroupReason('transferring', { limits: L, busy: 2 })).toBe('2 of 2 slots busy');
+		expect(stageGroupReason('transferring', { limits: { transfer_slots: 3 }, busy: 1 })).toBe('1 of 3 slots busy');
+		expect(stageGroupReason('transferring', { count: 1 })).toBe('1 slot busy');
+		expect(stageGroupReason('at_peer', {})).toBe('asked, waiting for the upload to start');
+		expect(stageGroupReason('searching', {})).toBe('up to 4 queries, then an album query');
+		expect(stageGroupReason('waiting_slot', { limits: L })).toBe('file picked, both slots busy');
+		expect(stageGroupReason('waiting_slot', { limits: { transfer_slots: 3 } })).toBe('file picked, all 3 slots busy');
+		expect(stageGroupReason('queue_search', { limits: L })).toBe('pacer allows 6 searches a minute, 8 s apart');
+		expect(stageGroupReason('queue_search', { limits: { searches_per_minute: 10, search_min_interval_s: 4.5 } }))
+			.toBe('pacer allows 10 searches a minute, 4.5 s apart');
+		expect(stageGroupReason('backlog', { batchKind: 'playlist' })).toBe('the import hands tracks over 4 at a time');
+		expect(stageGroupReason('backlog', { batchKind: 'scheduled', handover: 2 })).toBe('the run hands tracks over 2 at a time');
+		expect(stageGroupReason('nope')).toBe('');
+	});
+
+	it('class sentences and names', () => {
+		expect(classSentence('not_found')).toMatch(/^a normal outcome/);
+		expect(classSentence('peer')).toBe('a file was found, every peer that had it failed');
+		expect(classSentence('cancelled')).toBe(classSentence('infra'));
+		expect(classSentence('orphan', { incidentNote: 'x' })).toBe('cancelled, restart or outage · not counted against the track · x');
+		expect(classSentence('weird')).toBe('');
+		for (const c of ['not_found', 'no_better', 'rejected', 'peer', 'cancelled', 'infra', 'orphan']) {
+			expect(CLASS_COPY[c].name).toBeTruthy();
+			expect(GROUP_OF_CLASS[c]).toBeTruthy();
+		}
+	});
+});
+
+describe('compactSpeed', () => {
+	it('drops the decimal below 1 MB/s and keeps it above', () => {
+		expect(compactSpeed(310 * 1024)).toBe('310 KB/s');
+		expect(compactSpeed(200)).toBe('1 KB/s');
+		expect(compactSpeed(2.4 * 1024 * 1024)).toBe('2.4 MB/s');
+		expect(compactSpeed(0)).toBe('');
+		expect(compactSpeed(null)).toBe('');
 	});
 });
