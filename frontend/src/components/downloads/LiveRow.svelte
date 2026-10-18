@@ -42,6 +42,7 @@
 		onCancel = null,
 		onOpen = null,
 		backlog = null,
+		compact = false, // narrow list (drawer column open): no 320 px title floor, no size · peer text
 	} = $props();
 
 	const KNOWN_EXTENSIONS = new Set(['flac', 'mp3', 'wav', 'alac', 'm4a', 'ogg', 'opus', 'aiff', 'ape']);
@@ -170,15 +171,15 @@
 
 		<div class="min-w-0 max-md:col-start-2 max-md:row-start-1">
 			<div class="flex items-center gap-2 min-w-0 overflow-hidden max-md:flex-wrap max-md:gap-y-1">
-				<span class="font-medium truncate min-w-[min(320px,100%)] max-md:min-w-0 max-md:whitespace-normal max-md:basis-full {selected ? 'text-sky-400' : 'text-[var(--text-primary)]'}" title={title}>{title}</span>
+				<span class="font-medium truncate {compact ? 'min-w-0' : 'min-w-[min(320px,100%)]'} max-md:min-w-0 max-md:whitespace-normal max-md:basis-full {selected ? 'text-sky-400' : 'text-[var(--text-primary)]'}" title={title}>{title}</span>
 				{@render chip(job.card)}
 				{#if ext}<FormatBadge format={ext} class="!text-[10px] !py-0 flex-shrink-0" />{/if}
-				{#if size > 0 || peer}
+				{#if (size > 0 || peer) && !compact}
 					<span class="font-mono text-[11px] text-[var(--text-muted)] whitespace-nowrap flex-shrink-0">
 						{#if size > 0}{formatSize(size)}{/if}{#if size > 0 && peer}{' · '}{/if}{#if peer}<span title="from {peer}">{peer}</span>{/if}
 					</span>
 				{/if}
-				{#if peer && rep}<RepChip successes={rep.successes} failures={rep.failures} />{/if}
+				{#if peer && rep && !compact}<RepChip successes={rep.successes} failures={rep.failures} />{/if}
 			</div>
 			<p class="text-[11px] text-[var(--text-muted)] truncate max-md:whitespace-normal">
 				<span class="font-medium {COLOUR_TEXT[wordColour] || COLOUR_TEXT.muted}">{word}</span>{#if st.detail}{` · ${st.detail}`}{/if}

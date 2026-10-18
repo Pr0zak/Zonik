@@ -29,6 +29,7 @@
 		transfer = null, // the job's live transfer_progress entry, when there is one
 		onclose = null,
 		actions = {}, // {retry, cancel, stopTrying, remove, searchByHand, play, openTrack}
+		sheet = false, // true: a bottom sheet at every width (lists too wide to share a row with the column)
 	} = $props();
 
 	let detail = $state(null);
@@ -194,15 +195,15 @@
 	<!-- below 1280 px the drawer is a bottom sheet over a backdrop -->
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="fixed inset-0 z-30 bg-black/60 xl:hidden" onclick={close}></div>
+	<div class="fixed inset-0 z-30 bg-black/60 {sheet ? '' : 'xl:hidden'}" onclick={close}></div>
 
 	<aside
 		class="fixed inset-x-0 bottom-0 z-40 max-h-[82vh] overflow-auto rounded-t-3xl shadow-float animate-slide-up
-			xl:sticky xl:inset-auto xl:top-14 xl:z-auto xl:max-h-[calc(100vh-4.5rem)] xl:rounded-3xl xl:shadow-none xl:animate-none
+			{sheet ? 'xl:mx-auto xl:max-w-3xl' : 'xl:sticky xl:inset-auto xl:top-14 xl:z-auto xl:max-h-[calc(100vh-4.5rem)] xl:rounded-3xl xl:shadow-none xl:animate-none'}
 			p-5 bg-[var(--surface-container)]"
 		aria-label="Download details"
 	>
-		<div class="w-10 h-1 rounded-full bg-[var(--surface-container-highest)] mx-auto -mt-1 mb-3.5 xl:hidden" aria-hidden="true"></div>
+		<div class="w-10 h-1 rounded-full bg-[var(--surface-container-highest)] mx-auto -mt-1 mb-3.5 {sheet ? '' : 'xl:hidden'}" aria-hidden="true"></div>
 
 		<div class="flex justify-between items-start gap-3">
 			<h3 class="text-base leading-[1.375rem] font-semibold text-[var(--text-primary)] min-w-0 break-words">{title}</h3>

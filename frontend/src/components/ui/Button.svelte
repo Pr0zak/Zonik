@@ -13,7 +13,7 @@
 		...rest
 	} = $props();
 
-	const base = 'inline-flex items-center justify-center font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--surface-base)] disabled:opacity-50 disabled:cursor-not-allowed';
+	const base = 'inline-flex items-center justify-center font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_srgb,var(--color-primary)_40%,transparent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--surface-base)] disabled:opacity-50 disabled:cursor-not-allowed';
 
 	const variants = {
 		primary: 'bg-gradient-primary text-[var(--color-on-primary)] hover:opacity-90 rounded-md shadow-glow',
