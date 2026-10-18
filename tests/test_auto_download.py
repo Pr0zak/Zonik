@@ -220,6 +220,84 @@ async def test_download_tracked_many_dedupes_and_bounds(db_ready, fake_enqueue, 
     assert all(c["source"] == "playlist" for c in fake_enqueue.calls)
 
 
+# --- blacklist (DC-22) ------------------------------------------------------------
+
+async def blacklist(artist, track=None, reason=None):
+    import uuid
+    from backend.models.blacklist import DownloadBlacklist
+    async with async_session() as s:
+        s.add(DownloadBlacklist(id=str(uuid.uuid4()), artist=artist, track=track, reason=reason))
+        await s.commit()
+
+
+async def test_submit_tracked_skips_blacklisted(db_ready, fake_enqueue, no_lastfm):
+    async with async_session() as s:
+        s.add(DownloadAttempt(key=attempt_key("A", "Song"), artist="A", track="Song", attempts=1,
+                              next_retry_at=datetime.utcnow() - timedelta(hours=1)))
+        await s.commit()
+    await blacklist("A", "Song", "Stopped from Downloads")
+    await blacklist("Banned")  # artist-level, no reason
+    out = await auto.submit_tracked("A", "song", source="similar")
+    assert out == {"job_id": None, "skipped": "blacklisted: Stopped from Downloads", "error": None,
+                   "deduped": False, "blacklisted": True}
+    out = await auto.submit_tracked("banned", "Anything", source=None, skip_in_backoff=False)
+    assert out["skipped"] == "blacklisted: Artist blacklisted" and out["blacklisted"] is True
+    assert fake_enqueue.calls == []
+    assert no_lastfm == []  # refused before the length lookup
+    assert (await attempt_row("A", "Song")).attempts == 1  # ledger untouched
+    # Another track by the same artist is not affected by a track-level entry.
+    out = await auto.submit_tracked("A", "Other", source="similar")
+    assert out["job_id"] and not out["skipped"]
+
+
+async def test_download_tracked_many_reports_blacklist_skip(db_ready, fake_enqueue, no_lastfm):
+    await blacklist("A", "Song", "nope")
+    outs = await auto.download_tracked_many([{"artist": "A", "track": "Song"}, {"artist": "B", "track": "Two"}],
+                                            source="playlist")
+    by_track = {o["track"]: o for o in outs}
+    assert by_track["Song"]["skipped"] == "blacklisted: nope" and by_track["Song"]["ok"] is None
+    assert by_track["Two"]["ok"] is True
+    assert [c["track"] for c in fake_enqueue.calls] == ["Two"]
+    assert await attempt_row("A", "Song") is None  # a skip is never recorded
+
+
+async def test_blacklisted_track_exception_is_a_skip(db_ready, monkeypatch, no_lastfm):
+    from backend.services.blacklist import BlacklistedTrack
+
+    async def enqueue(*a, **k):
+        raise BlacklistedTrack("added meanwhile")
+    monkeypatch.setattr(download, "enqueue_download", enqueue)
+    out = await auto.submit_tracked("A", "Song", source="similar")
+    assert out == {"job_id": None, "skipped": "blacklisted: added meanwhile", "error": None,
+                   "deduped": False, "blacklisted": True}
+    out = await auto.download_tracked("A", "Song", source="similar")
+    assert out["skipped"] == "blacklisted: added meanwhile" and out["ok"] is None and out["error"] is None
+    assert await attempt_row("A", "Song") is None
+
+
+async def test_submit_tracked_real_enqueue_skips_blacklisted(db_ready, fake_slsk, no_lastfm, monkeypatch):
+    """The real enqueue_download's guard, reached when the entry appears after
+    submit_tracked's own check (simulated by skipping that check)."""
+    async with async_session() as s:
+        s.add(DownloadAttempt(key=attempt_key("Test Artist", "Test Song"), artist="Test Artist",
+                              track="Test Song", attempts=2, next_retry_at=datetime.utcnow() - timedelta(hours=1)))
+        await s.commit()
+    await blacklist("Test Artist", "Test Song", "Stopped from Downloads")
+    out = await auto.download_tracked("Test Artist", "Test Song", source="similar")
+    assert out["skipped"] == "blacklisted: Stopped from Downloads" and out["ok"] is None
+
+    async def not_checked(db, artist, track):
+        return None
+    monkeypatch.setattr(auto, "is_blacklisted", not_checked)
+    sub = await auto.submit_tracked("Test Artist", "Test Song", source="similar", skip_in_backoff=False)
+    assert sub == {"job_id": None, "skipped": "blacklisted: Stopped from Downloads", "error": None,
+                   "deduped": False, "blacklisted": True}
+    assert fake_slsk.searches == []
+    async with async_session() as s:
+        assert (await s.execute(select(Job))).scalars().all() == []
+    assert (await attempt_row("Test Artist", "Test Song")).attempts == 2  # unchanged
+
+
 # --- is_infra_error ---------------------------------------------------------------
 
 def test_infra_error_unchanged_and_reexported():
@@ -287,7 +365,9 @@ async def test_batch_records_finished_and_returns_unknown_at_deadline(db_ready, 
     async def ready():
         return True
     monkeypatch.setattr(scheduler, "_download_backend_ready", ready)
-    monkeypatch.setattr(scheduler, "AUTO_DOWNLOAD_BATCH_MINUTES", 0.6 / 60)  # 0.6 s
+    # 2 s: "Works"/"Fails" settle after 0.05 s, so a loaded machine (suite run next to
+    # the frontend build) still sees them finish well before the deadline; "Hangs" never does.
+    monkeypatch.setattr(scheduler, "AUTO_DOWNLOAD_BATCH_MINUTES", 2 / 60)
     monkeypatch.setattr(scheduler, "AUTO_DOWNLOAD_POLL_SECONDS", 0.02)
     monkeypatch.setattr(scheduler, "AUTO_DOWNLOAD_MAX_OUTSTANDING", 2)
 

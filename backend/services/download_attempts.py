@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from typing import Iterable
 
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.download_attempt import DownloadAttempt
@@ -76,6 +77,66 @@ async def keys_in_backoff(db: AsyncSession) -> set[str]:
         select(DownloadAttempt.key).where(DownloadAttempt.next_retry_at > datetime.utcnow())
     )
     return {k for (k,) in rows.all()}
+
+
+def _due_clause(before: datetime):
+    """A row is due once its backoff has elapsed; NULL next_retry_at never blocked (reason_for)."""
+    return or_(DownloadAttempt.next_retry_at.is_(None), DownloadAttempt.next_retry_at <= before)
+
+
+async def rows_due(db: AsyncSession, before: datetime | None = None,
+                   limit: int | None = None) -> list[DownloadAttempt]:
+    """Ledger rows whose backoff has elapsed by `before` (naive UTC, default now),
+    soonest first. A retired row only comes due when its year is up."""
+    before = before or datetime.utcnow()
+    q = (select(DownloadAttempt).where(_due_clause(before))
+         .order_by(DownloadAttempt.next_retry_at.asc(), DownloadAttempt.key))
+    if limit is not None:
+        q = q.limit(limit)
+    return list((await db.execute(q)).scalars().all())
+
+
+async def count_due(db: AsyncSession, before: datetime | None = None) -> int:
+    before = before or datetime.utcnow()
+    return (await db.execute(
+        select(func.count(DownloadAttempt.key)).where(_due_clause(before))
+    )).scalar_one()
+
+
+async def count_all(db: AsyncSession) -> int:
+    return (await db.execute(select(func.count(DownloadAttempt.key)))).scalar_one()
+
+
+async def ledger_by_keys(db: AsyncSession, keys: Iterable[str]) -> dict[str, DownloadAttempt]:
+    """{attempt_key: DownloadAttempt} for the keys that have a ledger row (chunked IN)."""
+    wanted = list(dict.fromkeys(k for k in keys if k))
+    out: dict[str, DownloadAttempt] = {}
+    for i in range(0, len(wanted), 500):
+        part = wanted[i:i + 500]
+        rows = (await db.execute(
+            select(DownloadAttempt).where(DownloadAttempt.key.in_(part))
+        )).scalars().all()
+        out.update({r.key: r for r in rows})
+    return out
+
+
+def row_to_dict(row: DownloadAttempt, now: datetime | None = None) -> dict:
+    """API shape of one ledger row (DC-14). `reason` is None once the row is due."""
+    now = now or datetime.utcnow()
+    attempts = row.attempts or 0
+    return {
+        "key": row.key,
+        "artist": row.artist,
+        "track": row.track,
+        "source": row.source,
+        "attempts": attempts,
+        "last_attempt_at": row.last_attempt_at.isoformat() if row.last_attempt_at else None,
+        "next_retry_at": row.next_retry_at.isoformat() if row.next_retry_at else None,
+        "last_error": row.last_error,
+        "last_job_id": row.last_job_id,
+        "retired": is_retired(attempts),
+        "reason": reason_for(row, now),
+    }
 
 
 async def record_outcome(

@@ -30,6 +30,7 @@ from sqlalchemy import select
 
 from backend.database import async_session
 from backend.models.job import Job
+from backend.services.blacklist import BlacklistedTrack, is_blacklisted
 from backend.services.download_attempts import attempt_key, in_backoff, record_outcome
 
 log = logging.getLogger(__name__)
@@ -170,6 +171,13 @@ def _tracked(source: str | None) -> bool:
     return source in TRACKED_SOURCES
 
 
+def _blacklisted_skip(reason: str) -> dict:
+    """submit_tracked's answer for a blacklisted track (DC-22): a skip, never an
+    error, so nothing is recorded against the track."""
+    return {"job_id": None, "skipped": f"blacklisted: {reason}", "error": None, "deduped": False,
+            "blacklisted": True}
+
+
 async def submit_tracked(
     artist: str, track: str, *, album: str | None = None, source: str | None, target_track_id: str | None = None,
     expected_duration: int | None = None, skip_in_backoff: bool = True,
@@ -177,7 +185,10 @@ async def submit_tracked(
 ) -> dict:
     """Start one automatic download. Returns {job_id, skipped, error, deduped}:
 
-    - skipped: why it was not started (backoff), job_id None.
+    - skipped: why it was not started (backoff, or "blacklisted: <reason>" with
+      blacklisted=True added to the dict), job_id None. A blacklisted track is
+      refused for every source, before the backoff check; callers that count
+      skips (the scheduler's skipped_backoff) count blacklist skips with them.
     - job_id None and no skip: enqueue skipped it because the library already has it.
     - error: enqueue_download raised (job_id is the id it was given).
     - deduped: another job was already downloading this track and job_id is that
@@ -186,6 +197,15 @@ async def submit_tracked(
     With wait=True (the default) this returns once the download has finished, as
     enqueue_download always did; with wait=False it returns once the job row exists."""
     from backend.api.download import enqueue_download
+
+    try:
+        async with async_session() as bl_db:
+            blocked = await is_blacklisted(bl_db, artist, track)
+        if blocked:
+            log.info(f"[auto-download] Skip {artist} — {track}: blacklisted ({blocked})")
+            return _blacklisted_skip(blocked)
+    except Exception as e:
+        log.debug(f"[auto-download] blacklist check failed for {artist} — {track}: {e}")
 
     if skip_in_backoff and _tracked(source):
         try:
@@ -207,9 +227,13 @@ async def submit_tracked(
     try:
         returned = await enqueue_download(artist, track, job_id=job_id, source=source,
                                           target_track_id=target_track_id, **enqueue_kw)
+    except BlacklistedTrack as e:
+        # enqueue_download's own guard (blacklisted between the check above and now).
+        log.info(f"[auto-download] Skip {artist} — {track}: blacklisted ({e.reason})")
+        return _blacklisted_skip(e.reason)
     except Exception as e:
-        # enqueue_download only raises for our own trouble (database, web process),
-        # never because of the track.
+        # Anything else enqueue_download raises is our own trouble (database, web
+        # process), never because of the track.
         log.warning(f"[auto-download] Failed {artist} — {track}: {e}")
         return {"job_id": job_id, "skipped": None, "error": f"Internal error: {e}"[:500], "deduped": False}
     return {"job_id": returned, "skipped": None, "error": None,

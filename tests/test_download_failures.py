@@ -146,3 +146,77 @@ def test_module_is_pure():
     import inspect
     for fn in (df.failure_class, df.failure_bucket, df.incident_kind):
         assert not inspect.iscoroutinefunction(fn)
+
+
+# --- R1-E2: incident grouping ---------------------------------------------------
+
+from datetime import datetime, timedelta  # noqa: E402
+
+T0 = datetime(2026, 10, 17, 21, 43, 12)
+
+
+def test_dismissed_flag_never_changes_the_class():
+    assert df.failure_class("failed", json.dumps({"incident_dismissed": True}), None) == "orphan"
+    assert df.failure_class("failed", json.dumps({}), None) == "orphan"
+    assert df.failure_class("failed", _r(error="Interrupted by restart", incident_dismissed=True), None) == "infra"
+    assert df.failure_class("failed", _r(error="Cancelled by user", incident_dismissed=True), None) == "cancelled"
+    assert df.is_dismissed(_r(error="x", incident_dismissed=True))
+    assert not df.is_dismissed(_r(error="x")) and not df.is_dismissed(None)
+
+
+@pytest.mark.parametrize("result_json,text", [
+    (_r(error="Interrupted by restart"), "Interrupted by restart"),
+    (_r(status="error", message=NATIVE), NATIVE),
+    (_r(error="", message="Soulseek server not connected"), "Soulseek server not connected"),
+    (None, ""),
+    ("Interrupted", "Interrupted"),
+    (json.dumps({"incident_dismissed": True}), ""),
+])
+def test_failure_text(result_json, text):
+    assert df.failure_text(result_json) == text
+
+
+def test_restart_batch_is_one_incident():
+    rows = [(f"j{i}", "dl:playlist", T0, "Interrupted by restart", False) for i in range(142)]
+    out = df.group_incidents(rows)
+    assert len(out) == 1
+    inc = out[0]
+    assert inc["kind"] == "restart" and inc["count"] == 142
+    assert inc["id"] == "restart:2026-10-17T21:30:00"
+    assert inc["start"] == inc["end"] == T0.isoformat()
+    assert inc["by_card"] == {"dl:playlist": 142} and inc["dismissed"] is False
+    assert len(inc["job_ids"]) == 142
+
+
+def test_outage_over_four_minutes_across_a_bucket_boundary_is_one_incident():
+    start = datetime(2026, 10, 18, 6, 12, 0)  # 06:12 → 06:16 spans the 06:15 boundary
+    rows = [(f"o{i}", "dl:similar" if i % 2 else "dl:discovery", start + timedelta(seconds=4 * i),
+             "Soulseek server not connected — try again later", False) for i in range(61)]
+    out = df.group_incidents(rows)
+    assert len(out) == 1
+    assert out[0]["kind"] == "outage" and out[0]["count"] == 61
+    assert out[0]["id"] == "outage:2026-10-18T06:00:00"
+    assert sum(out[0]["by_card"].values()) == 61
+
+
+def test_cancel_an_hour_later_and_reaper_batches_apart_are_separate():
+    rows = [(f"r{i}", "dl:playlist", T0, "Interrupted by restart", False) for i in range(3)]
+    rows += [("c1", "dl:manual", T0 + timedelta(hours=1), "Cancelled by user", False)]
+    rows += [(f"s{i}", "dl:playlist", T0 + timedelta(minutes=40), "Interrupted by restart or job timeout", True)
+             for i in range(2)]
+    out = df.group_incidents(rows)
+    kinds = sorted((i["kind"], i["count"]) for i in out)
+    assert kinds == [("cancel", 1), ("restart", 2), ("restart", 3)]
+    assert [i["id"] for i in out] == ["cancel:2026-10-17T22:30:00", "restart:2026-10-17T22:15:00",
+                                      "restart:2026-10-17T21:30:00"]  # newest first
+    second = next(i for i in out if i["count"] == 2)
+    assert second["dismissed"] is True
+
+
+def test_incident_ids_are_stable_and_rows_without_time_skipped():
+    rows = [("a", None, T0, "", False), ("b", "dl:x", None, "Interrupted by restart", False),
+            ("c", "dl:x", T0.isoformat() + "Z", "Internal error: boom", False)]
+    out = df.group_incidents(rows)
+    assert {i["kind"] for i in out} == {"orphan", "internal"}
+    assert next(i for i in out if i["kind"] == "orphan")["by_card"] == {"dl": 1}
+    assert df.group_incidents(list(reversed(rows))) == out

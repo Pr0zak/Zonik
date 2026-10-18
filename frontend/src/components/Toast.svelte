@@ -1,5 +1,5 @@
 <script>
-	import { toasts } from '$lib/stores.js';
+	import { toasts, dismissToast } from '$lib/stores.js';
 	import { CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-svelte';
 
 	const styles = {
@@ -18,6 +18,12 @@
 			style="border-left: 3px solid {s.stripe};">
 			<Icon class="w-4 h-4 shrink-0 {s.color}" />
 			<span class="text-[var(--text-body)]">{toast.message}</span>
+			{#if toast.extra?.href}
+				<a href={toast.extra.href} onclick={() => dismissToast(toast.id)}
+					class="ml-1 text-sky-400 hover:text-sky-300 font-medium whitespace-nowrap">
+					{toast.extra.label || 'Open'} <span aria-hidden="true">&rarr;</span>
+				</a>
+			{/if}
 		</div>
 	{/each}
 </div>

@@ -64,17 +64,17 @@ def stage_sequence(sent: list[dict]) -> list[str]:
     return seq
 
 
-async def run_job(job_id="job-1"):
+async def run_job(job_id="job-1", track=TRACK):
     """Write a running job row and run _do_download_inner on it; return the saved row."""
     async with async_session() as s:
         job = Job(id=job_id, type="download", card="dl:discovery", status="running",
                   started_at=datetime.utcnow(),
-                  tracks=json.dumps([{"artist": ARTIST, "track": TRACK, "status": "pending"}]))
+                  tracks=json.dumps([{"artist": ARTIST, "track": track, "status": "pending"}]))
         s.add(job)
         await s.commit()
         s.expunge(job)
-    req = download.DownloadRequest(artist=ARTIST, track=TRACK, source="discovery")
-    await download._do_download_inner(None, job, job_id, f"{ARTIST} — {TRACK}", req)
+    req = download.DownloadRequest(artist=ARTIST, track=track, source="discovery")
+    await download._do_download_inner(None, job, job_id, f"{ARTIST} — {track}", req)
     async with async_session() as s:
         return (await s.execute(select(Job).where(Job.id == job_id))).scalar_one()
 
@@ -93,25 +93,30 @@ async def test_success_imports_and_completes(db_ready, fake_slsk, imported, reco
 
     # Stages, in order, on the job_update stream.
     seq = stage_sequence(recorder)
-    assert seq == ["searching", "peer_lock", "connecting", "importing"]
+    assert seq == ["searching", "peer_lock", "waiting_slot", "connecting", "queued_at_peer",
+                   "transferring", "importing"]
     short = fname().rsplit("\\", 1)[-1]
     desc = f"{ARTIST} — {TRACK}"
-    # Description strings are today's, byte for byte.
-    assert [m["description"] for m in recorder] == [
-        desc, f"Queued for slot: {desc} — {short}", f"{desc} — {short} (attempt 1/1)",
-        f"{desc} — {short} (attempt 1/1)", desc]
-    live = recorder[1]
+    queued, live_d = f"Queued for slot: {desc} — {short}", f"{desc} — {short} (attempt 1/1)"
+    # Description strings are today's, byte for byte (the new stage writes reuse them).
+    n_search = sum(1 for m in recorder if m.get("search"))
+    assert n_search == 2  # query_start + query_end of the one query
+    assert [m["description"] for m in recorder] == [desc] * (1 + n_search) + [
+        queued, queued, live_d, live_d, live_d, live_d, desc]
+    live = next(m for m in recorder if m.get("attempt"))
     assert live["card"] == "dl:discovery" and live["attempt"] == 1 and live["of"] == 1
     assert live["username"] == "alpha" and live["stage_since"]
     final = recorder[-1]
     assert final["status"] == "completed" and final["progress"] == 1 and final["total"] == 1
     assert final["stage"] == "importing" and final["card"] == "dl:discovery"
     assert final["track_id"] == "track-1"
+    assert final["failure_class"] is None and final["source_errors"] == []
 
     # Timeline in Job.log; the row keeps the file size as progress/total.
     kinds = log_kinds(row)
     assert kinds[0] in ("submitted", "search_slot") and kinds[-1] == "done"
-    assert kinds == ["search_slot", "attempt", "connecting", "importing", "done"]
+    assert kinds == ["search_slot", "query_start", "query_end", "searched", "picked", "attempt", "peer_lock", "transfer_slot", "connecting", "requested",
+                     "queued", "transferring", "importing", "done"]
     done = json.loads(row.log)[-1]
     assert done["track_id"] == "track-1" and done["file_size"] == 1000 and done["t"]
     assert row.progress == row.total == 1000
@@ -124,21 +129,35 @@ async def test_success_imports_and_completes(db_ready, fake_slsk, imported, reco
     assert "job-1" not in download._timelines
 
 
-async def test_falls_back_to_next_candidate_after_failure(db_ready, fake_slsk, imported):
+async def test_falls_back_to_next_candidate_after_failure(db_ready, fake_slsk, imported, recorder):
     fake_slsk.results = [result("alpha", fname(1), speed=2_000_000), result("beta", fname(2), speed=600_000)]
     fake_slsk.behaviour = {"alpha": "fail"}
     row = await run_job()
     assert fake_slsk.downloads == ["alpha", "beta"]
     assert row.status == "completed"
     assert json.loads(row.result)["username"] == "beta"
+    running = [m for m in recorder if m["status"] == "running" and m.get("attempt")]
+    assert (running[0]["attempt"], running[0]["of"]) == (1, 2)
+    assert (running[-1]["attempt"], running[-1]["of"]) == (2, 2)
+    # alpha's failure was saved and broadcast as it happened, before beta's attempt.
+    beta_start = next(i for i, m in enumerate(recorder) if m.get("attempt") == 2)
+    alpha_fail = recorder[beta_start - 1]
+    assert alpha_fail["attempt"] == 1 and alpha_fail["username"] == "alpha"
+    assert alpha_fail["description"].endswith("(attempt 1/2)")
+    errs = json.loads(row.tracks)[0]["source_errors"]
+    assert [(e["user"], e["error"]) for e in errs] == [("alpha", "Denied")] and errs[0]["at"]
+    kinds = log_kinds(row)
+    assert kinds.count("attempt") == 2 and kinds.count("peer_failed") == 1
 
 
-async def test_all_sources_failing_fails_the_job(db_ready, fake_slsk, imported):
+async def test_all_sources_failing_fails_the_job(db_ready, fake_slsk, imported, recorder):
     fake_slsk.results = [result("alpha", fname(1)), result("beta", fname(2), speed=600_000)]
     fake_slsk.behaviour = {"alpha": "fail", "beta": "fail"}
     row = await run_job()
     assert row.status == "failed"
-    assert json.loads(row.result)["message"] == "All 2 sources failed"
+    res = json.loads(row.result)
+    assert res["message"] == "All 2 sources failed"
+    assert [(e["user"], e["error"]) for e in res["source_errors"]] == [("alpha", "Denied"), ("beta", "Denied")]
     assert imported == []
     kinds = log_kinds(row)
     assert kinds[-1] == "failed" and kinds.count("peer_failed") == 2
@@ -146,7 +165,126 @@ async def test_all_sources_failing_fails_the_job(db_ready, fake_slsk, imported):
     assert end["error"].startswith("All 2 sources failed") and end["class"] == "peer"
     t0 = json.loads(row.tracks)[0]
     assert t0["status"] == "failed" and t0["error"] == "Denied" and t0["attempt"] == 2
+    assert len(t0["source_errors"]) == 2 and all(e["at"] for e in t0["source_errors"])
     assert row.progress == 0  # only a completed row carries the file size
+    final = recorder[-1]
+    assert final["failure_class"] == "peer" and len(final["source_errors"]) == 2
+    assert final["failed_sources"] == ["alpha", "beta"] and final["error"].startswith("All 2 sources failed")
+
+
+async def test_parallel_sources_record_failures_live(db_ready, fake_slsk, imported, recorder, monkeypatch):
+    from backend import config
+    cfg = config.get_settings().soulseek
+    monkeypatch.setattr(cfg, "parallel_sources", 2, raising=False)
+    monkeypatch.setattr(cfg, "source_strategy", "first", raising=False)
+    fake_slsk.results = [result("alpha", fname(1)), result("beta", fname(2), speed=600_000)]
+    fake_slsk.behaviour = {"alpha": "fail"}
+    fake_slsk.transfer_seconds = 0.5  # beta finishes well after alpha's denial
+    row = await run_job()
+    assert row.status == "completed" and json.loads(row.result)["username"] == "beta"
+    errs = json.loads(row.tracks)[0]["source_errors"]
+    assert [(e["user"], e["error"]) for e in errs] == [("alpha", "Denied")]
+    seq = stage_sequence(recorder)
+    assert seq[:2] == ["searching", "peer_lock"] and seq[-1] == "importing"
+    assert {"waiting_slot", "connecting"} <= set(seq)
+    assert "peer_failed" in log_kinds(row) and log_kinds(row)[-1] == "done"
+
+
+async def test_job_outcome_extension():
+    rejected = download.job_outcome(
+        "failed", json.dumps({"message": "All 2 sources failed", "last_error": "Not imported: duplicate",
+                              "failed_sources": ["a", "b"],
+                              "source_errors": [{"user": "a", "error": "Denied"},
+                                                {"user": "b", "error": "Not imported: duplicate"}]}),
+        json.dumps([{"artist": "A", "track": "T", "status": "failed", "stage": "importing",
+                     "stage_since": "2026-10-18T07:00:00", "error": "Not imported: duplicate",
+                     "source_errors": [{"user": "a", "error": "Denied", "at": "x"},
+                                       {"user": "b", "error": "Not imported: duplicate", "at": "y"}]}]))
+    assert rejected["failure_class"] == "rejected" and rejected["stage"] == "importing"
+    assert rejected["stage_since"] == "2026-10-18T07:00:00"
+    assert [e["user"] for e in rejected["source_errors"]] == ["a", "b"] and rejected["source_errors"][0]["at"] == "x"
+    assert rejected["failed_sources"] == ["a", "b"]
+    assert rejected["error"] == "All 2 sources failed: Not imported: duplicate"
+    peer = download.job_outcome(
+        "failed", json.dumps({"message": "All 1 sources failed", "last_error": "Peer never answered in 120 s",
+                              "source_errors": [{"user": "a", "error": "Peer never answered in 120 s"}]}),
+        json.dumps([{"artist": "A", "track": "T", "status": "failed", "error": "Peer never answered in 120 s"}]))
+    assert peer["failure_class"] == "peer"
+    assert peer["source_errors"] == [{"user": "a", "error": "Peer never answered in 120 s"}]  # from result
+    assert peer["stage"] is None
+    # Without tracks_json the keys are exactly today's (jobs list, GET /api/jobs/{id}).
+    old = download.job_outcome("failed", json.dumps({"error": "Cancelled by user"}))
+    assert old == {"error": "Cancelled by user"}
+    assert download.job_outcome("completed", None) == {}
+    running = download.job_outcome("running", None, None)
+    assert running == {"source_errors": [], "failure_class": None, "stage": None, "stage_since": None}
+
+
+async def test_reaped_row_mid_download_is_still_retryable(db_ready, monkeypatch):
+    """A reaper fails a row whose tracks still say downloading (with a stage)."""
+    from fastapi import BackgroundTasks
+    from backend.api import jobs
+    async with async_session() as s:
+        s.add(Job(id="reaped", type="download", card="dl:similar", status="failed", started_at=datetime.utcnow(),
+                  result=json.dumps({"error": "Interrupted by restart"}),
+                  tracks=json.dumps([{"artist": ARTIST, "track": TRACK, "status": "downloading",
+                                      "stage": "transferring", "attempt": 1, "of": 3}])))
+        await s.commit()
+    bt = BackgroundTasks()
+    async with async_session() as db:
+        resp = await jobs.retry_job("reaped", bt, db)
+    assert resp.get("ok") is True and resp["total"] == 1
+    assert len(bt.tasks) == 1 and bt.tasks[0].args[0][0]["track"] == TRACK
+
+
+@pytest.fixture
+def no_album_lookup(monkeypatch):
+    import backend.services.lastfm as lastfm
+
+    async def no_info(artist, track):
+        return None
+    monkeypatch.setattr(lastfm, "get_track_info", no_info)
+
+
+async def test_not_found_records_funnel(db_ready, fake_slsk, imported, recorder, no_album_lookup):
+    track = "Test Song (Remastered)"  # two query variants
+    fake_slsk.results = [result("alpha", f"Music\\{ARTIST}\\01 - Something Else Entirely.flac")]
+    row = await run_job(track=track)
+    assert row.status == "failed"
+    res = json.loads(row.result)
+    assert res["message"] == f"No results for {ARTIST} - {track}"  # literal unchanged
+    funnel = res["search"]
+    assert len(funnel["queries"]) >= 2 and all(q["files"] == 1 for q in funnel["queries"])
+    assert funnel["rejected"]["title"] >= 1 and funnel["kept"] == 0 and funnel["files_seen"] >= 1
+    assert res["candidates"] == []
+    t0 = json.loads(row.tracks)[0]
+    assert "search" not in t0 and t0["status"] == "failed"
+    kinds = log_kinds(row)
+    assert "query_start" in kinds and "query_end" in kinds and "searched" in kinds
+    assert kinds.index("searched") > kinds.index("query_end")
+    # A running payload carried the query the job was on.
+    searching = [m for m in recorder if m["status"] == "running" and m.get("search")]
+    assert searching and searching[0]["search"]["query_index"] == 1
+    assert searching[0]["search"]["query_total"] == len(funnel["queries"])
+    assert max(m["search"]["files_seen"] for m in searching) == len(funnel["queries"])
+    # The not-found bucket's LIKE still matches the stored result.
+    assert "No results for" in row.result
+    from backend.services.download_failures import failure_class
+    assert failure_class(row.status, row.result, row.tracks) == "not_found"
+
+
+async def test_completed_result_has_candidates_with_score(db_ready, fake_slsk, imported):
+    fake_slsk.results = [result("alpha", fname(1)), result("beta", fname(2), speed=600_000)]
+    row = await run_job()
+    res = json.loads(row.result)
+    assert row.status == "completed" and res["username"] == "alpha"
+    assert [c["username"] for c in res["candidates"]] == ["alpha", "beta"]
+    assert res["candidates"][0]["score"] > 0 and res["candidates"][0]["extension"] == "flac"
+    assert set(res["candidates"][0]) == set(download._CANDIDATE_KEYS)
+    assert res["search"]["kept"] == 2 and len(res["search"]["queries"]) == 1
+    assert "candidates" not in res["search"]
+    picked = next(e for e in json.loads(row.log) if e["k"] == "picked")
+    assert [c["username"] for c in picked["candidates"]] == ["alpha", "beta"]
 
 
 async def test_cancel_during_transfer(db_ready, fake_slsk, imported):
@@ -230,9 +368,45 @@ async def test_poll_stall(fake_slsk):
 
 async def test_poll_queue_timeout(fake_slsk):
     t = await started(fake_slsk, "queue")
+    t.queue_place = 3
     status, _, err = await download.poll_transfer(fake_slsk, t, "job-p", queue_timeout=0.05, stall_timeout=1)
-    assert status == "failed" and err == "Peer did not respond in time"
+    assert status == "failed" and err.startswith("Peer queued us (place 3) but did not start in ")
     assert t.state == TransferState.FAILED
+    assert fake_slsk.transfers.aborted == [("peer", "Peer queued us but did not start", True)]
+    t = await started(fake_slsk, "queue", username="other")  # place unknown
+    status, _, err = await download.poll_transfer(fake_slsk, t, "job-p", queue_timeout=0.05, stall_timeout=1)
+    assert err.startswith("Peer queued us but did not start in ")
+
+
+async def test_poll_requested_timeout(fake_slsk):
+    t = await started(fake_slsk, "queue")
+    t.state = TransferState.REQUESTED  # the peer never answered our request
+    status, _, err = await download.poll_transfer(fake_slsk, t, "job-p", queue_timeout=0.05, stall_timeout=1)
+    assert status == "failed" and err.startswith("Peer never answered in ")
+    assert fake_slsk.transfers.aborted == [("peer", "Peer never answered", True)]
+
+
+async def test_timeout_strings_are_not_infra():
+    from backend.services.auto_download import is_infra_error
+    for e in ("Peer never answered in 120 s", "Peer queued us (place 3) but did not start in 120 s",
+              "Peer queued us but did not start in 180 s"):
+        assert not is_infra_error(e)
+
+
+async def test_poll_on_state_fires_on_transitions(fake_slsk):
+    seen: list[tuple] = []
+
+    async def on_state(tr):
+        seen.append((tr.state, tr.queue_place))
+        if len(seen) == 1:
+            raise RuntimeError("a broken callback never stops the poll")
+    t = await started(fake_slsk, "complete")
+    status, _, _ = await download.poll_transfer(fake_slsk, t, "job-p", queue_timeout=1, stall_timeout=1,
+                                                on_state=on_state)
+    assert status == "completed"
+    states = [s for s, _ in seen]
+    assert TransferState.TRANSFERRING in states and states[-1] == TransferState.COMPLETED
+    assert len(states) == len(set(states))  # only on a change
 
 
 async def test_poll_cancel(fake_slsk):

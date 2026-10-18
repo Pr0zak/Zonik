@@ -3,7 +3,7 @@
 Search returns canned results. download() returns a real Transfer that a fake
 uploader task drives according to the peer's scripted behaviour:
 
-    "complete"     connects, sends the file, COMPLETED with a save_path
+    "complete"     TRANSFERRING for transfer_seconds, then COMPLETED with a save_path
     "fail"         the peer denies the request (FAILED)
     "stall"        connects, sends nothing more
     "queue"        stays QUEUED (never starts)
@@ -12,8 +12,10 @@ uploader task drives according to the peer's scripted behaviour:
 from __future__ import annotations
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 from backend.soulseek.client import PeerBusy
 from backend.soulseek.protocol.types import FileInfo, SearchResult, TransferState
@@ -55,6 +57,9 @@ class FakeTransfers:
         self.discarded.append(job_id)
 
     def get_all_transfers(self) -> list:
+        return [t.to_dict() for t in self.table.values()]
+
+    def get_all_uploads(self) -> list:
         return []
 
 
@@ -77,16 +82,32 @@ class FakeClient:
         self.staging = Path(staging)
         self.logged_in = True
         self.results: list[SearchResult] = []
+        # Per-query answers (query -> results); queries not listed get `results`.
+        self.results_by_query: dict[str, list[SearchResult]] | None = None
         self.behaviour: dict[str, str] = {}  # username -> scripted behaviour
         self.searches: list[str] = []
         self.downloads: list[str] = []  # usernames, in the order download() was called
+        self.transfer_seconds = 0.1  # how long a "complete" peer spends TRANSFERRING
         self.transfers = FakeTransfers()
         self.reputation = FakeReputation()
         self._slots: dict[str, asyncio.Semaphore] = {}
         self._uploaders: list[asyncio.Task] = []
+        # What /api/download/status and soulseek-stats read off a real client.
+        self.username = "fake_user"
+        self.server = SimpleNamespace(connected_since=time.time(), disconnected_since=None,
+                                      total_reconnects=0, reconnecting=False, listen_port=0)
+        self.session_totals = {"completed": 0, "failed": 0, "bytes": 0}
+        self.pacer = {"waiting": 0, "sent_last_minute": 0, "next_slot_in_s": 0.0}
+        self._search_events: dict = {}
+        self.peers: dict = {}
+
+    def pacer_status(self) -> dict:
+        return dict(self.pacer)
 
     async def search(self, query: str, timeout: float = 0, max_responses: int = 50) -> list[SearchResult]:
         self.searches.append(query)
+        if self.results_by_query is not None and query in self.results_by_query:
+            return list(self.results_by_query[query])
         return list(self.results)
 
     def slot(self, username: str) -> asyncio.Semaphore:
@@ -128,6 +149,10 @@ class FakeClient:
         elif how == "complete":
             t.state = TransferState.TRANSFERRING
             t.total_bytes = 1000
+            t.received_bytes = 500
+            await asyncio.sleep(self.transfer_seconds)  # long enough for a poll to see it
+            if t.state == TransferState.FAILED:  # aborted meanwhile
+                return
             t.received_bytes = 1000
             path = self.staging / (t.job_id or "nojob") / t.filename.replace("\\", "_")
             path.parent.mkdir(parents=True, exist_ok=True)

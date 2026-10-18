@@ -52,12 +52,20 @@ export function playPrev() {
 }
 
 let toastId = 0;
-export function addToast(message, type = 'info', duration = 5000) {
+/**
+ * Show a toast. `extra` (optional) adds a link: `{ href, label }`, e.g.
+ * `{ href: '/library?track=…', label: 'Open track' }`. Positional args are unchanged.
+ */
+export function addToast(message, type = 'info', duration = 5000, extra = null) {
 	const id = toastId++;
-	toasts.update(t => [...t, { id, message, type }]);
+	toasts.update(t => [...t, { id, message, type, extra: extra && extra.href ? extra : null }]);
 	if (duration > 0) {
 		setTimeout(() => {
 			toasts.update(t => t.filter(toast => toast.id !== id));
 		}, duration);
 	}
+}
+
+export function dismissToast(id) {
+	toasts.update(t => t.filter(toast => toast.id !== id));
 }

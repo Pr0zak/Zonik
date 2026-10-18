@@ -112,3 +112,82 @@ async def test_manual_trigger_stays_untracked(db_ready, fake_slsk, lastfm, sourc
     assert "job_id" in resp  # not skipped despite the backoff
     assert lastfm == []
     assert await attempts() == 1  # nothing recorded
+
+
+# --- blacklist guard in enqueue_download (DC-22) ------------------------------------
+
+async def add_blacklist(artist=ARTIST, track=TRACK, reason="Stopped from Downloads"):
+    import uuid
+    from backend.models.blacklist import DownloadBlacklist
+    async with async_session() as s:
+        s.add(DownloadBlacklist(id=str(uuid.uuid4()), artist=artist, track=track, reason=reason))
+        await s.commit()
+
+
+async def test_enqueue_download_raises_for_blacklisted(db_ready, fake_slsk):
+    from backend.services.blacklist import BlacklistedTrack
+    await add_blacklist()
+    with pytest.raises(BlacklistedTrack) as exc:
+        await download.enqueue_download(ARTIST, TRACK, job_id="job-b", source="playlist")
+    assert exc.value.reason == "Stopped from Downloads"
+    assert await n_jobs() == 0 and fake_slsk.searches == []
+    assert not download.live_download_jobs and not download.stage_counts
+
+
+async def test_worker_side_enqueue_refuses_before_delegating(db_ready, monkeypatch):
+    """The arq worker has no client: the guard runs before the web delegation, so a
+    blacklisted track never turns into a 'backend unreachable' failed row."""
+    import backend.soulseek as soulseek
+    from backend.services.blacklist import BlacklistedTrack
+    monkeypatch.setattr(soulseek, "get_client", lambda: None)
+    delegated = []
+
+    async def delegate(*a, **k):
+        delegated.append(a)
+        return "x"
+    monkeypatch.setattr(download, "_delegate_download_to_web", delegate)
+    await add_blacklist(track=None, reason=None)  # whole artist
+    with pytest.raises(BlacklistedTrack) as exc:
+        await download.enqueue_download(ARTIST, "Any Song", source="similar")
+    assert exc.value.reason == "Artist blacklisted" and delegated == []
+    assert await n_jobs() == 0
+
+
+async def test_internal_run_answers_blacklisted(db_ready, fake_slsk):
+    await add_blacklist()
+    resp = await download.internal_run_download(download.InternalDownloadRequest(
+        artist=ARTIST, track=TRACK, job_id="job-i", source="similar", wait=False))
+    assert resp == {"job_id": None, "blacklisted": True, "reason": "Stopped from Downloads"}
+    assert await n_jobs() == 0
+
+
+async def test_trigger_still_refuses_blacklisted(db_ready, fake_slsk):
+    await add_blacklist()
+    async with async_session() as db:
+        resp = await download.trigger_download(download.DownloadRequest(artist=ARTIST, track=TRACK),
+                                               BackgroundTasks(), db)
+    assert resp == {"error": "blacklisted", "reason": "Stopped from Downloads"}
+
+
+async def test_origin_is_stamped_on_the_row(db_ready, fake_slsk, monkeypatch):
+    import json
+    import backend.services.scanner as scanner
+
+    async def fake_import(*a, **k):
+        return "track-1"
+    monkeypatch.setattr(scanner, "import_downloaded_file", fake_import)
+    sent = []
+
+    async def record(payload):
+        sent.append(payload)
+    monkeypatch.setattr(download, "broadcast_job_update", record)
+    fake_slsk.results = [result("alpha", f"Music\\{ARTIST}\\01 - {TRACK}.flac")]
+    jid = await download.enqueue_download(ARTIST, TRACK, job_id="job-o", source="playlist", origin="playlist:import")
+    async with async_session() as s:
+        row = await s.get(Job, jid)
+    assert row.status == "completed"
+    assert json.loads(row.tracks)[0]["origin"] == "playlist:import"  # sticky to the end
+    submitted = json.loads(row.log)[0]
+    assert submitted["k"] == "submitted" and submitted["origin"] == "playlist:import"
+    final = sent[-1]
+    assert final["status"] == "completed" and final["card"] == "dl:playlist"

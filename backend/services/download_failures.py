@@ -9,7 +9,8 @@ Classes (``failure_class``), checked in this order:
 
 - ``None``       the job did not fail.
 - ``orphan``     failed with no result, or a result that is not a JSON object
-                 (a job ended mid-flight with no reason recorded).
+                 (a job ended mid-flight with no reason recorded). A result that
+                 holds nothing but the incident-dismissed flag is still an orphan.
 - ``cancelled``  ``result.error == "Cancelled by user"``.
 - ``infra``      Zonik's own infrastructure failure (``is_infra_error``): restart,
                  Soulseek not connected / client not available, backend
@@ -27,6 +28,8 @@ Buckets (``BUCKET_OF_CLASS``) fold cancelled/infra/orphan into one ``infra`` buc
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
+from typing import Iterable
 
 # Substrings of Zonik's own failure messages. The SQL filter matches each as
 # ``result LIKE '%<pattern>%'`` (plus ``result IS NULL`` for orphans).
@@ -69,6 +72,10 @@ NO_BETTER_PREFIX = "No source better than"
 REJECTED_PREFIX = "Not imported:"
 REJECTED_LEGACY = "Import rejected"
 
+# Merged into member rows' result by POST /api/jobs/incidents/{id}/dismiss. It never
+# changes a row's class: a NULL result that only gained this flag stays an orphan.
+DISMISSED_KEY = "incident_dismissed"
+
 
 def _infra(text: str | None) -> bool:
     # Imported at call time: auto_download pulls in the DB layer, and this module
@@ -100,7 +107,7 @@ def failure_class(status: str | None, result_json: str | None, tracks_json: str 
     if status != "failed":
         return None
     result = _loads(result_json)
-    if not isinstance(result, dict):
+    if not isinstance(result, dict) or not (set(result) - {DISMISSED_KEY}):
         return "orphan"
     error = result.get("error")
     error = error if isinstance(error, str) else ""
@@ -150,3 +157,95 @@ def incident_kind(text: str | None) -> str:
     if "backend unreachable" in t:
         return "unreachable"
     return "orphan"
+
+
+def failure_text(result_json: str | None) -> str:
+    """The text incident_kind reads for a row: ``result.error or result.message``,
+    the raw text for a result that is not a JSON object, "" for none."""
+    result = _loads(result_json)
+    if isinstance(result, dict):
+        error = result.get("error")
+        message = result.get("message")
+        error = error if isinstance(error, str) else ""
+        message = message if isinstance(message, str) else ""
+        return error or message
+    if result is None and result_json and isinstance(result_json, str):
+        return result_json  # unparseable text (an old reaper's plain string)
+    return ""
+
+
+def is_dismissed(result_json: str | None) -> bool:
+    result = _loads(result_json)
+    return isinstance(result, dict) and result.get(DISMISSED_KEY) is True
+
+
+def _as_dt(ts) -> datetime | None:
+    if isinstance(ts, datetime):
+        return ts.replace(tzinfo=None) if ts.tzinfo else ts
+    if isinstance(ts, str) and ts:
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return None
+    return None
+
+
+def _bucket_start(ts: datetime, minutes: int) -> datetime:
+    midnight = ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    mins = ts.hour * 60 + ts.minute
+    return midnight + timedelta(minutes=(mins // minutes) * minutes)
+
+
+def group_incidents(rows: Iterable[tuple], bucket_minutes: int = 15) -> list[dict]:
+    """Group not-the-track's-fault failures into incidents (DC-17).
+
+    ``rows`` are ``(id, card, finished_at|started_at, error_text, dismissed)``.
+    Rows group by ``(incident_kind(error_text), bucket_minutes bucket of the time)``;
+    adjacent buckets of the same kind merge (a 4-minute outage across a bucket
+    boundary is one incident, two reaper batches 40 minutes apart are two). The id
+    is ``"<kind>:<first bucket start ISO>"``, derived from the rows, so it is stable
+    across reloads while those rows exist. An incident is ``dismissed`` when every
+    member is. Newest first."""
+    step = timedelta(minutes=bucket_minutes)
+    groups: dict[tuple[str, datetime], list[tuple]] = {}
+    for jid, card, ts, text, dismissed in rows:
+        ts = _as_dt(ts)
+        if ts is None:
+            continue
+        kind = incident_kind(text)
+        groups.setdefault((kind, _bucket_start(ts, bucket_minutes)), []).append(
+            (jid, card, ts, bool(dismissed)))
+
+    buckets_by_kind: dict[str, list[datetime]] = {}
+    for kind, start in sorted(groups):
+        buckets_by_kind.setdefault(kind, []).append(start)
+
+    def build(kind: str, run: list[datetime]) -> dict:
+        members = sorted((m for b in run for m in groups[(kind, b)]), key=lambda m: (m[2], str(m[0])))
+        by_card: dict[str, int] = {}
+        for _, card, _, _ in members:
+            c = card or "dl"
+            by_card[c] = by_card.get(c, 0) + 1
+        return {
+            "id": f"{kind}:{run[0].isoformat()}",
+            "kind": kind,
+            "count": len(members),
+            "start": members[0][2].isoformat(),
+            "end": members[-1][2].isoformat(),
+            "job_ids": [m[0] for m in members],
+            "by_card": by_card,
+            "dismissed": all(m[3] for m in members),
+        }
+
+    out: list[dict] = []
+    for kind, starts in buckets_by_kind.items():
+        run: list[datetime] = []
+        for b in starts:
+            if run and b - run[-1] > step:
+                out.append(build(kind, run))
+                run = []
+            run.append(b)
+        if run:
+            out.append(build(kind, run))
+    out.sort(key=lambda i: (i["end"], i["id"]), reverse=True)
+    return out

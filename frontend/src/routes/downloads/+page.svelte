@@ -2,10 +2,10 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { api } from '$lib/api.js';
-	import { addToast, activeTransfers, activeUploads } from '$lib/stores.js';
+	import { addToast, activeTransfers, activeUploads, wsState } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
-	import { formatSize, formatSpeed, formatETA, formatDateTime, formatRelativeTime } from '$lib/utils.js';
-	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Upload, Radio, Activity } from 'lucide-svelte';
+	import { formatSize, formatSpeed, formatETA, formatDateTime, formatRelativeTime, parseUTC } from '$lib/utils.js';
+	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Upload, Radio, Activity, TriangleAlert, ListOrdered } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -14,6 +14,9 @@
 	import EmptyState from '../../components/ui/EmptyState.svelte';
 	import DataTable from '../../components/ui/DataTable.svelte';
 	import Modal from '../../components/ui/Modal.svelte';
+	import Skeleton from '../../components/ui/Skeleton.svelte';
+	import FormatBadge from '../../components/ui/FormatBadge.svelte';
+	import { sourceLabel, clockTime, shortDate, resolveStage, firstTrack, failureSentence, nextSentence, doneOutcome, ordinal } from '$lib/downloads/stage.js';
 
 	// Search state
 	let searchQuery = $state('');
@@ -32,6 +35,8 @@
 	// Per-result inline download status: key = username+filename → { status, jobId }
 	// status: 'queued' | 'searching' | 'downloading' | 'completed' | 'failed'
 	let resultStatuses = $state({});
+	// Set when /download/search refused the query: the blacklist reason replaces "No results".
+	let searchBlacklisted = $state(null);
 	const FORMAT_ORDER = { flac: 0, wav: 1, alac: 1, mp3: 2, m4a: 3, ogg: 3, opus: 3 };
 
 	function sortResults(list) {
@@ -104,7 +109,8 @@
 	// Downloads state
 	let jobs = $state([]);
 	let jobsOffset = $state(0);
-	let jobsLoading = $state(false);
+	let jobsLoading = $state(true);
+	let jobsLoaded = $state(false); // first list response arrived (the skeleton shows only before it)
 	let expandedJob = $state(null);
 	// Starts unset: once the counts arrive it opens on Active when anything is in flight,
 	// otherwise Done. Opening on "All" meant a wall of failures (1,003 at the time).
@@ -118,19 +124,11 @@
 	let jobDetails = $state({});
 	const PAGE_LIMIT = 20;
 
-	let hiddenJobIds = $state(new Set(
-		typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem('hiddenDownloadJobs') || '[]') : []
-	));
-
 	const STATUS_PRIORITY = { pending: 0, running: 1, completed: 2, failed: 3 };
 
 	let visibleJobs = $derived(
-		jobs.filter(j => {
-			if (hiddenJobIds.has(j.id)) return false;
-			// Status (and failure reason) are filtered by the server now; the old client-side
-			// filter only ever saw the 20 jobs on the current page.
-			return true;
-		}).sort((a, b) => {
+		// Status, failure reason and scope are filtered by the server.
+		[...jobs].sort((a, b) => {
 			const pa = STATUS_PRIORITY[a.status] ?? 1;
 			const pb = STATUS_PRIORITY[b.status] ?? 1;
 			if (pa !== pb) return pa - pb;
@@ -146,7 +144,8 @@
 	}
 
 	function parseJobTracks(job) {
-		if (!job.tracks) return null;
+		if (!job?.tracks) return null;
+		if (Array.isArray(job.tracks)) return job.tracks;
 		try { return JSON.parse(job.tracks); } catch { return null; }
 	}
 
@@ -157,88 +156,223 @@
 		return KNOWN_EXTENSIONS.has(ext) ? ext : '';
 	}
 
-	const SOURCE_LABELS = {
-		'dl:upgrade': 'Upgrade',
-		'dl:discovery': 'Discovery',
-		'dl:similar': 'Similar',
-		'dl:remix': 'Remix',
-		'dl:recommendation': 'For You',
-		'dl:playlist': 'Playlist',
-		'dl:manual': 'Manual',
-	};
-	function sourceLabel(job) {
-		if (!job?.card) return '';
-		return SOURCE_LABELS[job.card] || '';
-	}
-
-	function formatJobTitle(raw) {
-		if (!raw) return 'Unknown Track';
-		let s = raw;
-		s = s.replace(/^Queued for slot:\s*/i, '');
-		s = s.replace(/^Queued:\s*/i, '');
-		s = s.replace(/\s*\(attempt\s+\d+.*?\)/i, '');
-		s = s.replace(/\s*—\s*\d+\s+sources/i, '');
-		return s.trim();
+	/**
+	 * "Artist — Track" from tracks[0]. Rows written before tracks[0] carried both fall back to
+	 * the description's first two " — " parts (the server's progress strings start with them).
+	 */
+	function jobTitle(job, fallback = 'Unknown track') {
+		const t = firstTrack(job);
+		if (t.artist && t.track) return `${t.artist} — ${t.track}`;
+		const d = (job?.description || '').replace(/^Queued( for slot)?:\s*/i, '').replace(/\s*\(attempt\s+\d+.*?\)/i, '');
+		const parts = d.split(' — ').filter(Boolean);
+		if (parts.length >= 2) return `${parts[0]} — ${parts[1]}`;
+		return d.trim() || fallback;
 	}
 
 	function getSearchQueryForJob(job) {
 		if (!job) return '';
 		const t = parseJobTracks(job)?.[0] || (job.id ? jobDetails[job.id]?.[0] : null);
 		if (t?.artist && t?.track) return `${t.artist} - ${t.track}`;
-		if (job.description) {
-			return formatJobTitle(job.description).replace(/\s*—\s*/, ' - ');
-		}
-		return '';
+		const title = jobTitle(job, '');
+		return title ? title.replace(/\s*—\s*/, ' - ') : '';
 	}
 
-	function friendlyFailure(job, jobResult) {
-		const raw = jobResult?.last_error || jobResult?.message || jobResult?.error || (job?.id ? jobDetails[job.id]?.[0]?.error : '') || '';
-		const rawLower = raw.toLowerCase();
+	// --- Failed + done row cells (R1-F1) ---------------------------------------------------
 
-		if (!raw) {
-			return { title: 'Download failed', detail: 'Unknown error occurred', category: 'unknown' };
-		}
-		if (rawLower.includes('cancel')) {
-			return { title: 'Cancelled', detail: 'Cancelled by user', category: 'cancelled' };
-		}
-		if (rawLower.includes('no candidates') || rawLower.includes('no results') || rawLower.includes('not found') || rawLower.includes('no matches')) {
-			return { title: 'No peers online', detail: 'Track is not currently shared by any online Soulseek peers', category: 'not_found' };
-		}
-		if (rawLower.includes('already in library') || rawLower.includes('no better') || rawLower.includes('equal or better')) {
-			return { title: 'Already in library', detail: 'Existing library copy is equal or higher quality', category: 'no_better' };
-		}
-		if (rawLower.includes('timed out') || rawLower.includes('timeout') || rawLower.includes('connection reset') || rawLower.includes('closed by peer') || rawLower.includes('connectionrefused')) {
-			return { title: 'Peer offline / timed out', detail: 'The uploader disconnected or their client did not respond', category: 'timeout' };
-		}
-		if (rawLower.includes('queue') && (rawLower.includes('full') || rawLower.includes('limit'))) {
-			return { title: 'Peer upload queue full', detail: 'Uploader has reached their max simultaneous transfer limit', category: 'queue_full' };
-		}
-		if (rawLower.includes('leech') || rawLower.includes('share') || rawLower.includes('denied')) {
-			return { title: 'Access denied by peer', detail: 'Uploader restricts downloads to peers sharing files', category: 'denied' };
-		}
-		if (rawLower.includes('corrupt') || rawLower.includes('size mismatch') || rawLower.includes('eof')) {
-			return { title: 'File transfer incomplete', detail: 'File received was incomplete or truncated', category: 'corrupt' };
-		}
-		return { title: 'Transfer error', detail: raw, category: 'other' };
+	/** HISTORY cell: how often this track failed in the last 30 days. */
+	function historyText(job) {
+		const n = Number(job?.times_failed_30d);
+		if (!Number.isFinite(n) || n <= 0) return '—';
+		return n === 1 ? '1st try' : `${ordinal(n)} time`;
 	}
 
-	// Server-side counts (independent of pagination) — fetched alongside loadJobs.
-	let jobStatusCounts = $state({ all: 0, queued: 0, running: 0, completed: 0, completed_today: 0, completed_week: 0, failed: 0 });
+	const TONE_TEXT = { rose: 'text-rose-400', muted: 'text-[var(--text-muted)]', default: 'text-[var(--text-secondary)]' };
+
+	// Jobs whose track was blacklisted from this page ("Stop trying"): NEXT reads "blacklisted".
+	let stoppedIds = $state(new Set());
+
+	function nextCell(job) {
+		if (stoppedIds.has(job.id)) return { text: 'blacklisted', tone: 'rose' };
+		return nextSentence(job, tick);
+	}
+
+	/** Local "HH:MM" for today, "Oct 17" before that. */
+	function whenShort(iso) {
+		const d = parseUTC(iso);
+		if (!d || Number.isNaN(d.getTime())) return '';
+		return d.toDateString() === new Date(tick).toDateString() ? clockTime(iso) : shortDate(iso);
+	}
+
+	/** "HH:MM" today, "Oct 17 HH:MM" before. */
+	function whenLong(iso) {
+		const d = parseUTC(iso);
+		if (!d || Number.isNaN(d.getTime())) return '';
+		return d.toDateString() === new Date(tick).toDateString() ? clockTime(iso) : `${shortDate(iso)} ${clockTime(iso)}`;
+	}
+
+	function trackIdOf(job) {
+		return job?.track_id || job?.track?.id || parseJobResult(job || {})?.track_id || null;
+	}
+
+	/** PLAYED cell for a done row. */
+	function playedText(job, outcome) {
+		if (outcome?.kind === 'already_had') return '—';
+		const tr = job?.track;
+		if (!tr) return '—';
+		const n = Number(tr.play_count) || 0;
+		if (!n) return 'not yet';
+		const last = parseUTC(tr.last_played_at);
+		const fin = parseUTC(job.finished_at);
+		if (last && fin && last < fin) return `${n}× before`;
+		return tr.last_played_at ? `${n}× · last ${whenShort(tr.last_played_at)}` : `${n}×`;
+	}
+
+	// Stop trying: blacklist the track, drop its retry schedule, skip pending upgrades (DC-11).
+	let stopConfirm = $state(null); // null | { id, title }
+	let stopping = $state(false);
+
+	async function confirmStopTrying() {
+		if (!stopConfirm) return;
+		stopping = true;
+		const { id, title } = stopConfirm;
+		try {
+			const r = await api.stopTrying(id);
+			if (r?.error) {
+				addToast(`Not blacklisted: ${r.error}`, 'warning');
+			} else {
+				stoppedIds = new Set([...stoppedIds, id]);
+				const bits = [];
+				if (r?.attempt_deleted) bits.push('retry schedule removed');
+				if (r?.upgrades_skipped) bits.push(`${r.upgrades_skipped} upgrade${r.upgrades_skipped === 1 ? '' : 's'} skipped`);
+				addToast(`Stopped trying ${title}: blacklisted${bits.length ? ` · ${bits.join(' · ')}` : ''}`, 'success');
+				loadBlacklist();
+			}
+			stopConfirm = null;
+		} catch (e) {
+			addToast(`Stop trying failed: ${e.message}`, 'error');
+		} finally {
+			stopping = false;
+		}
+	}
+
+	// Done totals (GET /api/jobs/summary, DC-9) — also feeds the quiet state's "last finished".
+	let summary = $state(null);
+	let summaryLoadedAt = 0;
+	async function loadSummary(force = false) {
+		if (!force && Date.now() - summaryLoadedAt < 10000) return;
+		summaryLoadedAt = Date.now();
+		try { summary = await api.getJobsSummary(sinceISO); } catch {}
+	}
+
+	let doneTotals = $derived.by(() => {
+		const o = summary?.outcomes;
+		if (!o) return '';
+		const added = (o.new || 0) + (o.replaced || 0);
+		const n = added + (o.already_had || 0);
+		const parts = [`${n.toLocaleString()} finished ${scopeInfo.phrase}`];
+		const extra = [];
+		if (summary.bytes_added) extra.push(formatSize(summary.bytes_added));
+		if (summary.pct_lossless != null && added) extra.push(`${summary.pct_lossless}% FLAC`);
+		parts.push(`${added.toLocaleString()} added${extra.length ? ` (${extra.join(', ')})` : ''}`);
+		if (o.already_had) parts.push(`${o.already_had.toLocaleString()} already had`);
+		return parts.join(' · ');
+	});
+
+	// Quiet state (nothing live): last finish, next scheduled runs, retries coming due today.
+	let attemptsSummary = $state(null);
+	let firstDueAt = $state(null);
+	let quietLoadedAt = 0;
+	let localEndOfDayISO = $derived.by(() => {
+		const d = new Date(tick);
+		d.setHours(23, 59, 59, 999);
+		return d.toISOString();
+	});
+
+	async function loadQuiet(force = false) {
+		if (!force && Date.now() - quietLoadedAt < 30000) return;
+		quietLoadedAt = Date.now();
+		const eod = localEndOfDayISO;
+		const [sum, , due] = await Promise.allSettled([
+			api.getAttemptsSummary(eod), loadSummary(force), api.getDownloadAttempts(eod, 1),
+		]);
+		if (sum.status === 'fulfilled') attemptsSummary = sum.value;
+		firstDueAt = due.status === 'fulfilled' ? due.value?.items?.[0]?.next_retry_at || null : null;
+	}
+
+	let quietText = $derived.by(() => {
+		const parts = [];
+		const lf = summary?.last_finished;
+		if (lf?.finished_at) {
+			const what = [lf.artist, lf.track].filter(Boolean).join(' — ');
+			parts.push(`Last job finished ${whenLong(lf.finished_at)} · ${sourceLabel(lf.card)}${what ? ` · ${what}` : ''}.`);
+		}
+		const runs = attemptsSummary?.next_runs || [];
+		if (runs.length) {
+			parts.push(`Next scheduled runs: ${runs.slice(0, 4).map(r => `${r.label} ${whenLong(r.next_run_at)}`).join(', ')}.`);
+		}
+		const dueNow = attemptsSummary?.due_now || 0;
+		const dueToday = attemptsSummary?.due_before || 0;
+		if (dueNow) parts.push(`${plural(dueNow, 'track')} in backoff ${dueNow === 1 ? 'is' : 'are'} due again now.`);
+		else if (dueToday) parts.push(`${plural(dueToday, 'track')} in backoff come${dueToday === 1 ? 's' : ''} due again${firstDueAt ? ` from ${clockTime(firstDueAt)}` : ' today'}.`);
+		return parts.join(' ');
+	});
+
+	let backoffOpen = $state(false);
+	let backoffRows = $state([]);
+	let backoffLoading = $state(false);
+	async function openBackoffList() {
+		backoffOpen = true;
+		backoffLoading = true;
+		try { backoffRows = (await api.getDownloadAttempts(null, 200))?.items || []; } catch { backoffRows = []; }
+		finally { backoffLoading = false; }
+	}
+
+	let runningRetries = $state(false);
+	async function runRetriesNow() {
+		runningRetries = true;
+		try {
+			const r = await api.runDueRetries(localEndOfDayISO);
+			const n = r?.queued ?? 0;
+			addToast(n ? `Queued ${plural(n, 'retry', 'retries')} — they show up under Active as they start` : 'Nothing was due — no retries queued', n ? 'success' : 'info');
+			loadQuiet(true);
+		} catch (e) {
+			addToast(`Retries not queued: ${e.message}`, 'error');
+		} finally {
+			runningRetries = false;
+		}
+	}
+
+	// One scope (DC-7/DC-8): Today / 7 days / 30 days, sent as `since` = local midnight
+	// (0, 6 or 29 days back) in UTC. It drives the Done/Failed lists, the pill counts, the
+	// failure buckets, the bulk actions and the footers. Never "All time": retention is 30 days.
+	const SCOPES = [
+		{ value: 'today', label: 'Today', days: 0, phrase: 'today' },
+		{ value: 'week', label: '7 days', days: 6, phrase: 'in the last 7 days' },
+		{ value: 'month', label: '30 days', days: 29, phrase: 'in the last 30 days' },
+	];
+	let scope = $state('today');
+	let scopeInfo = $derived(SCOPES.find(x => x.value === scope) || SCOPES[0]);
+	let sinceISO = $derived.by(() => {
+		const d = new Date(tick);
+		d.setHours(0, 0, 0, 0);
+		d.setDate(d.getDate() - scopeInfo.days);
+		return d.toISOString();
+	});
+
+	// Server-side counts (independent of pagination), scoped by `since`.
+	let jobStatusCounts = $state({ all: 0, active: 0, queued: 0, running: 0, completed: 0, failed: 0 });
 
 	async function loadJobCounts() {
 		try {
-			const r = await fetch('/api/jobs/counts?type=download');
-			if (!r.ok) return;
-			const c = await r.json();
+			const c = await api.getJobCounts('download,bulk_download', sinceISO);
 			jobStatusCounts = {
 				all: c.all || 0,
-				active: (c.pending || 0) + (c.running || 0),
+				active: c.active ?? ((c.pending || 0) + (c.running || 0)),
 				queued: c.pending || 0,
 				running: c.running || 0,
-				completed: c.completed || 0,
-				completed_today: c.completed_today || 0,
-				completed_week: c.completed_week || 0,
-				failed: c.failed || 0,
+				// Older servers lack the scoped keys: fall back to the all-time ones.
+				completed: c.completed_since ?? c.completed ?? 0,
+				failed: c.failed_since ?? c.failed ?? 0,
 			};
 			if (jobStatusFilter === null) {
 				setJobFilter(jobStatusCounts.active > 0 ? 'active' : jobStatusCounts.completed > 0 ? 'completed' : 'all');
@@ -246,7 +380,24 @@
 		} catch {}
 	}
 
-	let hasCleanable = $derived(jobs.some(j => j.status === 'completed' || j.status === 'failed'));
+	// A burst of job_update frames (one per stage change) refreshes the counts at most twice a second.
+	let countsTimer;
+	function refreshCountsSoon() {
+		if (countsTimer) return;
+		countsTimer = setTimeout(() => { countsTimer = null; loadJobCounts(); }, 500);
+	}
+
+	function setScope(v) {
+		if (v === scope) return;
+		scope = v;
+		jobsOffset = 0;
+		doneLimit = 10;
+		bucketSamples = {};
+		expandedFailureBucket = null;
+		loadJobs();
+		if (jobStatusFilter === 'failed') loadFailureGroups();
+		loadSummary(true);
+	}
 
 	function getTransferForJob(job) {
 		if (job.status !== 'running') return null;
@@ -263,45 +414,6 @@
 			tr.username === t.username &&
 			(tr.filename?.endsWith(t.filename) || tr.filename?.split(/[/\\]/).pop() === t.filename)
 		);
-	}
-
-	function friendlyStatus(job, transfer) {
-		if (!job) {
-			if (transfer) {
-				const s = transfer.state;
-				if (s === 'transferring' || s === 'connected') return 'downloading';
-				if (s === 'queued' || s === 'requested') return 'queued';
-				return s;
-			}
-			return 'downloading';
-		}
-		if (job.status === 'completed') return 'completed';
-		if (job.status === 'failed') return 'failed';
-		if (job.status === 'pending') return 'queued';
-		if (transfer) {
-			const s = transfer.state;
-			if (s === 'transferring' || s === 'connected') return 'downloading';
-			if (s === 'queued' || s === 'requested') return 'queued';
-			return s;
-		}
-		const tracks = parseJobTracks(job) || (job.id ? jobDetails[job.id] : null);
-		if (tracks?.length) {
-			const t = tracks[0];
-			if (t.status === 'downloading' || t.status === 'transferring') return 'downloading';
-			if (t.status === 'queued') return 'queued';
-		}
-		const wsDesc = (job.id ? wsDescriptions[job.id] : null) || job.description || '';
-		if (wsDesc.includes('Queued for') || wsDesc.startsWith('Queued:')) return 'queued';
-		if (wsDesc.includes('(attempt')) return 'downloading';
-		return 'searching';
-	}
-
-	function statusVariant(status) {
-		if (status === 'completed') return 'success';
-		if (status === 'failed') return 'error';
-		if (status === 'downloading') return 'info';
-		if (status === 'queued') return 'warning';
-		return 'default';
 	}
 
 	function getJobForTransfer(transfer) {
@@ -328,69 +440,40 @@
 		}
 	}
 
-	// Active live transfers (actually transferring or connected)
-	let liveTransfers = $derived(
-		$activeTransfers.filter(tr => tr.state === 'transferring' || tr.state === 'connected' || (tr.speed && tr.speed > 0))
-	);
+	// Hero cards: only transfers that are moving bytes (state === 'transferring').
+	let liveTransfers = $derived($activeTransfers.filter(tr => tr.state === 'transferring'));
 	let totalTransferSpeed = $derived(
 		liveTransfers.reduce((acc, tr) => acc + (tr.speed || 0), 0)
 	);
-
-	// Active hero cards items (active transfers in flight)
-	let activeHeroItems = $derived.by(() => {
-		const items = [];
-		const seenJobIds = new Set();
-
-		for (const tr of liveTransfers) {
-			if (tr.job_id) seenJobIds.add(tr.job_id);
-			items.push({
-				type: 'transfer',
-				transfer: tr,
-				job: getJobForTransfer(tr),
-				id: tr.job_id || `${tr.username}-${tr.filename}`,
-			});
-		}
-
-		for (const j of visibleJobs) {
-			if (j.status === 'running' && !seenJobIds.has(j.id)) {
-				const tr = getTransferForJob(j);
-				const status = friendlyStatus(j, tr);
-				if (status === 'downloading') {
-					seenJobIds.add(j.id);
-					items.push({
-						type: 'job',
-						transfer: tr,
-						job: j,
-						id: j.id,
-					});
-				}
-			}
-		}
-		return items;
+	// Session median speed of the running transfers: a row under 10 % of it reads "slow".
+	let medianSpeed = $derived.by(() => {
+		const v = liveTransfers.map(tr => Number(tr.speed) || 0).filter(x => x > 0).sort((a, b) => a - b);
+		if (!v.length) return 0;
+		const m = Math.floor(v.length / 2);
+		return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
 	});
+
+	let activeHeroItems = $derived(liveTransfers.map(tr => ({
+		transfer: tr,
+		job: getJobForTransfer(tr),
+		id: tr.job_id || `${tr.username}-${tr.filename}`,
+	})));
 
 	let heroJobIds = $derived(new Set(activeHeroItems.map(item => item.job?.id).filter(Boolean)));
 
-	// Currently searching job (pacing query on Soulseek central server)
-	let searchingJob = $derived(
-		visibleJobs.find(j => j.status === 'running' && friendlyStatus(j, getTransferForJob(j)) === 'searching')
-	);
-
-	// Queue rank derivation for jobs waiting for slot (FIFO: oldest queued first)
-	let queuedJobsList = $derived(
-		visibleJobs
-			.filter(j => friendlyStatus(j, getTransferForJob(j)) === 'queued')
-			.sort((a, b) => {
-				const ta = a.started_at || a.created_at || '';
-				const tb = b.started_at || b.created_at || '';
-				return ta.localeCompare(tb);
-			})
-	);
-
-	function getQueueRank(jobId) {
-		const idx = queuedJobsList.findIndex(j => j.id === jobId);
-		return idx >= 0 ? idx + 1 : null;
+	/** What a job is doing now (stage.js resolver), recomputed on the 1 s tick. */
+	function stageOf(job, transfer) {
+		return resolveStage(job, transfer, limits, tick, { pacer, medianSpeed });
 	}
+
+	const COLOUR_TEXT = {
+		sky: 'text-sky-400', amber: 'text-amber-400', indigo: 'text-indigo-400',
+		muted: 'text-[var(--text-muted)]', emerald: 'text-emerald-400', rose: 'text-rose-400',
+	};
+	const COLOUR_DOT = {
+		sky: 'bg-sky-400', amber: 'bg-amber-400', indigo: 'bg-indigo-400',
+		muted: 'bg-[var(--text-disabled)]', emerald: 'bg-emerald-400', rose: 'bg-rose-400',
+	};
 
 	let displayJobs = $derived.by(() => {
 		// When active transfer hero cards are shown on Active/All tab, exclude those active jobs from the rows below
@@ -400,32 +483,14 @@
 		return visibleJobs;
 	});
 
-	// Done tab timeframe & density state
-	let doneTimeframe = $state('today'); // 'today' | 'week' | 'all'
+	// Done tab density (how many rows of the scope are shown)
 	let doneLimit = $state(10);
 	let clearCompletedConfirm = $state(false);
 	let clearingCompleted = $state(false);
 
-	let allCompletedJobs = $derived(
-		jobs.filter(j => j.status === 'completed' && !hiddenJobIds.has(j.id))
-	);
-
 	let displayedCompletedJobs = $derived(
-		allCompletedJobs.slice(0, doneLimit)
+		jobs.filter(j => j.status === 'completed').slice(0, doneLimit)
 	);
-
-	let totalCompletedInTimeframe = $derived(
-		doneTimeframe === 'today' ? jobStatusCounts.completed_today :
-		doneTimeframe === 'week' ? jobStatusCounts.completed_week :
-		jobStatusCounts.completed
-	);
-
-	function setDoneTimeframe(tf) {
-		doneTimeframe = tf;
-		doneLimit = 10;
-		jobsOffset = 0;
-		loadJobs(false);
-	}
 
 	function expandDoneList(step = 25) {
 		doneLimit += step;
@@ -435,8 +500,9 @@
 	async function handleClearCompleted() {
 		clearingCompleted = true;
 		try {
-			await api.clearDownloadHistory('completed');
-			addToast('Cleared completed download history', 'success');
+			const r = await api.clearDownloadHistory('completed', null, sinceISO);
+			const n = r?.deleted ?? 0;
+			addToast(n ? `Deleted ${n} completed download record${n === 1 ? '' : 's'} on the server` : 'Nothing to clear', n ? 'success' : 'info');
 			clearCompletedConfirm = false;
 			await loadJobCounts();
 			await loadJobs();
@@ -473,7 +539,7 @@
 			iconColor: 'text-sky-400',
 			iconBg: 'bg-sky-500/15',
 			primaryAction: 'dismiss',
-			primaryLabel: 'Dismiss All',
+			primaryLabel: 'Delete All',
 		},
 		{
 			reason: 'not_found',
@@ -493,7 +559,17 @@
 			iconColor: 'text-rose-400',
 			iconBg: 'bg-rose-500/15',
 			primaryAction: 'dismiss',
-			primaryLabel: 'Dismiss All',
+			primaryLabel: 'Delete All',
+		},
+		{
+			reason: 'infra',
+			title: "Not the track's fault",
+			description: 'Cancelled, restart or outage — not counted against the track',
+			icon: TriangleAlert,
+			iconColor: 'text-slate-300',
+			iconBg: 'bg-slate-500/15',
+			primaryAction: 'retry',
+			primaryLabel: 'Retry All',
 		},
 	];
 
@@ -510,7 +586,7 @@
 		if (!bucketSamples[reason]) {
 			bucketLoading = true;
 			try {
-				const data = await api.getDownloadHistory(0, 5, 'failed', reason);
+				const data = await api.getDownloadHistory(0, 5, 'failed', reason, null, sinceISO);
 				bucketSamples[reason] = data.items || data;
 			} catch (e) {
 				console.error(e);
@@ -522,24 +598,26 @@
 
 	async function dismissFailedByReason(reason, label) {
 		try {
-			await api.clearDownloadHistory('failed', reason);
-			addToast(`Dismissed ${label}`, 'success');
+			const r = await api.clearDownloadHistory('failed', reason, sinceISO);
+			const n = r?.deleted ?? 0;
+			addToast(n ? `Deleted ${n} failed download record${n === 1 ? '' : 's'} (${label}) on the server` : 'Nothing to delete', n ? 'success' : 'info');
 			delete bucketSamples[reason];
 			if (expandedFailureBucket === reason) expandedFailureBucket = null;
 			await loadJobCounts();
 			await loadFailureGroups();
 			await loadJobs();
 		} catch (e) {
-			addToast(`Dismiss failed: ${e.message}`, 'error');
+			addToast(`Delete failed: ${e.message}`, 'error');
 		}
 	}
 
 	async function handleDismissNonCritical() {
 		dismissingNonCritical = true;
 		try {
-			await api.clearDownloadHistory('failed', 'no_better');
-			await api.clearDownloadHistory('failed', 'rejected');
-			addToast('Dismissed non-critical failure records', 'success');
+			const a = await api.clearDownloadHistory('failed', 'no_better', sinceISO);
+			const b = await api.clearDownloadHistory('failed', 'rejected', sinceISO);
+			const n = (a?.deleted ?? 0) + (b?.deleted ?? 0);
+			addToast(n ? `Deleted ${n} non-critical failure record${n === 1 ? '' : 's'} on the server` : 'Nothing to delete', n ? 'success' : 'info');
 			bucketSamples = {};
 			expandedFailureBucket = null;
 			dismissNonCriticalConfirm = false;
@@ -547,7 +625,7 @@
 			await loadFailureGroups();
 			await loadJobs();
 		} catch (e) {
-			addToast(`Dismiss failed: ${e.message}`, 'error');
+			addToast(`Delete failed: ${e.message}`, 'error');
 		} finally {
 			dismissingNonCritical = false;
 		}
@@ -619,16 +697,18 @@
 	}
 
 	async function loadFailureGroups() {
-		try { failureGroups = await api.getDownloadFailures(); } catch { failureGroups = []; }
+		try { failureGroups = await api.getDownloadFailures(sinceISO); } catch { failureGroups = []; }
 	}
 
 	async function retryFailed() {
 		if (!retryConfirm) return;
 		retrying = true;
 		try {
-			const r = await api.retryFailedDownloads(retryConfirm.reason);
+			const r = await api.retryFailedDownloads(retryConfirm.reason, sinceISO);
 			if (r?.error) throw new Error(r.error);
-			addToast(`Re-queued ${r.tracks} download${r.tracks === 1 ? '' : 's'}`, 'success');
+			const n = r?.tracks ?? 0;
+			addToast(n ? `Re-queued ${n} download${n === 1 ? '' : 's'}` : 'Nothing to retry in this period', n ? 'success' : 'info');
+			bucketSamples = {};
 			retryConfirm = null;
 			failureReason = null;
 			await loadFailureGroups();
@@ -646,9 +726,12 @@
 		try {
 			const status = jobStatusFilter && jobStatusFilter !== 'all' ? STATUS_QUERY[jobStatusFilter] : null;
 			const limit = jobStatusFilter === 'completed' ? Math.max(25, doneLimit) : PAGE_LIMIT;
-			const timeframe = jobStatusFilter === 'completed' && doneTimeframe !== 'all' ? doneTimeframe : null;
-			const data = await api.getDownloadHistory(jobsOffset, limit, status, jobStatusFilter === 'failed' ? failureReason : null, timeframe);
+			// Finished rows are scoped; live rows are not (a job queued before midnight is still live).
+			const scoped = jobStatusFilter === 'completed' || jobStatusFilter === 'failed';
+			const data = await api.getDownloadHistory(jobsOffset, limit, status, jobStatusFilter === 'failed' ? failureReason : null, null, scoped ? sinceISO : null);
 			jobs = data.items || data;
+			if (jobStatusFilter === 'completed') loadSummary();
+			if (jobStatusFilter === 'active' && !jobs.length) loadQuiet();
 			// Only fetch details for active RUNNING jobs (not queued/pending) — limit to 10 to avoid hammering API
 			const needDetails = jobs
 				.filter(j => j.status === 'running' && !jobDetails[j.id])
@@ -662,7 +745,7 @@
 				});
 			}
 		} catch (e) { console.error('Download history load failed:', e); }
-		finally { jobsLoading = false; }
+		finally { jobsLoading = false; jobsLoaded = true; }
 	}
 
 	async function toggleJobDetail(jobId) {
@@ -676,20 +759,129 @@
 		}
 	}
 
+	/** Drop a row locally (the server already removed or replaced it). */
+	function dropJobLocally(jobId) {
+		jobs = jobs.filter(j => j.id !== jobId);
+		for (const k of Object.keys(bucketSamples)) {
+			bucketSamples[k] = (bucketSamples[k] || []).filter(s => s.id !== jobId);
+		}
+	}
+
 	async function retryJob(jobId) {
 		try {
-			await api.retryJob(jobId);
-			addToast('Retry started', 'success');
+			const r = await api.retryJob(jobId);
+			if (r?.error) {
+				addToast(`Not retried: ${r.error}`, 'warning');
+				return;
+			}
+			addToast(`Retry started${r?.total > 1 ? ` (${r.total} tracks)` : ''}`, 'success');
+			if (r?.replaced_job_id) dropJobLocally(r.replaced_job_id);
+			if (jobStatusFilter === 'failed') loadFailureGroups();
 			await loadJobs();
-		} catch { addToast('Retry failed', 'error'); }
+		} catch (e) { addToast(`Retry failed: ${e.message}`, 'error'); }
 	}
 
 	async function cancelJob(jobId) {
 		try {
-			await api.cancelJob(jobId);
+			const r = await api.cancelJob(jobId);
+			if (r?.error) {
+				addToast(r.error === 'Job not cancellable' ? 'Not cancelled: it already finished' : `Not cancelled: ${r.error}`, 'warning');
+				await loadJobs();
+				return;
+			}
 			addToast('Download cancelled', 'success');
 			await loadJobs();
-		} catch { addToast('Cancel failed', 'error'); }
+		} catch (e) { addToast(`Cancel failed: ${e.message}`, 'error'); }
+	}
+
+	// Remove = delete the row on the server, behind a confirm (local hiding is gone).
+	let removeConfirm = $state(null); // null | { id, title }
+	let removing = $state(false);
+
+	function askRemove(job) {
+		const t = parseJobTracks(job)?.[0];
+		const title = t?.artist && t?.track ? `${t.artist} — ${t.track}` : jobTitle(job);
+		removeConfirm = { id: job.id, title, status: job.status };
+	}
+
+	async function confirmRemove() {
+		if (!removeConfirm) return;
+		removing = true;
+		const { id, status: wasStatus } = removeConfirm;
+		try {
+			const r = await api.deleteJob(id);
+			if (r?.error) {
+				addToast(r.error === 'Job is active' ? 'Not removed: it is still running — cancel it first' : `Not removed: ${r.error}`, 'warning');
+			} else {
+				addToast('Removed on the server', 'success');
+				dropJobLocally(id);
+				loadJobCounts();
+				if (wasStatus === 'failed') loadFailureGroups();
+			}
+			removeConfirm = null;
+		} catch (e) {
+			addToast(`Remove failed: ${e.message}`, 'error');
+		} finally {
+			removing = false;
+		}
+	}
+
+	/**
+	 * Toast what a /api/download/trigger reply actually says. Returns the job id when a
+	 * download was queued (or one was already running), else null. `key` resets the
+	 * inline status of a search-result row that did not start.
+	 */
+	function handleTriggerReply(resp, key = null, startedLabel = 'Download started') {
+		const reset = () => { if (key) delete resultStatuses[key]; };
+		if (!resp || typeof resp !== 'object') {
+			reset();
+			addToast('Download not started: no reply from the server', 'warning');
+			return null;
+		}
+		if (resp.error === 'blacklisted' || resp.blacklisted) {
+			reset();
+			addToast(`Not downloaded: blacklisted${resp.reason ? ` (${resp.reason})` : ''}`, 'warning');
+			return null;
+		}
+		if (resp.status === 'in_library') {
+			reset();
+			addToast('Already in your library', 'info', 6000,
+				resp.track_id ? { href: `/library?track=${encodeURIComponent(resp.track_id)}`, label: 'Open track' } : null);
+			return null;
+		}
+		if (resp.status === 'already_downloading') {
+			if (key) resultStatuses[key] = { status: 'searching', jobId: resp.job_id };
+			addToast('Already downloading', 'info');
+			return resp.job_id || null;
+		}
+		if (resp.status === 'skipped') {
+			reset();
+			addToast(`Skipped: ${resp.reason || 'not downloaded'}`, 'warning');
+			return null;
+		}
+		if (resp.job_id) {
+			if (key) resultStatuses[key] = { status: 'searching', jobId: resp.job_id };
+			addToast(startedLabel, 'success');
+			return resp.job_id;
+		}
+		reset();
+		addToast(`Not downloaded: ${resp.error || resp.detail || 'the server did not queue it'}`, 'warning');
+		return null;
+	}
+
+	async function postTrigger(body) {
+		const r = await fetch('/api/download/trigger', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+		});
+		let data = null;
+		try { data = await r.json(); } catch {}
+		if (!r.ok) {
+			const d = data?.detail;
+			throw new Error(typeof d === 'string' ? d : `API error: ${r.status}`);
+		}
+		return data;
 	}
 
 	// Blacklist
@@ -745,6 +937,7 @@
 		formatFilter = 'all';
 		resultsPage = 0;
 		resultStatuses = {};
+		searchBlacklisted = null;
 		try {
 			// Try to split "Artist - Track" for blacklist check, otherwise send as query
 			const q = searchQuery.trim();
@@ -762,7 +955,8 @@
 			resultCount = data.count || 0;
 			resultUsers = data.users || 0;
 			searchDone = true;
-			if (!results.length) addToast('No results found', 'warning');
+			if (data.blacklisted) searchBlacklisted = { reason: data.reason || '' };
+			else if (!results.length) addToast('No results found', 'warning');
 		} catch (e) {
 			addToast('Search failed: ' + e.message, 'error');
 		} finally {
@@ -783,18 +977,13 @@
 		resultStatuses[key] = { status: 'queued' };
 		try {
 			const { artist, track } = parseQuery();
-			const resp = await fetch('/api/download/trigger', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					artist, track,
-					username: result.username,
-					filename: result.filename,
-					source: 'manual',
-				})
-			}).then(r => r.json());
-			resultStatuses[key] = { status: 'searching', jobId: resp.job_id };
-			addToast('Download started', 'success');
+			const resp = await postTrigger({
+				artist, track,
+				username: result.username,
+				filename: result.filename,
+				source: 'manual',
+			});
+			handleTriggerReply(resp, key);
 		} catch (e) {
 			resultStatuses[key] = { status: 'failed' };
 			addToast('Download failed: ' + e.message, 'error');
@@ -806,12 +995,8 @@
 	async function autoDownload() {
 		try {
 			const { artist, track } = parseQuery();
-			await fetch('/api/download/trigger', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ artist, track, source: 'manual' })
-			}).then(r => r.json());
-			addToast('Auto-download started', 'success');
+			const resp = await postTrigger({ artist, track, source: 'manual' });
+			handleTriggerReply(resp, null, 'Auto-download started');
 		} catch (e) {
 			addToast('Download failed: ' + e.message, 'error');
 		}
@@ -841,10 +1026,88 @@
 	let uploadSpeed = $derived($activeUploads.reduce((n, u) => n + (u.state === 'transferring' ? (u.speed || 0) : 0), 0));
 	const baseName = (path) => (path || '').split(/[\\/]/).filter(Boolean).pop() || path;
 
-	let wsDescriptions = $state({});
+	// WS job_update keys copied onto the list row (DC-3; final frame adds the outcome keys).
+	const WS_MERGE_KEYS = ['tracks', 'card', 'stage', 'stage_since', 'attempt', 'of', 'username', 'queue_place', 'search',
+		'failure_class', 'source_errors', 'track_id', 'already_in_library', 'failed_sources', 'error'];
+	// Completion toasts only for downloads someone started by hand, and only when a file was added.
+	const TOAST_CARDS = new Set(['dl:manual', 'dl:search', 'dl']);
+	const toastedJobs = new Set();
+
+	function maybeCompletionToast(wsJob, prev) {
+		if (wsJob.already_in_library || toastedJobs.has(wsJob.id)) return;
+		const card = wsJob.card ?? prev?.card;
+		if (!TOAST_CARDS.has(card)) return;
+		toastedJobs.add(wsJob.id);
+		const t = parseJobTracks(prev || {})?.[0] || parseJobTracks(wsJob)?.[0] || {};
+		let artist = t.artist, track = t.track;
+		if (!artist || !track) {
+			const parts = (wsJob.description || prev?.description || '').split(' — ');
+			artist = artist || parts[0] || '';
+			track = track || parts[1] || '';
+		}
+		const result = (prev && parseJobResult(prev)) || {};
+		const fname = t.filename || result.filename || '';
+		const fmt = fileExtension(fname.split(/[/\\]/).pop()).toUpperCase();
+		const size = t.file_size || result.file_size || 0;
+		const tail = [fmt, size ? formatSize(size) : ''].filter(Boolean).join(' ');
+		const title = [artist, track].filter(Boolean).join(' — ') || 'download';
+		addToast(`Added ${title}${tail ? ` · ${tail}` : ''}`, 'success', 7000,
+			wsJob.track_id ? { href: `/library?track=${encodeURIComponent(wsJob.track_id)}`, label: 'Open track' } : null);
+	}
+
 	let unsubJobUpdate;
-	let autoHideTimer;
 	let loadJobsTimer;
+
+	// Live status (GET /api/download/status, DC-12): limits from settings, stage counts over every
+	// active job, the search pacer and the Soulseek connection. Polled every 5 s while anything is
+	// live, every 30 s otherwise; it also seeds the transfer/upload stores the WebSocket keeps live.
+	let status = $state(null);
+	let limits = $derived(status?.limits ?? null);
+	let stages = $derived(status?.stages ?? null);
+	let pacer = $derived(status?.pacer ?? null);
+	let slsk = $derived(status?.soulseek ?? null);
+	// 1 s clock: drives relative times, chip ages and elapsed cells.
+	let tick = $state(Date.now());
+	let statusTimer;
+	let tickTimer;
+	let lastFallbackAt = 0;
+	let destroyed = false;
+
+	async function loadStatus() {
+		try {
+			const data = await api.getDownloadStatus();
+			status = data;
+			// With the socket down the poll is the only source, so an empty list must clear too.
+			if (data.downloads?.length || !$wsState.connected) activeTransfers.set(data.downloads || []);
+			activeUploads.set(data.uploads || []);
+		} catch {}
+	}
+
+	function scheduleStatus() {
+		clearTimeout(statusTimer);
+		if (destroyed) return;
+		statusTimer = setTimeout(async () => {
+			await loadStatus();
+			scheduleStatus();
+		}, (stages?.live ?? 0) > 0 ? 5000 : 30000);
+	}
+
+	const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+	let subtitle = $derived(limits && limits.transfer_slots != null
+		? `Limits from settings: ${plural(limits.transfer_slots, 'transfer slot')} · ${plural(limits.search_slots, 'search slot')} · ${limits.searches_per_minute} searches a minute, ${limits.search_min_interval_s} s apart`
+		: 'Limits from settings');
+
+	/** Relative time that re-renders with the 1 s tick. */
+	function rel(iso) {
+		void tick;
+		return formatRelativeTime(iso);
+	}
+
+	// Tab-title badge: files moving bytes right now.
+	let transferringCount = $derived(stages?.transferring ?? $activeTransfers.filter(t => t.state === 'transferring').length);
+
+	let wsAgeS = $derived($wsState.lastMessageAt ? Math.max(0, Math.round((tick - $wsState.lastMessageAt) / 1000)) : null);
 
 	onMount(() => {
 		loadBlacklist();
@@ -859,29 +1122,35 @@
 			}
 		}
 		loadJobs();
-		fetch('/api/download/status').then(r => r.json()).then(data => {
-			if (data.downloads?.length) activeTransfers.set(data.downloads);
-			activeUploads.set(data.uploads || []);
-		}).catch(() => {});
+		loadStatus().then(scheduleStatus);
 		api.getServices().then(d => { sharing = !!d.slsk_share_library; }).catch(() => {});
 		unsubJobUpdate = onJobUpdate(async (wsJob) => {
 			if (wsJob.type === 'download' || wsJob.type === 'bulk_download') {
-				if (wsJob.description) wsDescriptions[wsJob.id] = wsJob.description;
 				// Update inline result statuses from job updates
 				for (const [key, rs] of Object.entries(resultStatuses)) {
 					if (rs.jobId === wsJob.id) {
-						if (wsJob.status === 'completed') resultStatuses[key] = { status: 'completed', jobId: wsJob.id };
+						if (wsJob.status === 'completed') resultStatuses[key] = { status: 'completed', jobId: wsJob.id, trackId: wsJob.track_id || null };
 						else if (wsJob.status === 'failed') resultStatuses[key] = { status: 'failed', jobId: wsJob.id };
-						else if (wsJob.status === 'running') {
-							const desc = wsJob.description || '';
-							if (desc.includes('(attempt')) resultStatuses[key] = { status: 'searching', jobId: wsJob.id };
+						else if (wsJob.status === 'running' && ['connecting', 'queued_at_peer', 'transferring'].includes(wsJob.stage)) {
+							resultStatuses[key] = { status: 'downloading', jobId: wsJob.id };
 						}
 					}
 				}
-				// Update job in-place from WS data for instant UI feedback
+				// Update job in-place from WS data for instant UI feedback (DC-3 fields merged).
 				const idx = jobs.findIndex(j => j.id === wsJob.id);
+				const prev = idx >= 0 ? jobs[idx] : null;
 				if (idx >= 0) {
-					jobs[idx] = { ...jobs[idx], status: wsJob.status, progress: wsJob.progress, total: wsJob.total, description: wsJob.description || jobs[idx].description, result: wsJob.result || jobs[idx].result, finished_at: wsJob.finished_at || jobs[idx].finished_at };
+					const merged = { ...jobs[idx], status: wsJob.status, progress: wsJob.progress, total: wsJob.total, description: wsJob.description || jobs[idx].description, result: wsJob.result || jobs[idx].result, finished_at: wsJob.finished_at || jobs[idx].finished_at };
+					for (const k of WS_MERGE_KEYS) {
+						if (wsJob[k] !== undefined && wsJob[k] !== null) merged[k] = wsJob[k];
+					}
+					jobs[idx] = merged;
+				}
+				if (wsJob.status === 'completed') maybeCompletionToast(wsJob, prev);
+				refreshCountsSoon();
+				// Something went live while the status poll sleeps 30 s: refresh it now.
+				if ((wsJob.status === 'running' || wsJob.status === 'pending') && !((stages?.live ?? 0) > 0)) {
+					loadStatus().then(scheduleStatus);
 				}
 				// Debounce full reload — longer delay when many active jobs to avoid API hammering
 				clearTimeout(loadJobsTimer);
@@ -890,7 +1159,16 @@
 				loadJobsTimer = setTimeout(loadJobs, debounceMs);
 			}
 		});
-		autoHideTimer = setInterval(() => { jobs = [...jobs]; }, 30000);
+		lastFallbackAt = Date.now();
+		tickTimer = setInterval(() => {
+			tick = Date.now();
+			// Socket down: missed job_update/transfer_progress frames are recovered by polling.
+			if (!$wsState.connected && tick - lastFallbackAt >= 10000) {
+				lastFallbackAt = tick;
+				loadJobs();
+				loadStatus();
+			}
+		}, 1000);
 
 		// Handle URL params from global search bar
 		const params = $page.url.searchParams;
@@ -908,22 +1186,44 @@
 
 	onDestroy(() => {
 		if (unsubJobUpdate) unsubJobUpdate();
-		if (autoHideTimer) clearInterval(autoHideTimer);
+		destroyed = true;
+		clearInterval(tickTimer);
+		clearTimeout(statusTimer);
 		clearTimeout(loadJobsTimer);
+		clearTimeout(countsTimer);
 	});
 </script>
+
+<svelte:head>
+	<title>{transferringCount ? `(${transferringCount}) ` : ''}Downloads · Zonik</title>
+</svelte:head>
 
 <div class="max-w-6xl">
 	<PageHeader
 		title="Downloads"
-		subtitle="P2P Transfer Queue: 2 concurrent download slots · Soulseek Server Pacer: 6 searches/min"
+		{subtitle}
 		icon={Download}
 		color="var(--color-downloads)">
 		{#snippet actions()}
-			<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-				<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-				Soulseek Connected
-			</span>
+			{#if slsk}
+				{#if slsk.connected}
+					<span title={slsk.username ? `Logged in as ${slsk.username}${slsk.reconnects ? ` · ${plural(slsk.reconnects, 'reconnect')}` : ''}` : ''}>
+						<Badge variant="success">
+							<span class="inline-block w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1.5"></span>
+							Soulseek connected
+						</Badge>
+					</span>
+				{:else}
+					<Badge variant="error">
+						{slsk.disconnected_since ? `Not connected since ${clockTime(slsk.disconnected_since * 1000)}` : 'Soulseek not connected'}{slsk.reconnecting ? ' · reconnecting…' : ''}
+					</Badge>
+				{/if}
+			{/if}
+			{#if $wsState.connected}
+				<Badge variant="info">Live{wsAgeS != null ? ` · updated ${wsAgeS} s ago` : ''}</Badge>
+			{:else}
+				<Badge variant="warning">Reconnecting{wsAgeS != null ? ` · last update ${wsAgeS} s ago` : ''}</Badge>
+			{/if}
 		{/snippet}
 	</PageHeader>
 
@@ -1089,10 +1389,19 @@
 						</td>
 						<td class="px-4 py-2">
 							{#if inline?.status === 'completed'}
-								<Badge variant="success">
-									<CircleCheck class="w-3 h-3 mr-0.5" />
-									done
-								</Badge>
+								{#if inline.trackId}
+									<a href="/library?track={encodeURIComponent(inline.trackId)}" title="Open track">
+										<Badge variant="success">
+											<CircleCheck class="w-3 h-3 mr-0.5" />
+											done &rarr;
+										</Badge>
+									</a>
+								{:else}
+									<Badge variant="success">
+										<CircleCheck class="w-3 h-3 mr-0.5" />
+										done
+									</Badge>
+								{/if}
 							{:else if inline?.status === 'failed'}
 								<div class="flex items-center gap-1">
 									<Badge variant="error">failed</Badge>
@@ -1135,484 +1444,446 @@
 					</div>
 				{/if}
 			{:else}
-				<EmptyState title="No results" description="No P2P results match the current filter.">
-					{#snippet icon()}<Search class="w-10 h-10" />{/snippet}
-				</EmptyState>
+				{#if searchBlacklisted}
+					<EmptyState title="Blacklisted" description={`Not searched: this artist or track is on your download blacklist${searchBlacklisted.reason ? ` (${searchBlacklisted.reason})` : ''}.`}>
+						{#snippet icon()}<ShieldBan class="w-10 h-10" />{/snippet}
+					</EmptyState>
+				{:else}
+					<EmptyState title="No results" description="No P2P results match the current filter.">
+						{#snippet icon()}<Search class="w-10 h-10" />{/snippet}
+					</EmptyState>
+				{/if}
 			{/if}
 		</Card>
 	{/if}
 
-	<!-- Downloads (unified: active + history) -->
-	{#if jobs.length || jobsLoading}
-		<Card padding="p-4" class="mb-6">
-			<div class="flex items-center justify-between mb-3">
-				<div class="flex items-center gap-2">
-					<Download class="w-4 h-4 text-[var(--color-downloads)]" />
-					<h2 class="text-base font-semibold text-[var(--text-primary)]">Downloads</h2>
-				</div>
-				{#if hasCleanable}
-					<button onclick={() => {
-						const cleared = jobs.filter(j => j.status === 'completed' || j.status === 'failed').map(j => j.id);
-						hiddenJobIds = new Set([...hiddenJobIds, ...cleared]);
-						localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-						expandedJob = null;
-					}} class="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-red-400 transition-colors">
-						<Eraser class="w-3.5 h-3.5" />
-						Clear
-					</button>
+	<!-- Downloads (unified: active + history). Always mounted: pills, scope and empty states render at 0. -->
+	{#snippet sourceChip(job)}
+		<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 whitespace-nowrap">{sourceLabel(job)}</span>
+	{/snippet}
+
+	{#snippet extBadge(ext)}
+		{#if ext}
+			<Badge size="sm" variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>{ext.toUpperCase()}</Badge>
+		{/if}
+	{/snippet}
+
+	{#snippet removeButton(job)}
+		<Button variant="icon" size="sm" class="hover:!text-rose-400" title="Remove (deletes the row on the server)" aria-label="Remove"
+			onclick={() => askRemove(job)}>
+			<Trash2 class="w-3.5 h-3.5" />
+		</Button>
+	{/snippet}
+
+	{#snippet doneRow(job)}
+		{@const jobResult = parseJobResult(job)}
+		{@const t = parseJobTracks(job)?.[0]}
+		{@const rawTitle = jobTitle(job)}
+		{@const outcome = doneOutcome(job)}
+		{@const muted = outcome?.kind === 'already_had'}
+		{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
+		{@const fmt = job.track?.format || fileExtension(fname)}
+		{@const fsize = job.track?.file_size || t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
+		{@const peer = t?.username || jobResult?.username || ''}
+		{@const attemptNo = Number(job.attempt ?? t?.attempt) || 0}
+		{@const trackId = trackIdOf(job)}
+		{@const timeIso = job.finished_at || job.started_at || job.created_at}
+		<div class="grid grid-cols-[10px_minmax(0,1.3fr)_196px_52px_62px_150px_44px_100px_100px_28px] max-md:grid-cols-[10px_minmax(0,1fr)_28px] items-center gap-x-2.5 gap-y-1 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs {muted ? 'opacity-60' : ''}">
+			<span class="w-2 h-2 rounded-full {muted ? 'bg-[var(--text-disabled)]' : 'bg-emerald-400'} max-md:row-span-2 max-md:self-start max-md:mt-1.5" title={outcome?.label || 'Completed'}></span>
+			<div class="min-w-0 flex items-center gap-2 max-md:col-start-2 max-md:row-start-1">
+				<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>{rawTitle}</span>
+				{@render sourceChip(job)}
+			</div>
+			<!-- Metadata cells: grid columns from md up, one wrapped line under the title below md -->
+			<div class="md:contents max-md:col-start-2 max-md:row-start-2 max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-2 max-md:gap-y-0.5 min-w-0">
+				<span class="min-w-0 truncate" title={outcome?.label || ''}>
+					{#if outcome}<Badge size="sm" variant={outcome.badgeVariant}>{outcome.label}</Badge>{/if}
+				</span>
+				<span class="md:text-center">{#if fmt}<FormatBadge format={fmt} class="!text-[10px] !py-0" />{/if}</span>
+				<span class="text-[var(--text-muted)] font-mono text-[11px] md:text-right truncate">{fsize > 0 ? formatSize(fsize) : '—'}</span>
+				<span class="text-[var(--text-muted)] text-[11px] truncate min-w-0" title={peer ? `from ${peer}${attemptNo > 1 ? ` (${ordinal(attemptNo)} peer tried)` : ''}` : ''}>
+					{peer || '—'}{#if peer && attemptNo > 1}<span class="text-[var(--text-disabled)]"> · {ordinal(attemptNo)} peer</span>{/if}
+				</span>
+				<span class="text-[var(--text-muted)] font-mono text-[11px] md:text-right whitespace-nowrap" title={timeIso ? formatDateTime(timeIso) : ''}>{timeIso ? whenShort(timeIso) : '—'}</span>
+				<span class="text-[var(--text-muted)] text-[11px] truncate">{playedText(job, outcome)}</span>
+				{#if trackId}
+					<a href="/library?track={encodeURIComponent(trackId)}" class="text-sky-400 hover:text-sky-300 font-medium transition-colors md:text-right whitespace-nowrap">
+						{muted ? 'Open existing' : 'Open track'} <span aria-hidden="true">&rarr;</span>
+					</a>
+				{:else}
+					<a href="/library?search={encodeURIComponent(getSearchQueryForJob(job).replace(' - ', ' '))}" class="text-sky-400 hover:text-sky-300 font-medium transition-colors md:text-right whitespace-nowrap" title="Search the library">
+						In library <span aria-hidden="true">&rarr;</span>
+					</a>
 				{/if}
 			</div>
-			<FilterPills
-				class="mb-4"
-				options={[
-					{ value: 'active', label: 'Active', color: 'downloads', count: jobStatusCounts.active },
-					{ value: 'completed', label: 'Done', color: 'downloads', count: jobStatusCounts.completed },
-					{ value: 'failed', label: 'Failed', color: 'downloads', count: jobStatusCounts.failed },
-					{ value: 'all', label: 'All', color: 'downloads' },
-				].filter(opt => opt.value === 'all' || opt.value === 'active' || (jobStatusCounts[opt.value] || 0) > 0)}
-				value={jobStatusFilter}
-				onchange={setJobFilter}
-			/>
+			<div class="flex justify-end max-md:col-start-3 max-md:row-start-1">{@render removeButton(job)}</div>
+		</div>
+	{/snippet}
 
-			{#if jobsLoading && !jobs.length}
-				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
-			{:else if jobStatusFilter === 'completed'}
-				<!-- OPTION 3: TIME-SCOPED DENSE FEED FOR DONE -->
-				<div class="flex items-center justify-between flex-wrap gap-2 mb-4">
-					<div class="inline-flex rounded-lg p-0.5 bg-[var(--surface-container)] border border-[var(--border-subtle)] text-xs">
-						<button
-							type="button"
-							onclick={() => setDoneTimeframe('today')}
-							class="px-3 py-1.5 rounded-md font-medium transition-all {doneTimeframe === 'today' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-						>
-							Today <span class="font-mono text-[11px] text-[var(--text-muted)] ml-1">({(jobStatusCounts.completed_today || 0).toLocaleString()})</span>
-						</button>
-						<button
-							type="button"
-							onclick={() => setDoneTimeframe('week')}
-							class="px-3 py-1.5 rounded-md font-medium transition-all {doneTimeframe === 'week' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-						>
-							Last 7 Days <span class="font-mono text-[11px] text-[var(--text-muted)] ml-1">({(jobStatusCounts.completed_week || 0).toLocaleString()})</span>
-						</button>
-						<button
-							type="button"
-							onclick={() => setDoneTimeframe('all')}
-							class="px-3 py-1.5 rounded-md font-medium transition-all {doneTimeframe === 'all' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
-						>
-							All Time <span class="font-mono text-[11px] text-[var(--text-muted)] ml-1">({(jobStatusCounts.completed || 0).toLocaleString()})</span>
-						</button>
-					</div>
+	{#snippet failedActions(job)}
+		{@const searchQ = getSearchQueryForJob(job)}
+		{#if searchQ}
+			<Button variant="icon" size="sm" title="Search P2P by hand" aria-label="Search by hand"
+				onclick={() => { searchQuery = searchQ; searchSoulseek(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+				<Search class="w-3.5 h-3.5" />
+			</Button>
+		{/if}
+		<Button variant="icon" size="sm" class="hover:!text-emerald-400" title="Retry (replaces this row)" aria-label="Retry" onclick={() => retryJob(job.id)}>
+			<RotateCcw class="w-3.5 h-3.5" />
+		</Button>
+		<Button variant="icon" size="sm" class="hover:!text-orange-400" title="Stop trying (blacklist this track)" aria-label="Stop trying"
+			disabled={stoppedIds.has(job.id)} onclick={() => stopConfirm = { id: job.id, title: jobTitle(job) }}>
+			<ShieldBan class="w-3.5 h-3.5" />
+		</Button>
+		{@render removeButton(job)}
+	{/snippet}
 
-					{#if jobStatusCounts.completed > 0}
-						<button
-							type="button"
-							onclick={() => clearCompletedConfirm = true}
-							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-container)] text-xs text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-500/30 transition-colors"
-						>
-							<Eraser class="w-3.5 h-3.5" />
-							Clear Completed History
-						</button>
+	{#snippet failedRow(job)}
+		{@const rawTitle = jobTitle(job)}
+		{@const sentence = failureSentence(job)}
+		{@const next = nextCell(job)}
+		{@const cls = job.failure_class}
+		<div class="grid grid-cols-[10px_minmax(0,1.05fr)_minmax(0,1.5fr)_76px_132px_120px] max-md:grid-cols-[10px_minmax(0,1fr)_28px] items-center gap-x-2.5 gap-y-1 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs">
+			<span class="w-2 h-2 rounded-full {cls === 'cancelled' || cls === 'infra' || cls === 'orphan' ? 'bg-[var(--text-disabled)]' : 'bg-rose-400'} max-md:row-span-3 max-md:self-start max-md:mt-1.5" title="Failed"></span>
+			<div class="min-w-0 flex items-center gap-2 max-md:col-start-2 max-md:row-start-1">
+				<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>{rawTitle}</span>
+				{@render sourceChip(job)}
+			</div>
+			<p class="min-w-0 whitespace-normal text-[var(--text-secondary)] leading-snug max-md:col-start-2 max-md:row-start-2">{sentence || 'Failed'}</p>
+			<!-- HISTORY + NEXT: two columns from md up, one line below md -->
+			<div class="md:contents max-md:col-start-2 max-md:row-start-3 max-md:flex max-md:flex-wrap max-md:gap-x-2 text-[11px]">
+				<span class="text-[var(--text-muted)] font-mono whitespace-nowrap">{historyText(job)}</span>
+				<span class="{TONE_TEXT[next.tone] || TONE_TEXT.default} min-w-0">{next.text}</span>
+			</div>
+			<div class="flex items-center justify-end gap-0.5 max-md:col-start-2 max-md:row-start-4 max-md:justify-start">
+				{@render failedActions(job)}
+			</div>
+		</div>
+	{/snippet}
+
+	{#snippet pager()}
+		{#if jobs.length >= PAGE_LIMIT || jobsOffset > 0}
+			<div class="flex items-center justify-between mt-4">
+				<Button variant="ghost" size="sm" disabled={jobsOffset === 0}
+					onclick={() => { jobsOffset = Math.max(0, jobsOffset - PAGE_LIMIT); loadJobs(); }}>
+					<ChevronLeft class="w-3.5 h-3.5" />
+					Prev
+				</Button>
+				<span class="text-xs text-[var(--text-muted)]">
+					{jobsOffset + 1}–{jobsOffset + jobs.length}
+				</span>
+				<Button variant="ghost" size="sm" disabled={jobs.length < PAGE_LIMIT}
+					onclick={() => { jobsOffset += PAGE_LIMIT; loadJobs(); }}>
+					Next
+					<ChevronRight class="w-3.5 h-3.5" />
+				</Button>
+			</div>
+		{/if}
+	{/snippet}
+
+	{#snippet liveRow(job)}
+		{@const transfer = getTransferForJob(job)}
+		{@const st = stageOf(job, transfer)}
+		{@const jobResult = parseJobResult(job)}
+		{@const t = parseJobTracks(job)?.[0]}
+		{@const rawTitle = jobTitle(job)}
+		{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || transfer?.filename?.split(/[/\\]/).pop() || ''}
+		{@const ext = fileExtension(fname)}
+		{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || transfer?.total_bytes || 0}
+		{@const peer = transfer?.username || t?.username || jobResult?.username || (job.id ? jobDetails[job.id]?.[0]?.username : '') || ''}
+		<div class="grid grid-cols-[10px_minmax(0,1fr)_224px_28px] max-md:grid-cols-[10px_minmax(0,1fr)_28px] items-center gap-x-2.5 gap-y-1 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs">
+			<span class="w-2 h-2 rounded-full {COLOUR_DOT[st.colour] || COLOUR_DOT.muted} {st.stage === 'transferring' || st.stage === 'searching' ? 'animate-pulse' : ''} max-md:row-span-2 max-md:self-start max-md:mt-1.5" title={st.word}></span>
+			<div class="min-w-0 max-md:col-start-2 max-md:row-start-1">
+				<div class="flex items-center gap-2 min-w-0">
+					<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>{rawTitle}</span>
+					{@render sourceChip(job)}
+					{@render extBadge(ext)}
+					{#if fsize > 0 || peer}
+						<span class="text-[11px] text-[var(--text-muted)] truncate min-w-0">
+							{#if fsize > 0}<span class="font-mono">{formatSize(fsize)}</span>{/if}{#if fsize > 0 && peer} · {/if}{#if peer}<span title="from {peer}">{peer}</span>{/if}
+						</span>
 					{/if}
 				</div>
-
-				{#if displayedCompletedJobs.length === 0}
-					<EmptyState
-						title="No downloads completed {doneTimeframe === 'today' ? 'today' : doneTimeframe === 'week' ? 'in the last 7 days' : ''}"
-						description="Downloaded tracks will appear here once finished."
-					>
-						{#snippet icon()}<Download class="w-10 h-10" />{/snippet}
-					</EmptyState>
-				{:else}
-					<div class="space-y-1.5">
-						{#each displayedCompletedJobs as job (job.id)}
-							{@const jobResult = parseJobResult(job)}
-							{@const jobTracks = parseJobTracks(job)}
-							{@const t = jobTracks?.[0]}
-							{@const rawTitle = formatJobTitle(job.description || job.type)}
-							{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
-							{@const ext = fileExtension(fname)}
-							{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
-							{@const peer = t?.username || jobResult?.username || ''}
-							{@const searchArtist = t?.artist || ''}
-							{@const searchTrack = t?.track || ''}
-							{@const libQuery = searchArtist && searchTrack ? `${searchArtist} ${searchTrack}` : rawTitle}
-							{@const timeIso = job.finished_at || job.started_at || job.created_at}
-
-							<div class="grid grid-cols-[16px_1fr_48px_60px_110px_70px_84px_24px] items-center gap-2.5 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs group/done">
-								<!-- Col 1: Status indicator -->
-								<span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" title="Completed"></span>
-
-								<!-- Col 2: Track Title & Source -->
-								<div class="min-w-0 flex items-center gap-2">
-									<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>
-										{rawTitle}
-									</span>
-									{#if sourceLabel(job)}
-										<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 hidden lg:inline">
-											{sourceLabel(job)}
-										</span>
-									{/if}
-								</div>
-
-								<!-- Col 3: Format Badge -->
-								<div class="text-center">
-									{#if ext}
-										<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'} class="text-[10px] py-0 px-1.5">
-											{ext.toUpperCase()}
-										</Badge>
-									{/if}
-								</div>
-
-								<!-- Col 4: Size -->
-								<span class="text-[var(--text-muted)] font-mono text-[11px] text-right truncate">
-									{fsize > 0 ? formatSize(fsize) : '—'}
-								</span>
-
-								<!-- Col 5: Peer -->
-								<span class="text-[var(--text-muted)] text-[11px] truncate hidden md:inline" title={peer ? `from ${peer}` : ''}>
-									{peer ? peer : '—'}
-								</span>
-
-								<!-- Col 6: Relative Time -->
-								<span class="text-[var(--text-muted)] font-mono text-[11px] text-right whitespace-nowrap" title={timeIso ? formatDateTime(timeIso) : ''}>
-									{timeIso ? formatRelativeTime(timeIso) : '—'}
-								</span>
-
-								<!-- Col 7: In Library Link -->
-								<a
-									href="/library?search={encodeURIComponent(libQuery)}"
-									class="text-sky-400 hover:text-sky-300 font-medium transition-colors text-right flex items-center justify-end gap-0.5 whitespace-nowrap"
-									title="View in Library"
-								>
-									In Library <span aria-hidden="true">&rarr;</span>
-								</a>
-
-								<!-- Col 8: Dismiss Button -->
-								<button
-									onclick={() => {
-										hiddenJobIds = new Set([...hiddenJobIds, job.id]);
-										localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-									}}
-									class="text-[var(--text-muted)] hover:text-rose-400 opacity-0 group-hover/done:opacity-100 transition-opacity p-0.5 flex items-center justify-center"
-									title="Dismiss from list"
-								>
-									<X class="w-3.5 h-3.5" />
-								</button>
-							</div>
-						{/each}
+				<p class="mt-0.5 text-[11px] min-w-0 whitespace-normal leading-snug">
+					<span class="font-medium {COLOUR_TEXT[st.colour] || COLOUR_TEXT.muted}">{st.word}</span>{#if st.detail}<span class="text-[var(--text-muted)]"> · {st.detail}</span>{/if}
+				</p>
+				{#if st.stage === 'transferring' && st.progress != null}
+					<div class="mt-1 h-1 rounded-full overflow-hidden bg-[var(--border-interactive)]">
+						<div class="h-full rounded-full bg-[var(--color-downloads)] transition-all duration-300" style="width: {st.progress}%"></div>
 					</div>
-
-					{@const totalInTimeframe = totalCompletedInTimeframe}
-					{#if totalInTimeframe > displayedCompletedJobs.length}
-						<div class="mt-4 pt-3 border-t border-[var(--border-subtle)]/50 flex items-center justify-between text-xs text-[var(--text-muted)]">
-							<span>
-								Showing <span class="font-medium text-[var(--text-secondary)]">{displayedCompletedJobs.length}</span> of <span class="font-medium text-[var(--text-secondary)]">{totalInTimeframe.toLocaleString()}</span>
-							</span>
-							<div class="flex items-center gap-2">
-								<button
-									onclick={() => expandDoneList(25)}
-									class="text-sky-400 hover:text-sky-300 font-medium hover:underline transition-colors"
-								>
-									View earlier {doneTimeframe === 'today' ? 'today' : ''} ({Math.min(25, totalInTimeframe - displayedCompletedJobs.length)} more) &darr;
-								</button>
-								{#if totalInTimeframe - displayedCompletedJobs.length > 25}
-									<span>&middot;</span>
-									<button
-										onclick={() => expandDoneList(totalInTimeframe)}
-										class="text-sky-400 hover:text-sky-300 font-medium hover:underline transition-colors"
-									>
-										View all ({totalInTimeframe.toLocaleString()})
-									</button>
-								{/if}
-							</div>
-						</div>
-					{/if}
 				{/if}
+			</div>
+			<div class="min-w-0 md:text-right font-mono text-[11px] leading-tight max-md:col-start-2 max-md:row-start-2" title={job.started_at ? `created ${rel(job.started_at)}` : ''}>
+				<div class="truncate {st.amber ? 'text-amber-400' : 'text-[var(--text-secondary)]'}">{st.big}</div>
+				{#if st.small}<div class="truncate text-[var(--text-muted)]">{st.small}</div>{/if}
+			</div>
+			<div class="flex justify-end max-md:col-start-3 max-md:row-start-1">
+				<Button variant="icon" size="sm" class="hover:!text-rose-400" title="Cancel" aria-label="Cancel" onclick={() => cancelJob(job.id)}>
+					<X class="w-3.5 h-3.5" />
+				</Button>
+			</div>
+		</div>
+	{/snippet}
 
-			{:else if jobStatusFilter === 'failed'}
-				<!-- OPTION 3: 4 ACTIONABLE TRIAGE CARDS FOR FAILED -->
-				<div class="mb-5 p-4 rounded-xl bg-gradient-to-r from-red-950/20 via-[var(--surface-container)] to-[var(--surface-container)] border border-red-500/20 space-y-3">
-					<div class="flex items-center justify-between flex-wrap gap-3">
-						<div class="min-w-0">
-							<h3 class="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
-								<ShieldBan class="w-4 h-4 text-rose-400" />
-								Failure Triage &bull; 4 Categories
-							</h3>
-							<p class="text-xs text-[var(--text-muted)] mt-0.5">
-								{jobStatusCounts.failed.toLocaleString()} failed downloads categorized by actionable root cause.
-							</p>
-						</div>
+	<Card padding="p-4" class="mb-6">
+		<div class="flex items-center justify-between mb-3">
+			<div class="flex items-center gap-2">
+				<Download class="w-4 h-4 text-[var(--color-downloads)]" />
+				<h2 class="text-base font-semibold text-[var(--text-primary)]">Downloads</h2>
+			</div>
+		</div>
+		<div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+		<FilterPills
+			options={[
+				{ value: 'active', label: 'Active', color: 'downloads', count: stages?.live ?? jobStatusCounts.active ?? 0 },
+				{ value: 'completed', label: 'Done', color: 'downloads', count: jobStatusCounts.completed || 0 },
+				{ value: 'failed', label: 'Failed', color: 'downloads', count: jobStatusCounts.failed || 0 },
+				{ value: 'all', label: 'All', color: 'downloads' },
+			]}
+			value={jobStatusFilter}
+			onchange={setJobFilter}
+		/>
+			<!-- One scope for lists, pill counts, buckets and footers -->
+			<div class="inline-flex rounded-lg p-0.5 bg-[var(--surface-container)] text-xs" role="group" aria-label="Period">
+				{#each SCOPES as sc (sc.value)}
+					<button type="button" onclick={() => setScope(sc.value)} aria-pressed={scope === sc.value}
+						class="px-3 py-1.5 rounded-md font-medium transition-all {scope === sc.value ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}">
+						{sc.label}
+					</button>
+				{/each}
+			</div>
+		</div>
 
-						<div class="flex items-center gap-2 flex-wrap">
-							{#if nonCriticalCount > 0}
-								<Button
-									variant="secondary"
-									size="sm"
-									onclick={() => dismissNonCriticalConfirm = true}
-									class="text-xs border-amber-500/30 hover:border-amber-500/60 text-amber-300"
-								>
-									<Trash2 class="w-3.5 h-3.5 mr-1" />
-									Dismiss Non-Critical ({nonCriticalCount.toLocaleString()})
-								</Button>
-							{/if}
-							<Button
-								variant="secondary"
-								size="sm"
-								onclick={() => retryConfirm = { reason: null, label: 'All failures', count: jobStatusCounts.failed }}
-								class="text-xs"
-							>
-								<RotateCcw class="w-3.5 h-3.5 mr-1" />
-								Retry All ({jobStatusCounts.failed.toLocaleString()})
-							</Button>
-						</div>
-					</div>
+		{#if !jobsLoaded}
+			<Skeleton variant="list-item" tone="high" count={5} />
+		{:else if jobStatusFilter === 'completed'}
+			{#if doneTotals || jobStatusCounts.completed > 0}
+				<div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+					<p class="text-xs text-[var(--text-muted)]">{doneTotals}</p>
+					<Button variant="secondary" size="sm" disabled={!jobStatusCounts.completed} onclick={() => clearCompletedConfirm = true}>
+						<Eraser class="w-3.5 h-3.5" />
+						Clear completed history on the server
+					</Button>
 				</div>
+			{/if}
 
-				<!-- 4 Actionable Triage Cards (2x2 Grid) -->
-				<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-					{#each FAILURE_CARD_CONFIG as cfg (cfg.reason)}
-						{@const count = getBucketCount(cfg.reason)}
-						{@const isInspecting = expandedFailureBucket === cfg.reason}
-						{@const IconComp = cfg.icon}
-
-						<div class="p-4 rounded-xl bg-[var(--surface-container)] border {isInspecting ? 'border-sky-500/50 shadow-md ring-1 ring-sky-500/20' : 'border-[var(--border-subtle)]'} transition-all flex flex-col justify-between">
-							<div>
-								<div class="flex items-start justify-between gap-2 mb-2">
-									<div class="flex items-center gap-2.5">
-										<div class="w-8 h-8 rounded-lg {cfg.iconBg} flex items-center justify-center flex-shrink-0">
-											<IconComp class="w-4 h-4 {cfg.iconColor}" />
-										</div>
-										<div>
-											<h4 class="text-sm font-semibold text-[var(--text-primary)] leading-tight">{cfg.title}</h4>
-											<span class="text-xs font-mono font-bold {cfg.iconColor}">
-												{count.toLocaleString()} track{count === 1 ? '' : 's'}
-											</span>
-										</div>
-									</div>
-
-									{#if count > 0}
-										<button
-											onclick={() => dismissFailedByReason(cfg.reason, cfg.title)}
-											class="text-[var(--text-muted)] hover:text-rose-400 transition-colors p-1"
-											title="Dismiss all {cfg.title}"
-										>
-											<Trash2 class="w-3.5 h-3.5" />
-										</button>
-									{/if}
-								</div>
-
-								<p class="text-xs text-[var(--text-muted)] leading-relaxed mb-4">
-									{cfg.description}
-								</p>
-							</div>
-
-							<div class="flex items-center justify-between gap-2 pt-3 border-t border-[var(--border-subtle)]/50 mt-auto">
-								{#if cfg.primaryAction === 'retry'}
-									<Button
-										variant="secondary"
-										size="sm"
-										disabled={count === 0}
-										onclick={() => retryConfirm = { reason: cfg.reason, label: cfg.title, count }}
-										class="text-xs"
-									>
-										<RotateCcw class="w-3.5 h-3.5 mr-1" />
-										Retry All ({count.toLocaleString()})
-									</Button>
-								{:else}
-									<Button
-										variant="secondary"
-										size="sm"
-										disabled={count === 0}
-										onclick={() => dismissFailedByReason(cfg.reason, cfg.title)}
-										class="text-xs"
-									>
-										<Trash2 class="w-3.5 h-3.5 mr-1" />
-										Dismiss All ({count.toLocaleString()})
-									</Button>
-								{/if}
-
-								<button
-									type="button"
-									disabled={count === 0}
-									onclick={() => toggleInspectBucket(cfg.reason)}
-									class="text-xs font-medium text-[var(--text-secondary)] hover:text-sky-400 transition-colors flex items-center gap-1 disabled:opacity-40"
-								>
-									Inspect (5) {isInspecting ? '▲' : '▼'}
-								</button>
-							</div>
-						</div>
+			{#if displayedCompletedJobs.length === 0}
+				<EmptyState compact title="No downloads finished in this period">
+					{#snippet icon()}<Download class="w-6 h-6" />{/snippet}
+				</EmptyState>
+			{:else}
+				<div class="grid grid-cols-[10px_minmax(0,1.3fr)_196px_52px_62px_150px_44px_100px_100px_28px] gap-x-2.5 px-3 pb-1 text-[10px] uppercase tracking-wider text-[var(--text-disabled)] max-md:hidden">
+					<span></span><span>Track</span><span>Outcome</span><span class="text-center">Format</span><span class="text-right">Size</span><span>From</span><span class="text-right">At</span><span>Played</span><span></span><span></span>
+				</div>
+				<div class="space-y-1.5">
+					{#each displayedCompletedJobs as job (job.id)}
+						{@render doneRow(job)}
 					{/each}
 				</div>
 
-				<!-- Inline Sample Inspector Drawer (Unfolded when Inspect (5) is active) -->
-				{#if expandedFailureBucket}
-					{@const cfg = FAILURE_CARD_CONFIG.find(c => c.reason === expandedFailureBucket)}
-					{@const samples = bucketSamples[expandedFailureBucket] || []}
-					{@const DrawerIcon = cfg?.icon}
-
-					<div class="p-4 rounded-xl bg-[var(--surface-container-high)] border border-sky-500/30 mb-5 space-y-3 animate-fade-slide-in">
-						<div class="flex items-center justify-between">
-							<div class="flex items-center gap-2">
-								{#if DrawerIcon}
-									<DrawerIcon class="w-4 h-4 {cfg?.iconColor}" />
-								{/if}
-								<h4 class="text-xs font-semibold text-[var(--text-primary)]">
-									Inspect Sample Tracks: <span class="text-sky-300">{cfg?.title}</span>
-								</h4>
-							</div>
-							<button
-								onclick={() => expandedFailureBucket = null}
-								class="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-								title="Close inspection"
-							>
-								<X class="w-4 h-4" />
+				{@const totalInTimeframe = jobStatusCounts.completed}
+				{#if totalInTimeframe > displayedCompletedJobs.length}
+					<div class="mt-4 pt-3 flex items-center justify-between flex-wrap gap-2 text-xs text-[var(--text-muted)]">
+						<span>
+							Showing <span class="font-medium text-[var(--text-secondary)]">{displayedCompletedJobs.length}</span> of <span class="font-medium text-[var(--text-secondary)]">{totalInTimeframe.toLocaleString()}</span>
+						</span>
+						<div class="flex items-center gap-2">
+							<button onclick={() => expandDoneList(25)} class="text-sky-400 hover:text-sky-300 font-medium hover:underline transition-colors">
+								View earlier ({Math.min(25, totalInTimeframe - displayedCompletedJobs.length)} more) &darr;
 							</button>
+							{#if totalInTimeframe - displayedCompletedJobs.length > 25}
+								<span>&middot;</span>
+								<button onclick={() => expandDoneList(totalInTimeframe)} class="text-sky-400 hover:text-sky-300 font-medium hover:underline transition-colors">
+									View all ({totalInTimeframe.toLocaleString()})
+								</button>
+							{/if}
 						</div>
-
-						{#if bucketLoading}
-							<p class="text-xs text-[var(--text-muted)] text-center py-4 font-mono">Loading sample tracks...</p>
-						{:else if samples.length === 0}
-							<p class="text-xs text-[var(--text-muted)] text-center py-4">No remaining samples in this category.</p>
-						{:else}
-							<div class="space-y-1.5">
-								{#each samples as sample (sample.id)}
-									{@const sampleResult = parseJobResult(sample)}
-									{@const fail = friendlyFailure(sample, sampleResult)}
-									{@const searchQ = getSearchQueryForJob(sample)}
-									{@const sampleTitle = formatJobTitle(sample.description || sample.type)}
-
-									<div class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[var(--surface-container)] border border-[var(--border-subtle)] text-xs">
-										<div class="min-w-0 flex-1">
-											<p class="font-medium text-[var(--text-primary)] truncate" title={sampleTitle}>
-												{sampleTitle}
-											</p>
-											<p class="text-[11px] text-rose-400/90 truncate mt-0.5">
-												{fail.title}: <span class="text-[var(--text-muted)]">{fail.detail}</span>
-											</p>
-										</div>
-
-										<div class="flex items-center gap-1.5 flex-shrink-0">
-											{#if searchQ}
-												<button
-													onclick={() => {
-														searchQuery = searchQ;
-														searchSoulseek();
-														window.scrollTo({ top: 0, behavior: 'smooth' });
-													}}
-													class="p-1.5 rounded hover:bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-sky-400 transition-colors"
-													title="Search P2P for alternative sources"
-												>
-													<Search class="w-3.5 h-3.5" />
-												</button>
-											{/if}
-											<button
-												onclick={() => retryJob(sample.id)}
-												class="p-1.5 rounded hover:bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-emerald-400 transition-colors"
-												title="Retry this download"
-											>
-												<RotateCcw class="w-3.5 h-3.5" />
-											</button>
-											<button
-												onclick={() => {
-													hiddenJobIds = new Set([...hiddenJobIds, sample.id]);
-													localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-													bucketSamples[expandedFailureBucket] = bucketSamples[expandedFailureBucket].filter(s => s.id !== sample.id);
-												}}
-												class="p-1.5 rounded hover:bg-[var(--surface-container-high)] text-[var(--text-muted)] hover:text-rose-400 transition-colors"
-												title="Dismiss track"
-											>
-												<X class="w-3.5 h-3.5" />
-											</button>
-										</div>
-									</div>
-								{/each}
-							</div>
-						{/if}
 					</div>
 				{/if}
+			{/if}
 
+		{:else if jobStatusFilter === 'failed'}
+			{@const peerCount = getBucketCount('peer')}
+			<div class="mb-4 flex items-center justify-between flex-wrap gap-3">
+				<p class="text-xs text-[var(--text-muted)]">
+					{(jobStatusCounts.failed || 0).toLocaleString()} failed {scopeInfo.phrase}, grouped by why they failed. Remove deletes a row on the server; Stop trying adds the track to the blacklist.
+				</p>
+				<div class="flex items-center gap-2 flex-wrap">
+					{#if nonCriticalCount > 0}
+						<Button variant="warning" size="sm" onclick={() => dismissNonCriticalConfirm = true}>
+							<Trash2 class="w-3.5 h-3.5" />
+							Delete Non-Critical ({nonCriticalCount.toLocaleString()})
+						</Button>
+					{/if}
+					<!-- Peer problems only: never resurrects cancelled or infra rows -->
+					<Button variant="secondary" size="sm" disabled={!peerCount}
+						onclick={() => retryConfirm = { reason: 'peer', label: 'Peer problems', count: peerCount }}>
+						<RotateCcw class="w-3.5 h-3.5" />
+						Retry {peerCount.toLocaleString()} peer problem{peerCount === 1 ? '' : 's'}
+					</Button>
+				</div>
+			</div>
+
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+				{#each FAILURE_CARD_CONFIG as cfg (cfg.reason)}
+					{@const count = getBucketCount(cfg.reason)}
+					{@const isInspecting = expandedFailureBucket === cfg.reason}
+					{@const IconComp = cfg.icon}
+					<div class="p-4 rounded-lg bg-[var(--surface-container)] {isInspecting || failureReason === cfg.reason ? 'ring-1 ring-sky-500/50' : ''} transition-all flex flex-col justify-between">
+						<div>
+							<div class="flex items-start justify-between gap-2 mb-2">
+								<div class="flex items-center gap-2.5 min-w-0">
+									<div class="w-8 h-8 rounded-lg {cfg.iconBg} flex items-center justify-center flex-shrink-0">
+										<IconComp class="w-4 h-4 {cfg.iconColor}" />
+									</div>
+									<div class="min-w-0">
+										<button type="button" class="text-left text-sm font-semibold leading-tight hover:text-sky-300 transition-colors {failureReason === cfg.reason ? 'text-sky-300' : 'text-[var(--text-primary)]'}"
+											title={failureReason === cfg.reason ? 'Show every failed row' : 'Show only these rows below'} onclick={() => setFailureReason(cfg.reason)}>{cfg.title}</button>
+										<span class="text-xs font-mono font-bold {cfg.iconColor}">{count.toLocaleString()} track{count === 1 ? '' : 's'}</span>
+									</div>
+								</div>
+								<Button variant="icon" size="sm" class="hover:!text-rose-400" disabled={count === 0}
+									title="Delete all {cfg.title} {scopeInfo.phrase} on the server" onclick={() => dismissFailedByReason(cfg.reason, cfg.title)}>
+									<Trash2 class="w-3.5 h-3.5" />
+								</Button>
+							</div>
+							<p class="text-xs text-[var(--text-muted)] leading-relaxed mb-4">{cfg.description}</p>
+						</div>
+						<div class="flex items-center justify-between gap-2 pt-3 mt-auto">
+							{#if cfg.primaryAction === 'retry'}
+								<Button variant="secondary" size="sm" disabled={count === 0}
+									onclick={() => retryConfirm = { reason: cfg.reason, label: cfg.title, count }}>
+									<RotateCcw class="w-3.5 h-3.5" />
+									Retry All ({count.toLocaleString()})
+								</Button>
+							{:else}
+								<Button variant="secondary" size="sm" disabled={count === 0}
+									onclick={() => dismissFailedByReason(cfg.reason, cfg.title)}>
+									<Trash2 class="w-3.5 h-3.5" />
+									Delete All ({count.toLocaleString()})
+								</Button>
+							{/if}
+							<Button variant="ghost" size="sm" disabled={count === 0} onclick={() => toggleInspectBucket(cfg.reason)}>
+								Inspect (5)
+								{#if isInspecting}<ChevronUp class="w-3.5 h-3.5" />{:else}<ChevronDown class="w-3.5 h-3.5" />{/if}
+							</Button>
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			{#if expandedFailureBucket}
+				{@const cfg = FAILURE_CARD_CONFIG.find(c => c.reason === expandedFailureBucket)}
+				{@const samples = bucketSamples[expandedFailureBucket] || []}
+				{@const DrawerIcon = cfg?.icon}
+				<div class="p-4 rounded-lg bg-[var(--surface-container-high)] mb-5 space-y-3 animate-fade-slide-in">
+					<div class="flex items-center justify-between">
+						<div class="flex items-center gap-2">
+							{#if DrawerIcon}<DrawerIcon class="w-4 h-4 {cfg?.iconColor}" />{/if}
+							<h4 class="text-xs font-semibold text-[var(--text-primary)]">
+								Sample tracks: <span class="text-sky-300">{cfg?.title}</span>
+							</h4>
+						</div>
+						<Button variant="icon" size="sm" title="Close" onclick={() => expandedFailureBucket = null}>
+							<X class="w-3.5 h-3.5" />
+						</Button>
+					</div>
+					{#if bucketLoading}
+						<Skeleton variant="list-item" count={3} />
+					{:else if samples.length === 0}
+						<p class="text-xs text-[var(--text-muted)] text-center py-4">No remaining samples in this category.</p>
+					{:else}
+						<div class="space-y-1.5">
+							{#each samples as sample (sample.id)}
+								{@const sampleTitle = jobTitle(sample)}
+								<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 rounded-lg bg-[var(--surface-container)] text-xs">
+									<div class="min-w-0">
+										<p class="font-medium text-[var(--text-primary)] truncate" title={sampleTitle}>{sampleTitle}</p>
+										<p class="text-[11px] text-[var(--text-muted)] whitespace-normal leading-snug mt-0.5">{failureSentence(sample) || 'Failed'}</p>
+									</div>
+									<div class="flex items-center gap-0.5">
+										{@render failedActions(sample)}
+									</div>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
+
+			<!-- Failed rows in the scope (filtered to one bucket when a card title is picked) -->
+			{#if failureReason}
+				{@const fcfg = FAILURE_CARD_CONFIG.find(c => c.reason === failureReason)}
+				<div class="flex items-center gap-2 mb-2 text-xs text-[var(--text-muted)]">
+					<span>Showing <span class="text-[var(--text-secondary)] font-medium">{fcfg?.title || failureReason}</span></span>
+					<Button variant="ghost" size="sm" onclick={() => setFailureReason(failureReason)}>Show all</Button>
+				</div>
+			{/if}
+			{#if jobs.length === 0}
+				<EmptyState compact title="Nothing failed in this period">
+					{#snippet icon()}<CircleCheck class="w-6 h-6" />{/snippet}
+				</EmptyState>
 			{:else}
-			<!-- TIER 1: ACTIVE TRANSFERS (Only what is moving data!) -->
+				<div class="grid grid-cols-[10px_minmax(0,1.05fr)_minmax(0,1.5fr)_76px_132px_120px] gap-x-2.5 px-3 pb-1 text-[10px] uppercase tracking-wider text-[var(--text-disabled)] max-md:hidden">
+					<span></span><span>Track</span><span>What happened</span><span>History</span><span>Next</span><span></span>
+				</div>
+				<div class="space-y-1">
+					{#each jobs.filter(j => j.status === 'failed') as job (job.id)}
+						{@render failedRow(job)}
+					{/each}
+				</div>
+				{@render pager()}
+			{/if}
+
+		{:else}
+			<!-- Active transfers: only what is moving data -->
 			{#if activeHeroItems.length > 0}
-				<div class="mb-5 p-4 rounded-xl bg-[var(--surface-container)] border border-[var(--border-subtle)] space-y-3">
+				<div class="mb-5 p-4 rounded-lg bg-[var(--surface-container)] space-y-3">
 					<div class="flex items-center justify-between flex-wrap gap-2">
 						<div class="flex items-center gap-2">
 							<span class="inline-flex items-center justify-center w-5 h-5 rounded-md bg-sky-500/20 text-sky-400 text-xs font-bold font-mono">{activeHeroItems.length}</span>
 							<h3 class="text-sm font-semibold text-[var(--text-primary)]">Active Transfers</h3>
 							<span class="text-xs text-[var(--text-muted)] font-mono">
-								({activeHeroItems.length} of 2 slots active{#if totalTransferSpeed > 0} · {formatSpeed(totalTransferSpeed)} total{/if})
+								({activeHeroItems.length}{#if limits?.transfer_slots != null} of {limits.transfer_slots}{/if} slots active{#if totalTransferSpeed > 0} · {formatSpeed(totalTransferSpeed)} total{/if})
 							</span>
 						</div>
-						<span class="text-xs text-sky-400/90 font-medium hidden sm:inline">Restricting concurrency to prevent peer choke</span>
 					</div>
-
 					<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
 						{#each activeHeroItems as item (item.id)}
 							{@const tr = item.transfer}
 							{@const job = item.job}
+							{@const st = stageOf(job, tr)}
 							{@const fname = tr?.filename?.split(/[/\\]/).pop() || ''}
 							{@const ext = fileExtension(fname)}
-							{@const rawTitle = formatJobTitle(job?.description || fname || 'Downloading file')}
-							{@const peer = tr?.username || (job?.id ? jobDetails[job.id]?.[0]?.username : '') || ''}
-							{@const progress = tr?.progress ?? (job?.total > 0 ? (job.progress / job.total) * 100 : 0)}
-							{@const speed = tr?.speed || 0}
-							{@const eta = tr?.eta_seconds || 0}
-							{@const received = tr?.received_bytes || 0}
-							{@const total = tr?.total_bytes || 0}
-
-							<div class="rounded-xl p-4 space-y-3 relative overflow-hidden bg-gradient-to-br from-sky-500/10 via-[var(--surface-container-high)] to-[var(--surface-container)] border border-sky-500/30 shadow-sm">
+							{@const rawTitle = job ? jobTitle(job, fname || 'Downloading file') : (fname || 'Downloading file')}
+							{@const peer = tr?.username || ''}
+							<div class="rounded-lg p-4 space-y-3 relative overflow-hidden bg-gradient-to-br from-sky-500/10 via-[var(--surface-container-high)] to-[var(--surface-container)]">
 								<div class="flex items-start justify-between gap-2">
 									<div class="min-w-0 flex-1">
-										<h4 class="text-sm font-semibold text-[var(--text-primary)] truncate" title={rawTitle}>
-											{rawTitle}
-										</h4>
+										<h4 class="text-sm font-semibold text-[var(--text-primary)] truncate" title={rawTitle}>{rawTitle}</h4>
 										<div class="flex items-center gap-2 text-xs text-[var(--text-muted)] mt-0.5 flex-wrap">
 											{#if peer}
-												<span>Peer: <span class="text-[var(--text-secondary)] font-medium">{peer}</span></span>
+												<span>from <span class="text-[var(--text-secondary)] font-medium">{peer}</span></span>
 											{/if}
-											{#if ext}
-												{#if peer}<span>&middot;</span>{/if}
-												<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'}>
-													{ext.toUpperCase()}
-												</Badge>
-											{/if}
-											{#if sourceLabel(job)}
-												<span>&middot;</span>
-												<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium">{sourceLabel(job)}</span>
-											{/if}
+											{@render extBadge(ext)}
+											{#if job}{@render sourceChip(job)}{/if}
+											{#if st.small}<span>{st.small}</span>{/if}
 										</div>
 									</div>
-									<button
-										onclick={() => cancelActiveItem(item)}
-										class="min-w-[32px] min-h-[32px] flex items-center justify-center text-[var(--text-muted)] hover:text-rose-400 transition-colors flex-shrink-0 -mr-1 -mt-1"
-										title="Cancel download"
-									>
-										<X class="w-4 h-4" />
-									</button>
+									<Button variant="icon" size="sm" class="hover:!text-rose-400 flex-shrink-0" title="Cancel download" aria-label="Cancel download" onclick={() => cancelActiveItem(item)}>
+										<X class="w-3.5 h-3.5" />
+									</Button>
 								</div>
-
 								<div class="space-y-1.5">
-									<div class="flex justify-between items-center text-xs font-mono text-[var(--text-secondary)]">
-										<span>
-											{progress > 0 ? `${progress.toFixed(1)}%` : 'Connecting...'}
-											{#if total > 0}
-												<span class="text-[var(--text-muted)]">({formatSize(received)} / {formatSize(total)})</span>
-											{/if}
-										</span>
-										<span class="text-sky-400 font-semibold">
-											{#if speed > 0}
-												{formatSpeed(speed)}{#if eta > 0} · ETA: {formatETA(eta)}{/if}
-											{:else}
-												<span class="text-[var(--text-muted)]">negotiating slot</span>
-											{/if}
-										</span>
+									<div class="flex justify-between items-center gap-2 text-xs font-mono">
+										<span class="text-[var(--text-muted)] truncate">{st.detail}</span>
+										<span class="font-semibold whitespace-nowrap {st.amber ? 'text-amber-400' : 'text-sky-400'}">{st.big}</span>
 									</div>
-									<div class="w-full bg-[var(--surface-lowest)] rounded-full h-2 overflow-hidden border border-[var(--border-subtle)]">
-										<div
-											class="bg-gradient-to-r from-sky-500 to-sky-400 h-2 rounded-full transition-all duration-300"
-											style="width: {Math.min(100, Math.max(progress > 0 ? 3 : 0, progress))}%"
-										></div>
-									</div>
+									{#if st.stage === 'transferring'}
+										<div class="w-full h-1 rounded-full overflow-hidden bg-[var(--border-interactive)]">
+											<div class="h-full rounded-full bg-[var(--color-downloads)] transition-all duration-300" style="width: {st.progress ?? 0}%"></div>
+										</div>
+									{/if}
 								</div>
 							</div>
 						{/each}
@@ -1620,200 +1891,57 @@
 				</div>
 			{/if}
 
-			<!-- TIER 2: SEARCH PACER BANNER -->
-			{#if searchingJob && (jobStatusFilter === 'active' || jobStatusFilter === 'all' || jobStatusFilter === null)}
-				<div class="mb-4 rounded-xl p-3 flex items-center justify-between border border-indigo-500/25 bg-indigo-950/20 text-xs">
-					<div class="flex items-center gap-3 min-w-0">
-						<div class="relative flex items-center justify-center w-3 h-3 flex-shrink-0">
-							<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-							<span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-						</div>
-						<div class="truncate text-[var(--text-secondary)]">
-							<span class="text-white font-medium">Soulseek Central Server Pacer:</span>
-							<span class="ml-1">Currently querying <span class="text-indigo-300 font-medium">“{formatJobTitle(wsDescriptions[searchingJob.id] || searchingJob.description || searchingJob.type)}”</span></span>
-							<span class="text-[var(--text-muted)] hidden sm:inline ml-1">· Paced to protect central search quota (1 query / 8s)</span>
-						</div>
-					</div>
-					<span class="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono flex-shrink-0 ml-2">Server Safe</span>
-				</div>
-			{/if}
-
-			<!-- TIER 3: QUEUE & HISTORY ROWS -->
 			{#if displayJobs.length === 0}
 				{#if activeHeroItems.length > 0}
 					<p class="text-xs text-[var(--text-muted)] text-center py-4">No additional jobs in queue.</p>
 				{:else}
-					<EmptyState title="No downloads" description="No download jobs match the current filter.">
-						{#snippet icon()}<Download class="w-10 h-10" />{/snippet}
-					</EmptyState>
+					{#if jobStatusFilter === 'all'}
+						<EmptyState compact title="No downloads yet">
+							{#snippet icon()}<Download class="w-6 h-6" />{/snippet}
+						</EmptyState>
+					{:else}
+						{@const dueToday = attemptsSummary?.due_before || 0}
+						{@const backoffTotal = attemptsSummary?.total || 0}
+						<EmptyState compact title="Nothing is downloading." description={quietText}>
+							{#snippet icon()}<Download class="w-6 h-6" />{/snippet}
+							{#snippet action()}
+								{#if backoffTotal || dueToday}
+									<div class="flex items-center justify-center gap-2 flex-wrap">
+										{#if backoffTotal}
+											<Button variant="secondary" size="sm" onclick={openBackoffList}>
+												<ListOrdered class="w-3.5 h-3.5" />
+												Backoff list ({backoffTotal.toLocaleString()})
+											</Button>
+										{/if}
+										{#if dueToday}
+											<Button variant="secondary" size="sm" loading={runningRetries} onclick={runRetriesNow}>
+												<RotateCcw class="w-3.5 h-3.5" />
+												Run the {dueToday.toLocaleString()} {dueToday === 1 ? 'retry' : 'retries'} now
+											</Button>
+										{/if}
+									</div>
+								{/if}
+							{/snippet}
+						</EmptyState>
+					{/if}
 				{/if}
 			{:else}
 				<div class="space-y-1">
 					{#each displayJobs as job (job.id)}
-						{@const transfer = getTransferForJob(job)}
-						{@const status = friendlyStatus(job, transfer)}
-						{@const queueRank = status === 'queued' ? getQueueRank(job.id) : null}
-						{@const jobResult = parseJobResult(job)}
-						{@const jobTracks = parseJobTracks(job)}
-						{@const t = jobTracks?.[0]}
-						{@const rawTitle = formatJobTitle(wsDescriptions[job.id] || job.description || job.type)}
-						{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
-						{@const ext = fileExtension(fname)}
-						{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || transfer?.total_bytes || 0}
-						{@const peer = transfer?.username || t?.username || jobResult?.username || (job.id ? jobDetails[job.id]?.[0]?.username : '') || ''}
-						{@const timeIso = job.finished_at || job.started_at || job.created_at}
-						{@const fail = status === 'failed' ? friendlyFailure(job, jobResult) : null}
-						{@const searchQ = status === 'failed' ? getSearchQueryForJob(job) : ''}
-						{@const searchArtist = t?.artist || ''}
-						{@const searchTrack = t?.track || ''}
-						{@const libQuery = searchArtist && searchTrack ? `${searchArtist} ${searchTrack}` : rawTitle}
-
-						<div class="grid grid-cols-[16px_1fr_48px_60px_110px_120px_84px_24px] items-center gap-2.5 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] transition-colors text-xs group/job">
-							<!-- Col 1: Status indicator -->
-							{#if status === 'completed'}
-								<span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" title="Completed"></span>
-							{:else if status === 'failed'}
-								<span class="w-2 h-2 rounded-full bg-rose-400 flex-shrink-0" title="Failed"></span>
-							{:else if status === 'downloading'}
-								<span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse flex-shrink-0" title="Downloading"></span>
-							{:else if status === 'queued'}
-								<span class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Queued"></span>
-							{:else}
-								<span class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse flex-shrink-0" title="Searching"></span>
-							{/if}
-
-							<!-- Col 2: Track Title, Queue Rank, and Source -->
-							<div class="min-w-0 flex items-center gap-2">
-								{#if queueRank}
-									<span class="text-[10px] font-bold font-mono px-1.5 py-0.5 rounded {queueRank === 1 ? 'bg-amber-500/20 text-amber-300' : 'bg-[var(--surface-container-high)] text-[var(--text-muted)]'} flex-shrink-0">
-										#{queueRank}
-									</span>
-								{/if}
-								<span class="font-medium text-[var(--text-primary)] truncate" title={rawTitle}>
-									{rawTitle}
-								</span>
-								{#if sourceLabel(job)}
-									<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 hidden lg:inline">
-										{sourceLabel(job)}
-									</span>
-								{/if}
-							</div>
-
-							<!-- Col 3: Format Badge -->
-							<div class="text-center">
-								{#if ext}
-									<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'} class="text-[10px] py-0 px-1.5">
-										{ext.toUpperCase()}
-									</Badge>
-								{/if}
-							</div>
-
-							<!-- Col 4: Size -->
-							<span class="text-[var(--text-muted)] font-mono text-[11px] text-right truncate">
-								{fsize > 0 ? formatSize(fsize) : '—'}
-							</span>
-
-							<!-- Col 5: Peer -->
-							<span class="text-[var(--text-muted)] text-[11px] truncate hidden md:inline" title={peer ? `from ${peer}` : ''}>
-								{peer ? peer : '—'}
-							</span>
-
-							<!-- Col 6: Status / Time -->
-							<div class="text-right truncate font-mono text-[11px]">
-								{#if status === 'completed'}
-									<span class="text-[var(--text-muted)]" title={timeIso ? formatDateTime(timeIso) : ''}>
-										{timeIso ? formatRelativeTime(timeIso) : 'done'}
-									</span>
-								{:else if status === 'failed'}
-									<span class="text-rose-400 truncate" title={fail?.detail || ''}>
-										{fail?.title || 'failed'}
-									</span>
-								{:else if status === 'queued'}
-									<span class="text-amber-400">waiting for slot</span>
-								{:else if status === 'downloading'}
-									<span class="text-sky-400">
-										{transfer?.speed > 0 ? formatSpeed(transfer.speed) : 'transferring'}
-									</span>
-								{:else}
-									<span class="text-indigo-400">querying P2P</span>
-								{/if}
-							</div>
-
-							<!-- Col 7: Primary Action -->
-							<div class="flex items-center justify-end gap-1 flex-shrink-0">
-								{#if status === 'completed'}
-									<a
-										href="/library?search={encodeURIComponent(libQuery)}"
-										class="text-sky-400 hover:text-sky-300 font-medium transition-colors text-right whitespace-nowrap"
-										title="View in Library"
-									>
-										In Library <span aria-hidden="true">&rarr;</span>
-									</a>
-								{:else if status === 'failed'}
-									{#if searchQ}
-										<button
-											onclick={() => { searchQuery = searchQ; searchSoulseek(); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
-											class="p-1 text-[var(--text-muted)] hover:text-sky-400 transition-colors"
-											title="Search P2P"
-										>
-											<Search class="w-3.5 h-3.5" />
-										</button>
-									{/if}
-									<button
-										onclick={() => retryJob(job.id)}
-										class="p-1 text-[var(--text-muted)] hover:text-emerald-400 transition-colors"
-										title="Retry"
-									>
-										<RotateCcw class="w-3.5 h-3.5" />
-									</button>
-								{:else if status === 'downloading' || status === 'queued' || job.status === 'running'}
-									<button
-										onclick={() => cancelJob(job.id)}
-										class="p-1 text-[var(--text-muted)] hover:text-rose-400 transition-colors"
-										title="Cancel"
-									>
-										<X class="w-3.5 h-3.5" />
-									</button>
-								{/if}
-							</div>
-
-							<!-- Col 8: Dismiss Button -->
-							<button
-								onclick={() => {
-									hiddenJobIds = new Set([...hiddenJobIds, job.id]);
-									localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
-								}}
-								class="text-[var(--text-muted)] hover:text-rose-400 opacity-0 group-hover/job:opacity-100 transition-opacity p-0.5 flex items-center justify-center"
-								title="Dismiss"
-							>
-								<X class="w-3.5 h-3.5" />
-							</button>
-						</div>
+						{#if job.status === 'completed'}
+							{@render doneRow(job)}
+						{:else if job.status === 'failed'}
+							{@render failedRow(job)}
+						{:else}
+							{@render liveRow(job)}
+						{/if}
 					{/each}
 				</div>
 			{/if}
 
-				<!-- Pagination -->
-				{#if jobs.length >= PAGE_LIMIT || jobsOffset > 0}
-					<div class="flex items-center justify-between mt-4">
-						<Button variant="ghost" size="sm" disabled={jobsOffset === 0}
-							onclick={() => { jobsOffset = Math.max(0, jobsOffset - PAGE_LIMIT); loadJobs(); }}>
-							<ChevronLeft class="w-3.5 h-3.5" />
-							Prev
-						</Button>
-						<span class="text-xs text-[var(--text-muted)]">
-							{jobsOffset + 1}–{jobsOffset + jobs.length}
-						</span>
-						<Button variant="ghost" size="sm" disabled={jobs.length < PAGE_LIMIT}
-							onclick={() => { jobsOffset += PAGE_LIMIT; loadJobs(); }}>
-							Next
-							<ChevronRight class="w-3.5 h-3.5" />
-						</Button>
-					</div>
-				{/if}
-			{/if}
-		</Card>
-	{/if}
+			{@render pager()}
+		{/if}
+	</Card>
 
 	<!-- Uploads: shared library files peers are pulling from us -->
 	{#if uploadRows.length || sharing}
@@ -1990,6 +2118,7 @@
 			<p class="text-xs text-[var(--text-muted)] mt-2">
 				Each one is searched for again and gets a new entry; the failed entry it replaces is removed.
 				{#if retryConfirm.reason === 'not_found' || retryConfirm.reason === 'no_better'}These weren't found last time, so most will likely fail again unless new peers have them.{/if}
+				{#if retryConfirm.reason === 'infra'}These stopped for reasons outside the track (cancelled, a restart or an outage), so a retry usually works.{/if}
 				{#if retryConfirm.reason === 'rejected'}These downloaded fine but weren't kept (already in the library, no better, or the wrong song), so retrying usually won't change anything.{/if}
 			</p>
 		{/snippet}
@@ -2003,13 +2132,13 @@
 {/if}
 
 {#if clearCompletedConfirm}
-	<Modal title="Clear Completed History" onclose={() => clearCompletedConfirm = false} maxWidth="max-w-md">
+	<Modal title="Clear completed history on the server" onclose={() => clearCompletedConfirm = false} maxWidth="max-w-md">
 		{#snippet children()}
 			<p class="text-sm text-[var(--text-primary)]">
-				Clear all <span class="font-bold">{jobStatusCounts.completed.toLocaleString()}</span> completed download records?
+				Delete the <span class="font-bold">{jobStatusCounts.completed.toLocaleString()}</span> completed download records from {scopeInfo.phrase} on the server?
 			</p>
 			<p class="text-xs text-[var(--text-muted)] mt-2">
-				This cleans up the download log history only. Files in your music library remain intact.
+				Only the download log rows go. Files in your music library stay.
 			</p>
 		{/snippet}
 		{#snippet footer()}
@@ -2022,10 +2151,10 @@
 {/if}
 
 {#if dismissNonCriticalConfirm}
-	<Modal title="Dismiss Non-Critical Failures" onclose={() => dismissNonCriticalConfirm = false} maxWidth="max-w-md">
+	<Modal title="Delete non-critical failures" onclose={() => dismissNonCriticalConfirm = false} maxWidth="max-w-md">
 		{#snippet children()}
 			<p class="text-sm text-[var(--text-primary)]">
-				Dismiss <span class="font-bold">{nonCriticalCount.toLocaleString()}</span> non-critical failure records?
+				Delete <span class="font-bold">{nonCriticalCount.toLocaleString()}</span> non-critical failure records from {scopeInfo.phrase} on the server?
 			</p>
 			<p class="text-xs text-[var(--text-muted)] mt-2">
 				This removes tracks where equal or higher quality already exists in your library, as well as rejected duplicate imports.
@@ -2034,8 +2163,71 @@
 		{#snippet footer()}
 			<Button variant="secondary" size="sm" onclick={() => dismissNonCriticalConfirm = false}>Cancel</Button>
 			<Button variant="primary" size="sm" disabled={dismissingNonCritical} onclick={handleDismissNonCritical}>
-				<Trash2 class="w-3.5 h-3.5 mr-1" /> {dismissingNonCritical ? 'Dismissing…' : 'Dismiss All Non-Critical'}
+				<Trash2 class="w-3.5 h-3.5 mr-1" /> {dismissingNonCritical ? 'Deleting…' : 'Delete'}
 			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if removeConfirm}
+	<Modal title="Remove download" onclose={() => removeConfirm = null} maxWidth="max-w-md">
+		{#snippet children()}
+			<p class="text-sm text-[var(--text-primary)]">Remove <span class="font-semibold">{removeConfirm.title}</span> from the download history?</p>
+			<p class="text-xs text-[var(--text-muted)] mt-2">
+				This deletes the row on the server. Files in your library and the track's retry schedule are not touched.
+			</p>
+		{/snippet}
+		{#snippet footer()}
+			<Button variant="secondary" size="sm" onclick={() => removeConfirm = null}>Cancel</Button>
+			<Button variant="danger" size="sm" disabled={removing} onclick={confirmRemove}>
+				<Trash2 class="w-3.5 h-3.5 mr-1" /> {removing ? 'Removing…' : 'Remove'}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if stopConfirm}
+	<Modal title="Stop trying this track" onclose={() => stopConfirm = null} maxWidth="max-w-md">
+		{#snippet children()}
+			<p class="text-sm text-[var(--text-primary)]">Blacklist <span class="font-semibold">{stopConfirm.title}</span>?</p>
+			<p class="text-xs text-[var(--text-muted)] mt-2">
+				This also removes its retry schedule; scheduler, bulk and playlist runs skip it from now on. You can undo it from the Download Blacklist below.
+			</p>
+		{/snippet}
+		{#snippet footer()}
+			<Button variant="secondary" size="sm" onclick={() => stopConfirm = null}>Cancel</Button>
+			<Button variant="danger" size="sm" disabled={stopping} onclick={confirmStopTrying}>
+				<ShieldBan class="w-3.5 h-3.5 mr-1" /> {stopping ? 'Blacklisting…' : 'Stop trying'}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if backoffOpen}
+	<Modal title="Backoff list" onclose={() => backoffOpen = false} maxWidth="max-w-xl">
+		{#snippet children()}
+			<p class="text-xs text-[var(--text-muted)] mb-3">Tracks the automatic runs failed to find, soonest retry first. They are searched again when their backoff ends.</p>
+			{#if backoffLoading}
+				<Skeleton variant="list-item" count={4} />
+			{:else if !backoffRows.length}
+				<p class="text-sm text-[var(--text-muted)]">Nothing is waiting in backoff.</p>
+			{:else}
+				<div class="space-y-1">
+					{#each backoffRows as row (row.key)}
+						<div class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 rounded-lg bg-[var(--surface-container-high)] text-xs">
+							<div class="min-w-0">
+								<p class="font-medium text-[var(--text-primary)] truncate">{row.artist} — {row.track}</p>
+								<p class="text-[11px] text-[var(--text-muted)] truncate" title={row.last_error || ''}>
+									{sourceLabel(row.source ? `dl:${row.source}` : null)} · {plural(row.attempts || 0, 'attempt')}{row.last_error ? ` · ${row.last_error}` : ''}
+								</p>
+							</div>
+							<span class="font-mono text-[11px] whitespace-nowrap {row.retired ? 'text-rose-400' : 'text-[var(--text-secondary)]'}">
+								{row.retired ? 'retired' : row.next_retry_at ? whenLong(row.next_retry_at) : '—'}
+							</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		{/snippet}
 	</Modal>
 {/if}
