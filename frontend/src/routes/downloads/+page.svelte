@@ -4,7 +4,7 @@
 	import { api } from '$lib/api.js';
 	import { addToast, activeTransfers, activeUploads } from '$lib/stores.js';
 	import { onJobUpdate } from '$lib/websocket.js';
-	import { formatSize, formatSpeed, formatETA, formatDateTime } from '$lib/utils.js';
+	import { formatSize, formatSpeed, formatETA, formatDateTime, formatRelativeTime } from '$lib/utils.js';
 	import { Download, Search, Zap, ShieldBan, Trash2, X, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, RotateCcw, Eraser, CircleCheck, Wifi, Clock, Upload, Radio, Activity } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -222,7 +222,7 @@
 	}
 
 	// Server-side counts (independent of pagination) — fetched alongside loadJobs.
-	let jobStatusCounts = $state({ all: 0, queued: 0, running: 0, completed: 0, failed: 0 });
+	let jobStatusCounts = $state({ all: 0, queued: 0, running: 0, completed: 0, completed_today: 0, completed_week: 0, failed: 0 });
 
 	async function loadJobCounts() {
 		try {
@@ -235,6 +235,8 @@
 				queued: c.pending || 0,
 				running: c.running || 0,
 				completed: c.completed || 0,
+				completed_today: c.completed_today || 0,
+				completed_week: c.completed_week || 0,
 				failed: c.failed || 0,
 			};
 			if (jobStatusFilter === null) {
@@ -397,6 +399,164 @@
 		return visibleJobs;
 	});
 
+	// Done tab timeframe & density state
+	let doneTimeframe = $state('today'); // 'today' | 'week' | 'all'
+	let doneLimit = $state(10);
+	let clearCompletedConfirm = $state(false);
+	let clearingCompleted = $state(false);
+
+	let allCompletedJobs = $derived(
+		jobs.filter(j => j.status === 'completed' && !hiddenJobIds.has(j.id))
+	);
+
+	let displayedCompletedJobs = $derived(
+		allCompletedJobs.slice(0, doneLimit)
+	);
+
+	let totalCompletedInTimeframe = $derived(
+		doneTimeframe === 'today' ? jobStatusCounts.completed_today :
+		doneTimeframe === 'week' ? jobStatusCounts.completed_week :
+		jobStatusCounts.completed
+	);
+
+	function setDoneTimeframe(tf) {
+		doneTimeframe = tf;
+		doneLimit = 10;
+		jobsOffset = 0;
+		loadJobs(false);
+	}
+
+	function expandDoneList(step = 25) {
+		doneLimit += step;
+		loadJobs(false);
+	}
+
+	async function handleClearCompleted() {
+		clearingCompleted = true;
+		try {
+			await api.clearDownloadHistory('completed');
+			addToast('Cleared completed download history', 'success');
+			clearCompletedConfirm = false;
+			await loadJobCounts();
+			await loadJobs();
+		} catch (e) {
+			addToast(`Clear failed: ${e.message}`, 'error');
+		} finally {
+			clearingCompleted = false;
+		}
+	}
+
+	// Failed tab triage bucket state
+	let expandedFailureBucket = $state(null);
+	let bucketSamples = $state({});
+	let bucketLoading = $state(false);
+	let dismissNonCriticalConfirm = $state(false);
+	let dismissingNonCritical = $state(false);
+
+	const FAILURE_CARD_CONFIG = [
+		{
+			reason: 'peer',
+			title: 'Peer Offline / Disconnected',
+			description: 'Uploader timed out, disconnected, or max queue limits reached.',
+			icon: Wifi,
+			iconColor: 'text-amber-400',
+			iconBg: 'bg-amber-500/15',
+			primaryAction: 'retry',
+			primaryLabel: 'Retry All',
+		},
+		{
+			reason: 'no_better',
+			title: 'Equal or Higher Quality Exists',
+			description: 'Your library already contains this track at equal or better bitrate.',
+			icon: CircleCheck,
+			iconColor: 'text-sky-400',
+			iconBg: 'bg-sky-500/15',
+			primaryAction: 'dismiss',
+			primaryLabel: 'Dismiss All',
+		},
+		{
+			reason: 'not_found',
+			title: 'No Peers Sharing Track Online',
+			description: 'Track was not found on Soulseek during central server search.',
+			icon: Search,
+			iconColor: 'text-purple-400',
+			iconBg: 'bg-purple-500/15',
+			primaryAction: 'retry',
+			primaryLabel: 'Retry All',
+		},
+		{
+			reason: 'rejected',
+			title: 'Import Rejected / Corrupted Stream',
+			description: 'File was incomplete, wrong track, or unreadable audio container.',
+			icon: ShieldBan,
+			iconColor: 'text-rose-400',
+			iconBg: 'bg-rose-500/15',
+			primaryAction: 'dismiss',
+			primaryLabel: 'Dismiss All',
+		},
+	];
+
+	function getBucketCount(reason) {
+		return failureGroups.find(g => g.reason === reason)?.count || 0;
+	}
+
+	async function toggleInspectBucket(reason) {
+		if (expandedFailureBucket === reason) {
+			expandedFailureBucket = null;
+			return;
+		}
+		expandedFailureBucket = reason;
+		if (!bucketSamples[reason]) {
+			bucketLoading = true;
+			try {
+				const data = await api.getDownloadHistory(0, 5, 'failed', reason);
+				bucketSamples[reason] = data.items || data;
+			} catch (e) {
+				console.error(e);
+			} finally {
+				bucketLoading = false;
+			}
+		}
+	}
+
+	async function dismissFailedByReason(reason, label) {
+		try {
+			await api.clearDownloadHistory('failed', reason);
+			addToast(`Dismissed ${label}`, 'success');
+			delete bucketSamples[reason];
+			if (expandedFailureBucket === reason) expandedFailureBucket = null;
+			await loadJobCounts();
+			await loadFailureGroups();
+			await loadJobs();
+		} catch (e) {
+			addToast(`Dismiss failed: ${e.message}`, 'error');
+		}
+	}
+
+	async function handleDismissNonCritical() {
+		dismissingNonCritical = true;
+		try {
+			await api.clearDownloadHistory('failed', 'no_better');
+			await api.clearDownloadHistory('failed', 'rejected');
+			addToast('Dismissed non-critical failure records', 'success');
+			bucketSamples = {};
+			expandedFailureBucket = null;
+			dismissNonCriticalConfirm = false;
+			await loadJobCounts();
+			await loadFailureGroups();
+			await loadJobs();
+		} catch (e) {
+			addToast(`Dismiss failed: ${e.message}`, 'error');
+		} finally {
+			dismissingNonCritical = false;
+		}
+	}
+
+	let nonCriticalCount = $derived(
+		(failureGroups.find(g => g.reason === 'no_better')?.count || 0) +
+		(failureGroups.find(g => g.reason === 'rejected')?.count || 0)
+	);
+
 	function getResultInlineStatus(r) {
 		const key = r.username + r.filename;
 		// Check active transfers first for live progress
@@ -484,7 +644,9 @@
 		if (withCounts) loadJobCounts();
 		try {
 			const status = jobStatusFilter && jobStatusFilter !== 'all' ? STATUS_QUERY[jobStatusFilter] : null;
-			const data = await api.getDownloadHistory(jobsOffset, PAGE_LIMIT, status, jobStatusFilter === 'failed' ? failureReason : null);
+			const limit = jobStatusFilter === 'completed' ? Math.max(25, doneLimit) : PAGE_LIMIT;
+			const timeframe = jobStatusFilter === 'completed' && doneTimeframe !== 'all' ? doneTimeframe : null;
+			const data = await api.getDownloadHistory(jobsOffset, limit, status, jobStatusFilter === 'failed' ? failureReason : null, timeframe);
 			jobs = data.items || data;
 			// Only fetch details for active RUNNING jobs (not queued/pending) — limit to 10 to avoid hammering API
 			const needDetails = jobs
@@ -1011,34 +1173,358 @@
 				onchange={setJobFilter}
 			/>
 
-			{#if jobStatusFilter === 'failed' && failureGroups.length}
-				<!-- Failures grouped by why they failed, so one kind can be retried or ignored. -->
-				<div class="flex flex-wrap items-center gap-2 mb-4 -mt-1">
-					<span class="text-xs text-[var(--text-muted)]">Why:</span>
-					{#each failureGroups as g (g.reason)}
-						<button onclick={() => setFailureReason(g.reason)}
-							class="text-xs px-2.5 py-1 rounded-full border transition-colors
-								{failureReason === g.reason
-									? 'border-red-400/60 bg-red-500/15 text-red-300'
-									: 'border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}">
-							{g.label} <span class="font-mono text-[var(--text-muted)]">{g.count.toLocaleString()}</span>
-						</button>
-					{/each}
-					<Button variant="secondary" size="sm" class="ml-auto"
-						onclick={() => retryConfirm = selectedFailureGroup
-							? { reason: selectedFailureGroup.reason, label: selectedFailureGroup.label, count: selectedFailureGroup.count }
-							: { reason: null, label: 'All failures', count: jobStatusCounts.failed }}>
-						<RotateCcw class="w-3.5 h-3.5 mr-1" />
-						{selectedFailureGroup ? `Retry ${selectedFailureGroup.count.toLocaleString()}` : 'Retry all'}
-					</Button>
-				</div>
-			{/if}
-
 			{#if jobsLoading && !jobs.length}
 				<p class="text-sm text-[var(--text-muted)] text-center py-6">Loading...</p>
+			{:else if jobStatusFilter === 'completed'}
+				<!-- OPTION 3: TIME-SCOPED DENSE FEED FOR DONE -->
+				<div class="flex items-center justify-between flex-wrap gap-2 mb-4">
+					<div class="inline-flex rounded-lg p-0.5 bg-[var(--surface-container)] border border-[var(--border-subtle)] text-xs">
+						<button
+							type="button"
+							onclick={() => setDoneTimeframe('today')}
+							class="px-3 py-1.5 rounded-md font-medium transition-all {doneTimeframe === 'today' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+						>
+							Today <span class="font-mono text-[11px] text-[var(--text-muted)] ml-1">({(jobStatusCounts.completed_today || 0).toLocaleString()})</span>
+						</button>
+						<button
+							type="button"
+							onclick={() => setDoneTimeframe('week')}
+							class="px-3 py-1.5 rounded-md font-medium transition-all {doneTimeframe === 'week' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+						>
+							Last 7 Days <span class="font-mono text-[11px] text-[var(--text-muted)] ml-1">({(jobStatusCounts.completed_week || 0).toLocaleString()})</span>
+						</button>
+						<button
+							type="button"
+							onclick={() => setDoneTimeframe('all')}
+							class="px-3 py-1.5 rounded-md font-medium transition-all {doneTimeframe === 'all' ? 'bg-[var(--surface-container-high)] text-[var(--text-primary)] shadow-sm' : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'}"
+						>
+							All Time <span class="font-mono text-[11px] text-[var(--text-muted)] ml-1">({(jobStatusCounts.completed || 0).toLocaleString()})</span>
+						</button>
+					</div>
+
+					{#if jobStatusCounts.completed > 0}
+						<button
+							type="button"
+							onclick={() => clearCompletedConfirm = true}
+							class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-container)] text-xs text-[var(--text-secondary)] hover:text-rose-400 hover:border-rose-500/30 transition-colors"
+						>
+							<Eraser class="w-3.5 h-3.5" />
+							Clear Completed History
+						</button>
+					{/if}
+				</div>
+
+				{#if displayedCompletedJobs.length === 0}
+					<EmptyState
+						title="No downloads completed {doneTimeframe === 'today' ? 'today' : doneTimeframe === 'week' ? 'in the last 7 days' : ''}"
+						description="Downloaded tracks will appear here once finished."
+					>
+						{#snippet icon()}<Download class="w-10 h-10" />{/snippet}
+					</EmptyState>
+				{:else}
+					<div class="space-y-1.5">
+						{#each displayedCompletedJobs as job (job.id)}
+							{@const jobResult = parseJobResult(job)}
+							{@const jobTracks = parseJobTracks(job)}
+							{@const t = jobTracks?.[0]}
+							{@const rawTitle = formatJobTitle(job.description || job.type)}
+							{@const fname = t?.filename || jobResult?.filename?.split(/[/\\]/).pop() || ''}
+							{@const ext = fileExtension(fname || job.description)}
+							{@const fsize = t?.file_size || t?.size || jobResult?.file_size || jobResult?.size || 0}
+							{@const peer = t?.username || jobResult?.username || ''}
+							{@const searchArtist = t?.artist || ''}
+							{@const searchTrack = t?.track || ''}
+							{@const libQuery = searchArtist && searchTrack ? `${searchArtist} ${searchTrack}` : rawTitle}
+							{@const timeIso = job.finished_at || job.started_at || job.created_at}
+
+							<div class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] border border-[var(--border-subtle)]/40 transition-colors text-xs group/done">
+								<div class="flex items-center gap-2.5 min-w-0 flex-1">
+									<span class="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" title="Completed"></span>
+									<span class="font-medium text-[var(--text-primary)] truncate max-w-[280px] sm:max-w-[360px] md:max-w-[480px]" title={rawTitle}>
+										{rawTitle}
+									</span>
+									{#if sourceLabel(job)}
+										<span class="px-1.5 py-0.5 rounded bg-[var(--surface-container-high)] text-[var(--text-muted)] text-[10px] font-medium flex-shrink-0 hidden sm:inline">
+											{sourceLabel(job)}
+										</span>
+									{/if}
+									{#if ext}
+										<Badge variant={ext === 'flac' ? 'success' : ext === 'mp3' ? 'default' : 'warning'} class="text-[10px] py-0 px-1.5 flex-shrink-0">
+											{ext.toUpperCase()}
+										</Badge>
+									{/if}
+									{#if fsize > 0}
+										<span class="text-[var(--text-muted)] font-mono text-[11px] flex-shrink-0 hidden md:inline">
+											{formatSize(fsize)}
+										</span>
+									{/if}
+									{#if peer}
+										<span class="text-[var(--text-muted)] text-[11px] truncate flex-shrink-0 hidden lg:inline">
+											from <span class="text-[var(--text-secondary)]">{peer}</span>
+										</span>
+									{/if}
+								</div>
+
+								<div class="flex items-center gap-3 flex-shrink-0">
+									{#if timeIso}
+										<span class="text-[var(--text-muted)] font-mono text-[11px] whitespace-nowrap" title={formatDateTime(timeIso)}>
+											{formatRelativeTime(timeIso)}
+										</span>
+									{/if}
+									<a
+										href="/library?search={encodeURIComponent(libQuery)}"
+										class="text-sky-400 hover:text-sky-300 font-medium transition-colors flex items-center gap-0.5 whitespace-nowrap"
+										title="View in Library"
+									>
+										In Library <span aria-hidden="true">&rarr;</span>
+									</a>
+									<button
+										onclick={() => {
+											hiddenJobIds = new Set([...hiddenJobIds, job.id]);
+											localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
+										}}
+										class="text-[var(--text-muted)] hover:text-rose-400 opacity-0 group-hover/done:opacity-100 transition-opacity p-0.5"
+										title="Dismiss from list"
+									>
+										<X class="w-3.5 h-3.5" />
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+
+					{@const totalInTimeframe = totalCompletedInTimeframe}
+					{#if totalInTimeframe > displayedCompletedJobs.length}
+						<div class="mt-4 pt-3 border-t border-[var(--border-subtle)]/50 flex items-center justify-between text-xs text-[var(--text-muted)]">
+							<span>
+								Showing <span class="font-medium text-[var(--text-secondary)]">{displayedCompletedJobs.length}</span> of <span class="font-medium text-[var(--text-secondary)]">{totalInTimeframe.toLocaleString()}</span>
+							</span>
+							<div class="flex items-center gap-2">
+								<button
+									onclick={() => expandDoneList(25)}
+									class="text-sky-400 hover:text-sky-300 font-medium hover:underline transition-colors"
+								>
+									View earlier {doneTimeframe === 'today' ? 'today' : ''} ({Math.min(25, totalInTimeframe - displayedCompletedJobs.length)} more) &darr;
+								</button>
+								{#if totalInTimeframe - displayedCompletedJobs.length > 25}
+									<span>&middot;</span>
+									<button
+										onclick={() => expandDoneList(totalInTimeframe)}
+										class="text-sky-400 hover:text-sky-300 font-medium hover:underline transition-colors"
+									>
+										View all ({totalInTimeframe.toLocaleString()})
+									</button>
+								{/if}
+							</div>
+						</div>
+					{/if}
+				{/if}
+
+			{:else if jobStatusFilter === 'failed'}
+				<!-- OPTION 3: 4 ACTIONABLE TRIAGE CARDS FOR FAILED -->
+				<div class="mb-5 p-4 rounded-xl bg-gradient-to-r from-red-950/20 via-[var(--surface-container)] to-[var(--surface-container)] border border-red-500/20 space-y-3">
+					<div class="flex items-center justify-between flex-wrap gap-3">
+						<div class="min-w-0">
+							<h3 class="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
+								<ShieldBan class="w-4 h-4 text-rose-400" />
+								Failure Triage &bull; 4 Categories
+							</h3>
+							<p class="text-xs text-[var(--text-muted)] mt-0.5">
+								{jobStatusCounts.failed.toLocaleString()} failed downloads categorized by actionable root cause.
+							</p>
+						</div>
+
+						<div class="flex items-center gap-2 flex-wrap">
+							{#if nonCriticalCount > 0}
+								<Button
+									variant="secondary"
+									size="sm"
+									onclick={() => dismissNonCriticalConfirm = true}
+									class="text-xs border-amber-500/30 hover:border-amber-500/60 text-amber-300"
+								>
+									<Trash2 class="w-3.5 h-3.5 mr-1" />
+									Dismiss Non-Critical ({nonCriticalCount.toLocaleString()})
+								</Button>
+							{/if}
+							<Button
+								variant="secondary"
+								size="sm"
+								onclick={() => retryConfirm = { reason: null, label: 'All failures', count: jobStatusCounts.failed }}
+								class="text-xs"
+							>
+								<RotateCcw class="w-3.5 h-3.5 mr-1" />
+								Retry All ({jobStatusCounts.failed.toLocaleString()})
+							</Button>
+						</div>
+					</div>
+				</div>
+
+				<!-- 4 Actionable Triage Cards (2x2 Grid) -->
+				<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+					{#each FAILURE_CARD_CONFIG as cfg (cfg.reason)}
+						{@const count = getBucketCount(cfg.reason)}
+						{@const isInspecting = expandedFailureBucket === cfg.reason}
+						{@const IconComp = cfg.icon}
+
+						<div class="p-4 rounded-xl bg-[var(--surface-container)] border {isInspecting ? 'border-sky-500/50 shadow-md ring-1 ring-sky-500/20' : 'border-[var(--border-subtle)]'} transition-all flex flex-col justify-between">
+							<div>
+								<div class="flex items-start justify-between gap-2 mb-2">
+									<div class="flex items-center gap-2.5">
+										<div class="w-8 h-8 rounded-lg {cfg.iconBg} flex items-center justify-center flex-shrink-0">
+											<IconComp class="w-4 h-4 {cfg.iconColor}" />
+										</div>
+										<div>
+											<h4 class="text-sm font-semibold text-[var(--text-primary)] leading-tight">{cfg.title}</h4>
+											<span class="text-xs font-mono font-bold {cfg.iconColor}">
+												{count.toLocaleString()} track{count === 1 ? '' : 's'}
+											</span>
+										</div>
+									</div>
+
+									{#if count > 0}
+										<button
+											onclick={() => dismissFailedByReason(cfg.reason, cfg.title)}
+											class="text-[var(--text-muted)] hover:text-rose-400 transition-colors p-1"
+											title="Dismiss all {cfg.title}"
+										>
+											<Trash2 class="w-3.5 h-3.5" />
+										</button>
+									{/if}
+								</div>
+
+								<p class="text-xs text-[var(--text-muted)] leading-relaxed mb-4">
+									{cfg.description}
+								</p>
+							</div>
+
+							<div class="flex items-center justify-between gap-2 pt-3 border-t border-[var(--border-subtle)]/50 mt-auto">
+								{#if cfg.primaryAction === 'retry'}
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={count === 0}
+										onclick={() => retryConfirm = { reason: cfg.reason, label: cfg.title, count }}
+										class="text-xs"
+									>
+										<RotateCcw class="w-3.5 h-3.5 mr-1" />
+										Retry All ({count.toLocaleString()})
+									</Button>
+								{:else}
+									<Button
+										variant="secondary"
+										size="sm"
+										disabled={count === 0}
+										onclick={() => dismissFailedByReason(cfg.reason, cfg.title)}
+										class="text-xs"
+									>
+										<Trash2 class="w-3.5 h-3.5 mr-1" />
+										Dismiss All ({count.toLocaleString()})
+									</Button>
+								{/if}
+
+								<button
+									type="button"
+									disabled={count === 0}
+									onclick={() => toggleInspectBucket(cfg.reason)}
+									class="text-xs font-medium text-[var(--text-secondary)] hover:text-sky-400 transition-colors flex items-center gap-1 disabled:opacity-40"
+								>
+									Inspect (5) {isInspecting ? '▲' : '▼'}
+								</button>
+							</div>
+						</div>
+					{/each}
+				</div>
+
+				<!-- Inline Sample Inspector Drawer (Unfolded when Inspect (5) is active) -->
+				{#if expandedFailureBucket}
+					{@const cfg = FAILURE_CARD_CONFIG.find(c => c.reason === expandedFailureBucket)}
+					{@const samples = bucketSamples[expandedFailureBucket] || []}
+					{@const DrawerIcon = cfg?.icon}
+
+					<div class="p-4 rounded-xl bg-[var(--surface-container-high)] border border-sky-500/30 mb-5 space-y-3 animate-fade-slide-in">
+						<div class="flex items-center justify-between">
+							<div class="flex items-center gap-2">
+								{#if DrawerIcon}
+									<DrawerIcon class="w-4 h-4 {cfg?.iconColor}" />
+								{/if}
+								<h4 class="text-xs font-semibold text-[var(--text-primary)]">
+									Inspect Sample Tracks: <span class="text-sky-300">{cfg?.title}</span>
+								</h4>
+							</div>
+							<button
+								onclick={() => expandedFailureBucket = null}
+								class="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+								title="Close inspection"
+							>
+								<X class="w-4 h-4" />
+							</button>
+						</div>
+
+						{#if bucketLoading}
+							<p class="text-xs text-[var(--text-muted)] text-center py-4 font-mono">Loading sample tracks...</p>
+						{:else if samples.length === 0}
+							<p class="text-xs text-[var(--text-muted)] text-center py-4">No remaining samples in this category.</p>
+						{:else}
+							<div class="space-y-1.5">
+								{#each samples as sample (sample.id)}
+									{@const sampleResult = parseJobResult(sample)}
+									{@const fail = friendlyFailure(sample, sampleResult)}
+									{@const searchQ = getSearchQueryForJob(sample)}
+									{@const sampleTitle = formatJobTitle(sample.description || sample.type)}
+
+									<div class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-[var(--surface-container)] border border-[var(--border-subtle)] text-xs">
+										<div class="min-w-0 flex-1">
+											<p class="font-medium text-[var(--text-primary)] truncate" title={sampleTitle}>
+												{sampleTitle}
+											</p>
+											<p class="text-[11px] text-rose-400/90 truncate mt-0.5">
+												{fail.title}: <span class="text-[var(--text-muted)]">{fail.detail}</span>
+											</p>
+										</div>
+
+										<div class="flex items-center gap-1.5 flex-shrink-0">
+											{#if searchQ}
+												<button
+													onclick={() => {
+														searchQuery = searchQ;
+														searchSoulseek();
+														window.scrollTo({ top: 0, behavior: 'smooth' });
+													}}
+													class="p-1.5 rounded hover:bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-sky-400 transition-colors"
+													title="Search P2P for alternative sources"
+												>
+													<Search class="w-3.5 h-3.5" />
+												</button>
+											{/if}
+											<button
+												onclick={() => retryJob(sample.id)}
+												class="p-1.5 rounded hover:bg-[var(--surface-container-high)] text-[var(--text-secondary)] hover:text-emerald-400 transition-colors"
+												title="Retry this download"
+											>
+												<RotateCcw class="w-3.5 h-3.5" />
+											</button>
+											<button
+												onclick={() => {
+													hiddenJobIds = new Set([...hiddenJobIds, sample.id]);
+													localStorage.setItem('hiddenDownloadJobs', JSON.stringify([...hiddenJobIds]));
+													bucketSamples[expandedFailureBucket] = bucketSamples[expandedFailureBucket].filter(s => s.id !== sample.id);
+												}}
+												class="p-1.5 rounded hover:bg-[var(--surface-container-high)] text-[var(--text-muted)] hover:text-rose-400 transition-colors"
+												title="Dismiss track"
+											>
+												<X class="w-3.5 h-3.5" />
+											</button>
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 			{:else}
 			<!-- TIER 1: ACTIVE TRANSFERS (Only what is moving data!) -->
-			{#if activeHeroItems.length > 0 && (jobStatusFilter === 'active' || jobStatusFilter === 'all' || jobStatusFilter === null)}
+			{#if activeHeroItems.length > 0}
 				<div class="mb-5 p-4 rounded-xl bg-[var(--surface-container)] border border-[var(--border-subtle)] space-y-3">
 					<div class="flex items-center justify-between flex-wrap gap-2">
 						<div class="flex items-center gap-2">
@@ -1588,6 +2074,44 @@
 			<Button variant="secondary" size="sm" onclick={() => retryConfirm = null}>Cancel</Button>
 			<Button variant="primary" size="sm" disabled={retrying} onclick={retryFailed}>
 				<RotateCcw class="w-3.5 h-3.5 mr-1" /> {retrying ? 'Re-queuing…' : 'Retry'}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if clearCompletedConfirm}
+	<Modal title="Clear Completed History" onclose={() => clearCompletedConfirm = false} maxWidth="max-w-md">
+		{#snippet children()}
+			<p class="text-sm text-[var(--text-primary)]">
+				Clear all <span class="font-bold">{jobStatusCounts.completed.toLocaleString()}</span> completed download records?
+			</p>
+			<p class="text-xs text-[var(--text-muted)] mt-2">
+				This cleans up the download log history only. Files in your music library remain intact.
+			</p>
+		{/snippet}
+		{#snippet footer()}
+			<Button variant="secondary" size="sm" onclick={() => clearCompletedConfirm = false}>Cancel</Button>
+			<Button variant="danger" size="sm" disabled={clearingCompleted} onclick={handleClearCompleted}>
+				<Eraser class="w-3.5 h-3.5 mr-1" /> {clearingCompleted ? 'Clearing…' : 'Clear History'}
+			</Button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if dismissNonCriticalConfirm}
+	<Modal title="Dismiss Non-Critical Failures" onclose={() => dismissNonCriticalConfirm = false} maxWidth="max-w-md">
+		{#snippet children()}
+			<p class="text-sm text-[var(--text-primary)]">
+				Dismiss <span class="font-bold">{nonCriticalCount.toLocaleString()}</span> non-critical failure records?
+			</p>
+			<p class="text-xs text-[var(--text-muted)] mt-2">
+				This removes tracks where equal or higher quality already exists in your library, as well as rejected duplicate imports.
+			</p>
+		{/snippet}
+		{#snippet footer()}
+			<Button variant="secondary" size="sm" onclick={() => dismissNonCriticalConfirm = false}>Cancel</Button>
+			<Button variant="primary" size="sm" disabled={dismissingNonCritical} onclick={handleDismissNonCritical}>
+				<Trash2 class="w-3.5 h-3.5 mr-1" /> {dismissingNonCritical ? 'Dismissing…' : 'Dismiss All Non-Critical'}
 			</Button>
 		{/snippet}
 	</Modal>

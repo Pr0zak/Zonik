@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy import select, delete, func, case, and_, or_
@@ -83,12 +83,18 @@ def _type_filter(q, type: str | None):
 
 @router.get("")
 async def list_jobs(limit: int = 25, offset: int = 0, type: str | None = None, status: str | None = None,
-                    reason: str | None = None, db: AsyncSession = Depends(get_db)):
+                    reason: str | None = None, timeframe: str | None = None, db: AsyncSession = Depends(get_db)):
     base = select(Job)
     if reason:
         cond = _failure_filter(reason)
         if cond is not None:
             base = base.where(Job.status == "failed", cond)
+    if timeframe == "today":
+        day_ago = datetime.utcnow() - timedelta(days=1)
+        base = base.where(func.coalesce(Job.finished_at, Job.started_at) >= day_ago)
+    elif timeframe == "week":
+        week_ago = datetime.utcnow() - timedelta(days=7)
+        base = base.where(func.coalesce(Job.finished_at, Job.started_at) >= week_ago)
     if type:
         type_list = [t.strip() for t in type.split(",") if t.strip()]
         if type_list:
@@ -137,10 +143,32 @@ async def job_counts(type: str | None = None, db: AsyncSession = Depends(get_db)
     if type:
         q = q.where(Job.type == type)
     counts = dict((await db.execute(q)).all())
+
+    # Calculate timeframe counts for completed jobs
+    now = datetime.utcnow()
+    q_today = select(func.count(Job.id)).where(
+        Job.status == "completed",
+        func.coalesce(Job.finished_at, Job.started_at) >= now - timedelta(days=1)
+    )
+    q_week = select(func.count(Job.id)).where(
+        Job.status == "completed",
+        func.coalesce(Job.finished_at, Job.started_at) >= now - timedelta(days=7)
+    )
+    if type:
+        type_list = [t.strip() for t in type.split(",") if t.strip()]
+        if type_list:
+            q_today = q_today.where(Job.type.in_(type_list))
+            q_week = q_week.where(Job.type.in_(type_list))
+
+    completed_today = (await db.execute(q_today)).scalar_one() or 0
+    completed_week = (await db.execute(q_week)).scalar_one() or 0
+
     return {
         "pending": counts.get("pending", 0),
         "running": counts.get("running", 0),
         "completed": counts.get("completed", 0),
+        "completed_today": completed_today,
+        "completed_week": completed_week,
         "failed": counts.get("failed", 0),
         "all": sum(counts.values()),
     }
@@ -366,13 +394,18 @@ async def recent_job_updates(limit: int = 20, db: AsyncSession = Depends(get_db)
 
 
 @router.delete("/clear")
-async def clear_jobs(type: str | None = None, db: AsyncSession = Depends(get_db)):
-    """Delete completed/failed jobs. Optionally filter by type (comma-separated)."""
-    query = delete(Job).where(Job.status.in_(["completed", "failed"]))
+async def clear_jobs(type: str | None = None, status: str | None = None, reason: str | None = None, db: AsyncSession = Depends(get_db)):
+    """Delete completed/failed jobs. Optionally filter by type, status (completed/failed), or failure reason."""
+    statuses = [s.strip() for s in status.split(",") if s.strip()] if status else ["completed", "failed"]
+    query = delete(Job).where(Job.status.in_(statuses))
     if type:
         type_list = [t.strip() for t in type.split(",") if t.strip()]
         if type_list:
             query = query.where(Job.type.in_(type_list))
+    if reason:
+        cond = _failure_filter(reason)
+        if cond is not None:
+            query = query.where(cond)
     result = await db.execute(query)
     await db.commit()
     return {"deleted": result.rowcount}

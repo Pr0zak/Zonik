@@ -76,14 +76,14 @@ export const api = {
 	// Transfers
 	cancelTransfer: (username, filename) =>
 		request('/download/cancel-transfer', { method: 'POST', body: JSON.stringify({ username, filename }) }),
-	getDownloadHistory: (offset = 0, limit = 20, status = null, reason = null) =>
+	getDownloadHistory: (offset = 0, limit = 20, status = null, reason = null, timeframe = null) =>
 		request(`/jobs?type=download,bulk_download&offset=${offset}&limit=${limit}`
-			+ (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : '')),
+			+ (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : '') + (timeframe ? `&timeframe=${timeframe}` : '')),
 	getDownloadFailures: () => request('/jobs/failures?type=download,bulk_download'),
 	retryFailedDownloads: (reason = null) =>
 		request('/jobs/retry-failed?type=download,bulk_download' + (reason ? `&reason=${reason}` : ''), { method: 'POST' }),
-	clearDownloadHistory: () =>
-		request('/jobs/clear?type=download,bulk_download', { method: 'DELETE' }),
+	clearDownloadHistory: (status = null, reason = null) =>
+		request('/jobs/clear?type=download,bulk_download' + (status ? `&status=${status}` : '') + (reason ? `&reason=${reason}` : ''), { method: 'DELETE' }),
 
 	// Blacklist
 	addToBlacklist: (artist, track = null, reason = null) =>
