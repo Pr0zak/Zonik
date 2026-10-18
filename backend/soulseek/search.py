@@ -221,7 +221,13 @@ def build_query_variants(artist: str, track: str, album: str | None = None) -> l
     track_words = cleaned_track.split()
     if len(track_words) >= 3:
         queries.append(f"{cleaned_artist} {' '.join(track_words[-2:])}")
-    if len(cleaned_track.split()) >= 2:
+    # Title-only query: the Soulseek server returns nothing for searches that contain
+    # some major-label artist names (e.g. "Rihanna"), so the title alone is the only
+    # way to find those tracks. One-word titles used to be excluded here, which made
+    # "Rihanna - Disturbia" unfindable; their results are filtered to files whose path
+    # names the artist (see search_multi_strategy_native), so a one-word title can't
+    # pull in a different artist's song.
+    if cleaned_track:
         queries.append(cleaned_track)
     first_artist = artist.split()[0] if artist.split() else artist
     if first_artist.lower() != cleaned_artist.lower():
@@ -292,9 +298,15 @@ async def search_multi_strategy_native(
         merged = merge_search_results(responses)
         if not merged:
             return []
-        return await pick_best_results_native(merged, artist, track, reputation=client.reputation,
-                                              better_than=better_than, target_duration=target_duration,
-                                              strict_duration=strict_duration)
+        found = await pick_best_results_native(merged, artist, track, reputation=client.reputation,
+                                               better_than=better_than, target_duration=target_duration,
+                                               strict_duration=strict_duration)
+        if len(strip_track_extras(track).split()) == 1:
+            # A one-word title matches many unrelated songs; keep files whose path
+            # names the artist.
+            artist_name = clean_artist_name(artist)
+            found = [c for c in found if words_match(artist_name, c["filename"]) or words_match(artist, c["filename"])]
+        return found
 
     first = await run(queries[:1])
     candidates = await rank(first)
