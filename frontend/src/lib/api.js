@@ -1,3 +1,5 @@
+import { notifyUnauthorized } from './auth.js';
+
 const BASE_URL = '/api';
 
 async function request(path, options = {}) {
@@ -7,6 +9,7 @@ async function request(path, options = {}) {
 		...rest,
 		...(signal ? { signal } : {}),
 	});
+	if (res.status === 401 && !path.startsWith('/auth/')) notifyUnauthorized();
 	if (!res.ok) {
 		let detail;
 		try { detail = (await res.json()).detail; } catch {}
@@ -209,6 +212,8 @@ export const api = {
 	// Users
 	getUsers: () => request('/users'),
 	createUser: (data) => request('/users', { method: 'POST', body: JSON.stringify(data) }),
+	updateUser: (id, data) => request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+	resetUserPassword: (id, new_password) => request(`/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password }) }),
 	deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
 	changePassword: (id, data) => request(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify(data) }),
 	generateApiKey: (id) => request(`/users/${id}/api-key`, { method: 'POST' }),

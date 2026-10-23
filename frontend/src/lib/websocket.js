@@ -1,6 +1,8 @@
 import { activeJobs, activeTransfers, activeUploads, wsState } from './stores.js';
 
 let ws = null;
+let stopped = false;
+let reconnectTimer = null;
 let reconnectDelay = 1000;
 // True once any socket has opened, so a later open counts as a reconnect.
 let hasOpened = false;
@@ -39,6 +41,8 @@ function syncJobsFromTransfers(transfers) {
 }
 
 export function connectWebSocket() {
+	stopped = false;
+	if (ws && ws.readyState <= 1) return;
 	const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
 	const url = `${protocol}//${location.host}/api/ws`;
 
@@ -89,11 +93,15 @@ export function connectWebSocket() {
 
 	ws.onclose = () => {
 		wsState.update(s => ({ ...s, connected: false, reconnecting: true }));
-		setTimeout(connectWebSocket, reconnectDelay);
+		if (stopped) return;
+		reconnectTimer = setTimeout(connectWebSocket, reconnectDelay);
 		reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
 	};
 }
 
 export function disconnectWebSocket() {
+	stopped = true;
+	clearTimeout(reconnectTimer);
 	if (ws) ws.close();
+	ws = null;
 }

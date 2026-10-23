@@ -9,16 +9,74 @@
 	import { connectWebSocket, disconnectWebSocket } from '$lib/websocket.js';
 	import { initCast } from '$lib/cast.js';
 	import { goto } from '$app/navigation';
-	import { Menu } from 'lucide-svelte';
+	import { page } from '$app/stores';
+	import { Menu, Loader2 } from 'lucide-svelte';
+	import AdminsOnly from '../components/AdminsOnly.svelte';
+	import ChangePasswordModal from '../components/ChangePasswordModal.svelte';
+	import {
+		currentUser, authReady, loadStatus, loadMe, isAdmin, isAdminPath, isPublicPath,
+		loginUrl, setUnauthorizedHandler, notifyUnauthorized, isAuthExempt,
+	} from '$lib/auth.js';
 	import { sidebarOpen, isPlaying, showShortcuts, playNext, playPrev, isMobile } from '$lib/stores.js';
 
 	let { children } = $props();
 
 	let mql;
 	let mqlHandler;
-	onMount(() => {
-		connectWebSocket();
-		initCast();
+	let socketsUp = false;
+	let castStarted = false;
+
+	let pathname = $derived($page.url.pathname);
+	let publicPage = $derived(isPublicPath(pathname));
+	let showShell = $derived($authReady && !!$currentUser && !publicPage);
+	let blocked = $derived(showShell && !isAdmin($currentUser) && isAdminPath(pathname));
+
+	function toLogin() {
+		const here = window.location.pathname + window.location.search;
+		if (isPublicPath(window.location.pathname)) return;
+		goto(loginUrl(here), { replaceState: true });
+	}
+
+	// Redirect once auth has resolved and there is no session on a non-public page.
+	$effect(() => {
+		if ($authReady && !$currentUser && !publicPage) toLogin();
+	});
+
+	// Websocket and cast only run while someone is signed in.
+	$effect(() => {
+		if ($currentUser && !socketsUp) {
+			socketsUp = true;
+			connectWebSocket();
+			if (!castStarted) { castStarted = true; initCast(); }
+		} else if (!$currentUser && socketsUp) {
+			socketsUp = false;
+			disconnectWebSocket();
+		}
+	});
+
+	onMount(async () => {
+		// One-time wrapper so raw fetch('/api/...') calls also bounce to the login page on 401.
+		if (!window.__zonikFetchWrapped) {
+			window.__zonikFetchWrapped = true;
+			const orig = window.fetch.bind(window);
+			window.fetch = async (input, init) => {
+				const res = await orig(input, init);
+				if (res.status === 401) {
+					const url = typeof input === 'string' ? input : input?.url;
+					if (url && !isAuthExempt(url) && new URL(url, window.location.origin).pathname.startsWith('/api/')) notifyUnauthorized();
+				}
+				return res;
+			};
+		}
+		let bouncing = false;
+		setUnauthorizedHandler(() => {
+			if (bouncing) return;
+			bouncing = true;
+			$currentUser = null;
+			toLogin();
+			setTimeout(() => { bouncing = false; }, 1500);
+		});
+
 		mql = window.matchMedia('(max-width: 767px)');
 		$isMobile = mql.matches;
 		mqlHandler = (e) => { $isMobile = e.matches; };
@@ -26,6 +84,10 @@
 		if ($isMobile) {
 			$sidebarOpen = false;
 		}
+
+		await loadStatus();
+		await loadMe();
+		$authReady = true;
 	});
 
 	onDestroy(() => {
@@ -34,6 +96,7 @@
 	});
 
 	function handleKeydown(event) {
+		if (!$currentUser || publicPage) return;
 		// Don't trigger shortcuts when typing in inputs
 		const tag = event.target?.tagName?.toLowerCase();
 		if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
@@ -145,6 +208,17 @@
 	{/snippet}
 </Modal>
 
+{#if !$authReady || (!$currentUser && !publicPage)}
+	<!-- Auth not resolved yet (or redirecting to /login): nothing of the app shell renders. -->
+	<div class="h-screen flex items-center justify-center bg-[var(--bg-primary)]">
+		<Loader2 class="w-6 h-6 text-[var(--text-disabled)] animate-spin" />
+	</div>
+{:else if publicPage}
+	<div class="h-screen overflow-y-auto bg-[var(--bg-primary)]">
+		{@render children()}
+	</div>
+	<Toast />
+{:else}
 <div class="h-screen flex flex-col bg-[var(--bg-primary)]">
 	<!-- Mobile header -->
 	<div class="md:hidden flex items-center justify-between px-4 py-3 bg-[var(--surface-base)]">
@@ -167,7 +241,11 @@
 			</div>
 			<main class="flex-1 overflow-y-auto p-4 md:p-6">
 				<div class="animate-fade-in">
-					{@render children()}
+					{#if blocked}
+						<AdminsOnly />
+					{:else}
+						{@render children()}
+					{/if}
 				</div>
 			</main>
 			<!-- In the content column, not under the whole window, so the sidebar keeps the full
@@ -177,3 +255,8 @@
 	</div>
 	<Toast />
 </div>
+
+{#if $currentUser?.must_change_password}
+	<ChangePasswordModal />
+{/if}
+{/if}

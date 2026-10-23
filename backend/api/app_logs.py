@@ -24,10 +24,10 @@ class LogUploadRequest(BaseModel):
 
 # --- Upload ---
 #
-# Permissive on purpose. Most /rest/* endpoints don't enforce Subsonic auth on
-# this single-user server, and requiring it here was the only thing surfacing
-# stale-api_key drift on the phone. Trust the network boundary (Tailscale-only
-# in practice); record the u= query param as a hint, not a credential.
+# Permissive on purpose (a public route in backend/auth/policy.py, even with
+# [auth] enforce on): requiring auth here was the only thing surfacing
+# stale-api_key drift on the phone. Record the u= query param as a hint, not a
+# credential.
 
 @router.post("")
 async def upload_log(body: LogUploadRequest, request: Request, db: AsyncSession = Depends(get_db)):
@@ -49,7 +49,7 @@ async def upload_log(body: LogUploadRequest, request: Request, db: AsyncSession 
     return {"id": log_id, "message": "ok"}
 
 
-# --- Web UI endpoints (no auth, same as other /api/ routes) ---
+# --- Web UI endpoints (admin only: logs.read in backend/auth/policy.py) ---
 
 @router.get("/app")
 async def list_app_logs(

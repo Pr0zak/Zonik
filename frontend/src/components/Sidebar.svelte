@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { sidebarOpen, updateAvailable, activeJobs, activeTransfers } from '$lib/stores.js';
 	import { Loader2 } from 'lucide-svelte';
+	import { currentUser, isAdmin, navVisible } from '$lib/auth.js';
 	import {
 		LayoutDashboard, Library, Compass, Download, ListMusic,
 		Heart, AudioWaveform, BarChart3, Clock, ScrollText, Settings, Github, Network, Copy, ArrowUpCircle, Radio, Tv, FolderTree
@@ -63,6 +64,13 @@
 		},
 	];
 
+	let admin = $derived(isAdmin($currentUser));
+	let visibleGroups = $derived(
+		navGroups
+			.map((g) => ({ ...g, items: g.items.filter((i) => navVisible($currentUser, i.href)) }))
+			.filter((g) => g.items.length)
+	);
+
 	function isActive(pathname, href) {
 		if (href === '/') return pathname === '/';
 		return pathname.startsWith(href);
@@ -100,7 +108,7 @@
 	</div>
 
 	<nav class="flex-1 px-3 overflow-y-auto space-y-2.5">
-		{#each navGroups as group}
+		{#each visibleGroups as group}
 			<div>
 				<p class="px-3 mb-1 text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]/80">{group.label}</p>
 				<div class="space-y-0.5">
@@ -151,7 +159,7 @@
 			</a>
 		{/if}
 		{#if $activeJobs.length > 0}
-			<a href="/logs" class="flex items-center gap-2 mb-2 hover:bg-white/5 -mx-2 px-2 py-1 rounded transition-colors"
+			<a href={admin ? '/logs' : '/downloads'} class="flex items-center gap-2 mb-2 hover:bg-white/5 -mx-2 px-2 py-1 rounded transition-colors"
 				onclick={() => { if (window.innerWidth < 768) $sidebarOpen = false; }}>
 				<Loader2 class="w-3.5 h-3.5 text-[var(--color-info)] animate-spin" />
 				<div class="flex-1 min-w-0">

@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.auth.resolve import subsonic_gate
 from backend.database import get_db
 from backend.subsonic.auth import authenticate_subsonic, _client_ip
 from backend.subsonic.activity import record_activity
@@ -28,7 +29,9 @@ async def _track_subsonic_activity(request: Request) -> None:
     )
 
 
-router = APIRouter(dependencies=[Depends(_track_subsonic_activity)])
+# subsonic_gate resolves the caller into request.state.user (session cookie, Bearer device
+# token, apiKey, u+t/s); in enforce mode it refuses unauthenticated calls with error 40.
+router = APIRouter(dependencies=[Depends(_track_subsonic_activity), Depends(subsonic_gate)])
 
 # Include all sub-routers
 router.include_router(system.router)

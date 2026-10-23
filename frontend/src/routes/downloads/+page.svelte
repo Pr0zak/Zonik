@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api.js';
 	import { addToast, activeTransfers, activeUploads, wsState } from '$lib/stores.js';
+	import { currentUser, can } from '$lib/auth.js';
 	import { onJobUpdate } from '$lib/websocket.js';
 	import { formatSize, formatSpeed, formatETA, parseUTC } from '$lib/utils.js';
 	import { Download, Search, Zap, ShieldBan, Trash2, ChevronLeft, ChevronRight, RotateCcw, Eraser, CircleCheck, Wifi, Upload, ListOrdered, Pause, Ban } from 'lucide-svelte';
@@ -999,8 +1000,8 @@
 	const drawerActions = {
 		cancel: (job) => cancelJob(job.id),
 		retry: async (job) => { await retryJob(job.id); selectedJobId = null; },
-		stopTrying: (job) => askStop(job),
-		remove: (job) => askRemove(job),
+		stopTrying: isDlAdmin ? (job) => askStop(job) : undefined,
+		remove: isDlAdmin ? (job) => askRemove(job) : undefined,
 		// Same "Artist - Track" query as the row button, so the search's blacklist check applies.
 		searchByHand: (q, job) => { selectedJobId = null; if (job) searchByHandFor(job); else searchByHand(q); },
 	};
@@ -1336,8 +1337,11 @@
 		loadJobsTimer = setTimeout(() => loadJobs(false), activeCount > 20 ? 10000 : activeCount > 5 ? 5000 : 2000);
 	}
 
+	// Blacklist editing, bulk clear/retry and row deletion are admin-only on the server too.
+	let isDlAdmin = $derived(can($currentUser, 'downloads.admin'));
+
 	onMount(() => {
-		loadBlacklist();
+		if (isDlAdmin) loadBlacklist();
 		// Deep links, e.g. /downloads?status=failed&reason=not_found (dashboard) or ?status=active
 		const qs = new URLSearchParams(window.location.search);
 		const wantStatus = qs.get('status') === 'active' ? 'live' : qs.get('status');
@@ -1644,7 +1648,7 @@
 	{/if}
 
 	<!-- Incident banner (only while an un-dismissed restart/outage wave exists) + health strip -->
-	<IncidentBanner {incidents} onRetry={retryIncident} onDismiss={dismissIncident} busy={incidentBusy} now={tick} class="mb-4" />
+	<IncidentBanner {incidents} onRetry={isDlAdmin ? retryIncident : null} onDismiss={isDlAdmin ? dismissIncident : null} busy={incidentBusy} now={tick} class="mb-4" />
 	<HealthStrip {status} {summary} backlog={backlogCount} {nextRun}
 		scopeLabel={scope === 'today' ? 'today' : scopeInfo.label} activeFilter={activeTile} onFilter={onTile} now={tick} class="mb-4" />
 
@@ -1684,7 +1688,7 @@
 								{#if rows.length}
 									<div class="divide-y divide-[var(--border-subtle)]">
 										{#each rows as job (job.id)}
-											<DoneRow {job} now={tick} selected={selectedJobId === job.id} onRemove={askRemove} onOpen={openRow} />
+											<DoneRow {job} now={tick} selected={selectedJobId === job.id} onRemove={isDlAdmin ? askRemove : null} onOpen={openRow} />
 										{/each}
 									</div>
 								{:else}
@@ -1697,7 +1701,7 @@
 
 				<GroupedList groups={doneGroupList} columns={DONE_COLUMNS} grid={DONE_GRID}>
 					{#snippet row(job)}
-						<DoneRow {job} now={tick} selected={selectedJobId === job.id} onRemove={askRemove} onOpen={openRow} />
+						<DoneRow {job} now={tick} selected={selectedJobId === job.id} onRemove={isDlAdmin ? askRemove : null} onOpen={openRow} />
 					{/snippet}
 					{#snippet empty()}
 						<EmptyState compact title={doneOutcomeFilter === 'all' ? 'No downloads finished in this period' : 'No rows match this filter'}>
@@ -1711,10 +1715,12 @@
 								<button type="button" class="text-sky-400 hover:text-sky-300 font-medium transition-colors" onclick={() => showMoreDone(25)}>Show 25 more</button>
 								<button type="button" class="text-sky-400 hover:text-sky-300 font-medium transition-colors" onclick={() => showMoreDone('all')}>Show all {doneTotal.toLocaleString()}</button>
 							{/if}
+							{#if isDlAdmin}
 							<button type="button" class="inline-flex items-center gap-1 hover:text-rose-400 transition-colors disabled:opacity-50" disabled={!jobStatusCounts.completed}
 								onclick={() => (clearCompletedConfirm = true)}>
 								<Eraser class="w-3.5 h-3.5" />Clear completed history on the server
 							</button>
+							{/if}
 						</span>
 					{/snippet}
 				</GroupedList>
@@ -1728,13 +1734,13 @@
 				<div class="flex items-center justify-between flex-wrap gap-x-4 gap-y-2 mb-2">
 					<FilterPills variant="outline" options={failedPills} value={failedClass ?? 'all'} onchange={(v) => (failedClass = v === 'all' ? null : v)} />
 					<div class="flex items-center gap-2 flex-wrap">
-						{#if peerCount > 0}
+						{#if isDlAdmin && peerCount > 0}
 							<!-- Peer problems only: never resurrects cancelled or infra rows -->
 							<Button variant="secondary" size="sm" onclick={() => (retryConfirm = { reason: 'peer', label: 'Peer problems', count: peerCount })}>
 								<RotateCcw class="w-3.5 h-3.5" />Retry {plural(peerCount, 'peer problem')}
 							</Button>
 						{/if}
-						{#if retiredRows.length}
+						{#if isDlAdmin && retiredRows.length}
 							<Button variant="ghost" size="sm" class="!text-rose-400" onclick={() => (stopRetiredConfirm = true)}>
 								<Ban class="w-3.5 h-3.5" />Stop retrying {plural(retiredRows.length, 'retired track')}
 							</Button>
@@ -1749,7 +1755,7 @@
 				<GroupedList groups={failedGroupList} columns={FAILED_COLUMNS} grid={FAILED_GRID}>
 					{#snippet row(job)}
 						<FailedRow {job} now={tick} selected={selectedJobId === job.id} stopped={stoppedIds.has(job.id)}
-							onSearch={searchByHandFor} onRetry={(j) => retryJob(j.id)} onStopTrying={askStop} onRemove={askRemove} onOpen={openRow} />
+							onSearch={searchByHandFor} onRetry={(j) => retryJob(j.id)} onStopTrying={isDlAdmin ? askStop : null} onRemove={isDlAdmin ? askRemove : null} onOpen={openRow} />
 					{/snippet}
 					{#snippet empty()}
 						<EmptyState compact title={failedClass ? 'Nothing of this kind failed in this period' : 'Nothing failed in this period'}>
@@ -1801,7 +1807,7 @@
 										<ListOrdered class="w-3.5 h-3.5" />Backoff list ({backoffTotal.toLocaleString()})
 									</Button>
 								{/if}
-								{#if dueToday}
+								{#if dueToday && isDlAdmin}
 									<Button variant="secondary" size="sm" loading={runningRetries} onclick={runRetriesNow}>
 										<RotateCcw class="w-3.5 h-3.5" />Run the {dueToday.toLocaleString()} {dueToday === 1 ? 'retry' : 'retries'} now
 									</Button>
@@ -1921,7 +1927,8 @@
 		</Card>
 	{/if}
 
-	<!-- Blacklist -->
+	<!-- Blacklist (admins only) -->
+	{#if isDlAdmin}
 	<Card padding="p-4">
 		<div class="flex items-center justify-between mb-4">
 			<div class="flex items-center gap-2">
@@ -2022,6 +2029,7 @@
 			{/if}
 		{/if}
 	</Card>
+	{/if}
 </div>
 
 {#if retryConfirm}

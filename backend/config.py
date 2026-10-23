@@ -25,6 +25,17 @@ class ServerConfig(BaseModel):
     rate_limit_burst: int = 30
 
 
+class AuthConfig(BaseModel):
+    # Grace mode while false: requests without credentials still run, as the owner (the first
+    # admin), and are logged. Set true once every client (web, phone, TV, watch, Zata) logs in.
+    enforce: bool = False
+    # Web sessions slide: each use (at most every 5 min) pushes the expiry this far out.
+    session_days: int = 90
+    # Login lockout per (client IP, username): this many failures within lockout_minutes.
+    login_max_failures: int = 5
+    lockout_minutes: int = 5
+
+
 class LibraryConfig(BaseModel):
     music_dir: str = "/music"
     cover_cache_dir: str = "/opt/zonik/cache/covers"
@@ -186,6 +197,7 @@ class AssistantConfig(BaseModel):
 
 class Settings(BaseModel):
     server: ServerConfig = ServerConfig()
+    auth: AuthConfig = AuthConfig()
     library: LibraryConfig = LibraryConfig()
     database: DatabaseConfig = DatabaseConfig()
     redis: RedisConfig = RedisConfig()

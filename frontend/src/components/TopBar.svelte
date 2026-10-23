@@ -1,6 +1,7 @@
 <script>
 	import { goto } from '$app/navigation';
-	import { Search, X, RefreshCw, Bell } from 'lucide-svelte';
+	import { Search, X, RefreshCw, Bell, UserRound, LogOut } from 'lucide-svelte';
+	import { currentUser, isAdmin, initials, displayName, logout } from '$lib/auth.js';
 	import { api } from '$lib/api.js';
 	import { activeJobs, addToast } from '$lib/stores.js';
 	import { formatSize } from '$lib/utils.js';
@@ -21,6 +22,17 @@
 	let syncing = $state(false);
 	let inputEl;
 	let dropdownRef = $state(null);
+
+	let showUserMenu = $state(false);
+	let admin = $derived(isAdmin($currentUser));
+	// Users cannot open /logs, so job links lead to Downloads instead.
+	let jobsHref = $derived(admin ? '/logs' : '/downloads');
+
+	async function signOut() {
+		showUserMenu = false;
+		await logout();
+		goto('/login');
+	}
 
 	let runningJobs = $derived($activeJobs.filter(j => j.status === 'running'));
 
@@ -106,12 +118,14 @@
 <!-- Action icons -->
 <div class="flex items-center gap-1.5 ml-auto">
 	<!-- Sync library -->
+	{#if admin}
 	<button onclick={syncLibrary}
 		class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--surface-container)] hover:bg-[var(--surface-container-high)] ghost-border transition-colors"
 		title="Scan & sync library">
 		<RefreshCw class="w-3.5 h-3.5 {syncing ? 'animate-spin text-[var(--color-library)]' : ''}" />
 		<span class="hidden md:inline">Sync</span>
 	</button>
+	{/if}
 
 	<!-- Notifications / Activity -->
 	<div class="relative">
@@ -137,7 +151,7 @@
 				</div>
 				{#if runningJobs.length}
 					{#each runningJobs as job}
-						<button onclick={() => { showNotifications = false; goto(`/logs?job=${job.id}`); }}
+						<button onclick={() => { showNotifications = false; goto(admin ? `/logs?job=${job.id}` : '/downloads'); }}
 							class="w-full text-left px-3 py-2.5  hover:bg-[var(--surface-container-high)] transition-colors cursor-pointer">
 							<div class="flex items-center gap-2">
 								<span class="inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-downloads)] animate-pulse flex-shrink-0"></span>
@@ -157,11 +171,42 @@
 						<p class="text-sm text-[var(--text-muted)]">No active tasks</p>
 					</div>
 				{/if}
-				<button onclick={() => { showNotifications = false; goto('/logs'); }}
+				<button onclick={() => { showNotifications = false; goto(jobsHref); }}
 					class="w-full px-3 py-2 mt-1 text-xs text-center text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors">
-					View all jobs
+					{admin ? 'View all jobs' : 'Open downloads'}
 				</button>
 			</div>
 		{/if}
 	</div>
+
+	<!-- User menu -->
+	{#if $currentUser}
+		<div class="relative">
+			<button onclick={() => showUserMenu = !showUserMenu}
+				class="flex items-center gap-2 pl-1 pr-1 sm:pr-2.5 py-1 rounded-full hover:bg-[var(--surface-container-high)] transition-colors"
+				title="Account" aria-haspopup="menu" aria-expanded={showUserMenu}>
+				<span class="w-7 h-7 rounded-full bg-gradient-primary text-[var(--color-on-primary)] text-xs font-bold flex items-center justify-center">{initials($currentUser)}</span>
+				<span class="hidden sm:inline text-xs font-medium text-[var(--text-secondary)] max-w-[8rem] truncate">{displayName($currentUser)}</span>
+			</button>
+			{#if showUserMenu}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div class="fixed inset-0 z-40" onclick={() => showUserMenu = false}></div>
+				<div class="absolute top-full right-0 mt-1 w-56 glass rounded-lg shadow-float z-50 overflow-hidden animate-fade-slide-in" role="menu">
+					<div class="px-3 py-2.5">
+						<p class="text-sm font-medium text-[var(--text-primary)] truncate">{displayName($currentUser)}</p>
+						<p class="text-[11px] font-mono text-[var(--text-disabled)] uppercase tracking-wider">{$currentUser.role}</p>
+					</div>
+					<button role="menuitem" onclick={() => { showUserMenu = false; goto('/account'); }}
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-container-high)] transition-colors">
+						<UserRound class="w-4 h-4" />Account
+					</button>
+					<button role="menuitem" onclick={signOut}
+						class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-[var(--text-secondary)] hover:text-red-400 hover:bg-[var(--surface-container-high)] transition-colors">
+						<LogOut class="w-4 h-4" />Log out
+					</button>
+				</div>
+			{/if}
+		</div>
+	{/if}
 </div>

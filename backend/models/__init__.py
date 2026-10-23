@@ -7,6 +7,7 @@ from backend.models.analysis import TrackAnalysis
 from backend.models.embedding import TrackEmbedding
 from backend.models.job import Job
 from backend.models.user import User
+from backend.models.auth import AuthSession, DeviceToken
 from backend.models.play_queue import PlayQueue
 from backend.models.bookmark import Bookmark
 from backend.models.schedule import ScheduleTask
@@ -24,7 +25,7 @@ from backend.models.preview_embedding import PreviewEmbedding
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
-    "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User",
+    "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User", "AuthSession", "DeviceToken",
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
     "SoulseekSnapshot", "PlayHistory", "Recommendation", "TasteProfile",
     "TrackUpgrade", "AppLog", "AIUsage", "TvVisualizerConfig", "TvEffectStat",

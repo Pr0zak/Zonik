@@ -2,24 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
-import bcrypt
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import inspect as sa_inspect, select
 
 from backend.api.config_api import _get_version
+from backend.auth.resolve import SubsonicAuthRequired, api_gate
 from backend.config import get_settings
-from backend.database import async_session, init_db
+from backend.database import async_session, engine, init_db
 from backend.models.user import User
 from backend.models.job import Job
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer, tidy as tidy_api, download_attempts, download_batches
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer, tidy as tidy_api, download_attempts, download_batches, auth as auth_api
 from backend.subsonic import router as subsonic_router
+from backend.subsonic.responses import error_response
 
 
 STATS_INTERVAL = 300  # 5 minutes
@@ -196,21 +196,24 @@ async def _native_keepalive_loop():
 
 async def lifespan(app: FastAPI):
     await init_db()
-    # Ensure default admin user exists
-    async with async_session() as session:
-        result = await session.execute(select(User).limit(1))
-        if result.scalar_one_or_none() is None:
-            user = User(
-                id=str(uuid.uuid4()),
-                username="admin",
-                password_hash=bcrypt.hashpw(b"admin", bcrypt.gensalt()).decode(),
-                is_admin=True,
-            )
-            session.add(user)
-            await session.commit()
+    log = logging.getLogger(__name__)
+    # No default account any more: an empty users table means the web UI shows first-run
+    # setup (POST /api/auth/setup). The auth columns come from alembic revision q8r9s0t1u2v3,
+    # which upgrade.sh does not run — say so loudly instead of failing on every request.
+    try:
+        async with engine.connect() as conn:
+            user_cols = await conn.run_sync(lambda c: {col["name"] for col in sa_inspect(c).get_columns("users")})
+        if "role" not in user_cols:
+            log.error("AUTH SCHEMA MISSING: users.role does not exist — run `alembic upgrade head` on this "
+                      "host now. Logins and user lookups fail until then (grace mode keeps /api usable).")
+        else:
+            async with async_session() as session:
+                if (await session.execute(select(User.id).limit(1))).scalar_one_or_none() is None:
+                    log.warning("No users yet — open the web UI to create the admin account")
+    except Exception as e:
+        log.error(f"Auth schema check failed: {e!r}")
 
     # Mark any stuck "running" jobs as failed (killed by restart)
-    log = logging.getLogger(__name__)
     async with async_session() as session:
         from sqlalchemy import update, func
         from datetime import datetime
@@ -299,34 +302,49 @@ if settings.server.rate_limit_rps > 0:
         burst=settings.server.rate_limit_burst,
     )
 
+# Subsonic error 40 for unauthenticated /rest calls in enforce mode (raised by subsonic_gate).
+@app.exception_handler(SubsonicAuthRequired)
+async def _subsonic_auth_required(request: Request, _exc: SubsonicAuthRequired):
+    return error_response(40, "Wrong username or password", request.query_params.get("f", "json"))
+
+
+def _api(router, prefix: str, tag: str) -> None:
+    """Mount an /api router behind the auth gate: caller resolution (grace or enforce),
+    CSRF check for cookie writes, and the path policy in backend/auth/policy.py. Public
+    routes (auth/login etc., pair, log upload) are exempted by that policy, not here."""
+    app.include_router(router, prefix=prefix, tags=[tag], dependencies=[Depends(api_gate)])
+
+
 # API routes
-app.include_router(tracks.router, prefix="/api/tracks", tags=["tracks"])
-app.include_router(library.router, prefix="/api/library", tags=["library"])
-app.include_router(favorites.router, prefix="/api/favorites", tags=["favorites"])
-app.include_router(playlists.router, prefix="/api/playlists", tags=["playlists"])
-app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
-app.include_router(download.router, prefix="/api/download", tags=["download"])
-app.include_router(download_attempts.router, prefix="/api/download/attempts", tags=["download-attempts"])
-app.include_router(download_batches.router, prefix="/api/download/batches", tags=["download-batches"])
-app.include_router(discovery.router, prefix="/api/discovery", tags=["discovery"])
-app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
-app.include_router(schedule.router, prefix="/api/schedule", tags=["schedule"])
-app.include_router(config_api.router, prefix="/api/config", tags=["config"])
-app.include_router(users.router, prefix="/api/users", tags=["users"])
-app.include_router(map_api.router, prefix="/api/map", tags=["map"])
-app.include_router(recommendations.router, prefix="/api/recommendations", tags=["recommendations"])
-app.include_router(upgrades.router, prefix="/api/upgrades", tags=["upgrades"])
-app.include_router(ai_search.router, prefix="/api/search", tags=["ai-search"])
-app.include_router(catalog_api.router, prefix="/api/search", tags=["catalog"])
-app.include_router(assistant.router, prefix="/api/assistant", tags=["assistant"])
-app.include_router(playlist_import.router, prefix="/api/playlists/import", tags=["playlist-import"])
-app.include_router(app_logs.router, prefix="/api/logs", tags=["logs"])
-app.include_router(tv_visualizer.router, prefix="/api/tv/visualizer", tags=["tv-visualizer"])
-app.include_router(tidy_api.router, prefix="/api/tidy", tags=["tidy"])
-app.include_router(pair.router, prefix="/api/pair", tags=["pair"])
-app.include_router(live.router, prefix="/api/live", tags=["live"])
-app.include_router(attention.router, prefix="/api/attention", tags=["attention"])
-app.include_router(ai_usage.router, prefix="/api/ai-usage", tags=["ai-usage"])
+_api(auth_api.router, "/api/auth", "auth")
+_api(tracks.router, "/api/tracks", "tracks")
+_api(library.router, "/api/library", "library")
+_api(favorites.router, "/api/favorites", "favorites")
+_api(playlists.router, "/api/playlists", "playlists")
+_api(jobs.router, "/api/jobs", "jobs")
+_api(download.router, "/api/download", "download")
+_api(download_attempts.router, "/api/download/attempts", "download-attempts")
+_api(download_batches.router, "/api/download/batches", "download-batches")
+_api(discovery.router, "/api/discovery", "discovery")
+_api(analysis.router, "/api/analysis", "analysis")
+_api(schedule.router, "/api/schedule", "schedule")
+_api(config_api.router, "/api/config", "config")
+_api(users.router, "/api/users", "users")
+_api(map_api.router, "/api/map", "map")
+_api(recommendations.router, "/api/recommendations", "recommendations")
+_api(upgrades.router, "/api/upgrades", "upgrades")
+_api(ai_search.router, "/api/search", "ai-search")
+_api(catalog_api.router, "/api/search", "catalog")
+_api(assistant.router, "/api/assistant", "assistant")
+_api(playlist_import.router, "/api/playlists/import", "playlist-import")
+_api(app_logs.router, "/api/logs", "logs")
+_api(tv_visualizer.router, "/api/tv/visualizer", "tv-visualizer")
+_api(tidy_api.router, "/api/tidy", "tidy")
+_api(pair.router, "/api/pair", "pair")
+_api(live.router, "/api/live", "live")
+_api(attention.router, "/api/attention", "attention")
+_api(ai_usage.router, "/api/ai-usage", "ai-usage")
+# The websocket authenticates itself (backend.auth.resolve.websocket_allowed).
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 
 # Subsonic API

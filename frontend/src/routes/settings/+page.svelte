@@ -3,7 +3,8 @@
 	import { api } from '$lib/api.js';
 	import { createScheduleHelpers } from '$lib/schedule.js';
 	import { addToast } from '$lib/stores.js';
-	import { inputClass, formatDateTime } from '$lib/utils.js';
+	import { inputClass, formatDateTime, formatRelativeTime } from '$lib/utils.js';
+	import { currentUser } from '$lib/auth.js';
 	import { Settings, Shuffle, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform, Tv, Smartphone } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
@@ -175,9 +176,9 @@
 	let creatingBackup = $state(false);
 
 	let users = $state([]);
-	let newUser = $state({ username: '', password: '', is_admin: false });
+	let newUser = $state({ username: '', display_name: '', password: '', role: 'user' });
 	let changingPw = $state(null);
-	let pwForm = $state({ current_password: '', new_password: '' });
+	let pwForm = $state({ new_password: '' });
 
 	function applyServices(d) {
 		services = d;
@@ -387,9 +388,9 @@
 
 	async function addUser() {
 		try {
-			await api.createUser(newUser);
+			await api.createUser({ ...newUser, is_admin: newUser.role === 'admin' });
 			addToast(`User "${newUser.username}" created`, 'success');
-			newUser = { username: '', password: '', is_admin: false };
+			newUser = { username: '', display_name: '', password: '', role: 'user' };
 			await loadUsers();
 		} catch (e) {
 			addToast(e.message || 'Failed to create user', 'error');
@@ -398,12 +399,23 @@
 
 	async function changePassword(userId) {
 		try {
-			await api.changePassword(userId, pwForm);
-			addToast('Password changed', 'success');
+			await api.resetUserPassword(userId, pwForm.new_password);
+			addToast('Password reset. That user was signed out everywhere.', 'success');
 			changingPw = null;
-			pwForm = { current_password: '', new_password: '' };
+			pwForm = { new_password: '' };
 		} catch (e) {
 			addToast(e.message || 'Failed to change password', 'error');
+		}
+	}
+
+	// Role / disabled changes; the server rejects demoting, disabling or deleting the last admin (or yourself).
+	async function patchUser(user, patch) {
+		try {
+			await api.updateUser(user.id, patch);
+			await loadUsers();
+		} catch (e) {
+			addToast(e.message || 'Failed to update user', 'error');
+			await loadUsers();
 		}
 	}
 
@@ -932,20 +944,38 @@
 			</div>
 
 			<div class="space-y-3">
-				{#each users as user}
-					<div class="bg-[var(--surface-container)] rounded-md px-3 py-2">
-						<div class="flex items-center justify-between">
-							<div class="flex items-center gap-3">
+				{#each users as user (user.id)}
+					{@const isSelf = $currentUser?.id === user.id}
+					<div class="bg-[var(--surface-container)] rounded-md px-3 py-2 {user.disabled ? 'opacity-60' : ''}">
+						<div class="flex items-center justify-between gap-3 flex-wrap">
+							<div class="flex items-center gap-2 min-w-0 flex-wrap">
 								<span class="font-medium text-[var(--text-primary)]">{user.username}</span>
-								{#if user.is_admin}
-									<Badge variant="info">Admin</Badge>
+								{#if user.display_name}
+									<span class="text-sm text-[var(--text-secondary)]">{user.display_name}</span>
+								{/if}
+								{#if isSelf}<Badge variant="default" size="sm">You</Badge>{/if}
+								{#if user.disabled}
+									<Badge variant="error" size="sm">Disabled</Badge>
+								{:else}
+									<Badge variant="success" size="sm">Active</Badge>
 								{/if}
 								{#if user.has_api_key}
-									<Badge variant="success">API Key</Badge>
+									<Badge variant="success" size="sm">API Key</Badge>
 								{/if}
 							</div>
-							<div class="flex items-center gap-2">
-								<Button variant="ghost" size="sm" onclick={() => { changingPw = changingPw === user.id ? null : user.id; }} title="Change password">
+							<div class="flex items-center gap-2 flex-wrap">
+								<select aria-label="Role for {user.username}" value={user.role || (user.is_admin ? 'admin' : 'user')}
+									disabled={isSelf}
+									onchange={(e) => patchUser(user, { role: e.currentTarget.value })}
+									class="{inputClass} !w-auto !py-1 text-xs">
+									<option value="admin">Admin</option>
+									<option value="user">User</option>
+								</select>
+								<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]" title={isSelf ? 'You cannot disable yourself' : 'Disabled users cannot sign in'}>
+									<input type="checkbox" checked={!!user.disabled} disabled={isSelf}
+										onchange={(e) => patchUser(user, { disabled: e.currentTarget.checked })} /> Disabled
+								</label>
+								<Button variant="ghost" size="sm" onclick={() => { changingPw = changingPw === user.id ? null : user.id; pwForm = { new_password: '' }; }} title="Reset password">
 									<Key class="w-3.5 h-3.5" />
 								</Button>
 								{#if user.has_api_key}
@@ -960,13 +990,16 @@
 										<Shield class="w-3.5 h-3.5" />
 									</Button>
 								{/if}
-								{#if !user.is_admin}
-									<Button variant="ghost" size="sm" onclick={() => deleteUser(user.id)}>
+								{#if !isSelf}
+									<Button variant="ghost" size="sm" onclick={() => deleteUser(user.id)} title="Delete user">
 										<Trash2 class="w-3.5 h-3.5 text-red-400" />
 									</Button>
 								{/if}
 							</div>
 						</div>
+						<p class="mt-1 text-[11px] text-[var(--text-disabled)]">
+							Last login: {user.last_login_at ? `${formatRelativeTime(user.last_login_at)} (${formatDateTime(user.last_login_at)})` : 'never'}
+						</p>
 						{#if user.has_api_key}
 							<div class="mt-1.5 flex items-center gap-2">
 								<code class="text-xs font-mono text-[var(--text-muted)] bg-[var(--bg-primary)] px-2 py-0.5 rounded">
@@ -984,9 +1017,8 @@
 					</div>
 					{#if changingPw === user.id}
 						<div class="ml-3 flex gap-2 animate-fade-slide-in">
-							<input type="password" placeholder="Current password" bind:value={pwForm.current_password} class={inputClass + ' flex-1'} />
-							<input type="password" placeholder="New password" bind:value={pwForm.new_password} class={inputClass + ' flex-1'} />
-							<Button variant="primary" size="sm" onclick={() => changePassword(user.id)}>Save</Button>
+							<input type="password" placeholder="New password for {user.username} (min 8)" bind:value={pwForm.new_password} class={inputClass + ' flex-1'} />
+							<Button variant="primary" size="sm" disabled={pwForm.new_password.length < 8} onclick={() => changePassword(user.id)}>Reset</Button>
 						</div>
 					{/if}
 				{/each}
@@ -994,12 +1026,14 @@
 
 			<!-- Add User -->
 			<div class="mt-4 pt-4 ">
-				<div class="flex gap-2">
-					<input type="text" placeholder="Username" bind:value={newUser.username} class={inputClass + ' flex-1'} />
-					<input type="password" placeholder="Password" bind:value={newUser.password} class={inputClass + ' flex-1'} />
-					<label class="flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
-						<input type="checkbox" bind:checked={newUser.is_admin} /> Admin
-					</label>
+				<div class="flex gap-2 flex-wrap">
+					<input type="text" placeholder="Username" bind:value={newUser.username} class={inputClass + ' flex-1 min-w-[8rem]'} />
+					<input type="text" placeholder="Display name (optional)" bind:value={newUser.display_name} class={inputClass + ' flex-1 min-w-[8rem]'} />
+					<input type="password" placeholder="Password" bind:value={newUser.password} class={inputClass + ' flex-1 min-w-[8rem]'} />
+					<select aria-label="Role" bind:value={newUser.role} class="{inputClass} !w-auto">
+						<option value="user">User</option>
+						<option value="admin">Admin</option>
+					</select>
 					<Button variant="primary" size="sm" disabled={!newUser.username || !newUser.password} onclick={addUser}>
 						<Plus class="w-3.5 h-3.5" />
 						Add

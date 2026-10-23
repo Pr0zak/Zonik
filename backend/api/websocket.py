@@ -9,6 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
+from backend.auth.resolve import websocket_allowed
 from backend.database import async_session
 from backend.models.job import Job
 
@@ -103,6 +104,11 @@ def _download_replay_fields(tracks_json: str | None) -> dict:
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # Same caller resolution as /api (cookie, Bearer, apiKey, Subsonic u/t/s query params).
+    # Grace mode lets anonymous sockets in; enforce mode closes them before the handshake.
+    if not await websocket_allowed(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     fwd = websocket.headers.get("x-forwarded-for")
     ip = fwd.split(",")[0].strip() if fwd else (websocket.client.host if websocket.client else None)
