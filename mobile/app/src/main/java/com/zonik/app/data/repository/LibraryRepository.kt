@@ -36,6 +36,8 @@ class LibraryRepository @Inject constructor(
      */
     suspend fun getLibraryVersion(): String? = try {
         api.getLibraryVersion().response.libraryVersion?.version
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
         com.zonik.app.data.DebugLog.d("Sync", "Library version unavailable: ${e.message}")
         null

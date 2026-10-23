@@ -31,7 +31,8 @@ class SyncManager @Inject constructor(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     /**
-     * Returns true when the sync completed (or was skipped as unnecessary). [background] syncs
+     * Returns true when the sync completed, was skipped as unnecessary, or another sync was
+     * already running. [background] syncs
      * (the scheduled worker) run silently: no "Sync complete" banner, and a failure is logged
      * rather than shown as an error on screen, since nobody asked for it and the worker will
      * retry.
@@ -54,8 +55,25 @@ class SyncManager @Inject constructor(
                 SyncState(isSyncing = true, phase = "Syncing artists...")
             }
         }
-        if (!claimed) return false
+        // Another sync already holds the slot; it will bring the library up to date, so
+        // this request counts as handled (the worker must not retry over it).
+        if (!claimed) return true
 
+        // Everything past the claim runs under this try/finally: whatever happens —
+        // a failure, or the worker being cancelled while it checks for changes — the
+        // slot is released. Before, a cancellation during the version check left
+        // isSyncing stuck true, so the TV showed "syncing" forever and every later
+        // sync bailed.
+        try {
+            return runClaimedSync(background, onlyIfChanged)
+        } finally {
+            if (_syncState.value.isSyncing) {
+                _syncState.value = _syncState.value.copy(isSyncing = false, phase = "", detail = "")
+            }
+        }
+    }
+
+    private suspend fun runClaimedSync(background: Boolean, onlyIfChanged: Boolean): Boolean {
         var serverVersion: String? = null
         if (onlyIfChanged) {
             _syncState.value = _syncState.value.copy(phase = "Checking for changes...")
@@ -154,10 +172,7 @@ class SyncManager @Inject constructor(
             )
             return true
         } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) {
-                _syncState.value = _syncState.value.copy(isSyncing = false)
-                throw e
-            }
+            if (e is kotlinx.coroutines.CancellationException) throw e
             DebugLog.e("Sync", "Sync failed", e)
             _syncState.value = if (background) {
                 _syncState.value.copy(isSyncing = false)
