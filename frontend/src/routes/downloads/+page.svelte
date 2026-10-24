@@ -1124,7 +1124,8 @@
 
 	async function loadBlacklist() {
 		try {
-			blacklist = await fetch('/api/download/blacklist').then(r => r.json());
+			const r = await fetch('/api/download/blacklist');
+			if (r.ok) blacklist = await r.json();
 		} catch (e) { console.error(e); }
 	}
 

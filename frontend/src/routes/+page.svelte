@@ -105,15 +105,18 @@
 		} catch { addToast('Failed to start', 'error'); }
 	}
 
+	const getJson = (url) => fetch(url).then(r => (r.ok ? r.json() : null)).catch(() => null);
+
 	onMount(async () => {
 		try {
 			[stats, health, version, lastScan, slsk, dashboard] = await Promise.all([
 				api.getStats(),
-				fetch('/api/config/health').then(r => r.json()).catch(() => null),
-				fetch('/api/config/version').then(r => r.json()).catch(() => null),
-				fetch('/api/jobs?limit=50').then(r => r.json()).then(data => (data.items || data).find(j => j.type === 'library_scan' && j.status === 'completed')).catch(() => null),
-				fetch('/api/download/soulseek-stats').then(r => r.json()).catch(() => null),
-				fetch('/api/library/stats/dashboard').then(r => r.json()).catch(() => null),
+				// Some of these are admin-only: a 403 body must read as "no data", not as data.
+				getJson('/api/config/health'),
+				getJson('/api/config/version'),
+				getJson('/api/jobs?limit=50').then(data => data && (data.items || data).find(j => j.type === 'library_scan' && j.status === 'completed')),
+				getJson('/api/download/soulseek-stats'),
+				getJson('/api/library/stats/dashboard'),
 			]);
 		} catch (e) {
 			console.error('Failed to load dashboard:', e);
@@ -554,7 +557,7 @@
 							<Badge variant={health.status === 'ok' ? 'success' : 'warning'}>{health.status}</Badge>
 						</div>
 						<div class="flex flex-wrap gap-3">
-							{#each Object.entries(health.services) as [name, check]}
+							{#each Object.entries(health.services || {}) as [name, check]}
 								<div class="flex items-center gap-1.5">
 									<div class="w-2 h-2 rounded-full {check.status === 'ok' ? 'bg-emerald-400' : check.status === 'warning' ? 'bg-amber-400' : 'bg-red-400'}"></div>
 									<span class="text-xs text-[var(--text-body)] capitalize">{name}</span>
