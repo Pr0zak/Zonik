@@ -96,6 +96,9 @@
 					{needsSetup ? 'Create account' : 'Sign in'}
 				</Button>
 			</form>
+			{#if !needsSetup}
+				<p class="text-xs text-center text-[var(--text-disabled)] mt-4">Have an invite? Open the link you were sent.</p>
+			{/if}
 		{/if}
 	</div>
 </div>

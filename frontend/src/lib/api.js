@@ -215,6 +215,13 @@ export const api = {
 	updateUser: (id, data) => request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 	resetUserPassword: (id, new_password) => request(`/users/${id}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password }) }),
 	deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
+	// Invites + per-user devices (admin)
+	getInvites: (includeUsed = false) => request(`/users/invites?include_used=${includeUsed ? 'true' : 'false'}`),
+	createInvite: (data) => request('/users/invites', { method: 'POST', body: JSON.stringify(data) }),
+	revokeInvite: (id) => request(`/users/invites/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+	inviteQrUrl: (id) => `/api/users/invites/${encodeURIComponent(id)}/qr.svg`,
+	getUserDevices: (userId) => request(`/users/${userId}/devices`),
+	revokeUserDevice: (userId, deviceId) => request(`/users/${userId}/devices/${encodeURIComponent(deviceId)}`, { method: 'DELETE' }),
 	changePassword: (id, data) => request(`/users/${id}/password`, { method: 'PUT', body: JSON.stringify(data) }),
 	generateApiKey: (id) => request(`/users/${id}/api-key`, { method: 'POST' }),
 	revokeApiKey: (id) => request(`/users/${id}/api-key`, { method: 'DELETE' }),

@@ -10,7 +10,7 @@ export const authStatus = writable(null);
 export const authReady = writable(false);
 
 /** Pages that render without the app shell and without a session. */
-export const PUBLIC_PATHS = ['/login', '/pair'];
+export const PUBLIC_PATHS = ['/login', '/pair', '/join'];
 
 /** Pages only admins may open. */
 export const ADMIN_PATHS = ['/duplicates', '/upgrades', '/tidy', '/schedule', '/visualizer', '/logs', '/settings'];
@@ -131,6 +131,20 @@ export async function setupAdmin(username, password, display_name) {
 	const me = await call('/setup', { method: 'POST', body: JSON.stringify(body) });
 	currentUser.set(me);
 	authStatus.update((s) => (s ? { ...s, needs_setup: false } : s));
+	return me;
+}
+
+/** Public: check an invite code. Throws (status 404) when invalid/expired/used. */
+export function getInvite(code) {
+	return call(`/invite/${encodeURIComponent(code)}`);
+}
+
+/** Redeem an invite: creates the account and starts a session. */
+export async function joinWithInvite({ code, username, display_name, password }) {
+	const body = { code, username, password };
+	if (display_name) body.display_name = display_name;
+	const me = await call('/join', { method: 'POST', body: JSON.stringify(body) });
+	currentUser.set(me);
 	return me;
 }
 

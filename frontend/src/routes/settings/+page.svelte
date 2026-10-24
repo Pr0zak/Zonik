@@ -5,7 +5,9 @@
 	import { addToast } from '$lib/stores.js';
 	import { inputClass, formatDateTime, formatRelativeTime } from '$lib/utils.js';
 	import { currentUser } from '$lib/auth.js';
-	import { Settings, Shuffle, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform, Tv, Smartphone } from 'lucide-svelte';
+	import InvitesPanel from '../../components/InvitesPanel.svelte';
+	import UserDevices from '../../components/UserDevices.svelte';
+	import { Settings, Shuffle, Eye, EyeOff, Wifi, RefreshCw, Users, Plus, Trash2, Key, Database, RotateCcw, Clock, Copy, Shield, ExternalLink, LogIn, Music, Download, Radio, HardDrive, Server, Info, Sparkles, AudioWaveform, Tv, Smartphone, MonitorSmartphone } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -176,6 +178,7 @@
 	let creatingBackup = $state(false);
 
 	let users = $state([]);
+	let devicesOpen = $state(null);
 	let newUser = $state({ username: '', display_name: '', password: '', role: 'user' });
 	let changingPw = $state(null);
 	let pwForm = $state({ new_password: '' });
@@ -943,6 +946,8 @@
 				</div>
 			</div>
 
+			<InvitesPanel />
+
 			<div class="space-y-3">
 				{#each users as user (user.id)}
 					{@const isSelf = $currentUser?.id === user.id}
@@ -975,6 +980,9 @@
 									<input type="checkbox" checked={!!user.disabled} disabled={isSelf}
 										onchange={(e) => patchUser(user, { disabled: e.currentTarget.checked })} /> Disabled
 								</label>
+								<Button variant="ghost" size="sm" onclick={() => { devicesOpen = devicesOpen === user.id ? null : user.id; }} title="Devices & sessions">
+									<MonitorSmartphone class="w-3.5 h-3.5" />
+								</Button>
 								<Button variant="ghost" size="sm" onclick={() => { changingPw = changingPw === user.id ? null : user.id; pwForm = { new_password: '' }; }} title="Reset password">
 									<Key class="w-3.5 h-3.5" />
 								</Button>
@@ -1015,6 +1023,9 @@
 							</div>
 						{/if}
 					</div>
+					{#if devicesOpen === user.id}
+						<UserDevices userId={user.id} />
+					{/if}
 					{#if changingPw === user.id}
 						<div class="ml-3 flex gap-2 animate-fade-slide-in">
 							<input type="password" placeholder="New password for {user.username} (min 8)" bind:value={pwForm.new_password} class={inputClass + ' flex-1'} />

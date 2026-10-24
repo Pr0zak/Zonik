@@ -1,6 +1,7 @@
 """/api/auth — web login, first-run setup, the caller's own account and devices.
 
-status, login, setup, device and logout are public (see backend/auth/policy.py); the rest
+status, login, setup, device, logout, invite/{code} and join are public (see
+backend/auth/policy.py); the rest
 need real credentials — the grace-mode owner stand-in does not count as logged in.
 """
 from __future__ import annotations
@@ -11,18 +12,19 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth import lockout
-from backend.auth.devices import create_device_token
+from backend.auth import invites, lockout
+from backend.auth.devices import create_device_token, list_user_items, revoke_user_item
 from backend.auth.passwords import check_password, hash_password, must_change_password, new_password_problem
 from backend.auth.permissions import permissions_for
 from backend.auth.resolve import client_ip, is_authenticated
 from backend.auth.sessions import SESSION_COOKIE, create_session, delete_user_sessions, lookup_session, session_lifetime
 from backend.config import get_settings
 from backend.database import get_db
-from backend.models.auth import AuthSession, DeviceToken
+from backend.models.invite import Invite
 from backend.models.user import User
 
 router = APIRouter()
@@ -44,6 +46,13 @@ class DeviceLoginRequest(BaseModel):
     password: str
     label: str | None = None
     platform: str | None = None
+
+
+class JoinRequest(BaseModel):
+    code: str
+    username: str
+    password: str
+    display_name: str | None = None
 
 
 class MeUpdate(BaseModel):
@@ -161,6 +170,73 @@ async def device_login(body: DeviceLoginRequest, request: Request, db: AsyncSess
     return {"token": token, "user": me_payload(user, "device")}
 
 
+def _check_invite_lockout(ip: str | None) -> None:
+    minutes = lockout.locked_minutes(ip, invites.LOCKOUT_NAME)
+    if minutes:
+        raise HTTPException(429, _lockout_message(minutes))
+
+
+async def _valid_invite_or_404(db: AsyncSession, ip: str | None, code: str) -> Invite:
+    """The usable invite for code; a miss counts towards the per-IP lockout and 404s."""
+    invite = await invites.find_valid(db, (code or "").strip())
+    if invite is None:
+        lockout.record_failure(ip, invites.LOCKOUT_NAME)
+        raise HTTPException(404, invites.INVALID_MESSAGE)
+    return invite
+
+
+@router.get("/invite/{code}")
+async def invite_info(code: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """What the /join page shows before the form. Same 404 for unknown/used/expired/revoked."""
+    ip = client_ip(request)
+    _check_invite_lockout(ip)
+    invite = await _valid_invite_or_404(db, ip, code)
+    inviter = await db.get(User, invite.created_by)
+    invited_by = (inviter.display_name or inviter.username) if inviter else None
+    return {"valid": True, "role": invite.role, "expires_at": invite.expires_at.isoformat(),
+            "invited_by": invited_by}
+
+
+@router.post("/join")
+async def join(body: JoinRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Redeem an invite: create the account with the invite's role and log it in like /login."""
+    ip = client_ip(request)
+    _check_invite_lockout(ip)
+    invite = await _valid_invite_or_404(db, ip, body.code)
+    username = (body.username or "").strip()
+    problem = invites.username_problem(username)
+    if problem:
+        raise HTTPException(400, problem)
+    problem = new_password_problem(body.password)
+    if problem:
+        raise HTTPException(400, problem)
+    if await invites.username_taken(db, username):
+        raise HTTPException(409, "Username already taken")
+    user = User(
+        id=str(uuid.uuid4()),
+        username=username,
+        password_hash=hash_password(body.password),
+        subsonic_api_key=secrets.token_hex(16),
+        role=invite.role,
+        display_name=(body.display_name or "").strip() or None,
+        last_login_at=datetime.utcnow(),
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError:  # lost a race on the username's unique index
+        await db.rollback()
+        raise HTTPException(409, "Username already taken")
+    if not await invites.consume(db, invite.id, user.id):  # someone else redeemed it first
+        await db.rollback()
+        raise HTTPException(404, invites.INVALID_MESSAGE)
+    await db.commit()
+    lockout.clear(ip, invites.LOCKOUT_NAME)
+    token, _row = await create_session(db, user, user_agent=request.headers.get("user-agent"), ip=ip)
+    _set_cookie(response, token)
+    return me_payload(user, "session")
+
+
 @router.post("/logout")
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     token = request.cookies.get(SESSION_COOKIE)
@@ -208,51 +284,17 @@ async def change_password(body: PasswordChange, request: Request, db: AsyncSessi
 async def list_devices(request: Request, db: AsyncSession = Depends(get_db)):
     """The caller's web sessions and device tokens (revoked tokens left out)."""
     user = _caller(request)
-    now = datetime.utcnow()
-    sessions = (await db.execute(
-        select(AuthSession).where(AuthSession.user_id == user.id, AuthSession.expires_at > now)
-    )).scalars().all()
-    devices = (await db.execute(
-        select(DeviceToken).where(DeviceToken.user_id == user.id, DeviceToken.revoked_at.is_(None))
-    )).scalars().all()
-
-    def iso(dt):
-        return dt.isoformat() if dt else None
-
-    out = [
-        {"id": s.id, "kind": "session", "label": s.label, "platform": "web", "ip": s.ip,
-         "created_at": iso(s.created_at), "last_seen_at": iso(s.last_seen_at),
-         "current": s.id == request.state.session_id}
-        for s in sessions
-    ] + [
-        {"id": d.id, "kind": "device", "label": d.label, "platform": d.platform, "ip": None,
-         "created_at": iso(d.created_at), "last_seen_at": iso(d.last_seen_at),
-         "current": d.id == request.state.device_token_id}
-        for d in devices
-    ]
-    out.sort(key=lambda r: r["last_seen_at"] or r["created_at"] or "", reverse=True)
-    return out
+    return await list_user_items(db, user.id, current_session_id=request.state.session_id,
+                                 current_device_id=request.state.device_token_id)
 
 
 @router.delete("/devices/{item_id}")
 async def revoke_device(item_id: str, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """Revoke one of the caller's sessions (deleted) or device tokens (revoked_at set)."""
     user = _caller(request)
-    session_row = (await db.execute(
-        select(AuthSession).where(AuthSession.id == item_id, AuthSession.user_id == user.id)
-    )).scalar_one_or_none()
-    if session_row is not None:
-        await db.execute(delete(AuthSession).where(AuthSession.id == item_id))
-        await db.commit()
-        if item_id == request.state.session_id:
-            _clear_cookie(response)
-        return {"ok": True}
-    device = (await db.execute(
-        select(DeviceToken).where(DeviceToken.id == item_id, DeviceToken.user_id == user.id)
-    )).scalar_one_or_none()
-    if device is None:
+    kind = await revoke_user_item(db, user.id, item_id)
+    if kind is None:
         raise HTTPException(404, "Not found")
-    if device.revoked_at is None:
-        device.revoked_at = datetime.utcnow()
-        await db.commit()
+    if kind == "session" and item_id == request.state.session_id:
+        _clear_cookie(response)
     return {"ok": True}

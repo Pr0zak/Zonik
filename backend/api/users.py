@@ -1,19 +1,24 @@
-"""User management API routes (admin only — see backend/auth/policy.py)."""
+"""User management API routes (admin only — see backend/auth/policy.py): accounts, invite
+links (P3) and an admin view of each user's sessions/devices."""
 from __future__ import annotations
 
+import io
 import secrets
 import uuid
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.auth.devices import revoke_user_devices
+from backend.auth import invites
+from backend.auth.devices import list_user_items, revoke_user_devices, revoke_user_item
 from backend.auth.passwords import check_password, hash_password, new_password_problem
 from backend.auth.sessions import delete_user_sessions
 from backend.database import get_db
 from backend.models.auth import DeviceToken
+from backend.models.invite import Invite
 from backend.models.user import ROLES, User
 
 router = APIRouter()
@@ -40,6 +45,12 @@ class PasswordChange(BaseModel):
 
 class PasswordReset(BaseModel):
     new_password: str
+
+
+class InviteCreate(BaseModel):
+    role: str = "user"
+    note: str | None = None
+    expires_days: int = 7
 
 
 async def _get_user(db: AsyncSession, user_id: str) -> User:
@@ -81,6 +92,101 @@ def _user_row(u: User) -> dict:
         "subsonic_api_key": u.subsonic_api_key or "",
         "created_at": u.created_at.isoformat() if u.created_at else None,
     }
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt else None
+
+
+async def _usernames(db: AsyncSession, ids: set[str]) -> dict[str, str]:
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    rows = await db.execute(select(User.id, User.username).where(User.id.in_(ids)))
+    return {uid: name for uid, name in rows.all()}
+
+
+def _invite_row(inv: Invite, request: Request, names: dict[str, str], now: datetime) -> dict:
+    def who(uid: str | None):
+        return {"id": uid, "username": names.get(uid)} if uid else None
+
+    return {
+        "id": inv.id,
+        "code": inv.code,
+        "url": invites.invite_url(request, inv.code),
+        "role": inv.role,
+        "note": inv.note,
+        "status": inv.status(now),
+        "created_at": _iso(inv.created_at),
+        "expires_at": _iso(inv.expires_at),
+        "used_at": _iso(inv.used_at),
+        "used_by": who(inv.used_by),
+        "created_by": who(inv.created_by),
+    }
+
+
+async def _get_invite(db: AsyncSession, invite_id: str) -> Invite:
+    invite = await db.get(Invite, invite_id)
+    if invite is None:
+        raise HTTPException(404, "Invite not found")
+    return invite
+
+
+# --- invites (declared before the /{user_id} routes) ------------------------------------
+
+@router.post("/invites")
+async def create_invite(req: InviteCreate, request: Request, db: AsyncSession = Depends(get_db)):
+    if req.role not in ROLES:
+        raise HTTPException(400, f"Role must be one of: {', '.join(ROLES)}")
+    if not invites.MIN_EXPIRES_DAYS <= req.expires_days <= invites.MAX_EXPIRES_DAYS:
+        raise HTTPException(400, f"expires_days must be {invites.MIN_EXPIRES_DAYS}-{invites.MAX_EXPIRES_DAYS}")
+    created_by = _caller_id(request)
+    if created_by is None:
+        raise HTTPException(401, "Not authenticated")
+    now = datetime.utcnow()
+    invite = Invite(
+        id=str(uuid.uuid4()),
+        code=invites.new_code(),
+        role=req.role,
+        note=(req.note or "").strip()[:200] or None,
+        created_by=created_by,
+        created_at=now,
+        expires_at=now + timedelta(days=req.expires_days),
+    )
+    db.add(invite)
+    await db.commit()
+    return _invite_row(invite, request, await _usernames(db, {created_by}), now)
+
+
+@router.get("/invites")
+async def list_invites(request: Request, include_used: bool = False, db: AsyncSession = Depends(get_db)):
+    """Newest first. Without include_used only active invites are listed."""
+    rows = (await db.execute(select(Invite).order_by(Invite.created_at.desc()))).scalars().all()
+    now = datetime.utcnow()
+    if not include_used:
+        rows = [r for r in rows if r.status(now) == "active"]
+    names = await _usernames(db, {r.created_by for r in rows} | {r.used_by for r in rows if r.used_by})
+    return [_invite_row(r, request, names, now) for r in rows]
+
+
+@router.delete("/invites/{invite_id}")
+async def revoke_invite(invite_id: str, db: AsyncSession = Depends(get_db)):
+    invite = await _get_invite(db, invite_id)
+    if invite.used_at is not None:
+        raise HTTPException(400, "Invite already used")
+    if invite.revoked_at is None:
+        invite.revoked_at = datetime.utcnow()
+        await db.commit()
+    return {"ok": True}
+
+
+@router.get("/invites/{invite_id}/qr.svg")
+async def invite_qr(invite_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    import segno
+    invite = await _get_invite(db, invite_id)
+    buf = io.BytesIO()
+    segno.make(invites.invite_url(request, invite.code), error="m").save(buf, kind="svg", scale=6, border=2)
+    return Response(buf.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 
 @router.get("")
@@ -176,6 +282,21 @@ async def revoke_api_key(user_id: str, db: AsyncSession = Depends(get_db)):
     user = await _get_user(db, user_id)
     user.subsonic_api_key = None
     await db.commit()
+    return {"ok": True}
+
+
+@router.get("/{user_id}/devices")
+async def list_user_devices(user_id: str, db: AsyncSession = Depends(get_db)):
+    """Admin view of a user's sessions and device tokens (same shape as /api/auth/devices)."""
+    user = await _get_user(db, user_id)
+    return await list_user_items(db, user.id)
+
+
+@router.delete("/{user_id}/devices/{item_id}")
+async def revoke_user_device(user_id: str, item_id: str, db: AsyncSession = Depends(get_db)):
+    user = await _get_user(db, user_id)
+    if await revoke_user_item(db, user.id, item_id) is None:
+        raise HTTPException(404, "Not found")
     return {"ok": True}
 
 

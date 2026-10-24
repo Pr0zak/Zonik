@@ -27,6 +27,8 @@ _RAW_RULES: list[tuple[frozenset | None, str, str]] = [
     # --- public: never authenticated --------------------------------------------------
     (_GET, r"/api/health", PUBLIC),
     (_ANY, r"/api/auth/(status|login|setup|device|logout)", PUBLIC),
+    (_GET, rf"/api/auth/invite/{_ID}", PUBLIC),  # invite link lookup + join (P3)
+    (_POST, r"/api/auth/join", PUBLIC),
     (_POST, r"/api/logs", PUBLIC),  # phone log upload, permissive as before
     (_ANY, r"/api/pair(/.*)?", PUBLIC),
 
