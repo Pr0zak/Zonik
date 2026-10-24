@@ -254,8 +254,13 @@ async def lifespan(app: FastAPI):
     keepalive_task = asyncio.create_task(_native_keepalive_loop())
     # Pre-warm Discover -> New Releases so no request pays the cold Deezer walk.
     warm_task = asyncio.create_task(_warm_new_releases_loop())
+    # LAN discovery (mDNS + UDP probe) — zonik-web only; failures just log a warning.
+    from backend.services.discovery import start_discovery, stop_discovery
+    discovery_svc = await start_discovery()
 
     yield
+
+    await stop_discovery(discovery_svc)
 
     stats_task.cancel()
     keepalive_task.cancel()

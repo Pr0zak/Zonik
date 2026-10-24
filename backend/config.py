@@ -145,6 +145,16 @@ class SubsonicConfig(BaseModel):
     shuffle_artist_gap: int = 5
 
 
+class DiscoveryConfig(BaseModel):
+    # LAN discovery for the apps: mDNS/DNS-SD `_zonik._tcp` plus a UDP probe responder
+    # (a `ZONIK?` datagram gets a JSON reply). Started by zonik-web only, never the worker.
+    enabled: bool = True
+    name: str = ""  # empty -> subsonic.server_name
+    udp_port: int = 3000
+    # The URL apps should use. Empty -> http://<primary LAN IPv4>:<server.port>.
+    advertise_url: str = ""
+
+
 class AssistantConfig(BaseModel):
     enabled: bool = True
     claude_api_key: str = ""
@@ -209,6 +219,7 @@ class Settings(BaseModel):
     apple_music: AppleMusicConfig = AppleMusicConfig()
     streaming: StreamingConfig = StreamingConfig()
     subsonic: SubsonicConfig = SubsonicConfig()
+    discovery: DiscoveryConfig = DiscoveryConfig()
     assistant: AssistantConfig = AssistantConfig()
 
 

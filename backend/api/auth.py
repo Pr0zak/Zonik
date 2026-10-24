@@ -118,10 +118,12 @@ async def _check_login(db: AsyncSession, request: Request, username: str, passwo
 
 
 @router.get("/status")
-async def auth_status(db: AsyncSession = Depends(get_db)):
+async def auth_status(request: Request, db: AsyncSession = Depends(get_db)):
     from backend.api.config_api import _get_version
+    from backend.services.discovery import advertise_url, server_name
     count = (await db.execute(select(func.count(User.id)))).scalar() or 0
-    return {"needs_setup": count == 0, "enforce": get_settings().auth.enforce, "version": _get_version()}
+    return {"needs_setup": count == 0, "enforce": get_settings().auth.enforce, "version": _get_version(),
+            "server_name": server_name(), "url": advertise_url() or invites.base_url(request)}
 
 
 @router.post("/setup")

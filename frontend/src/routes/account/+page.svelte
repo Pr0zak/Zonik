@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { UserRound, KeyRound, MonitorSmartphone, LogOut } from 'lucide-svelte';
+	import { UserRound, KeyRound, MonitorSmartphone, Tv, LogOut } from 'lucide-svelte';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Button from '../../components/ui/Button.svelte';
@@ -163,7 +163,7 @@
 								<span class="text-[var(--text-primary)]">{d.label || 'Unknown'}</span>
 								{#if d.current}<Badge variant="success" size="sm" class="ml-2">This session</Badge>{/if}
 							</td>
-							<td class={td}>{d.kind === 'session' ? 'Browser' : (d.platform || 'device')}</td>
+							<td class={td}><span class="inline-flex items-center gap-1.5">{#if d.platform === 'tv'}<Tv class="w-3.5 h-3.5" />{/if}{d.kind === 'session' ? 'Browser' : (d.platform === 'tv' ? 'TV' : (d.platform || 'device'))}</span></td>
 							<td class="{td} font-mono text-xs">{d.ip || '-'}</td>
 							<td class={td}>{d.created_at ? formatDateTime(d.created_at) : '-'}</td>
 							<td class={td}>{d.last_seen_at ? formatRelativeTime(d.last_seen_at) : '-'}</td>

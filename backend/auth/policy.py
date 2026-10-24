@@ -30,6 +30,9 @@ _RAW_RULES: list[tuple[frozenset | None, str, str]] = [
     (_GET, rf"/api/auth/invite/{_ID}", PUBLIC),  # invite link lookup + join (P3)
     (_POST, r"/api/auth/join", PUBLIC),
     (_POST, r"/api/logs", PUBLIC),  # phone log upload, permissive as before
+    # Approving a TV pairing mints a device token for the caller: real credentials only
+    # (the handler also refuses the grace-mode stand-in). Must precede the public pair rule.
+    (_POST, rf"/api/pair/{_ID}/approve", "own.write"),
     (_ANY, r"/api/pair(/.*)?", PUBLIC),
 
     # --- admin-only whatever the method ---------------------------------------------

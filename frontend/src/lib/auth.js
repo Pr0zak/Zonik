@@ -10,7 +10,7 @@ export const authStatus = writable(null);
 export const authReady = writable(false);
 
 /** Pages that render without the app shell and without a session. */
-export const PUBLIC_PATHS = ['/login', '/pair', '/join'];
+export const PUBLIC_PATHS = ['/login', '/join'];
 
 /** Pages only admins may open. */
 export const ADMIN_PATHS = ['/duplicates', '/upgrades', '/tidy', '/schedule', '/visualizer', '/logs', '/settings'];

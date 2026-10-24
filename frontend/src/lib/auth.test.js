@@ -27,7 +27,7 @@ describe('paths', () => {
 	});
 	it('public paths', () => {
 		expect(isPublicPath('/login')).toBe(true);
-		expect(isPublicPath('/pair')).toBe(true);
+		expect(isPublicPath('/pair')).toBe(false);
 		expect(isPublicPath('/')).toBe(false);
 	});
 	it('nav visibility', () => {

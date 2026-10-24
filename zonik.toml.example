@@ -88,6 +88,14 @@ transcode_cache_max_mb = 500
 [subsonic]
 server_name = "Zonik"
 
+[discovery]
+# LAN discovery for the phone/TV apps: mDNS service _zonik._tcp and a UDP probe
+# responder ("ZONIK?" -> JSON). Failures only log a warning.
+enabled = true
+name = ""            # empty -> subsonic.server_name
+udp_port = 3000
+advertise_url = ""   # empty -> http://<primary LAN IPv4>:<server.port>
+
 [assistant]
 claude_api_key = ""
 claude_model = "claude-sonnet-5-5"

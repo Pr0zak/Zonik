@@ -12,6 +12,8 @@ _toml.write_text(
     f'[database]\npath = "{_tmp / "zonik.db"}"\n'
     f'[library]\ncover_cache_dir = "{_tmp / "covers"}"\nmusic_dir = "{_tmp / "music"}"\n'
     f'[soulseek]\nstaging_dir = "{_tmp / "staging"}"\ndownload_dir = "{_tmp / "downloads"}"\n'
+    # Never multicast/bind from the suite's many app instances; tests opt in explicitly.
+    '[discovery]\nenabled = false\n'
 )
 _config.CONFIG_PATHS[:] = [_toml]
 
