@@ -188,7 +188,7 @@ private fun TvManualEntry(viewModel: LoginViewModel, uiState: LoginUiState) {
             value = uiState.manualUrl,
             onValueChange = viewModel::updateManualUrl,
             label = { Text("Server address") },
-            placeholder = { Text("zonik, .205, 10.0.0.205 or https://…") },
+            placeholder = { Text("zonik, .205 or 10.0.0.205") },
             singleLine = true,
             isError = uiState.manualError != null,
             supportingText = {

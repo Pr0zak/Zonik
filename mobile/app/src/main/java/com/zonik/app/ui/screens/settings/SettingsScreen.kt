@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalContext
+import com.zonik.app.data.auth.DeviceIdentity
+import com.zonik.core.auth.ServerUrlNormalizer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -280,11 +282,17 @@ private fun ServerFieldDialog(
 ) {
     var value by remember { mutableStateOf(initialValue) }
     var reveal by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val trimmed = value.trim()
+    // Same shorthand as the login screen: "zonik", "10.0.0.205", "host:port" or ".205" get
+    // http:// (and :3000 when no port) added; a full http(s) URL is kept as typed.
+    val normalizedUrl = if (field == ServerField.Url && trimmed.isNotEmpty()) {
+        ServerUrlNormalizer.normalize(trimmed, DeviceIdentity.lanIpv4(context))
+    } else null
     val error = when {
         trimmed.isEmpty() -> null
-        field == ServerField.Url && !(trimmed.startsWith("http://") || trimmed.startsWith("https://")) ->
-            "Start with http:// or https://"
+        field == ServerField.Url && normalizedUrl == null ->
+            "Enter an address like zonik.lan:3000 or 10.0.0.205"
         else -> null
     }
     val canSave = trimmed.isNotEmpty() && error == null
@@ -298,11 +306,12 @@ private fun ServerFieldDialog(
                 onValueChange = { value = it },
                 label = { Text(field.label) },
                 placeholder = if (field == ServerField.Url) {
-                    { Text("https://music.example.com") }
+                    { Text("zonik.lan:3000 or 10.0.0.205") }
                 } else null,
                 singleLine = true,
                 isError = error != null,
-                supportingText = error?.let { { Text(it) } },
+                supportingText = (error ?: normalizedUrl?.takeIf { it != trimmed }?.let { "Will use $it" })
+                    ?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(
                     keyboardType = when (field) {
                         ServerField.Url -> KeyboardType.Uri
@@ -329,7 +338,7 @@ private fun ServerFieldDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onSave(trimmed) }, enabled = canSave) { Text("Save") }
+            TextButton(onClick = { onSave(normalizedUrl ?: trimmed) }, enabled = canSave) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

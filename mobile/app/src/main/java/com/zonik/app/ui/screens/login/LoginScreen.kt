@@ -147,7 +147,7 @@ private fun PhoneServerPicker(viewModel: LoginViewModel, uiState: LoginUiState) 
         value = uiState.manualUrl,
         onValueChange = viewModel::updateManualUrl,
         label = { Text("Server address") },
-        placeholder = { Text("zonik, 10.0.0.205 or https://…") },
+        placeholder = { Text("zonik, zonik.lan or 10.0.0.205") },
         singleLine = true,
         isError = uiState.manualError != null,
         supportingText = uiState.manualError?.let { { Text(it) } },
