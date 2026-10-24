@@ -33,7 +33,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import com.zonik.core.util.md5
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -753,11 +752,8 @@ class PlaybackManager @Inject constructor(
             .build()
     }
 
-    private fun buildAuthParamsFromConfig(config: ServerConfig): String {
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = md5("${config.apiKey}$salt")
-        return "&u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp"
-    }
+    private fun buildAuthParamsFromConfig(config: ServerConfig): String =
+        "&" + com.zonik.core.auth.SubsonicAuth.query(config, "ZonikApp")
 
     private fun findTrackByMetadata(title: String, artist: String?): Track? {
         val queue = _queue.value

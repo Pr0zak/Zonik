@@ -1,10 +1,17 @@
 package com.zonik.app.ui.screens.login
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
@@ -12,372 +19,247 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
-import com.zonik.app.data.DebugLog
-import com.zonik.app.data.repository.SettingsRepository
-import com.zonik.core.model.PingResponse
-import com.zonik.core.model.ServerConfig
-import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
-import javax.inject.Inject
-
-data class LoginUiState(
-    val serverUrl: String = "",
-    val username: String = "",
-    val apiKey: String = "",
-    val isLoading: Boolean = false,
-    val error: String? = null,
-    val isSuccess: Boolean = false,
-    val pairingCode: String? = null,
-    val isPairingActive: Boolean = false
-)
-
-@HiltViewModel
-class LoginViewModel @Inject constructor(
-    private val settingsRepository: SettingsRepository
-) : ViewModel() {
-
-    private val _uiState = MutableStateFlow(LoginUiState())
-    val uiState: StateFlow<LoginUiState> = _uiState.asStateFlow()
-    private var pairingJob: kotlinx.coroutines.Job? = null
-    private val pairingClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .build()
-    private val json = Json { ignoreUnknownKeys = true }
-
-    fun updateServerUrl(url: String) {
-        _uiState.value = _uiState.value.copy(serverUrl = url, error = null)
-    }
-
-    fun updateUsername(username: String) {
-        _uiState.value = _uiState.value.copy(username = username, error = null)
-    }
-
-    fun updateApiKey(apiKey: String) {
-        _uiState.value = _uiState.value.copy(apiKey = apiKey, error = null)
-    }
-
-    fun login() {
-        val state = _uiState.value
-        if (state.serverUrl.isBlank() || state.username.isBlank() || state.apiKey.isBlank()) {
-            _uiState.value = state.copy(error = "All fields are required")
-            return
-        }
-
-        viewModelScope.launch {
-            _uiState.value = state.copy(isLoading = true, error = null)
-            try {
-                val config = ServerConfig(
-                    url = state.serverUrl.trimEnd('/'),
-                    username = state.username,
-                    apiKey = state.apiKey
-                )
-
-                // Test connection before saving
-                val result = testConnection(config)
-                if (result != null) {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = result
-                    )
-                    return@launch
-                }
-
-                settingsRepository.saveServerConfig(config)
-                _uiState.value = _uiState.value.copy(isLoading = false, isSuccess = true)
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    error = e.message ?: "Connection failed"
-                )
-            }
-        }
-    }
-
-    private suspend fun testConnection(config: ServerConfig): String? =
-        withContext(Dispatchers.IO) {
-            try {
-                DebugLog.d("Login", "Testing connection to ${config.url}")
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .build()
-
-                val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }
-                    .joinToString("")
-                val token = md5("${config.apiKey}$salt")
-
-                val url = "${config.url}/rest/ping.view" +
-                    "?u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp&f=json"
-
-                val request = Request.Builder().url(url).build()
-                val response = client.newCall(request).execute()
-
-                DebugLog.d("Login", "Ping response: ${response.code}")
-
-                if (!response.isSuccessful) {
-                    DebugLog.e("Login", "Server returned ${response.code}")
-                    return@withContext "Server returned ${response.code}"
-                }
-
-                val body = response.body?.string()
-                    ?: return@withContext "Empty response from server"
-
-                DebugLog.d("Login", "Ping body: $body")
-
-                val json = Json { ignoreUnknownKeys = true }
-                val ping = json.decodeFromString<PingResponse>(body)
-
-                if (!ping.response.isOk) {
-                    val error = ping.response.error
-                    DebugLog.e("Login", "Auth failed: ${error?.message}")
-                    return@withContext error?.message ?: "Authentication failed"
-                }
-
-                DebugLog.d("Login", "Connection test passed")
-                null // success
-            } catch (e: java.net.UnknownHostException) {
-                DebugLog.e("Login", "UnknownHostException", e)
-                "Server not found. Check the URL."
-            } catch (e: java.net.ConnectException) {
-                DebugLog.e("Login", "ConnectException", e)
-                "Cannot connect to server. Check the URL and port."
-            } catch (e: java.net.SocketTimeoutException) {
-                DebugLog.e("Login", "SocketTimeoutException", e)
-                "Connection timed out. Server may be offline."
-            } catch (e: Exception) {
-                DebugLog.e("Login", "Exception", e)
-                "Connection failed: ${e.message}"
-            }
-        }
-
-    fun startPairing() {
-        val serverUrl = _uiState.value.serverUrl.trimEnd('/')
-        if (serverUrl.isBlank()) {
-            _uiState.value = _uiState.value.copy(error = "Enter server URL first")
-            return
-        }
-        pairingJob?.cancel()
-        viewModelScope.launch {
-            try {
-                _uiState.value = _uiState.value.copy(isPairingActive = true, error = null)
-
-                // Create pairing code via raw OkHttp (Retrofit has no base URL before login)
-                val code = withContext(Dispatchers.IO) {
-                    val request = Request.Builder()
-                        .url("$serverUrl/api/pair")
-                        .post(okhttp3.RequestBody.create("application/json".toMediaType(), "{}"))
-                        .build()
-                    val response = pairingClient.newCall(request).execute()
-                    if (!response.isSuccessful) throw Exception("Server returned ${response.code}")
-                    val body = response.body?.string() ?: throw Exception("Empty response")
-                    val parsed = json.decodeFromString<com.zonik.app.data.api.PairingCodeResponse>(body)
-                    parsed.code
-                }
-
-                _uiState.value = _uiState.value.copy(pairingCode = code)
-                DebugLog.d("Login", "Pairing code: $code")
-
-                // Poll for config every 2 seconds
-                pairingJob = launch {
-                    while (true) {
-                        kotlinx.coroutines.delay(2000)
-                        try {
-                            val config = withContext(Dispatchers.IO) {
-                                val request = Request.Builder()
-                                    .url("$serverUrl/api/pair/$code")
-                                    .build()
-                                val response = pairingClient.newCall(request).execute()
-                                if (!response.isSuccessful) return@withContext null
-                                val body = response.body?.string() ?: return@withContext null
-                                json.decodeFromString<com.zonik.app.data.api.PairingConfigResponse>(body)
-                            } ?: continue
-
-                            if (config.status == "ready" && config.url != null && config.username != null && config.apiKey != null) {
-                                val serverConfig = ServerConfig(
-                                    url = config.url.trimEnd('/'),
-                                    username = config.username,
-                                    apiKey = config.apiKey
-                                )
-                                val testResult = testConnection(serverConfig)
-                                if (testResult != null) {
-                                    _uiState.value = _uiState.value.copy(error = testResult, isPairingActive = false, pairingCode = null)
-                                    return@launch
-                                }
-                                settingsRepository.saveServerConfig(serverConfig)
-                                _uiState.value = _uiState.value.copy(isSuccess = true, isPairingActive = false)
-                                DebugLog.d("Login", "Paired successfully via code $code")
-                                return@launch
-                            } else if (config.status == "expired") {
-                                _uiState.value = _uiState.value.copy(error = "Pairing code expired", isPairingActive = false, pairingCode = null)
-                                return@launch
-                            }
-                        } catch (_: Exception) { }
-                    }
-                }
-            } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    error = "Failed to get pairing code: ${e.message}",
-                    isPairingActive = false
-                )
-            }
-        }
-    }
-
-    fun stopPairing() {
-        pairingJob?.cancel()
-        pairingJob = null
-        _uiState.value = _uiState.value.copy(isPairingActive = false, pairingCode = null)
-    }
-
-    private fun md5(input: String): String {
-        val digest = MessageDigest.getInstance("MD5")
-        val bytes = digest.digest(input.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
-}
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zonik.app.ui.theme.ZonikShapes
+import com.zonik.app.ui.util.qrBitmap
+import com.zonik.core.auth.DiscoveredServer
+import kotlinx.coroutines.delay
 
 @Composable
 fun LoginScreen(
     onLoginSuccess: () -> Unit,
     viewModel: LoginViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    var apiKeyVisible by remember { mutableStateOf(false) }
-    val focusManager = LocalFocusManager.current
-    val keyboardController = LocalSoftwareKeyboardController.current
-    val isTv = com.zonik.app.ui.util.isTv()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(uiState.isSuccess) {
         if (uiState.isSuccess) onLoginSuccess()
     }
 
-    // Auto-start pairing on TV
-    LaunchedEffect(isTv) {
-        if (isTv && uiState.pairingCode == null && !uiState.isPairingActive) {
-            viewModel.startPairing()
-        }
+    if (viewModel.isTv) {
+        TvLoginScreen(viewModel, uiState)
+    } else {
+        PhoneLoginScreen(viewModel, uiState)
+    }
+}
+
+// region Phone
+
+@Composable
+private fun PhoneLoginScreen(viewModel: LoginViewModel, uiState: LoginUiState) {
+    BackHandler(enabled = uiState.step != LoginStep.PickServer) {
+        viewModel.backToServers()
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(32.dp),
-        verticalArrangement = Arrangement.Center,
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Spacer(Modifier.height(24.dp))
         Text(
             text = "Zonik",
             style = MaterialTheme.typography.displayLarge,
             color = MaterialTheme.colorScheme.primary
         )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
+        Spacer(Modifier.height(8.dp))
         Text(
             text = "Self-hosted music player",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(Modifier.height(40.dp))
 
-        Spacer(modifier = Modifier.height(48.dp))
+        when (uiState.step) {
+            LoginStep.PickServer -> PhoneServerPicker(viewModel, uiState)
+            LoginStep.Credentials -> PhoneCredentials(viewModel, uiState)
+            LoginStep.Pairing -> PhonePairing(viewModel, uiState)
+        }
+    }
+}
 
-        // TV pairing code mode
-        if (uiState.pairingCode != null) {
-            Text(
-                text = "Enter this code on your Zonik server",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+@Composable
+private fun PhoneServerPicker(viewModel: LoginViewModel, uiState: LoginUiState) {
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "Found on your network",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        if (uiState.discovering) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        } else {
+            TextButton(onClick = viewModel::startDiscovery) { Text("Search again") }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+
+    if (uiState.servers.isEmpty()) {
+        Text(
+            text = if (uiState.discovering) "Looking for Zonik servers…"
+            else "No server found. Enter its address below.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+        )
+    }
+    uiState.servers.forEach { server ->
+        ServerCard(server = server, onClick = { viewModel.selectServer(server) })
+        Spacer(Modifier.height(8.dp))
+    }
+
+    Spacer(Modifier.height(24.dp))
+    Text(
+        "Other server…",
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = uiState.manualUrl,
+        onValueChange = viewModel::updateManualUrl,
+        label = { Text("Server address") },
+        placeholder = { Text("zonik, 10.0.0.205 or https://…") },
+        singleLine = true,
+        isError = uiState.manualError != null,
+        supportingText = uiState.manualError?.let { { Text(it) } },
+        modifier = Modifier.fillMaxWidth(),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Uri,
+            autoCorrectEnabled = false,
+            imeAction = ImeAction.Go
+        ),
+        keyboardActions = KeyboardActions(onGo = {
+            keyboard?.hide()
+            focusManager.clearFocus()
+            viewModel.submitManualUrl()
+        })
+    )
+    Spacer(Modifier.height(12.dp))
+    Button(
+        onClick = viewModel::submitManualUrl,
+        enabled = uiState.manualUrl.isNotBlank() && !uiState.checkingManual,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (uiState.checkingManual) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimary
             )
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = uiState.pairingCode!!,
-                style = MaterialTheme.typography.displayLarge.copy(
-                    letterSpacing = 12.sp,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                ),
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(8.dp))
+        } else {
+            Text("Continue")
+        }
+    }
+}
+
+@Composable
+private fun ServerCard(server: DiscoveredServer, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = ZonikShapes.cardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        ListItem(
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+            leadingContent = {
+                Icon(Icons.Default.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            },
+            headlineContent = { Text("${server.title} (${server.host})") },
+            supportingContent = {
                 Text(
-                    text = "Waiting for pairing...",
-                    style = MaterialTheme.typography.bodySmall,
+                    listOfNotNull(server.url, server.version?.let { "v$it" }).joinToString(" · "),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-            Spacer(modifier = Modifier.height(24.dp))
-            if (uiState.error != null) {
-                Text(
-                    text = uiState.error!!,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-            OutlinedButton(onClick = { viewModel.stopPairing() }) {
-                Text("Enter manually instead")
-            }
-            return@Column
-        }
-
-        // Show pairing button (for both TV and phone)
-        if (!uiState.isPairingActive) {
-            OutlinedButton(
-                onClick = { viewModel.startPairing() },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Pair with code")
-            }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        // Every field advances with the IME's own Next/Done action. Without this, a TV remote
-        // has no way out of a text field at all: the leanback IME is fullscreen and swallows
-        // D-pad DOWN, so what feels like "move to the next box" just walks the on-screen
-        // keyboard and the next thing typed lands in the field you were trying to leave.
-        OutlinedTextField(
-            value = uiState.serverUrl,
-            onValueChange = viewModel::updateServerUrl,
-            label = { Text("Server URL") },
-            placeholder = { Text("https://zonik.example.com") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(
-                keyboardType = KeyboardType.Uri,
-                imeAction = ImeAction.Next
-            ),
-            keyboardActions = KeyboardActions(
-                onNext = { focusManager.moveFocus(FocusDirection.Down) }
-            )
+            },
+            trailingContent = { Icon(Icons.Default.ChevronRight, contentDescription = null) }
         )
+    }
+}
 
-        Spacer(modifier = Modifier.height(16.dp))
+@Composable
+private fun SelectedServerRow(server: DiscoveredServer, onChange: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.Dns, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(server.title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                server.url,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        TextButton(onClick = onChange) { Text("Change") }
+    }
+}
+
+@Composable
+private fun PhoneCredentials(viewModel: LoginViewModel, uiState: LoginUiState) {
+    val server = uiState.selected ?: return
+    CredentialsForm(viewModel, uiState, server)
+}
+
+/**
+ * Username + password (device token) or username + API key (legacy). Shared by the phone and
+ * the TV's manual fallback. Every field advances with the IME's Next/Done action: on TV the
+ * leanback IME is fullscreen and swallows D-pad DOWN, so there is no other way out of a field.
+ */
+@Composable
+internal fun CredentialsForm(
+    viewModel: LoginViewModel,
+    uiState: LoginUiState,
+    server: DiscoveredServer,
+    modifier: Modifier = Modifier,
+) {
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    var secretVisible by remember { mutableStateOf(false) }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        SelectedServerRow(server, onChange = viewModel::backToServers)
+        Spacer(Modifier.height(20.dp))
+
+        if (uiState.legacyServer) {
+            Text(
+                "This server is older and signs in with an API key (web UI → Settings).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(12.dp))
+        }
 
         OutlinedTextField(
             value = uiState.username,
@@ -385,72 +267,177 @@ fun LoginScreen(
             label = { Text("Username") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            keyboardActions = KeyboardActions(
-                onNext = { focusManager.moveFocus(FocusDirection.Down) }
-            )
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
+            keyboardActions = KeyboardActions(onNext = { focusManager.moveFocus(FocusDirection.Down) })
         )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            value = uiState.apiKey,
-            onValueChange = viewModel::updateApiKey,
-            label = { Text("API Key") },
+            value = if (uiState.useApiKey) uiState.apiKey else uiState.password,
+            onValueChange = if (uiState.useApiKey) viewModel::updateApiKey else viewModel::updatePassword,
+            label = { Text(if (uiState.useApiKey) "API key" else "Password") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(
-                onDone = {
-                    // Dismiss the IME before moving focus, or on TV it stays up over the form
-                    // and keeps eating the remote.
-                    keyboardController?.hide()
-                    focusManager.clearFocus()
-                }
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Password,
+                autoCorrectEnabled = false,
+                imeAction = ImeAction.Done
             ),
-            visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardActions = KeyboardActions(onDone = {
+                keyboard?.hide()
+                focusManager.clearFocus()
+                viewModel.signIn()
+            }),
+            visualTransformation = if (secretVisible) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
-                IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                IconButton(onClick = { secretVisible = !secretVisible }) {
                     Icon(
-                        imageVector = if (apiKeyVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                        contentDescription = if (apiKeyVisible) "Hide API key" else "Show API key"
+                        imageVector = if (secretVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
+                        contentDescription = if (secretVisible) "Hide" else "Show"
                     )
                 }
             }
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
-
-        if (uiState.error != null) {
-            Text(
-                text = uiState.error!!,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+        uiState.error?.let {
+            Spacer(Modifier.height(12.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
-
+        Spacer(Modifier.height(20.dp))
         Button(
-            onClick = viewModel::login,
+            onClick = viewModel::signIn,
             enabled = !uiState.isLoading,
             modifier = Modifier.fillMaxWidth()
         ) {
             if (uiState.isLoading) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
                     color = MaterialTheme.colorScheme.onPrimary
                 )
             } else {
-                Text("Connect")
+                Text("Sign in")
             }
         }
+        Spacer(Modifier.height(8.dp))
+        TextButton(
+            onClick = { viewModel.setUseApiKey(!uiState.useApiKey) },
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text(if (uiState.useApiKey) "Use your password instead" else "Use an API key instead")
+        }
+        TextButton(
+            onClick = { viewModel.startPairing(server) },
+            modifier = Modifier.align(Alignment.CenterHorizontally)
+        ) {
+            Text("Pair with a code instead")
+        }
+    }
+}
 
-        Spacer(modifier = Modifier.weight(1f))
+@Composable
+private fun PhonePairing(viewModel: LoginViewModel, uiState: LoginUiState) {
+    val pairing = uiState.pairing ?: return
+    SelectedServerRow(pairing.server, onChange = viewModel::backToServers)
+    Spacer(Modifier.height(24.dp))
+    PairingCodeBlock(pairing, codeSize = 56.sp, qrSize = 200.dp)
+    Spacer(Modifier.height(24.dp))
+    OutlinedButton(onClick = viewModel::renewCode, modifier = Modifier.fillMaxWidth()) { Text("New code") }
+    Spacer(Modifier.height(8.dp))
+    TextButton(
+        onClick = { viewModel.stopPairing(); viewModel.selectServer(pairing.server) },
+    ) { Text("Sign in with a password instead") }
+}
 
+// endregion
+
+// region Shared pairing pieces
+
+/** Seconds left until [expiresAtMs], ticking once a second. */
+@Composable
+internal fun rememberSecondsLeft(expiresAtMs: Long): Long {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(expiresAtMs) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1000)
+        }
+    }
+    return ((expiresAtMs - now) / 1000).coerceAtLeast(0)
+}
+
+internal fun formatCountdown(seconds: Long): String = "%d:%02d".format(seconds / 60, seconds % 60)
+
+/** The server's address for the "open … /pair" hint, without the scheme. */
+internal fun pairHint(server: DiscoveredServer): String =
+    server.url.substringAfter("://").trimEnd('/') + "/pair"
+
+/** Code, QR (stacked) and status for the phone; the TV lays the same pieces out side by side. */
+@Composable
+private fun PairingCodeBlock(pairing: PairingUi, codeSize: androidx.compose.ui.unit.TextUnit, qrSize: Dp) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        if (pairing.code == null) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(12.dp))
+            Text(
+                pairing.error ?: "Getting a pairing code…",
+                color = if (pairing.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            return@Column
+        }
         Text(
-            text = "v0.1.18",
-            style = MaterialTheme.typography.labelSmall,
+            pairing.code,
+            style = MaterialTheme.typography.displayLarge.copy(
+                fontSize = codeSize,
+                letterSpacing = 8.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.height(16.dp))
+        pairing.approveUrl?.let { QrImage(it, qrSize) }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Scan with your phone or open ${pairHint(pairing.server)}",
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        val left = rememberSecondsLeft(pairing.expiresAtMs)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (left > 0) "Waiting for approval · code expires in ${formatCountdown(left)}" else "Getting a new code…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        pairing.error?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/** A locally rendered QR code on a white tile (scanners want a light quiet zone). */
+@Composable
+internal fun QrImage(content: String, size: Dp) {
+    val bitmap = remember(content) { qrBitmap(content, 512) }
+    if (bitmap == null) return
+    Box(
+        modifier = Modifier
+            .size(size)
+            .background(Color.White, RoundedCornerShape(12.dp))
+            .padding(8.dp)
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "QR code to approve this device",
+            filterQuality = FilterQuality.None,
+            modifier = Modifier.fillMaxSize()
         )
     }
 }
+
+// endregion

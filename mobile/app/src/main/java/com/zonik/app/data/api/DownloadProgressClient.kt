@@ -7,7 +7,6 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import com.zonik.app.data.DebugLog
 import com.zonik.app.data.repository.SettingsRepository
-import com.zonik.core.util.md5
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -265,7 +264,7 @@ class DownloadProgressClient @Inject constructor(
                 }
 
                 val result = try {
-                    connectOnce(config.url, config.username, config.apiKey)
+                    connectOnce(config)
                 } catch (e: Exception) {
                     DebugLog.e(TAG, "Connect loop error: ${e.message}")
                     if (e is UnknownHostException) ConnectResult.HOST_UNREACHABLE else ConnectResult.FAILED
@@ -394,8 +393,8 @@ class DownloadProgressClient @Inject constructor(
             .first { it }
     }
 
-    private suspend fun connectOnce(serverUrl: String, username: String, apiKey: String): ConnectResult {
-        val wsUrl = buildWsUrl(serverUrl, username, apiKey)
+    private suspend fun connectOnce(config: com.zonik.core.model.ServerConfig): ConnectResult {
+        val wsUrl = buildWsUrl(config)
         val request = Request.Builder().url(wsUrl).build()
         val opened = CompletableDeferred<Unit>()
         // Completed with the outcome of this socket's lifetime.
@@ -451,16 +450,14 @@ class DownloadProgressClient @Inject constructor(
         }
     }
 
-    private fun buildWsUrl(serverUrl: String, username: String, apiKey: String): String {
-        val base = serverUrl.trimEnd('/')
+    private fun buildWsUrl(config: com.zonik.core.model.ServerConfig): String {
+        val base = config.url.trimEnd('/')
         val wsBase = when {
             base.startsWith("https://") -> "wss://" + base.removePrefix("https://")
             base.startsWith("http://") -> "ws://" + base.removePrefix("http://")
             else -> "ws://$base"
         }
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = md5("$apiKey$salt")
-        return "$wsBase/api/ws?u=$username&t=$token&s=$salt&v=1.16.1&c=ZonikApp&f=json"
+        return com.zonik.core.auth.SubsonicAuth.appendTo("$wsBase/api/ws", config, "ZonikApp", json = true)
     }
 
     private fun handleMessage(text: String) {

@@ -4,7 +4,6 @@ import android.content.Context
 import com.zonik.app.data.DebugLog
 import com.zonik.app.data.db.ZonikDatabase
 import com.zonik.app.data.repository.SettingsRepository
-import com.zonik.core.util.md5
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -195,10 +194,10 @@ class OfflineCacheManager @Inject constructor(
     private suspend fun buildStreamUrl(trackId: String): String {
         val config = settingsRepository.serverConfig.first()
             ?: throw IllegalStateException("No server config")
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = md5("${config.apiKey}$salt")
         // No maxBitRate — download original quality for offline
-        return "${config.url.trimEnd('/')}/rest/stream.view?id=$trackId&estimateContentLength=true&u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp"
+        return com.zonik.core.auth.SubsonicAuth.appendTo(
+            "${config.url.trimEnd('/')}/rest/stream.view?id=$trackId&estimateContentLength=true", config, "ZonikApp"
+        )
     }
 
     private fun updateState(trackId: String, state: DownloadState) {

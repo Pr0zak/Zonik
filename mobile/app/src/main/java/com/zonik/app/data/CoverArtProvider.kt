@@ -22,7 +22,6 @@ import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
 import com.zonik.core.model.ServerConfig
-import com.zonik.core.util.md5
 
 /**
  * ContentProvider that serves cover art images from the Subsonic server.
@@ -97,10 +96,9 @@ class CoverArtProvider : ContentProvider() {
             runBlocking { entryPoint.settingsRepository().serverConfig.first() }
         } ?: return null
         val serverUrl = config.url.trimEnd('/')
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = md5("${config.apiKey}$salt")
-        val url = "$serverUrl/rest/getCoverArt.view?id=$coverArtId&size=$size" +
-            "&u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp"
+        val url = com.zonik.core.auth.SubsonicAuth.appendTo(
+            "$serverUrl/rest/getCoverArt.view?id=$coverArtId&size=$size", config, "ZonikApp"
+        )
 
         // Cache to disk to avoid re-fetching
         val cacheDir = File(context.cacheDir, "cover_art")

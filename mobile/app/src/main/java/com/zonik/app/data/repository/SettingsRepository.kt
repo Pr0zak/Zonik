@@ -23,34 +23,40 @@ class SettingsRepository @Inject constructor(
     // hasSystemFeature is a binder round-trip — resolve it once, not on every flow emission.
     private val isTv: Boolean by lazy { context.isTvDevice() }
 
-    // The API key and the Last.fm session key are stored encrypted (see CredentialCipher).
-    // DataStore re-emits on every settings change, and a Keystore decrypt is not free, so the
-    // last stored value and its plain text are kept and reused while the stored value is
-    // unchanged.
-    @Volatile private var decryptedFor: String? = null
-    @Volatile private var decrypted: String? = null
+    // The API key, the device token and the Last.fm session key are stored encrypted (see
+    // CredentialCipher). DataStore re-emits on every settings change, and a Keystore decrypt is
+    // not free, so the plain text of each stored value is kept and reused while the stored
+    // value is unchanged. Two credentials alternate on every emission, hence a tiny map rather
+    // than a single slot.
+    private val revealed = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private fun reveal(stored: String?): String? {
         if (stored == null) return null
-        if (stored == decryptedFor) return decrypted
-        val plain = CredentialCipher.decrypt(stored)
-        decryptedFor = stored
-        decrypted = plain
+        revealed[stored]?.let { return it }
+        val plain = CredentialCipher.decrypt(stored) ?: return null
+        if (revealed.size > 8) revealed.clear()
+        revealed[stored] = plain
         return plain
     }
 
-    val serverConfig: Flow<ServerConfig?> = dataStore.data.map { prefs ->
-        val url = prefs[SERVER_URL] ?: return@map null
-        val username = prefs[USERNAME] ?: return@map null
-        val apiKey = reveal(prefs[API_KEY]) ?: return@map null
-        ServerConfig(url, username, apiKey)
+    /**
+     * The saved config, or null when signed out. A credential that can no longer be decrypted
+     * (a backup restored onto another device) counts as signed out, so the user is sent to
+     * sign in again instead of failing every request. A device-token login stores an empty
+     * API key; a legacy login has no token.
+     */
+    private fun configFrom(prefs: Preferences): ServerConfig? {
+        val url = prefs[SERVER_URL] ?: return null
+        val username = prefs[USERNAME] ?: return null
+        val apiKey = reveal(prefs[API_KEY]) ?: return null
+        val token = prefs[DEVICE_TOKEN]?.let { reveal(it) ?: return null }?.takeIf { it.isNotBlank() }
+        val config = ServerConfig(url, username, apiKey, token)
+        return config.takeIf { it.hasCredentials }
     }
 
-    // A key that can no longer be decrypted (a backup restored onto another device) counts as
-    // signed out, so the user is sent to pair again instead of failing every request.
-    val isLoggedIn: Flow<Boolean> = dataStore.data.map { prefs ->
-        prefs[SERVER_URL] != null && prefs[USERNAME] != null && reveal(prefs[API_KEY]) != null
-    }
+    val serverConfig: Flow<ServerConfig?> = dataStore.data.map { prefs -> configFrom(prefs) }
+
+    val isLoggedIn: Flow<Boolean> = dataStore.data.map { prefs -> configFrom(prefs) != null }
 
     val wifiBitrate: Flow<Int> = dataStore.data.map { prefs ->
         prefs[WIFI_BITRATE] ?: 0
@@ -85,6 +91,9 @@ class SettingsRepository @Inject constructor(
             prefs[SERVER_URL] = config.url
             prefs[USERNAME] = config.username
             prefs[API_KEY] = CredentialCipher.encrypt(config.apiKey)
+            val token = config.deviceToken?.takeIf { it.isNotBlank() }
+            if (token != null) prefs[DEVICE_TOKEN] = CredentialCipher.encrypt(token)
+            else prefs.remove(DEVICE_TOKEN)
         }
     }
 
@@ -96,6 +105,9 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs ->
             prefs[API_KEY]?.takeIf { !CredentialCipher.isEncrypted(it) }?.let {
                 prefs[API_KEY] = CredentialCipher.encrypt(it)
+            }
+            prefs[DEVICE_TOKEN]?.takeIf { !CredentialCipher.isEncrypted(it) }?.let {
+                prefs[DEVICE_TOKEN] = CredentialCipher.encrypt(it)
             }
             prefs[LASTFM_SESSION_KEY]?.takeIf { !CredentialCipher.isEncrypted(it) }?.let {
                 prefs[LASTFM_SESSION_KEY] = CredentialCipher.encrypt(it)
@@ -294,13 +306,23 @@ class SettingsRepository @Inject constructor(
     }
 
     suspend fun clearAll() {
-        dataStore.edit { it.clear() }
+        dataStore.edit { prefs ->
+            // Remember where we were connected so the next sign-in can offer it again.
+            val last = prefs[SERVER_URL]
+            prefs.clear()
+            if (last != null) prefs[LAST_SERVER_URL] = last
+        }
     }
+
+    /** The server of the last session, kept across sign-out (a discovery candidate). */
+    val lastServerUrl: Flow<String?> = dataStore.data.map { prefs -> prefs[SERVER_URL] ?: prefs[LAST_SERVER_URL] }
 
     companion object {
         private val SERVER_URL = stringPreferencesKey("server_url")
         private val USERNAME = stringPreferencesKey("username")
         private val API_KEY = stringPreferencesKey("api_key")
+        private val DEVICE_TOKEN = stringPreferencesKey("device_token")
+        private val LAST_SERVER_URL = stringPreferencesKey("last_server_url")
         private val WIFI_BITRATE = intPreferencesKey("wifi_bitrate")
         private val CELLULAR_BITRATE = intPreferencesKey("cellular_bitrate")
         private val LAST_SYNC = longPreferencesKey("last_sync")

@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore by preferencesDataStore(name = "wear_settings")
 
 /**
- * Wear-side persistence for the ServerConfig (url + username + apiKey).
+ * Wear-side persistence for the ServerConfig (url + username + apiKey + deviceToken).
  * Kept independent from :app's SettingsRepository — different process,
  * different DataStore file, simpler key set.
  */
@@ -21,28 +21,28 @@ class WearSettingsRepository(context: Context) {
 
     private val store = context.dataStore
 
-    // The API key is stored encrypted (see CredentialCipher). current() runs on every network
-    // request, so the plain text is kept alongside the stored value it came from rather than
-    // decrypted through the Keystore each time.
-    @Volatile private var decryptedFor: String? = null
-    @Volatile private var decrypted: String? = null
+    // The API key and the device token are stored encrypted (see CredentialCipher). current()
+    // runs on every network request, so the plain text is kept alongside the stored value it
+    // came from rather than decrypted through the Keystore each time.
+    private val revealed = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private fun reveal(stored: String?): String? {
         if (stored == null) return null
-        if (stored == decryptedFor) return decrypted
-        val plain = CredentialCipher.decrypt(stored)
-        decryptedFor = stored
-        decrypted = plain
+        revealed[stored]?.let { return it }
+        val plain = CredentialCipher.decrypt(stored) ?: return null
+        if (revealed.size > 8) revealed.clear()
+        revealed[stored] = plain
         return plain
     }
 
     val serverConfig: Flow<ServerConfig?> = store.data.map { prefs ->
         val url = prefs[SERVER_URL] ?: return@map null
         val username = prefs[USERNAME] ?: return@map null
-        // Null when it can no longer be decrypted (a restore onto another watch): the watch
-        // then shows pairing again rather than failing every request.
+        // Null when a credential can no longer be decrypted (a restore onto another watch):
+        // the watch then shows pairing again rather than failing every request.
         val apiKey = reveal(prefs[API_KEY]) ?: return@map null
-        ServerConfig(url, username, apiKey)
+        val token = prefs[DEVICE_TOKEN]?.let { reveal(it) ?: return@map null }?.takeIf { it.isNotBlank() }
+        ServerConfig(url, username, apiKey, token).takeIf { it.hasCredentials }
     }
 
     suspend fun current(): ServerConfig? = serverConfig.first()
@@ -52,6 +52,9 @@ class WearSettingsRepository(context: Context) {
             prefs[SERVER_URL] = config.url
             prefs[USERNAME] = config.username
             prefs[API_KEY] = CredentialCipher.encrypt(config.apiKey)
+            val token = config.deviceToken?.takeIf { it.isNotBlank() }
+            if (token != null) prefs[DEVICE_TOKEN] = CredentialCipher.encrypt(token)
+            else prefs.remove(DEVICE_TOKEN)
         }
     }
 
@@ -72,5 +75,6 @@ class WearSettingsRepository(context: Context) {
         val SERVER_URL = stringPreferencesKey("server_url")
         val USERNAME = stringPreferencesKey("username")
         val API_KEY = stringPreferencesKey("api_key")
+        val DEVICE_TOKEN = stringPreferencesKey("device_token")
     }
 }

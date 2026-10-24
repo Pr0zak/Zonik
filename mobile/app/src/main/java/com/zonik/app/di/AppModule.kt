@@ -87,6 +87,29 @@ object AppModule {
         }
     }
 
+    /**
+     * BASIC request logging with credentials masked: URLs carry `apiKey=<device token>` (or
+     * u/t/s), and a device token is a long-lived secret that must not reach logcat.
+     */
+    private fun sanitizedLogging(): Interceptor =
+        HttpLoggingInterceptor { message ->
+            android.util.Log.i("OkHttp", com.zonik.app.data.DebugLog.sanitizeUrl(message))
+        }.apply { level = HttpLoggingInterceptor.Level.BASIC }
+
+    /** Plain client for /api/auth and /api/pair calls that run before (or outside) a saved config. */
+    @Provides
+    @Singleton
+    fun provideZonikAuthClient(
+        cachingDns: com.zonik.app.data.api.CachingDns,
+    ): com.zonik.core.auth.ZonikAuthClient = com.zonik.core.auth.ZonikAuthClient(
+        http = OkHttpClient.Builder()
+            .dns(cachingDns)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build(),
+        clientName = "ZonikApp",
+    )
+
     @Provides
     @Singleton
     fun provideSubsonicAuthInterceptor(
@@ -108,9 +131,7 @@ object AppModule {
             .dns(cachingDns)
             .addInterceptor(dynamicBaseUrlInterceptor(serverConfigCache))
             .addInterceptor(authInterceptor)
-            .addInterceptor(HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BASIC
-            })
+            .addInterceptor(sanitizedLogging())
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
@@ -128,9 +149,7 @@ object AppModule {
             .dns(cachingDns)
             .addInterceptor(dynamicBaseUrlInterceptor(serverConfigCache))
             .addInterceptor(authInterceptor)
-            .addInterceptor(HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BASIC
-            })
+            .addInterceptor(sanitizedLogging())
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(90, TimeUnit.SECONDS)
             .build()

@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- LAN server discovery (mDNS browse + UDP broadcast probe) -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <!-- Media / Foreground Service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

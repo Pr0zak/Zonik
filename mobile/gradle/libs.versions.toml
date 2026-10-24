@@ -30,6 +30,7 @@ horologist = "0.6.20"
 wear-tiles = "1.4.1"
 wear-watchface-complications = "1.2.1"
 play-services-wearable = "18.2.0"
+zxing = "3.5.3"
 
 [libraries]
 # AndroidX Core
@@ -111,6 +112,9 @@ androidx-mediarouter = { group = "androidx.mediarouter", name = "mediarouter", v
 
 # Browser (CustomTabs)
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
+
+# QR codes (TV pairing screen renders its QR locally)
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 # Security
 

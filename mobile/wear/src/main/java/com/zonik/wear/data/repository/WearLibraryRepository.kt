@@ -112,9 +112,6 @@ class WearLibraryRepository(
         return "${cfg.url.trimEnd('/')}/rest/getCoverArt.view?id=$coverArtId&size=$size${buildAuthParams(cfg)}"
     }
 
-    private fun buildAuthParams(cfg: ServerConfig): String {
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = com.zonik.core.util.md5("${cfg.apiKey}$salt")
-        return "&u=${cfg.username}&t=$token&s=$salt&v=1.16.1&c=ZonikWear"
-    }
+    private fun buildAuthParams(cfg: ServerConfig): String =
+        "&" + com.zonik.core.auth.SubsonicAuth.query(cfg, "ZonikWear")
 }

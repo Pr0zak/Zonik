@@ -1,14 +1,19 @@
 package com.zonik.core.api
 
 import android.util.Log
-import com.zonik.core.util.md5
+import com.zonik.core.auth.SubsonicAuth
 import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.Response
 
 /**
- * Appends Subsonic auth query params (u, t, s, v, c, f) to every outgoing
- * request, using the current ServerConfig from the host module.
+ * Appends auth query params to every outgoing request, using the current ServerConfig from
+ * the host module: `apiKey` when the config holds a device token, else Subsonic u/t/s (see
+ * [SubsonicAuth]), plus v, c and f=json.
+ *
+ * A URL that already carries credentials (a stream or cover URL built with [SubsonicAuth]) is
+ * left signed as it is — adding a second set could mix `apiKey` with `u`/`t`/`s`, which an
+ * OpenSubsonic server rejects. Parameters the URL already has are never duplicated.
  *
  * Stays out of Hilt — both :app and :wear construct this directly. The
  * caller controls the client identifier (`c=` param) so wear can identify
@@ -23,17 +28,16 @@ class SubsonicAuthInterceptor(
         val config = runBlocking { configProvider.current() }
             ?: return chain.proceed(chain.request())
 
-        val salt = generateSalt()
-        val token = md5("${config.apiKey}$salt")
-
-        val url = chain.request().url.newBuilder()
-            .addQueryParameter("u", config.username)
-            .addQueryParameter("t", token)
-            .addQueryParameter("s", salt)
-            .addQueryParameter("v", "1.16.1")
-            .addQueryParameter("c", clientName)
-            .addQueryParameter("f", "json")
-            .build()
+        val original = chain.request().url
+        val existing = original.queryParameterNames
+        val alreadySigned = SubsonicAuth.hasCredentials(existing)
+        val builder = original.newBuilder()
+        for ((name, value) in SubsonicAuth.params(config, clientName, json = true)) {
+            if (name in existing) continue
+            if (alreadySigned && name in SubsonicAuth.CREDENTIAL_PARAMS) continue
+            builder.addQueryParameter(name, value)
+        }
+        val url = builder.build()
 
         val request = chain.request().newBuilder()
             .url(url)
@@ -47,11 +51,6 @@ class SubsonicAuthInterceptor(
             Log.e(TAG, "$path failed: ${response.code} ${response.message}")
         }
         return response
-    }
-
-    private fun generateSalt(): String {
-        val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-        return (1..16).map { chars.random() }.joinToString("")
     }
 
     private companion object {

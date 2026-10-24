@@ -78,8 +78,12 @@ class MainViewModel @Inject constructor(
     settingsRepository: SettingsRepository,
     private val playbackManager: PlaybackManager,
     private val syncManager: SyncManager,
-    private val updateChecker: UpdateChecker
+    private val updateChecker: UpdateChecker,
+    private val accountManager: com.zonik.app.data.auth.AccountManager,
 ) : ViewModel() {
+
+    /** Clears the saved login and revokes this device's token (best effort). */
+    fun signOut() = accountManager.signOut()
 
     val isLoggedIn = settingsRepository.isLoggedIn
         .stateIn(viewModelScope, SharingStarted.Eagerly, null as Boolean?)
@@ -238,6 +242,7 @@ fun ZonikApp(
                 if (isTv()) {
                     com.zonik.app.ui.tv.TvMainScreen(
                         onDisconnected = {
+                            viewModel.signOut()
                             rootNavController.navigate(Screen.Login.route) {
                                 popUpTo(0) { inclusive = true }
                             }

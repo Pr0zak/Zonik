@@ -39,6 +39,9 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
     @Inject
     lateinit var settingsRepository: SettingsRepository
 
+    @Inject
+    lateinit var deviceTokenUpgrader: com.zonik.app.data.auth.DeviceTokenUpgrader
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override val workManagerConfiguration: Configuration
@@ -51,7 +54,15 @@ class ZonikApplication : Application(), Configuration.Provider, ImageLoaderFacto
         com.zonik.app.data.DebugLog.init(this)
         setupUncaughtExceptionHandler()
         createNotificationChannels()
-        appScope.launch(Dispatchers.IO) { settingsRepository.encryptStoredCredentials() }
+        appScope.launch(Dispatchers.IO) {
+            settingsRepository.encryptStoredCredentials()
+            // API-key installs move onto a device token of their own (retried every launch).
+            try {
+                deviceTokenUpgrader.upgradeIfNeeded()
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.w("DeviceToken", "Upgrade check failed: ${e.message}")
+            }
+        }
         scheduleLibrarySync()
         // Skip Cast SDK on TV (not available, wastes startup time)
         if (!isTvDevice()) {

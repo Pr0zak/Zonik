@@ -95,27 +95,39 @@ object DebugLog {
     // Redacts secret query-param values (auth token, salt, user, password, apiKey)
     // from any string containing a URL. UNCONDITIONAL — tokens must never reach
     // the log file or logcat, even in debug-variant builds that get uploaded via /api/logs.
-    private val secretParamRegex = Regex("(?i)([?&](?:t|s|u|p|salt|token|apiKey)=)[^&\\s]*")
+    // Device tokens (apiKey=, Bearer, JSON "device_token"/"api_key"/"token"/"password") are
+    // masked the same way. Every DebugLog line goes through this, not only explicit URL logs.
+    private val secretParamRegex =
+        Regex("(?i)([?&](?:t|s|u|p|salt|token|apiKey|api_key|device_token)=)[^&\\s\"]*")
+    private val secretJsonRegex =
+        Regex("(?i)(\"(?:device_token|api_key|apiKey|token|password)\"\\s*:\\s*\")[^\"]*")
+    private val bearerRegex = Regex("(?i)(Bearer\\s+)[A-Za-z0-9._~+/=-]+")
 
     fun sanitizeUrl(s: String?): String {
         if (s == null) return ""
-        return secretParamRegex.replace(s) { "${it.groupValues[1]}***" }
+        var out = secretParamRegex.replace(s) { "${it.groupValues[1]}***" }
+        out = secretJsonRegex.replace(out) { "${it.groupValues[1]}***" }
+        out = bearerRegex.replace(out) { "${it.groupValues[1]}***" }
+        return out
     }
 
     fun d(tag: String, message: String) {
-        add("D", tag, message)
-        android.util.Log.d(tag, message)
+        val m = sanitizeUrl(message)
+        add("D", tag, m)
+        android.util.Log.d(tag, m)
     }
 
     fun e(tag: String, message: String, error: Throwable? = null) {
-        val msg = if (error != null) "$message: ${error.message}" else message
+        val m = sanitizeUrl(message)
+        val msg = if (error != null) "$m: ${sanitizeUrl(error.message)}" else m
         add("E", tag, msg)
-        android.util.Log.e(tag, message, error)
+        android.util.Log.e(tag, m, error)
     }
 
     fun w(tag: String, message: String) {
-        add("W", tag, message)
-        android.util.Log.w(tag, message)
+        val m = sanitizeUrl(message)
+        add("W", tag, m)
+        android.util.Log.w(tag, m)
     }
 
     private fun add(level: String, tag: String, message: String) {

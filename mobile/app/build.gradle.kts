@@ -16,8 +16,8 @@ android {
         applicationId = "com.zonik.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 268
-        versionName = "1.52.1"
+        versionCode = 269
+        versionName = "1.53.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -142,6 +142,9 @@ dependencies {
 
     // Browser (CustomTabs)
     implementation(libs.androidx.browser)
+
+    // QR code for the TV pairing screen
+    implementation(libs.zxing.core)
 
     // Security
 

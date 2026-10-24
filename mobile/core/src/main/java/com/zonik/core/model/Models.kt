@@ -73,11 +73,30 @@ data class Genre(
     val albumCount: Int = 0
 )
 
+/**
+ * Where the app talks to and how it signs in.
+ *
+ * [apiKey] is the legacy Subsonic key (sent as u/t/s token auth). [deviceToken] is a per-device
+ * token minted by the server (`/api/auth/device`, `/api/auth/devices`, TV pairing); when present
+ * it is sent as OpenSubsonic `apiKey=` and the legacy key is not sent at all. Configs saved by
+ * older releases load with a null token and keep working with the key. Build auth params with
+ * [com.zonik.core.auth.SubsonicAuth], never by hand.
+ */
 data class ServerConfig(
     val url: String,
     val username: String,
-    val apiKey: String
-)
+    val apiKey: String,
+    val deviceToken: String? = null,
+) {
+    val hasDeviceToken: Boolean get() = !deviceToken.isNullOrBlank()
+
+    /** True when there is something to sign requests with. */
+    val hasCredentials: Boolean get() = hasDeviceToken || apiKey.isNotBlank()
+
+    override fun toString(): String =
+        "ServerConfig(url=$url, username=$username, apiKey=${if (apiKey.isBlank()) "none" else "***"}, " +
+            "deviceToken=${if (hasDeviceToken) "***" else "none"})"
+}
 
 enum class RepeatMode { OFF, ALL, ONE }
 enum class ShuffleMode { OFF, SHUFFLE, TRUE_RANDOM }

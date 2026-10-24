@@ -49,7 +49,6 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
-import com.zonik.core.util.md5
 import javax.inject.Inject
 
 @OptIn(UnstableApi::class)
@@ -658,8 +657,6 @@ class ZonikMediaService : MediaLibraryService() {
     private fun buildStreamUrlForTrack(trackId: String): String {
         val config = cachedServerConfig ?: runBlocking { settingsRepository.serverConfig.first() }
             ?: return "http://localhost/rest/stream.view?id=$trackId"
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = md5("${config.apiKey}$salt")
         // Apply smart bitrate based on network type. isUnmeteredNetwork() counts Ethernet and
         // anything the system marks unmetered — a wired Google TV reports no WIFI transport and
         // used to get the cellular bitrate on a gigabit link.
@@ -669,17 +666,17 @@ class ZonikMediaService : MediaLibraryService() {
             cachedCellularBitrate ?: runBlocking { settingsRepository.cellularBitrate.first() }
         }
         val bitrateParam = if (bitrate > 0) "&maxBitRate=$bitrate" else ""
-        return "${config.url.trimEnd('/')}/rest/stream.view?id=$trackId${bitrateParam}&estimateContentLength=true&u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp"
+        return com.zonik.core.auth.SubsonicAuth.appendTo(
+            "${config.url.trimEnd('/')}/rest/stream.view?id=$trackId${bitrateParam}&estimateContentLength=true",
+            config, "ZonikApp"
+        )
     }
 
     private fun buildAuthenticatedUrl(baseUrl: String): String {
         val config = runBlocking {
             settingsRepository.serverConfig.first()
         } ?: return baseUrl
-        val salt = (1..16).map { "abcdefghijklmnopqrstuvwxyz0123456789".random() }.joinToString("")
-        val token = md5("${config.apiKey}$salt")
-        val separator = if (baseUrl.contains('?')) '&' else '?'
-        return "${baseUrl}${separator}u=${config.username}&t=$token&s=$salt&v=1.16.1&c=ZonikApp"
+        return com.zonik.core.auth.SubsonicAuth.appendTo(baseUrl, config, "ZonikApp")
     }
 
     private fun applyEqualizer(audioSessionId: Int, enabled: Boolean, preset: Int, bandLevelsStr: String?) {

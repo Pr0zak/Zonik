@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import com.zonik.core.auth.describe
 import javax.inject.Inject
 
 data class LibraryStats(
@@ -29,6 +30,21 @@ data class LibraryStats(
     val totalDurationSeconds: Long = 0L,
     val totalSizeBytes: Long = 0L
 )
+
+data class AccountInfo(
+    val displayName: String,
+    val username: String,
+    val role: String?,
+    val usesDeviceToken: Boolean,
+)
+
+/** Steps of Settings → Pair a TV. */
+sealed interface PairTvState {
+    data class Entering(val code: String = "", val error: String? = null) : PairTvState
+    data class Working(val code: String, val message: String) : PairTvState
+    data class Confirm(val code: String, val deviceLabel: String, val platform: String?, val pairAs: String) : PairTvState
+    data class Done(val deviceLabel: String) : PairTvState
+}
 
 data class SettingsUiState(
     val serverUrl: String = "",
@@ -72,7 +88,91 @@ class SettingsViewModel @Inject constructor(
     private val playbackManager: PlaybackManager,
     private val offlineCacheManager: com.zonik.app.media.OfflineCacheManager,
     private val zonikApi: ZonikApi,
+    private val accountManager: com.zonik.app.data.auth.AccountManager,
 ) : ViewModel() {
+
+    // --- Account ---
+
+    private val _account = MutableStateFlow<AccountInfo?>(null)
+    /** Who is signed in; null until loaded. */
+    val account: StateFlow<AccountInfo?> = _account.asStateFlow()
+
+    fun refreshAccount() {
+        viewModelScope.launch {
+            val config = accountManager.config() ?: run { _account.value = null; return@launch }
+            val base = AccountInfo(
+                displayName = config.username,
+                username = config.username,
+                role = null,
+                usesDeviceToken = config.hasDeviceToken,
+            )
+            _account.value = _account.value?.takeIf { it.username == config.username }
+                ?.copy(usesDeviceToken = config.hasDeviceToken) ?: base
+            when (val r = accountManager.me()) {
+                is com.zonik.core.auth.AuthResult.Ok -> _account.value = base.copy(
+                    displayName = r.value.shownName,
+                    username = r.value.username,
+                    role = r.value.role,
+                )
+                // Older servers have no /api/auth/me: the saved username is all there is.
+                else -> com.zonik.app.data.DebugLog.d("Account", "Account details unavailable: ${r.describe()}")
+            }
+        }
+    }
+
+    // --- Pair a TV ---
+
+    private val _pairTv = MutableStateFlow<PairTvState?>(null)
+    /** The "Pair a TV" dialog; null when closed. */
+    val pairTv: StateFlow<PairTvState?> = _pairTv.asStateFlow()
+
+    fun openPairTv() { _pairTv.value = PairTvState.Entering() }
+    fun closePairTv() { _pairTv.value = null }
+
+    fun lookUpPairCode(raw: String) {
+        val code = raw.filter { it.isDigit() }
+        if (code.length != 6) {
+            _pairTv.value = PairTvState.Entering(code, "Enter the 6-digit code shown on the TV")
+            return
+        }
+        _pairTv.value = PairTvState.Working(code, "Looking up the code…")
+        viewModelScope.launch {
+            val r = accountManager.pairInfo(code)
+            _pairTv.value = when {
+                r is com.zonik.core.auth.AuthResult.Ok && r.value.isPending -> PairTvState.Confirm(
+                    code = code,
+                    deviceLabel = r.value.label?.takeIf { it.isNotBlank() } ?: "A device",
+                    platform = r.value.platform,
+                    pairAs = _account.value?.displayName ?: accountManager.config()?.username ?: "you",
+                )
+                r is com.zonik.core.auth.AuthResult.Ok -> PairTvState.Entering(code, "Code expired or invalid. Check the TV for a new one.")
+                r is com.zonik.core.auth.AuthResult.Http && r.code == 404 ->
+                    PairTvState.Entering(code, "This server can't approve pairing from the app yet. Update the server, or open its /pair page.")
+                else -> PairTvState.Entering(code, r.describe())
+            }
+        }
+    }
+
+    fun approvePairCode(code: String) {
+        val confirm = _pairTv.value as? PairTvState.Confirm
+        _pairTv.value = PairTvState.Working(code, "Pairing…")
+        viewModelScope.launch {
+            val r = accountManager.approvePair(code)
+            _pairTv.value = when (r) {
+                is com.zonik.core.auth.AuthResult.Ok -> PairTvState.Done(r.value.device?.label ?: confirm?.deviceLabel ?: "The TV")
+                is com.zonik.core.auth.AuthResult.Http -> PairTvState.Entering(
+                    code,
+                    when (r.code) {
+                        404 -> "Code expired or invalid. Check the TV for a new one."
+                        409 -> "That code was already used."
+                        401 -> "Your sign-in wasn't accepted. Sign out and in again."
+                        else -> r.describe()
+                    }
+                )
+                is com.zonik.core.auth.AuthResult.Failure -> PairTvState.Entering(code, r.describe())
+            }
+        }
+    }
 
     private val _wearPairStatus = MutableStateFlow<String?>(null)
     val wearPairStatus: StateFlow<String?> = _wearPairStatus.asStateFlow()
@@ -108,12 +208,18 @@ class SettingsViewModel @Inject constructor(
                     _wearPairStatus.value = "No watch paired (open the Wear OS app first)"
                     return@launch
                 }
+                // The watch gets a device token of its own when the server can mint one, so it
+                // shows up (and can be revoked) separately; otherwise the phone's own login.
+                // apiKey always goes along for watch builds that predate device tokens.
+                _wearPairStatus.value = "Preparing a login for ${target.displayName}…"
+                val watchToken = accountManager.mintWatchToken(config, target.displayName ?: "Wear OS watch")
                 val payload = kotlinx.serialization.json.Json.encodeToString(
                     WirePairPayload.serializer(),
                     WirePairPayload(
                         url = config.url,
                         username = config.username,
                         apiKey = config.apiKey,
+                        deviceToken = watchToken ?: config.deviceToken,
                     )
                 ).toByteArray(Charsets.UTF_8)
                 val messageClient = com.google.android.gms.wearable.Wearable.getMessageClient(appContext)
@@ -123,7 +229,8 @@ class SettingsViewModel @Inject constructor(
                 )
                 messageClient.sendMessage(target.id, "/zonik/pair", payload).await()
                 com.zonik.app.data.DebugLog.d("WearPair", "sendMessage acked")
-                _wearPairStatus.value = "Sent to ${target.displayName}"
+                _wearPairStatus.value = "Sent to ${target.displayName}" +
+                    if (watchToken != null) " with its own login" else " (using this phone's login)"
             } catch (e: Exception) {
                 com.zonik.app.data.DebugLog.e("WearPair", "pairWatch failed: ${e.message}", e)
                 _wearPairStatus.value = "Send failed: ${e.message}"
@@ -136,6 +243,7 @@ class SettingsViewModel @Inject constructor(
         val url: String,
         val username: String,
         val apiKey: String,
+        val deviceToken: String? = null,
     )
 
     private val _isUploadingLogsToServer = MutableStateFlow(false)
@@ -185,6 +293,7 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 2048)
 
     init {
+        refreshAccount()
         checkForUpdate()
         fetchServerInfo()
         refreshCacheSize()
@@ -503,8 +612,9 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** Signs out: clears the saved login and revokes this device's token (best effort). */
     fun disconnect() {
-        viewModelScope.launch { settingsRepository.clearAll() }
+        accountManager.signOut()
     }
 
     private val _connectionTestResult = MutableStateFlow<String?>(null)
@@ -548,7 +658,8 @@ class SettingsViewModel @Inject constructor(
     fun updateApiKey(apiKey: String) {
         viewModelScope.launch {
             val config = settingsRepository.serverConfig.first() ?: return@launch
-            settingsRepository.saveServerConfig(config.copy(apiKey = apiKey))
+            // Typing a key means "sign in with this key": drop the device token so it is used.
+            settingsRepository.saveServerConfig(config.copy(apiKey = apiKey, deviceToken = null))
         }
     }
 

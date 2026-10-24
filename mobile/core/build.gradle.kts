@@ -30,4 +30,6 @@ dependencies {
     api(libs.okhttp.logging)
     api(libs.retrofit)
     api(libs.retrofit.serialization)
+
+    testImplementation(libs.junit)
 }

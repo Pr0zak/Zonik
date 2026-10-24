@@ -1147,6 +1147,13 @@ private fun TvSettingsContent(
     // back on the row that opened it instead of dropping it at the top of the list.
     var showVisualizer by remember { mutableStateOf(false) }
     var returnFocus by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if (confirmSignOut) {
+        com.zonik.app.ui.util.SignOutConfirmDialog(
+            onConfirm = { confirmSignOut = false; onDisconnected() },
+            onDismiss = { confirmSignOut = false }
+        )
+    }
     val visualizerRow = remember { FocusRequester() }
     if (showVisualizer) {
         TvVisualizerSettings(viewModel = viewModel, onBack = {
@@ -1244,8 +1251,8 @@ private fun TvSettingsContent(
         TvSettingsButton(
             icon = Icons.Default.Logout,
             title = "Disconnect",
-            subtitle = "Log out from server",
-            onClick = onDisconnected,
+            subtitle = "Sign out and revoke this TV's login",
+            onClick = { confirmSignOut = true },
             tint = MaterialTheme.colorScheme.error
         )
 

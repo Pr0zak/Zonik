@@ -31,11 +31,19 @@ class PairingDataListener : WearableListenerService() {
             Log.w(TAG, "Bad pairing payload from ${event.sourceNodeId}: ${e.message}")
             return
         }
-        if (payload.url.isBlank() || payload.username.isBlank() || payload.apiKey.isBlank()) {
+        // A phone signed in with a password has no legacy key to send, only the watch's own
+        // device token; older phones send only the key. Either is enough.
+        if (payload.url.isBlank() || payload.username.isBlank() ||
+            (payload.apiKey.isBlank() && payload.deviceToken.isNullOrBlank())
+        ) {
             Log.w(TAG, "Pairing payload missing fields — ignoring")
             return
         }
-        Log.i(TAG, "Pairing config received from ${event.sourceNodeId} (url=${payload.url})")
+        Log.i(
+            TAG,
+            "Pairing config received from ${event.sourceNodeId} (url=${payload.url}, " +
+                "auth=${if (payload.deviceToken.isNullOrBlank()) "api key" else "device token"})"
+        )
         val app = applicationContext as WearApp
         scope.launch {
             app.settings.save(
@@ -43,6 +51,7 @@ class PairingDataListener : WearableListenerService() {
                     url = payload.url.trimEnd('/'),
                     username = payload.username,
                     apiKey = payload.apiKey,
+                    deviceToken = payload.deviceToken?.takeIf { it.isNotBlank() },
                 )
             )
         }
@@ -52,7 +61,8 @@ class PairingDataListener : WearableListenerService() {
     private data class WirePayload(
         val url: String,
         val username: String,
-        val apiKey: String,
+        val apiKey: String = "",
+        val deviceToken: String? = null,
     )
 
     private companion object {

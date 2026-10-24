@@ -3,20 +3,15 @@ package com.zonik.wear.ui.screens.pairing
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.zonik.core.model.ServerConfig
+import com.zonik.core.auth.AuthResult
+import com.zonik.core.auth.ServerUrlNormalizer
+import com.zonik.core.auth.ZonikAuthClient
 import com.zonik.wear.data.repository.WearSettingsRepository
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 /**
  * Drives the watch's first-launch pairing flow:
@@ -28,11 +23,7 @@ class PairingViewModel(
     private val settings: WearSettingsRepository,
 ) : ViewModel() {
 
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .build()
+    private val authClient = ZonikAuthClient(clientName = "ZonikWear")
 
     private val _state = MutableStateFlow<PairingState>(PairingState.EnterUrl(""))
     val state: StateFlow<PairingState> = _state.asStateFlow()
@@ -52,26 +43,16 @@ class PairingViewModel(
         _state.value = PairingState.Requesting(normalized)
         viewModelScope.launch {
             try {
-                val resp = withContext(Dispatchers.IO) {
-                    http.newCall(
-                        Request.Builder()
-                            .url("$normalized/api/pair")
-                            .post(okhttp3.internal.EMPTY_REQUEST)
-                            .build()
-                    ).execute()
-                }
-                resp.use {
-                    if (!it.isSuccessful) {
-                        _state.value = PairingState.EnterUrl(
-                            url = st.url,
-                            error = "Server responded ${it.code} — wrong URL?"
-                        )
-                        return@launch
+                when (val r = authClient.createPair(normalized, label = android.os.Build.MODEL, platform = "wear")) {
+                    is AuthResult.Ok -> {
+                        _state.value = PairingState.Pending(normalized, r.value.code)
+                        pollUntilReady(normalized, r.value.code)
                     }
-                    val body = it.body?.string().orEmpty()
-                    val payload = json.decodeFromString(CodeResponse.serializer(), body)
-                    _state.value = PairingState.Pending(normalized, payload.code)
-                    pollUntilReady(normalized, payload.code)
+                    is AuthResult.Http -> _state.value = PairingState.EnterUrl(
+                        url = st.url,
+                        error = "Server responded ${r.code} — wrong URL?"
+                    )
+                    is AuthResult.Failure -> throw r.error
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Pair request failed: ${e.message}")
@@ -100,26 +81,22 @@ class PairingViewModel(
             val st = _state.value
             if (st !is PairingState.Pending || st.code != code) return
             try {
-                val resp = withContext(Dispatchers.IO) {
-                    http.newCall(Request.Builder().url("$serverUrl/api/pair/$code").build()).execute()
-                }
-                resp.use {
-                    val body = it.body?.string().orEmpty()
-                    val payload = json.decodeFromString(StatusResponse.serializer(), body)
+                val payload = authClient.pollPair(serverUrl, code).valueOrNull() ?: continue
+                run {
                     when (payload.status) {
                         "ready" -> {
-                            val u = payload.url ?: serverUrl
-                            val user = payload.username
-                            val key = payload.api_key
-                            if (user.isNullOrBlank() || key.isNullOrBlank()) {
+                            // Pairing v2 servers add a device token for this watch; older ones
+                            // send the account's API key. toServerConfig takes either.
+                            val config = payload.toServerConfig(fallbackUrl = serverUrl)
+                            if (config == null) {
                                 _state.value = PairingState.EnterUrl(
                                     url = serverUrl,
                                     error = "Server returned ready but missing credentials"
                                 )
                                 return
                             }
-                            settings.save(ServerConfig(url = u, username = user, apiKey = key))
-                            _state.value = PairingState.Paired(u, user)
+                            settings.save(config)
+                            _state.value = PairingState.Paired(config.url, config.username)
                             return
                         }
                         "expired" -> {
@@ -139,25 +116,9 @@ class PairingViewModel(
         }
     }
 
-    private fun normalizeUrl(input: String): String {
-        val trimmed = input.trim().trimEnd('/')
-        if (trimmed.isEmpty()) return ""
-        return when {
-            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
-            else -> "http://$trimmed"
-        }
-    }
-
-    @Serializable
-    private data class CodeResponse(val code: String, val expires: String? = null)
-
-    @Serializable
-    private data class StatusResponse(
-        val status: String,
-        val url: String? = null,
-        val username: String? = null,
-        val api_key: String? = null,
-    )
+    // Same shorthand as the phone/TV: "zonik" → http://zonik.lan:3000, a bare host gets
+    // http:// and :3000. (No last-octet shorthand here: the watch's own IP is not looked up.)
+    private fun normalizeUrl(input: String): String = ServerUrlNormalizer.normalize(input).orEmpty()
 
     private companion object {
         const val TAG = "WearPairing"

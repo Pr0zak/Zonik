@@ -84,8 +84,11 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 32.dp)
         ) {
+            SettingsGroup("Account") {
+                AccountSection(viewModel, onDisconnected, askToConfirm)
+            }
             SettingsGroup("Server") {
-                ServerSection(viewModel, uiState, onDisconnected, askToConfirm)
+                ServerSection(viewModel, uiState)
             }
             SettingsGroup("Playback") {
                 PlaybackSection(viewModel, uiState)
@@ -139,12 +142,49 @@ fun SettingsScreen(
 // region Sections
 
 @Composable
-private fun ServerSection(
+private fun AccountSection(
     viewModel: SettingsViewModel,
-    uiState: SettingsUiState,
     onDisconnected: () -> Unit,
     askToConfirm: (ConfirmRequest) -> Unit,
 ) {
+    val account by viewModel.account.collectAsStateWithLifecycle()
+    val a = account
+    SettingRow(
+        title = a?.displayName ?: "Signed in",
+        summary = a?.let {
+            listOfNotNull(
+                it.role?.replaceFirstChar { c -> c.uppercase() },
+                it.username.takeIf { u -> u != it.displayName },
+                if (it.usesDeviceToken) "Device login" else "API key login",
+            ).joinToString(" · ")
+        } ?: "Loading…",
+        icon = Icons.Default.AccountCircle,
+    )
+    GroupDivider()
+    SettingRow(
+        title = "Sign out",
+        summary = "Remove this server and your login from this device",
+        icon = Icons.Default.Logout,
+        titleColor = MaterialTheme.colorScheme.error,
+        onClick = {
+            askToConfirm(
+                ConfirmRequest(
+                    title = com.zonik.app.ui.util.SIGN_OUT_TITLE,
+                    message = com.zonik.app.ui.util.SIGN_OUT_MESSAGE,
+                    confirmLabel = "Sign out",
+                    onConfirm = { viewModel.disconnect(); onDisconnected() }
+                )
+            )
+        }
+    )
+}
+
+@Composable
+private fun ServerSection(
+    viewModel: SettingsViewModel,
+    uiState: SettingsUiState,
+) {
+    val account by viewModel.account.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<ServerField?>(null) }
     val isTesting by viewModel.isTestingConnection.collectAsStateWithLifecycle()
     val testResult by viewModel.connectionTestResult.collectAsStateWithLifecycle()
@@ -166,8 +206,9 @@ private fun ServerSection(
     )
     GroupDivider()
     SettingRow(
-        title = "Password or API key",
-        summary = "Saved · tap to change",
+        title = "API key",
+        summary = if (account?.usesDeviceToken == true) "Not needed (device login) · tap to use a key instead"
+        else "Saved · tap to change",
         icon = Icons.Default.Key,
         onClick = { editing = ServerField.ApiKey },
         trailing = { EditHint() }
@@ -202,23 +243,6 @@ private fun ServerSection(
             viewModel.clearConnectionTestResult()
         }
     }
-    GroupDivider()
-    SettingRow(
-        title = "Disconnect",
-        summary = "Sign out of this server",
-        icon = Icons.Default.Logout,
-        titleColor = MaterialTheme.colorScheme.error,
-        onClick = {
-            askToConfirm(
-                ConfirmRequest(
-                    title = "Disconnect from server?",
-                    message = "You'll need to enter the server address and your login again to use the app.",
-                    confirmLabel = "Disconnect",
-                    onConfirm = { viewModel.disconnect(); onDisconnected() }
-                )
-            )
-        }
-    )
 
     editing?.let { field ->
         ServerFieldDialog(
@@ -244,7 +268,7 @@ private fun ServerSection(
 private enum class ServerField(val label: String) {
     Url("Server address"),
     Username("Username"),
-    ApiKey("Password or API key"),
+    ApiKey("API key"),
 }
 
 @Composable
@@ -747,6 +771,8 @@ private fun StorageSection(viewModel: SettingsViewModel, uiState: SettingsUiStat
 @Composable
 private fun DevicesSection(viewModel: SettingsViewModel) {
     val wearStatus by viewModel.wearPairStatus.collectAsStateWithLifecycle()
+    val pairTv by viewModel.pairTv.collectAsStateWithLifecycle()
+    pairTv?.let { PairTvDialog(it, viewModel) }
     val tabOrder by viewModel.autoTabOrder.collectAsStateWithLifecycle()
     val tabLabels = mapOf(
         "mix" to "Mix",
@@ -761,6 +787,20 @@ private fun DevicesSection(viewModel: SettingsViewModel) {
         icon = Icons.Default.Watch,
         onClick = viewModel::pairWatch,
         trailing = { FilledTonalButton(onClick = viewModel::pairWatch) { Text("Send") } }
+    )
+    GroupDivider()
+    SettingRow(
+        title = "Pair a TV",
+        summary = "Enter the code shown on a TV to sign it in as you",
+        icon = Icons.Default.Tv,
+        onClick = viewModel::openPairTv,
+        trailing = {
+            Icon(
+                Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     )
     GroupDivider()
     SettingRow(
@@ -1132,5 +1172,81 @@ private fun StatItem(label: String, value: String) {
 }
 
 private fun mbLabel(mb: Int): String = if (mb < 1024) "$mb MB" else "${mb / 1024} GB"
+
+// endregion
+
+// region Pair a TV
+
+@Composable
+private fun PairTvDialog(state: PairTvState, viewModel: SettingsViewModel) {
+    var code by remember { mutableStateOf((state as? PairTvState.Entering)?.code.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = viewModel::closePairTv,
+        icon = { Icon(Icons.Default.Tv, contentDescription = null) },
+        title = {
+            Text(
+                when (state) {
+                    is PairTvState.Confirm -> "${state.deviceLabel} wants to connect"
+                    is PairTvState.Done -> "TV paired"
+                    else -> "Pair a TV"
+                }
+            )
+        },
+        text = {
+            when (state) {
+                is PairTvState.Entering -> Column {
+                    Text(
+                        "Enter the 6-digit code on the TV's sign-in screen.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
+                        label = { Text("Code") },
+                        singleLine = true,
+                        isError = state.error != null,
+                        supportingText = state.error?.let { { Text(it) } },
+                        textStyle = MaterialTheme.typography.headlineSmall.copy(letterSpacing = 6.sp),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                            onDone = { viewModel.lookUpPairCode(code) }
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                is PairTvState.Working -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(state.message)
+                }
+                is PairTvState.Confirm -> Text(
+                    "It will be signed in as ${state.pairAs}, with your library, favourites and playlists. " +
+                        "You can remove it later from the server's Devices page."
+                )
+                is PairTvState.Done -> Text("${state.deviceLabel} is signed in. It will open your library in a moment.")
+            }
+        },
+        confirmButton = {
+            when (state) {
+                is PairTvState.Entering -> TextButton(
+                    onClick = { viewModel.lookUpPairCode(code) },
+                    enabled = code.length == 6
+                ) { Text("Next") }
+                is PairTvState.Working -> TextButton(onClick = {}, enabled = false) { Text("Next") }
+                is PairTvState.Confirm -> Button(onClick = { viewModel.approvePairCode(state.code) }) {
+                    Text("Pair as ${state.pairAs}")
+                }
+                is PairTvState.Done -> TextButton(onClick = viewModel::closePairTv) { Text("Done") }
+            }
+        },
+        dismissButton = if (state is PairTvState.Done) null else {
+            { TextButton(onClick = viewModel::closePairTv) { Text("Cancel") } }
+        }
+    )
+}
 
 // endregion
