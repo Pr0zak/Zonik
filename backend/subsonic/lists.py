@@ -14,6 +14,9 @@ from backend.models.track import Track
 from backend.models.album import Album
 from backend.models.artist import Artist
 from backend.models.favorite import Favorite
+from backend.models.user_track_stats import UserTrackStats
+from backend.services.user_data import caller_id
+from backend.subsonic.personal import personal_view
 from backend.subsonic.responses import subsonic_response, error_response, format_track, format_album, format_artist
 
 router = APIRouter()
@@ -31,6 +34,8 @@ async def get_album_list2(request: Request, db: AsyncSession = Depends(get_db)):
     offset = max(0, int(request.query_params.get("offset", 0)))
 
     query = select(Album).options(selectinload(Album.artist))
+    # recent / frequent / starred are the caller's own (the owner for anonymous calls).
+    uid = await caller_id(request, db)
 
     if list_type == "alphabeticalByName":
         query = query.order_by(Album.title)
@@ -39,14 +44,15 @@ async def get_album_list2(request: Request, db: AsyncSession = Depends(get_db)):
     elif list_type == "newest":
         query = query.order_by(Album.created_at.desc())
     elif list_type == "recent":
-        # "recent" = recently played (per Subsonic spec). Order by max(last_played_at)
-        # of any track in the album. Albums with no plays fall through to created_at.
+        # "recent" = recently played (per Subsonic spec), by the caller. Order by the
+        # latest play of any track in the album; albums they never played are left out.
         last_played_subq = (
             select(
                 Track.album_id.label("album_id"),
-                func.max(Track.last_played_at).label("last_played"),
+                func.max(UserTrackStats.last_played_at).label("last_played"),
             )
-            .where(Track.album_id.isnot(None))
+            .join(UserTrackStats, UserTrackStats.track_id == Track.id)
+            .where(Track.album_id.isnot(None), UserTrackStats.user_id == uid)
             .group_by(Track.album_id)
             .subquery()
         )
@@ -56,15 +62,16 @@ async def get_album_list2(request: Request, db: AsyncSession = Depends(get_db)):
             .order_by(last_played_subq.c.last_played.desc())
         )
     elif list_type == "frequent":
-        # "frequent" = most played. Aggregate play_count across each album's tracks
+        # "frequent" = most played by the caller. Aggregate their play counts across each album's tracks
         # so albums with many high-play tracks float to the top. Albums with zero
         # total plays are excluded (spec: "albums sorted by play count").
         play_count_subq = (
             select(
                 Track.album_id.label("album_id"),
-                func.coalesce(func.sum(Track.play_count), 0).label("total_plays"),
+                func.coalesce(func.sum(UserTrackStats.play_count), 0).label("total_plays"),
             )
-            .where(Track.album_id.isnot(None))
+            .join(UserTrackStats, UserTrackStats.track_id == Track.id)
+            .where(Track.album_id.isnot(None), UserTrackStats.user_id == uid)
             .group_by(Track.album_id)
             .subquery()
         )
@@ -84,17 +91,22 @@ async def get_album_list2(request: Request, db: AsyncSession = Depends(get_db)):
         if genre:
             query = query.where(Album.genre == genre)
     elif list_type == "starred":
-        query = query.join(Favorite, Favorite.album_id == Album.id).order_by(Favorite.starred_at.desc())
+        query = (
+            query.join(Favorite, Favorite.album_id == Album.id)
+            .where(Favorite.user_id == uid)
+            .order_by(Favorite.starred_at.desc())
+        )
     else:
         query = query.order_by(Album.title)
 
     query = query.offset(offset).limit(size)
     result = await db.execute(query)
     albums = result.scalars().all()
+    personal = await personal_view(request, db, albums=albums, user_id=uid)
 
     return subsonic_response({
         "albumList2": {
-            "album": [format_album(a) for a in albums]
+            "album": [format_album(a, personal=personal) for a in albums]
         }
     }, _get_format(request))
 
@@ -169,6 +181,11 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
         query = query.where(Track.year <= int(to_year))
 
     cfg = get_settings().subsonic
+    # The cooldown and unplayed quota read the caller's plays, not everyone's.
+    uid = await caller_id(request, db)
+    query = query.outerjoin(
+        UserTrackStats, (UserTrackStats.track_id == Track.id) & (UserTrackStats.user_id == uid)
+    )
 
     # Uniform random order. Skips are tracked for the Stats page but deliberately
     # don't weigh on the mix: skipping a track usually means "not right now", not
@@ -193,8 +210,8 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
     cooldown = cfg.shuffle_cooldown_days or 0
     if cooldown > 0:
         fresh = query.where(or_(
-            Track.last_played_at.is_(None),
-            Track.last_played_at < func.datetime("now", f"-{cooldown} days"),
+            UserTrackStats.last_played_at.is_(None),
+            UserTrackStats.last_played_at < func.datetime("now", f"-{cooldown} days"),
         ))
 
     # New-arrivals quota: a guaranteed slice of the mix from tracks ADDED in the
@@ -206,7 +223,7 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
     )
     # Unplayed quota: a slice from tracks that have never been played.
     unplayed = await _draw(
-        fresh.where(or_(Track.play_count == 0, Track.play_count.is_(None))),
+        fresh.where(or_(UserTrackStats.play_count == 0, UserTrackStats.play_count.is_(None))),
         min(_quota(cfg.shuffle_unplayed_percent), size - len(new_tracks)),
     )
 
@@ -223,10 +240,11 @@ async def get_random_songs(request: Request, db: AsyncSession = Depends(get_db))
         one_per_album=cfg.shuffle_one_per_album,
     )
     tracks = _space_artists(tracks, gap=max(0, cfg.shuffle_artist_gap))
+    personal = await personal_view(request, db, tracks=tracks, user_id=uid)
 
     return subsonic_response({
         "randomSongs": {
-            "song": [format_track(t) for t in tracks]
+            "song": [format_track(t, personal=personal) for t in tracks]
         }
     }, _get_format(request))
 
@@ -247,42 +265,54 @@ async def get_songs_by_genre(request: Request, db: AsyncSession = Depends(get_db
         ).where(Track.genre == genre).offset(offset).limit(count)
     )
     tracks = result.scalars().all()
+    personal = await personal_view(request, db, tracks=tracks)
 
     return subsonic_response({
         "songsByGenre": {
-            "song": [format_track(t) for t in tracks]
+            "song": [format_track(t, personal=personal) for t in tracks]
         }
     }, _get_format(request))
 
 
 @router.get("/getStarred2")
 @router.get("/getStarred2.view")
+@router.get("/getStarred")
+@router.get("/getStarred.view")
 async def get_starred2(request: Request, db: AsyncSession = Depends(get_db)):
+    """The caller's stars (the owner for anonymous grace-mode calls). getStarred answers
+    with the same items under `starred`."""
+    uid = await caller_id(request, db)
+
     # Starred artists
     artist_result = await db.execute(
         select(Artist).join(Favorite, Favorite.artist_id == Artist.id)
+        .where(Favorite.user_id == uid).order_by(Favorite.starred_at.desc())
     )
-    starred_artists = [format_artist(a, starred=True) for a in artist_result.scalars().all()]
+    artists = artist_result.scalars().all()
 
     # Starred albums
     album_result = await db.execute(
         select(Album).options(selectinload(Album.artist))
         .join(Favorite, Favorite.album_id == Album.id)
+        .where(Favorite.user_id == uid).order_by(Favorite.starred_at.desc())
     )
-    starred_albums = [format_album(a, starred=True) for a in album_result.scalars().all()]
+    albums = album_result.scalars().all()
 
     # Starred tracks
     track_result = await db.execute(
         select(Track).options(
             selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis)
         ).join(Favorite, Favorite.track_id == Track.id)
+        .where(Favorite.user_id == uid).order_by(Favorite.starred_at.desc())
     )
-    starred_songs = [format_track(t, starred=True) for t in track_result.scalars().all()]
+    tracks = track_result.scalars().all()
 
+    personal = await personal_view(request, db, tracks=tracks, albums=albums, artists=artists, user_id=uid)
+    key = "starred2" if "getStarred2" in request.url.path else "starred"
     return subsonic_response({
-        "starred2": {
-            "artist": starred_artists,
-            "album": starred_albums,
-            "song": starred_songs,
+        key: {
+            "artist": [format_artist(a, starred=True, personal=personal) for a in artists],
+            "album": [format_album(a, starred=True, personal=personal) for a in albums],
+            "song": [format_track(t, starred=True, personal=personal) for t in tracks],
         }
     }, _get_format(request))

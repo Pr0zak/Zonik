@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,12 +13,37 @@ from backend.api.helpers import paginate
 from backend.database import get_db, async_session
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
+from backend.services.user_data import caller, caller_id
 
 router = APIRouter()
 
 
+def _mine(user_id: str | None):
+    """The caller's recommendations (multi-user P2). Rows without a user (only left where
+    the migration found no owner) are shown to everyone."""
+    if not user_id:
+        return Recommendation.user_id.is_(None)
+    return (Recommendation.user_id == user_id) | Recommendation.user_id.is_(None)
+
+
+async def _profile(db: AsyncSession, user_id: str | None) -> TasteProfile | None:
+    return await db.get(TasteProfile, user_id or "default")
+
+
+async def _own_rec(db: AsyncSession, request: Request, rec_id: str) -> Recommendation | None:
+    """A recommendation the caller may act on: their own, or any for an admin."""
+    rec = await db.get(Recommendation, rec_id)
+    if rec is None:
+        return None
+    user = caller(request)
+    if user is None or user.role == "admin" or rec.user_id in (None, user.id):
+        return rec
+    return None
+
+
 @router.get("")
 async def list_recommendations(
+    request: Request,
     limit: int = 25,
     offset: int = 0,
     status: str | None = None,
@@ -26,8 +51,9 @@ async def list_recommendations(
     min_score: float = 0.0,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get paginated recommendations sorted by score."""
-    query = select(Recommendation).where(Recommendation.score >= min_score)
+    """Get the caller's recommendations, paginated and sorted by score."""
+    user_id = await caller_id(request, db)
+    query = select(Recommendation).where(Recommendation.score >= min_score, _mine(user_id))
 
     if status:
         query = query.where(Recommendation.status == status)
@@ -43,7 +69,7 @@ async def list_recommendations(
     recs = page["items"]
 
     # Load profile stats
-    tp = await db.get(TasteProfile, "default")
+    tp = await _profile(db, user_id)
     profile_stats = None
     if tp:
         try:
@@ -91,13 +117,15 @@ class RefreshRequest(BaseModel):
 
 
 @router.post("/refresh")
-async def refresh_recommendations(req: RefreshRequest, background_tasks: BackgroundTasks):
-    """Trigger a recommendation refresh (background job)."""
+async def refresh_recommendations(req: RefreshRequest, background_tasks: BackgroundTasks,
+                                  request: Request, db: AsyncSession = Depends(get_db)):
+    """Trigger a refresh of the caller's recommendations (background job)."""
     import uuid
     from backend.models.job import Job
     from backend.api.websocket import broadcast_job_update
 
     job_id = str(uuid.uuid4())
+    user_id = await caller_id(request, db)
 
     async def do_refresh():
         from backend.services.recommender import refresh_recommendations as _refresh
@@ -133,7 +161,8 @@ async def refresh_recommendations(req: RefreshRequest, background_tasks: Backgro
                         "description": desc or "AI Recommendations",
                     })
 
-                result = await _refresh(db, limit=req.limit, use_claude=req.use_claude, on_progress=on_progress)
+                result = await _refresh(db, limit=req.limit, use_claude=req.use_claude, on_progress=on_progress,
+                                        user_id=user_id)
                 job.status = "completed"
                 job.result = json.dumps(result)
             except Exception as e:
@@ -168,9 +197,9 @@ class FeedbackRequest(BaseModel):
 
 
 @router.post("/feedback")
-async def submit_feedback(req: FeedbackRequest, db: AsyncSession = Depends(get_db)):
-    """Submit feedback on a recommendation."""
-    rec = await db.get(Recommendation, req.recommendation_id)
+async def submit_feedback(req: FeedbackRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Submit feedback on one of the caller's recommendations."""
+    rec = await _own_rec(db, request, req.recommendation_id)
     if not rec:
         return {"error": "Recommendation not found"}
 
@@ -190,31 +219,33 @@ async def submit_feedback(req: FeedbackRequest, db: AsyncSession = Depends(get_d
 
 
 @router.get("/stats")
-async def recommendation_stats(db: AsyncSession = Depends(get_db)):
-    """Get recommendation conversion stats."""
-    total = (await db.execute(select(func.count(Recommendation.id)))).scalar() or 0
+async def recommendation_stats(request: Request, db: AsyncSession = Depends(get_db)):
+    """The caller's recommendation conversion stats."""
+    mine = _mine(await caller_id(request, db))
+    total = (await db.execute(select(func.count(Recommendation.id)).where(mine))).scalar() or 0
     downloaded = (await db.execute(
-        select(func.count(Recommendation.id)).where(Recommendation.status == "downloaded")
+        select(func.count(Recommendation.id)).where(mine, Recommendation.status == "downloaded")
     )).scalar() or 0
     thumbs_up = (await db.execute(
-        select(func.count(Recommendation.id)).where(Recommendation.feedback == "thumbs_up")
+        select(func.count(Recommendation.id)).where(mine, Recommendation.feedback == "thumbs_up")
     )).scalar() or 0
     thumbs_down = (await db.execute(
-        select(func.count(Recommendation.id)).where(Recommendation.feedback == "thumbs_down")
+        select(func.count(Recommendation.id)).where(mine, Recommendation.feedback == "thumbs_down")
     )).scalar() or 0
     # Count pending and failed directly. The old "total - downloaded - thumbs_down"
     # subtraction lumped accepted, rejected, expired and (since the scheduler stopped
     # marking failed downloads as downloaded) failed rows in with pending.
     pending = (await db.execute(
-        select(func.count(Recommendation.id)).where(Recommendation.status == "pending")
+        select(func.count(Recommendation.id)).where(mine, Recommendation.status == "pending")
     )).scalar() or 0
     failed = (await db.execute(
-        select(func.count(Recommendation.id)).where(Recommendation.status == "failed")
+        select(func.count(Recommendation.id)).where(mine, Recommendation.status == "failed")
     )).scalar() or 0
 
     # By source breakdown
     source_result = await db.execute(
         select(Recommendation.source, func.count(Recommendation.id))
+        .where(mine)
         .group_by(Recommendation.source)
     )
     by_source = {src: cnt for src, cnt in source_result.all() if src}
@@ -222,7 +253,7 @@ async def recommendation_stats(db: AsyncSession = Depends(get_db)):
     # Downloads by source
     dl_source_result = await db.execute(
         select(Recommendation.source, func.count(Recommendation.id))
-        .where(Recommendation.status == "downloaded")
+        .where(mine, Recommendation.status == "downloaded")
         .group_by(Recommendation.source)
     )
     downloads_by_source = {src: cnt for src, cnt in dl_source_result.all() if src}
@@ -246,10 +277,14 @@ class BulkDownloadRequest(BaseModel):
 
 
 @router.post("/bulk-download")
-async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    """Download multiple recommendations through the tracked path. Each rec's status
-    follows its own outcome once its download ends (see _download_recs)."""
-    query = select(Recommendation).where(Recommendation.status == "pending")
+async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: BackgroundTasks, request: Request,
+                             db: AsyncSession = Depends(get_db)):
+    """Download several of the caller's recommendations through the tracked path. Each
+    rec's status follows its own outcome once its download ends (see _download_recs).
+    The downloads themselves are ordinary global jobs, tagged with the caller as origin."""
+    user = caller(request)
+    query = select(Recommendation).where(Recommendation.status == "pending",
+                                         _mine(await caller_id(request, db)))
     if req.mode == "above_score":
         query = query.where(Recommendation.score >= req.min_score)
     query = query.order_by(Recommendation.score.desc())
@@ -262,11 +297,12 @@ async def bulk_download_recs(req: BulkDownloadRequest, background_tasks: Backgro
     if not recs:
         return {"ok": False, "error": "No pending recommendations to download"}
 
-    background_tasks.add_task(_download_recs, [r.id for r in recs])
+    origin = f"recommendations:{user.username}" if user is not None else None
+    background_tasks.add_task(_download_recs, [r.id for r in recs], origin)
     return {"ok": True, "count": len(recs)}
 
 
-async def _download_recs(rec_ids: list[str]) -> None:
+async def _download_recs(rec_ids: list[str], origin: str | None = None) -> None:
     """Download the given recs (backoff, duration gate, outcome recorded), then set
     each one's status the way the scheduled auto-download does: "downloaded" on
     success, "failed" (error kept on source_detail) on failure, left pending when
@@ -279,7 +315,7 @@ async def _download_recs(rec_ids: list[str]) -> None:
         items = [{"artist": r.artist, "track": r.track} for r in recs]
 
     outcomes = await download_tracked_many(items, source="recommendation", label="Recommendations",
-                                           kind="recommendation")
+                                           kind="recommendation", origin=origin)
     by_key = {attempt_key(o["artist"], o["track"]): o for o in outcomes}
 
     async with async_session() as db:
@@ -297,14 +333,14 @@ async def _download_recs(rec_ids: list[str]) -> None:
 
 
 @router.post("/{rec_id}/explain")
-async def explain(rec_id: str, db: AsyncSession = Depends(get_db)):
-    """Get AI explanation for why a track was recommended."""
-    rec = await db.get(Recommendation, rec_id)
+async def explain(rec_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Get AI explanation for why a track was recommended (against the caller's taste)."""
+    rec = await _own_rec(db, request, rec_id)
     if not rec:
         return {"error": "Recommendation not found"}
 
-    # Get taste profile for context
-    tp = await db.get(TasteProfile, "default")
+    # Get taste profile for context: the profile the rec was made for
+    tp = await _profile(db, rec.user_id or await caller_id(request, db))
     profile_summary = {}
     if tp:
         try:
@@ -324,9 +360,9 @@ async def explain(rec_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/profile")
-async def get_profile(db: AsyncSession = Depends(get_db)):
-    """Get the current taste profile summary."""
-    tp = await db.get(TasteProfile, "default")
+async def get_profile(request: Request, db: AsyncSession = Depends(get_db)):
+    """The caller's taste profile summary."""
+    tp = await _profile(db, await caller_id(request, db))
     if not tp:
         return {
             "exists": False,

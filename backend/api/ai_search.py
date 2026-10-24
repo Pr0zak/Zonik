@@ -1,12 +1,13 @@
 """AI-powered search API routes."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.services.ai.nl_search import detect_nl_query, interpret_query, search_with_filters
+from backend.services.user_data import caller_id
 
 router = APIRouter()
 
@@ -17,7 +18,7 @@ class AISearchRequest(BaseModel):
 
 
 @router.post("/ai")
-async def ai_search(req: AISearchRequest, db: AsyncSession = Depends(get_db)):
+async def ai_search(req: AISearchRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Natural language search — interpret query and find matching tracks."""
     # Interpret the query
     filters = await interpret_query(req.query)
@@ -25,7 +26,7 @@ async def ai_search(req: AISearchRequest, db: AsyncSession = Depends(get_db)):
         return {"error": filters["error"], "tracks": [], "total": 0}
 
     # Search with interpreted filters
-    tracks = await search_with_filters(db, filters, limit=req.limit)
+    tracks = await search_with_filters(db, filters, limit=req.limit, user_id=await caller_id(request, db))
 
     return {
         "tracks": tracks,

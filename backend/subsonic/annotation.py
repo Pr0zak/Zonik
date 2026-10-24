@@ -7,20 +7,22 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Depends
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.database import get_db
 from backend.models.favorite import Favorite
 from backend.models.track import Track
-from backend.models.user import User
-from backend.subsonic.auth import authenticate_subsonic
+from backend.services.user_data import caller_user, is_admin, record_play, record_skip
+from backend.services.user_data import set_rating as store_rating
+from backend.subsonic.personal import personal_view
 from backend.subsonic.responses import subsonic_response, error_response, format_track
 
 router = APIRouter()
 
-# In-memory now-playing state: {username: {track, started_at, playerId}}
+# In-memory now-playing state: {username: {track, track_id, user_id, playerId, started_at}}
 _now_playing: dict[str, dict] = {}
 
-# Skip inference, keyed per (username, client) so the phone and the watch don't
+# Skip inference, keyed per (user id, client) so the phone and the watch don't
 # overwrite each other: {key: {track_id, started_at, duration, submitted}}.
 # Clients post a now-playing notice when a track starts and a submission once it
 # passes 50%. A now-playing for a *different* track while the previous one was
@@ -34,10 +36,12 @@ def _get_format(request: Request) -> str:
     return request.query_params.get("f", "json")
 
 
-async def _get_user_id(request: Request) -> str:
-    """Get user ID from request params."""
-    username = request.query_params.get("u", "admin")
-    return username  # Simplified - use username as lookup key
+def _ids(request: Request, params: dict, name: str) -> list[str]:
+    """Every value of a repeatable param (query string first, then a POSTed form)."""
+    values = [v for v in request.query_params.getlist(name) if v]
+    if not values and params.get(name):
+        values = [params[name]]
+    return values
 
 
 @router.get("/star")
@@ -53,17 +57,15 @@ async def star(request: Request, db: AsyncSession = Depends(get_db)):
         except Exception:
             pass
 
-    # Get the user
-    username = params.get("u", "admin")
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    # Always the caller's stars (the owner for anonymous grace-mode calls), never `u=`.
+    user = await caller_user(request, db)
     if not user:
         return error_response(0, "User not found", _get_format(request))
 
     # Star can receive id, albumId, or artistId (can be multiple)
-    song_ids = params.getlist("id") if hasattr(params, "getlist") else [params.get("id")] if params.get("id") else []
-    album_ids = params.getlist("albumId") if hasattr(params, "getlist") else [params.get("albumId")] if params.get("albumId") else []
-    artist_ids = params.getlist("artistId") if hasattr(params, "getlist") else [params.get("artistId")] if params.get("artistId") else []
+    song_ids = _ids(request, params, "id")
+    album_ids = _ids(request, params, "albumId")
+    artist_ids = _ids(request, params, "artistId")
 
     for sid in song_ids:
         if sid:
@@ -112,15 +114,13 @@ async def unstar(request: Request, db: AsyncSession = Depends(get_db)):
         except Exception:
             pass
 
-    username = params.get("u", "admin")
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    user = await caller_user(request, db)
     if not user:
         return error_response(0, "User not found", _get_format(request))
 
-    song_ids = params.getlist("id") if hasattr(params, "getlist") else [params.get("id")] if params.get("id") else []
-    album_ids = params.getlist("albumId") if hasattr(params, "getlist") else [params.get("albumId")] if params.get("albumId") else []
-    artist_ids = params.getlist("artistId") if hasattr(params, "getlist") else [params.get("artistId")] if params.get("artistId") else []
+    song_ids = _ids(request, params, "id")
+    album_ids = _ids(request, params, "albumId")
+    artist_ids = _ids(request, params, "artistId")
 
     for sid in song_ids:
         if sid:
@@ -169,30 +169,33 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
     if not song_id:
         return error_response(10, "Missing id parameter", _get_format(request))
 
-    result = await db.execute(select(Track).where(Track.id == song_id))
+    # Relations loaded up front: getNowPlaying formats this instance after the session ends.
+    result = await db.execute(
+        select(Track).options(
+            selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis)
+        ).where(Track.id == song_id)
+    )
     track = result.scalar_one_or_none()
     if not track:
         # Track unknown — return success (clients shouldn't error out the queue)
         return subsonic_response({}, _get_format(request))
 
-    username = params.get("u", "admin")
+    # The caller's plays and skips (the owner for anonymous grace-mode calls).
+    user = await caller_user(request, db)
+    user_id = user.id if user else None
+    username = user.username if user else params.get("u", "admin")
     client = (params.get("c") or "").strip()
-    watch_key = (username, client)
+    watch_key = (user_id or username, client)
 
     if is_submission:
-        # Update play count and record history
-        track.play_count = (track.play_count or 0) + 1
-        track.last_played_at = played_at
-        # A completed listen pays one skip back, so a track isn't buried for good.
-        if track.skip_count:
-            track.skip_count -= 1
+        # Global totals + the caller's stats + history. A completed listen pays one skip
+        # back, so a track isn't buried for good (record_play does that for both).
         watched = _skip_watch.get(watch_key)
         if watched and watched["track_id"] == song_id:
             watched["submitted"] = True
-        from backend.models.play_history import PlayHistory
         # Record the originating client (c= param: ZonikApp/ZonikWear/DSub/…) as the
         # source so "Recently Played" can show which device the play came from.
-        db.add(PlayHistory(track_id=song_id, played_at=played_at, source=client or "subsonic"))
+        await record_play(db, user_id, track, played_at, source=client or "subsonic")
         await db.commit()
     else:
         # Now-playing notification
@@ -203,8 +206,7 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
             if elapsed < prev["duration"] / 2:
                 skipped = await db.get(Track, prev["track_id"])
                 if skipped:
-                    skipped.skip_count = (skipped.skip_count or 0) + 1
-                    skipped.last_skipped_at = now
+                    await record_skip(db, user_id, skipped, now)
                     await db.commit()
         if not prev or prev["track_id"] != song_id:
             _skip_watch[watch_key] = {
@@ -216,6 +218,7 @@ async def scrobble(request: Request, db: AsyncSession = Depends(get_db)):
         _now_playing[username] = {
             "track": track,
             "track_id": song_id,
+            "user_id": user_id,
             "playerId": params.get("c", ""),
             "started_at": datetime.utcnow(),
         }
@@ -255,7 +258,8 @@ async def set_rating(request: Request, db: AsyncSession = Depends(get_db)):
     if not track:
         return error_response(70, "Song not found", _get_format(request))
 
-    track.rating = rating if rating > 0 else None
+    # The caller's rating; an admin's also sets the library-wide tracks.rating.
+    await store_rating(db, await caller_user(request, db), track, rating)
     await db.commit()
     return subsonic_response({}, _get_format(request))
 
@@ -263,15 +267,26 @@ async def set_rating(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/getNowPlaying")
 @router.get("/getNowPlaying.view")
 async def get_now_playing(request: Request, db: AsyncSession = Depends(get_db)):
-    """Return tracks currently being played (reported via scrobble submission=false)."""
-    entries = []
+    """Return tracks currently being played (reported via scrobble submission=false).
+    Admins see everyone's; a regular user sees only their own."""
+    me = await caller_user(request, db)
+    everyone = me is None or is_admin(me)
+    live = []
     cutoff = datetime.utcnow() - timedelta(minutes=10)
     for username, info in list(_now_playing.items()):
         if info["started_at"] < cutoff:
-            del _now_playing[username]
+            _now_playing.pop(username, None)
             continue
+        if not everyone and info.get("user_id") != me.id and username != me.username:
+            continue
+        live.append((username, info))
+    # The caller's own counts/stars on every entry, loaded once.
+    personal = await personal_view(request, db, tracks=[info["track"] for _, info in live],
+                                   user_id=me.id if me else None)
+    entries = []
+    for username, info in live:
         track = info["track"]
-        entry = format_track(track)
+        entry = format_track(track, personal=personal)
         entry["username"] = username
         entry["minutesAgo"] = int((datetime.utcnow() - info["started_at"]).total_seconds() / 60)
         entry["playerId"] = info.get("playerId", "")

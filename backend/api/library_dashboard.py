@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
 from backend.models.job import Job
+from backend.services.user_data import caller_id
 
 router = APIRouter()
 
@@ -22,17 +23,44 @@ _DASHBOARD_CACHE_TTL = 300  # 5 minutes
 
 
 @router.get("/stats/dashboard")
-async def dashboard_stats(db: AsyncSession = Depends(get_db)):
-    """Aggregated dashboard data: growth, quality, recent activity, favorites, duplicates."""
+async def dashboard_stats(request: Request, db: AsyncSession = Depends(get_db)):
+    """Aggregated dashboard data: growth, quality, recent activity, favorites, duplicates.
+    The library part is cached for everyone; `favorites` is the caller's, every time."""
     import time as _time
     global _dashboard_cache, _dashboard_cache_time
 
+    user_id = await caller_id(request, db)
     now_ts = _time.monotonic()
-    if _dashboard_cache and (now_ts - _dashboard_cache_time) < _DASHBOARD_CACHE_TTL:
-        return _dashboard_cache
+    if not (_dashboard_cache and (now_ts - _dashboard_cache_time) < _DASHBOARD_CACHE_TTL):
+        _dashboard_cache = await _library_dashboard(db)
+        _dashboard_cache_time = now_ts
+    return {**_dashboard_cache, "favorites": await _caller_favorites(db, user_id)}
+
+
+async def _caller_favorites(db: AsyncSession, user_id: str | None) -> dict:
+    """The caller's favorite-track count and five most recent stars."""
+    from backend.models.favorite import Favorite
+    fav_count = (await db.execute(
+        select(func.count(Favorite.id)).where(Favorite.user_id == user_id, Favorite.track_id.isnot(None))
+    )).scalar() or 0
+    recent_favs_result = await db.execute(
+        select(Track.title, Artist.name)
+        .join(Favorite, Favorite.track_id == Track.id)
+        .outerjoin(Artist, Track.artist_id == Artist.id)
+        .where(Favorite.user_id == user_id)
+        .order_by(Favorite.starred_at.desc())
+        .limit(5)
+    )
+    return {
+        "count": fav_count,
+        "recent": [{"title": t, "artist": a or "Unknown"} for t, a in recent_favs_result.all()],
+    }
+
+
+async def _library_dashboard(db: AsyncSession) -> dict:
+    """The shared (library-wide) part of the dashboard."""
 
     from datetime import timedelta
-    from backend.models.favorite import Favorite
     from backend.models.analysis import TrackAnalysis
 
     now = datetime.utcnow()
@@ -105,22 +133,6 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
             "status": j_status,
             "finished_at": j_finished.isoformat() if j_finished else None,
         })
-
-    # Favorites count + 5 most recent
-    fav_count = (await db.execute(
-        select(func.count(Favorite.id)).where(Favorite.track_id.isnot(None))
-    )).scalar() or 0
-    recent_favs_result = await db.execute(
-        select(Track.title, Artist.name)
-        .join(Favorite, Favorite.track_id == Track.id)
-        .outerjoin(Artist, Track.artist_id == Artist.id)
-        .order_by(Favorite.starred_at.desc())
-        .limit(5)
-    )
-    recent_favorites = [
-        {"title": t, "artist": a or "Unknown"}
-        for t, a in recent_favs_result.all()
-    ]
 
     # Duplicates summary (lightweight count query instead of full enriched scan)
     try:
@@ -195,10 +207,6 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
             "by_format": storage_by_format,
         },
         "recent_activity": recent_activity,
-        "favorites": {
-            "count": fav_count,
-            "recent": recent_favorites,
-        },
         "duplicates": {
             "groups": dup_groups,
             "reclaimable_bytes": dup_reclaimable,
@@ -206,13 +214,11 @@ async def dashboard_stats(db: AsyncSession = Depends(get_db)):
         "upcoming_tasks": upcoming,
     }
 
-    _dashboard_cache = result
-    _dashboard_cache_time = now_ts
     return result
 
 
 @router.get("/stats/detailed")
-async def detailed_stats(db: AsyncSession = Depends(get_db)):
+async def detailed_stats(request: Request, db: AsyncSession = Depends(get_db)):
     """Detailed library statistics for the stats page."""
     from backend.models.analysis import TrackAnalysis
     from backend.models.embedding import TrackEmbedding
@@ -292,15 +298,22 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
     embedded = (await db.execute(
         select(func.count(TrackEmbedding.track_id)).join(Track, Track.id == TrackEmbedding.track_id)
     )).scalar() or 0
-    favorites = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
+    # favorites / most_played are the caller's; favorites_total (all users) feeds total_rows.
+    user_id = await caller_id(request, db)
+    favorites_total = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
+    favorites = (await db.execute(
+        select(func.count(Favorite.id)).where(Favorite.user_id == user_id)
+    )).scalar() or 0
     playlists = (await db.execute(select(func.count(Playlist.id)))).scalar() or 0
 
-    # Most played
+    # Most played (by the caller)
+    from backend.models.user_track_stats import UserTrackStats
     most_played_result = await db.execute(
-        select(Track.title, Artist.name, Track.play_count)
+        select(Track.title, Artist.name, UserTrackStats.play_count)
+        .join(UserTrackStats, UserTrackStats.track_id == Track.id)
         .outerjoin(Artist, Track.artist_id == Artist.id)
-        .where(Track.play_count > 0)
-        .order_by(Track.play_count.desc())
+        .where(UserTrackStats.user_id == user_id, UserTrackStats.play_count > 0)
+        .order_by(UserTrackStats.play_count.desc())
         .limit(10)
     )
     most_played = [{"title": t, "artist": a, "plays": p} for t, a, p in most_played_result.all()]
@@ -346,7 +359,7 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
     play_count_total = (await db.execute(select(func.count(PlayHistory.id)))).scalar() or 0
     job_count_total = (await db.execute(select(func.count(Job.id)))).scalar() or 0
 
-    db_info["total_rows"] = track_count + artist_count + album_count + play_count_total + job_count_total + favorites + analyzed + embedded
+    db_info["total_rows"] = track_count + artist_count + album_count + play_count_total + job_count_total + favorites_total + analyzed + embedded
 
     # Backend info
     backend_info = {
@@ -377,18 +390,21 @@ async def detailed_stats(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/stats/insights")
-async def get_insights(db: AsyncSession = Depends(get_db)):
-    """Get AI-generated listening insights for the week."""
+async def get_insights(request: Request, db: AsyncSession = Depends(get_db)):
+    """AI-generated insights on the caller's listening this week."""
     from backend.services.ai.insights import generate_insights
-    return await generate_insights(db)
+    return await generate_insights(db, user_id=await caller_id(request, db))
 
 
 @router.get("/stats/play-history")
 async def play_history_stats(
+    request: Request,
     period: str = "7d",
+    all_users: bool = False,
     db: AsyncSession = Depends(get_db),
 ):
-    """Play history over time for charting. Periods: 24h, 7d, 30d, 90d, all."""
+    """The caller's play history over time for charting. Periods: 24h, 7d, 30d, 90d, all.
+    all_users=true (admins only) charts everyone's plays."""
     from backend.models.play_history import PlayHistory
     from datetime import timedelta
 
@@ -396,9 +412,12 @@ async def play_history_stats(
     period_map = {"24h": timedelta(hours=24), "7d": timedelta(days=7), "30d": timedelta(days=30), "90d": timedelta(days=90)}
     cutoff = now - period_map.get(period, timedelta(days=7)) if period != "all" else None
 
-    base = select(PlayHistory)
+    from backend.services.user_scope import caller_is_admin
+    conds = []
     if cutoff:
-        base = base.where(PlayHistory.played_at >= cutoff)
+        conds.append(PlayHistory.played_at >= cutoff)
+    if not (all_users and caller_is_admin(request)):
+        conds.append(PlayHistory.user_id == await caller_id(request, db))
 
     # Plays over time (group by hour for 24h, by day otherwise)
     if period == "24h":
@@ -411,8 +430,7 @@ async def play_history_stats(
         .group_by(time_col)
         .order_by(time_col)
     )
-    if cutoff:
-        timeline_q = timeline_q.where(PlayHistory.played_at >= cutoff)
+    timeline_q = timeline_q.where(*conds)
     timeline = [{"period": p, "count": c} for p, c in (await db.execute(timeline_q)).all()]
 
     # Top tracks by play count in period
@@ -424,8 +442,7 @@ async def play_history_stats(
         .order_by(func.count(PlayHistory.id).desc())
         .limit(20)
     )
-    if cutoff:
-        top_tracks_q = top_tracks_q.where(PlayHistory.played_at >= cutoff)
+    top_tracks_q = top_tracks_q.where(*conds)
     top_tracks = [{"title": t, "artist": a, "plays": p} for t, a, p in (await db.execute(top_tracks_q)).all()]
 
     # Top artists
@@ -437,14 +454,12 @@ async def play_history_stats(
         .order_by(func.count(PlayHistory.id).desc())
         .limit(15)
     )
-    if cutoff:
-        top_artists_q = top_artists_q.where(PlayHistory.played_at >= cutoff)
+    top_artists_q = top_artists_q.where(*conds)
     top_artists = [{"name": n, "plays": p} for n, p in (await db.execute(top_artists_q)).all()]
 
     # Total plays in period
     total_q = select(func.count(PlayHistory.id))
-    if cutoff:
-        total_q = total_q.where(PlayHistory.played_at >= cutoff)
+    total_q = total_q.where(*conds)
     total_plays = (await db.execute(total_q)).scalar() or 0
 
     # Hourly distribution (plays by hour of day)
@@ -453,8 +468,7 @@ async def play_history_stats(
         .group_by(func.strftime("%H", PlayHistory.played_at))
         .order_by(func.strftime("%H", PlayHistory.played_at))
     )
-    if cutoff:
-        hour_q = hour_q.where(PlayHistory.played_at >= cutoff)
+    hour_q = hour_q.where(*conds)
     hourly = [{"hour": int(h), "count": c} for h, c in (await db.execute(hour_q)).all()]
 
     return {

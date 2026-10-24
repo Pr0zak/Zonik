@@ -5,6 +5,10 @@ skip counters.
 
 Times are stored as naive UTC; anything bucketed by day, week or month is
 converted to the server's local time first, matching the listening clock.
+
+Everything is one listener's (multi-user P2): every function takes the user id whose
+plays to read (play_history.user_id), and the per-track counters come from
+user_track_stats. user_id None reads the unowned rows of a server without accounts.
 """
 from __future__ import annotations
 
@@ -46,19 +50,26 @@ def _iso(v) -> str | None:
     return dt.isoformat() if dt else None
 
 
+def _who(user_id: str | None, col: str = "user_id") -> tuple[str, dict]:
+    """SQL condition + params selecting one user's rows."""
+    if user_id is None:
+        return f"{col} IS NULL", {}
+    return f"{col} = :uid", {"uid": user_id}
+
+
 def _week_start(d: datetime) -> datetime:
     d = d.replace(hour=0, minute=0, second=0, microsecond=0)
     return d - timedelta(days=d.weekday())
 
 
-async def _plays(db: AsyncSession, since: datetime | None = None) -> list[tuple]:
-    """(track_id, played_at, source, genre) in time order."""
+async def _plays(db: AsyncSession, user_id: str | None, since: datetime | None = None) -> list[tuple]:
+    """One user's (track_id, played_at, source, genre) in time order."""
+    who, params = _who(user_id, "ph.user_id")
     sql = (
         "SELECT ph.track_id, ph.played_at, ph.source, t.genre "
         "FROM play_history ph JOIN tracks t ON t.id = ph.track_id "
-        "WHERE ph.played_at IS NOT NULL"
+        f"WHERE ph.played_at IS NOT NULL AND {who}"
     )
-    params = {}
     if since is not None:
         sql += " AND ph.played_at >= :since"
         params["since"] = since.astimezone(timezone.utc).replace(tzinfo=None).isoformat(" ")
@@ -68,18 +79,19 @@ async def _plays(db: AsyncSession, since: datetime | None = None) -> list[tuple]
 
 # --- B: taste river ---
 
-async def taste_river(db: AsyncSession, weeks: int = 52) -> dict:
+async def taste_river(db: AsyncSession, weeks: int = 52, user_id: str | None = None) -> dict:
     """Plays per genre family per local week, oldest week first."""
     now = datetime.now().astimezone()
     first = _week_start(now) - timedelta(weeks=weeks - 1)
     # Start at the first recorded play rather than drawing empty weeks before tracking began.
+    who, params = _who(user_id)
     earliest = _local((await db.execute(text(
-        "SELECT MIN(played_at) FROM play_history WHERE played_at IS NOT NULL"
-    ))).scalar())
+        f"SELECT MIN(played_at) FROM play_history WHERE played_at IS NOT NULL AND {who}"
+    ), params)).scalar())
     if earliest and _week_start(earliest) > first:
         first = _week_start(earliest)
         weeks = max(1, (_week_start(now) - first).days // 7 + 1)
-    rows = await _plays(db, first)
+    rows = await _plays(db, user_id, first)
     starts = [first + timedelta(weeks=k) for k in range(weeks)]
     counts: dict[str, list[int]] = defaultdict(lambda: [0] * weeks)
     for _tid, at, _src, genre in rows:
@@ -101,11 +113,11 @@ async def taste_river(db: AsyncSession, weeks: int = 52) -> dict:
 
 # --- G: genre flow ---
 
-async def genre_flow(db: AsyncSession, days: int = 90) -> dict:
+async def genre_flow(db: AsyncSession, days: int = 90, user_id: str | None = None) -> dict:
     """How often a play in one family is followed by a play in another, within
     one session. Replays of the same track are left out."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    rows = await _plays(db, since)
+    rows = await _plays(db, user_id, since)
     pairs: Counter = Counter()
     prev = None
     sessions = 1 if rows else 0
@@ -138,14 +150,14 @@ async def genre_flow(db: AsyncSession, days: int = 90) -> dict:
 
 # --- I: rotation board ---
 
-async def rotation(db: AsyncSession, days: int = 30, limit: int = 60) -> dict:
+async def rotation(db: AsyncSession, days: int = 30, limit: int = 60, user_id: str | None = None) -> dict:
     """Tracks ranked by plays in the last `days`, against the `days` before,
     with a weekly sparkline and a flag for the ones changing fastest."""
     now = datetime.now(timezone.utc)
     cur_from, prev_from = now - timedelta(days=days), now - timedelta(days=days * 2)
     spark_weeks = 8
     spark_from = now - timedelta(weeks=spark_weeks)
-    rows = await _plays(db, min(prev_from, spark_from))
+    rows = await _plays(db, user_id, min(prev_from, spark_from))
 
     cur: Counter = Counter()
     prev: Counter = Counter()
@@ -163,10 +175,11 @@ async def rotation(db: AsyncSession, days: int = 30, limit: int = 60) -> dict:
     ids = set(cur) | {t for t, n in prev.items() if n >= 3}
     if not ids:
         return {"days": days, "tracks": [], "dropped": []}
+    who, who_params = _who(user_id)
     first_played = {
         r[0]: _utc(r[1]) for r in (await db.execute(text(
-            "SELECT track_id, MIN(played_at) FROM play_history GROUP BY track_id"
-        ))).all()
+            f"SELECT track_id, MIN(played_at) FROM play_history WHERE {who} GROUP BY track_id"
+        ), who_params)).all()
     }
     meta = {}
     id_list = list(ids)
@@ -174,10 +187,12 @@ async def rotation(db: AsyncSession, days: int = 30, limit: int = 60) -> dict:
         chunk = id_list[k:k + 500]
         marks = ",".join(f":i{n}" for n in range(len(chunk)))
         for r in (await db.execute(text(
-            "SELECT t.id, t.title, ar.name, t.album_id, t.genre, COALESCE(t.play_count, 0), "
-            "       COALESCE(t.skip_count, 0), t.last_played_at "
-            f"FROM tracks t LEFT JOIN artists ar ON ar.id = t.artist_id WHERE t.id IN ({marks})"
-        ), {f"i{n}": v for n, v in enumerate(chunk)})).all():
+            "SELECT t.id, t.title, ar.name, t.album_id, t.genre, COALESCE(s.play_count, 0), "
+            "       COALESCE(s.skip_count, 0), s.last_played_at "
+            "FROM tracks t LEFT JOIN artists ar ON ar.id = t.artist_id "
+            "LEFT JOIN user_track_stats s ON s.track_id = t.id AND s.user_id = :uid "
+            f"WHERE t.id IN ({marks})"
+        ), {"uid": user_id, **{f"i{n}": v for n, v in enumerate(chunk)}})).all():
             meta[r[0]] = r
 
     def row(tid: str) -> dict | None:
@@ -254,21 +269,24 @@ async def rotation(db: AsyncSession, days: int = 30, limit: int = 60) -> dict:
 
 # --- H: one track's listening ---
 
-async def track_listening(db: AsyncSession, track_id: str) -> dict | None:
+async def track_listening(db: AsyncSession, track_id: str, user_id: str | None = None) -> dict | None:
     t = (await db.execute(text(
         "SELECT t.id, t.title, ar.name, al.title, t.album_id, t.genre, t.year, "
-        "       COALESCE(t.play_count, 0), COALESCE(t.skip_count, 0), t.last_played_at, t.last_skipped_at, "
+        "       COALESCE(s.play_count, 0), COALESCE(s.skip_count, 0), s.last_played_at, s.last_skipped_at, "
         "       a.bpm, a.key, a.scale "
         "FROM tracks t LEFT JOIN artists ar ON ar.id = t.artist_id "
         "LEFT JOIN albums al ON al.id = t.album_id "
+        "LEFT JOIN user_track_stats s ON s.track_id = t.id AND s.user_id = :uid "
         "LEFT JOIN track_analysis a ON a.track_id = t.id WHERE t.id = :id"
-    ), {"id": track_id})).first()
+    ), {"id": track_id, "uid": user_id})).first()
     if not t:
         return None
 
+    who, who_params = _who(user_id)
     mine = (await db.execute(text(
-        "SELECT played_at, source FROM play_history WHERE track_id = :id AND played_at IS NOT NULL ORDER BY played_at"
-    ), {"id": track_id})).all()
+        "SELECT played_at, source FROM play_history WHERE track_id = :id AND played_at IS NOT NULL "
+        f"AND {who} ORDER BY played_at"
+    ), {"id": track_id, **who_params})).all()
 
     now = datetime.now().astimezone()
     months = []
@@ -290,8 +308,9 @@ async def track_listening(db: AsyncSession, track_id: str) -> dict | None:
     if mine:
         rows = (await db.execute(text(
             "SELECT ph.track_id, ph.played_at FROM play_history ph "
-            "WHERE ph.played_at IS NOT NULL AND ph.played_at >= :first ORDER BY ph.played_at"
-        ), {"first": str(mine[0][0])})).all()
+            f"WHERE ph.played_at IS NOT NULL AND ph.played_at >= :first AND {_who(user_id, 'ph.user_id')[0]} "
+            "ORDER BY ph.played_at"
+        ), {"first": str(mine[0][0]), **who_params})).all()
         for k in range(len(rows) - 1):
             if rows[k][0] != track_id:
                 continue
@@ -327,30 +346,45 @@ async def track_listening(db: AsyncSession, track_id: str) -> dict | None:
 
 # --- D: listening trail ---
 
-async def trail(db: AsyncSession, hours: int = 0) -> dict:
-    """Plays in time order since local midnight (hours=0) or over the last
-    `hours`, plus what's playing now and the saved play queue."""
+async def trail(db: AsyncSession, hours: int = 0, user_id: str | None = None) -> dict:
+    """One user's plays in time order since local midnight (hours=0) or over the last
+    `hours`, plus what they're playing now and their saved play queue."""
     if hours <= 0:
         since = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
     else:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
-    rows = await _plays(db, since)
+    rows = await _plays(db, user_id, since)
     plays = [{"track_id": r[0], "played_at": _iso(r[1]), "source": r[2]} for r in rows]
 
     from backend.subsonic.annotation import _now_playing
+    username = None
+    if user_id is not None:
+        username = (await db.execute(text("SELECT username FROM users WHERE id = :uid"),
+                                     {"uid": user_id})).scalar()
+
+    def is_mine(key: str, info: dict) -> bool:
+        if user_id is None:
+            return True
+        if info.get("user_id"):
+            return info["user_id"] == user_id
+        return (info.get("username") or key) == username
+
     cutoff = datetime.utcnow() - timedelta(minutes=10)
     now_playing = [
         {"track_id": info.get("track_id"), "client": info.get("playerId") or "",
          "started_at": _iso(info.get("started_at"))}
-        for info in list(_now_playing.values())
+        for key, info in list(_now_playing.items())
         if info.get("track_id") and info.get("started_at") and info["started_at"] >= cutoff
+        and is_mine(key, info)
     ]
     now_playing.sort(key=lambda r: r["started_at"] or "", reverse=True)
 
     queue = None
+    q_who, q_params = _who(user_id)
     q = (await db.execute(text(
-        "SELECT current_track_id, track_ids, updated_at FROM play_queue ORDER BY updated_at DESC LIMIT 1"
-    ))).first()
+        "SELECT current_track_id, track_ids, updated_at FROM play_queue "
+        f"WHERE {q_who} ORDER BY updated_at DESC LIMIT 1"
+    ), q_params)).first()
     if q and q[1]:
         try:
             ids = [i for i in json.loads(q[1]) if isinstance(i, str)]

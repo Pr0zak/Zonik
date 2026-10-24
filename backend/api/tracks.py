@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 
 log = logging.getLogger(__name__)
 from pydantic import BaseModel
@@ -15,6 +15,9 @@ from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
 from backend.models.analysis import TrackAnalysis
+from backend.models.user_track_stats import UserTrackStats
+from backend.services.user_data import caller_id, caller_user, stats_for
+from backend.services import user_data
 
 router = APIRouter()
 
@@ -23,6 +26,7 @@ TRACK_SORT_COLUMNS = {"title", "artist_id", "album_id", "genre", "year", "format
 
 @router.get("")
 async def list_tracks(
+    request: Request,
     offset: int = 0,
     limit: int = 50,
     sort: str = "title",
@@ -93,6 +97,9 @@ async def list_tracks(
         analyzed_set = set(analyzed_result.scalars().all())
     else:
         analyzed_set = set()
+    # play_count / rating stay the library-wide values (sorting, the deletion flag);
+    # user_play_count / user_rating are the caller's own.
+    mine = await stats_for(db, await caller_id(request, db), track_ids)
 
     count_q = select(func.count(Track.id))
     if search:
@@ -138,6 +145,8 @@ async def list_tracks(
                 "file_size": t.file_size,
                 "play_count": t.play_count,
                 "rating": t.rating,
+                "user_play_count": mine[t.id].play_count if t.id in mine else 0,
+                "user_rating": mine[t.id].rating if t.id in mine else None,
                 "cover_art": t.album_id or t.id,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "analyzed": t.id in analyzed_set,
@@ -149,7 +158,7 @@ async def list_tracks(
 
 
 @router.get("/{track_id}")
-async def get_track(track_id: str, db: AsyncSession = Depends(get_db)):
+async def get_track(track_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(Track)
         .options(selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis))
@@ -158,6 +167,7 @@ async def get_track(track_id: str, db: AsyncSession = Depends(get_db)):
     track = result.scalar_one_or_none()
     if not track:
         raise HTTPException(404, "Track not found")
+    mine = (await stats_for(db, await caller_id(request, db), [track.id])).get(track.id)
     return {
         "id": track.id,
         "title": track.title,
@@ -177,6 +187,8 @@ async def get_track(track_id: str, db: AsyncSession = Depends(get_db)):
         "genre": track.genre,
         "year": track.year,
         "play_count": track.play_count,
+        "user_play_count": mine.play_count if mine else 0,
+        "user_rating": mine.rating if mine else None,
         "cover_art_path": track.cover_art_path,
         "analysis": {
             "bpm": track.analysis.bpm,
@@ -256,10 +268,9 @@ async def update_track(track_id: str, req: TrackUpdateRequest, db: AsyncSession 
 
 
 @router.post("/{track_id}/play")
-async def record_play(track_id: str, db: AsyncSession = Depends(get_db)):
-    """Record a play for a track — increments play_count, updates last_played_at, scrobbles to Last.fm."""
-    from datetime import datetime
-
+async def record_play(track_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """Record the caller's play of a track (their stats, history and the library totals),
+    then scrobble to Last.fm. play_count in the reply is the caller's."""
     result = await db.execute(
         select(Track).options(selectinload(Track.artist)).where(Track.id == track_id)
     )
@@ -267,11 +278,10 @@ async def record_play(track_id: str, db: AsyncSession = Depends(get_db)):
     if not track:
         raise HTTPException(404, "Track not found")
 
-    track.play_count = (track.play_count or 0) + 1
-    track.last_played_at = datetime.utcnow()
-    from backend.models.play_history import PlayHistory
-    db.add(PlayHistory(track_id=track_id, played_at=datetime.utcnow(), source="web"))
+    uid = await caller_id(request, db)
+    await user_data.record_play(db, uid, track, source="web")
     await db.commit()
+    mine = await db.get(UserTrackStats, (uid, track.id)) if uid else None
 
     # Forward scrobble to Last.fm in background
     try:
@@ -284,20 +294,23 @@ async def record_play(track_id: str, db: AsyncSession = Depends(get_db)):
     except Exception as e:
         log.debug("Last.fm scrobble failed: %s", e)
 
-    return {"ok": True, "play_count": track.play_count}
+    return {"ok": True, "play_count": mine.play_count if mine else track.play_count,
+            "total_play_count": track.play_count}
 
 
 @router.put("/{track_id}/rating")
-async def set_rating(track_id: str, rating: int = Query(ge=0, le=5), db: AsyncSession = Depends(get_db)):
-    """Set a 0-5 star rating for a track. 0 removes the rating."""
+async def set_rating(track_id: str, request: Request, rating: int = Query(ge=0, le=5),
+                     db: AsyncSession = Depends(get_db)):
+    """Set the caller's 0-5 star rating for a track. 0 removes it. An admin's rating is
+    also the library-wide one (tracks.rating, whose 1 is the deletion flag)."""
     result = await db.execute(select(Track).where(Track.id == track_id))
     track = result.scalar_one_or_none()
     if not track:
         raise HTTPException(404, "Track not found")
 
-    track.rating = rating if rating > 0 else None
+    value = await user_data.set_rating(db, await caller_user(request, db), track, rating)
     await db.commit()
-    return {"ok": True, "rating": track.rating}
+    return {"ok": True, "rating": value}
 
 
 @router.delete("/{track_id}")
@@ -327,6 +340,7 @@ async def delete_track(track_id: str, db: AsyncSession = Depends(get_db)):
     await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id == track_id))
     await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id == track_id))
     await db.execute(delete(PlayHistory).where(PlayHistory.track_id == track_id))
+    await db.execute(delete(UserTrackStats).where(UserTrackStats.track_id == track_id))
     await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id == track_id))
     await db.execute(delete(Bookmark).where(Bookmark.track_id == track_id))
     await db.execute(delete(TrackMood).where(TrackMood.track_id == track_id))
@@ -379,6 +393,7 @@ async def bulk_delete_tracks(req: BulkDeleteRequest, db: AsyncSession = Depends(
                 await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(found_ids)))
                 await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(found_ids)))
                 await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(found_ids)))
+                await db.execute(delete(UserTrackStats).where(UserTrackStats.track_id.in_(found_ids)))
                 await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(found_ids)))
                 await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(found_ids)))
                 await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(found_ids)))

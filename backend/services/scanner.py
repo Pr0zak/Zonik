@@ -481,6 +481,7 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
             from backend.models.analysis import TrackAnalysis
             from backend.models.embedding import TrackEmbedding
             from backend.models.play_history import PlayHistory
+            from backend.models.user_track_stats import UserTrackStats
             from backend.models.bookmark import Bookmark
             from backend.models.mood import TrackMood
             from backend.models.upgrade import TrackUpgrade
@@ -488,6 +489,7 @@ async def scan_library(db: AsyncSession, progress_callback=None) -> dict:
             await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(orphan_ids)))
             await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(orphan_ids)))
             await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(orphan_ids)))
+            await db.execute(delete(UserTrackStats).where(UserTrackStats.track_id.in_(orphan_ids)))
             await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(orphan_ids)))
             await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(orphan_ids)))
             await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(orphan_ids)))
@@ -792,7 +794,7 @@ async def import_downloaded_file(
                     db.add(new_track)
                     await db.flush()  # new_track_id now exists in `tracks`
 
-                    for tbl in ("favorites", "play_history", "track_upgrades", "playlist_tracks", "bookmarks"):
+                    for tbl in ("favorites", "play_history", "user_track_stats", "track_upgrades", "playlist_tracks", "bookmarks"):
                         await db.execute(
                             text(f"UPDATE {tbl} SET track_id = :new WHERE track_id = :old"),
                             {"new": new_track_id, "old": existing_id},

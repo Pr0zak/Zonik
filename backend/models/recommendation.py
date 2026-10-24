@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import String, Float, Integer, DateTime, Text
+from sqlalchemy import ForeignKey, String, Float, Integer, DateTime, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -13,6 +13,8 @@ class Recommendation(CreatedAtMixin, Base):
     __tablename__ = "recommendations"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Whose taste produced it (per-user recommendations, multi-user P2).
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     artist: Mapped[str] = mapped_column(String, nullable=False)
     track: Mapped[str] = mapped_column(String, nullable=False)
     source: Mapped[str] = mapped_column(String)  # similar_track, similar_artist, tag, trending

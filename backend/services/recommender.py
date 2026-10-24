@@ -29,6 +29,8 @@ from backend.models.taste_profile import TasteProfile
 from backend.models.preview_embedding import PreviewEmbedding
 from backend.services.library_match import norm_artist, batch_library_match, key_artist, key_title
 from backend.services.download_attempts import keys_in_backoff, attempt_key
+from backend.models.user_track_stats import UserTrackStats
+from backend.services.user_scope import resolve_user_id, is_owner
 
 log = logging.getLogger(__name__)
 
@@ -37,37 +39,65 @@ log = logging.getLogger(__name__)
 # 1. Taste Profile Builder
 # ---------------------------------------------------------------------------
 
-async def build_taste_profile(db: AsyncSession) -> dict:
-    """Build a taste profile from the user's library data."""
+# A non-owner's genre histogram comes from their own played/favorited tracks once they
+# have at least this many with a genre; before that the library's stands in.
+PERSONAL_GENRE_MIN_TRACKS = 20
+
+async def build_taste_profile(db: AsyncSession, user_id: str | None = None) -> dict:
+    """Build one user's taste profile (their plays and favorites) and store it as
+    TasteProfile(id=user_id). user_id None = the owner (single-user callers).
+
+    The genre histogram is library-wide for the owner (the library is their collection,
+    unchanged from before multi-user); for anyone else it comes from the tracks they
+    played or favorited, falling back to the library until there are enough of those.
+    The Last.fm history in zonik.toml is the owner's account, so only the owner's profile
+    blends it in."""
+    user_id = await resolve_user_id(db, user_id)
+    owner = await is_owner(db, user_id) or user_id is None
+    uts = UserTrackStats
+    played = (uts.user_id == user_id, uts.play_count > 0)
 
     # === Profile queries (sequential — AsyncSession is single-threaded) ===
     async def _genre_histogram():
-        r = await db.execute(
+        q = (
             select(Track.genre, func.count(Track.id).label("cnt"))
             .where(Track.genre.isnot(None), Track.genre != "")
             .group_by(Track.genre)
             .order_by(func.count(Track.id).desc())
             .limit(20)
         )
-        return r.all()
+        if not owner:
+            mine = (
+                select(uts.track_id).where(*played)
+                .union(select(Favorite.track_id).where(
+                    Favorite.user_id == user_id, Favorite.track_id.isnot(None)))
+            )
+            rows = (await db.execute(q.where(Track.id.in_(mine)))).all()
+            if sum(c for _g, c in rows) >= PERSONAL_GENRE_MIN_TRACKS:
+                return rows
+        return (await db.execute(q)).all()
 
     async def _top_artists():
         r = await db.execute(
-            select(Artist.name, func.sum(Track.play_count).label("plays"))
+            select(Artist.name, func.sum(uts.play_count).label("plays"))
             .join(Track, Track.artist_id == Artist.id)
+            .join(uts, uts.track_id == Track.id)
+            .where(*played)
             .group_by(Artist.id)
-            .order_by(func.sum(Track.play_count).desc())
+            .order_by(func.sum(uts.play_count).desc())
             .limit(20)
         )
         return [{"name": name, "plays": int(plays or 0)} for name, plays in r.all()]
 
     async def _fav_artists():
         r1 = await db.execute(
-            select(Artist.name).join(Favorite, Favorite.artist_id == Artist.id).distinct()
+            select(Artist.name).join(Favorite, Favorite.artist_id == Artist.id)
+            .where(Favorite.user_id == user_id).distinct()
         )
         r2 = await db.execute(
             select(Artist.name).join(Track, Track.artist_id == Artist.id)
-            .join(Favorite, Favorite.track_id == Track.id).distinct()
+            .join(Favorite, Favorite.track_id == Track.id)
+            .where(Favorite.user_id == user_id).distinct()
         )
         return list(set([r[0] for r in r1.all()] + [r[0] for r in r2.all()]))
 
@@ -79,18 +109,18 @@ async def build_taste_profile(db: AsyncSession) -> dict:
                 func.avg(TrackAnalysis.danceability),
                 func.count(TrackAnalysis.track_id),
             )
-            .join(Track, Track.id == TrackAnalysis.track_id)
-            .where(Track.play_count > 0)
+            .join(uts, uts.track_id == TrackAnalysis.track_id)
+            .where(*played)
         )
         return r.one()
 
     async def _fav_and_top_ids():
         r1 = await db.execute(
-            select(Favorite.track_id).where(Favorite.track_id.isnot(None))
+            select(Favorite.track_id).where(Favorite.user_id == user_id, Favorite.track_id.isnot(None))
         )
         r2 = await db.execute(
-            select(Track.id).where(Track.play_count > 0)
-            .order_by(Track.play_count.desc()).limit(50)
+            select(uts.track_id).where(*played)
+            .order_by(uts.play_count.desc()).limit(50)
         )
         fav = [r[0] for r in r1.all()]
         top = [r[0] for r in r2.all()]
@@ -104,7 +134,9 @@ async def build_taste_profile(db: AsyncSession) -> dict:
 
     async def _counts():
         t = (await db.execute(select(func.count(Track.id)))).scalar() or 0
-        f = (await db.execute(select(func.count(Favorite.id)))).scalar() or 0
+        f = (await db.execute(
+            select(func.count(Favorite.id)).where(Favorite.user_id == user_id)
+        )).scalar() or 0
         return t, f
 
     # Run queries sequentially — AsyncSession doesn't support concurrent ops
@@ -131,8 +163,8 @@ async def build_taste_profile(db: AsyncSession) -> dict:
     if avg_bpm:
         std_result = await db.execute(
             select(func.avg((TrackAnalysis.bpm - avg_bpm) * (TrackAnalysis.bpm - avg_bpm)))
-            .join(Track, Track.id == TrackAnalysis.track_id)
-            .where(Track.play_count > 0, TrackAnalysis.bpm.isnot(None))
+            .join(uts, uts.track_id == TrackAnalysis.track_id)
+            .where(*played, TrackAnalysis.bpm.isnot(None))
         )
         variance = std_result.scalar()
         if variance and variance > 0:
@@ -179,7 +211,7 @@ async def build_taste_profile(db: AsyncSession) -> dict:
     lastfm_top_artists = []
     lastfm_top_tracks = []
     settings = get_settings()
-    if settings.lastfm.api_key and settings.lastfm.username:
+    if owner and settings.lastfm.api_key and settings.lastfm.username:
         try:
             from backend.services.lastfm import get_user_top_artists, get_user_top_tracks
             lastfm_top_artists = await get_user_top_artists(settings.lastfm.username, period="6month", limit=50)
@@ -221,7 +253,7 @@ async def build_taste_profile(db: AsyncSession) -> dict:
     }
 
     # Save to DB
-    existing = await db.get(TasteProfile, "default")
+    existing = await db.get(TasteProfile, user_id or "default")
     if existing:
         existing.profile_data = json.dumps(profile_data)
         existing.clap_centroid = clap_centroid
@@ -231,7 +263,7 @@ async def build_taste_profile(db: AsyncSession) -> dict:
         existing.computed_at = datetime.utcnow()
     else:
         db.add(TasteProfile(
-            id="default",
+            id=user_id or "default",
             profile_data=json.dumps(profile_data),
             clap_centroid=clap_centroid,
             track_count=track_count,
@@ -339,8 +371,9 @@ async def _fetch_candidate_tags(candidates: list[dict]) -> None:
             log.debug(f"Tag fetch error for {c['artist']} - {c['track']}: {e}")
 
 
-async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
-    """Source recommendation candidates from Last.fm."""
+async def source_candidates(db: AsyncSession, profile: dict, user_id: str | None = None) -> list[dict]:
+    """Source recommendation candidates from Last.fm for one user (None = the owner):
+    their favorites and rejections steer it; library, blacklist and backoff are global."""
     from backend.services.lastfm import (
         get_similar_tracks, get_similar_artists,
         get_artist_top_tracks, get_top_tracks, get_track_info,
@@ -356,11 +389,14 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
     # Tracks whose automatic download failed recently shouldn't take up a top-100 slot.
     backoff_keys = await keys_in_backoff(db)
 
+    user_id = await resolve_user_id(db, user_id)
+
     # Recently rejected recommendations (last 7 days)
     week_ago = datetime.utcnow() - timedelta(days=7)
     rejected_result = await db.execute(
         select(Recommendation.artist, Recommendation.track)
-        .where(Recommendation.feedback == "thumbs_down", Recommendation.created_at > week_ago)
+        .where(Recommendation.feedback == "thumbs_down", Recommendation.created_at > week_ago,
+               _rec_owned_by(user_id))
     )
     rejected_keys = {
         f"{key_artist(a)}::{key_title(t)}" for a, t in rejected_result.all()
@@ -400,7 +436,9 @@ async def source_candidates(db: AsyncSession, profile: dict) -> list[dict]:
         select(Track.title, Artist.name)
         .join(Artist, Track.artist_id == Artist.id)
         .join(Favorite, Favorite.track_id == Track.id)
-        .order_by(Track.play_count.desc())
+        .outerjoin(UserTrackStats, (UserTrackStats.track_id == Track.id) & (UserTrackStats.user_id == user_id))
+        .where(Favorite.user_id == user_id)
+        .order_by(func.coalesce(UserTrackStats.play_count, 0).desc())
         .limit(20)
     )
     fav_tracks = fav_result.all()
@@ -876,8 +914,16 @@ async def score_previews_with_clap(db: AsyncSession, candidates: list[dict],
 # 4. Full Refresh Pipeline
 # ---------------------------------------------------------------------------
 
-async def _get_feedback_multipliers(db: AsyncSession) -> dict[str, float]:
-    """Build feedback multipliers from historical thumbs up/down.
+def _rec_owned_by(user_id: str | None):
+    """Recommendation filter for one user's rows. Pre-multi-user rows (user_id NULL, left
+    only where the migration found no owner) count as everyone's."""
+    if not user_id:
+        return Recommendation.user_id.is_(None)
+    return (Recommendation.user_id == user_id) | Recommendation.user_id.is_(None)
+
+
+async def _get_feedback_multipliers(db: AsyncSession, user_id: str | None = None) -> dict[str, float]:
+    """Build feedback multipliers from one user's historical thumbs up/down.
 
     Returns {normalized_artist: multiplier} where:
     - Artists with thumbs_up history get 1.2x
@@ -888,7 +934,7 @@ async def _get_feedback_multipliers(db: AsyncSession) -> dict[str, float]:
     # Liked recommendations boost the artist
     liked = await db.execute(
         select(Recommendation.artist)
-        .where(Recommendation.feedback == "thumbs_up")
+        .where(Recommendation.feedback == "thumbs_up", _rec_owned_by(user_id))
     )
     for (artist,) in liked.all():
         multipliers[_normalize(artist)] = 1.2
@@ -896,7 +942,7 @@ async def _get_feedback_multipliers(db: AsyncSession) -> dict[str, float]:
     # Disliked recommendations suppress the artist
     disliked = await db.execute(
         select(Recommendation.artist)
-        .where(Recommendation.feedback == "thumbs_down")
+        .where(Recommendation.feedback == "thumbs_down", _rec_owned_by(user_id))
     )
     for (artist,) in disliked.all():
         multipliers[_normalize(artist)] = 0.5
@@ -957,15 +1003,14 @@ def compute_engagement(
     return source_mults, artist_mults
 
 
-async def _get_engagement_multipliers(db: AsyncSession) -> tuple[dict[str, float], dict[str, float]]:
+async def _get_engagement_multipliers(db: AsyncSession, user_id: str | None = None,
+                                      ) -> tuple[dict[str, float], dict[str, float]]:
     """(per-source, per-normalised-artist) multipliers from what happened to earlier
-    auto-downloads: of the 'downloaded' recommendations that are now in the library,
-    how many were played (play_count > 0) or favorited."""
-    from backend.models.track import Track as _Track
-
+    auto-downloads: of the user's 'downloaded' recommendations that are now in the
+    library, how many did that user play or favorite."""
     recs = (await db.execute(
         select(Recommendation.artist, Recommendation.track, Recommendation.source, Recommendation.created_at)
-        .where(Recommendation.status == "downloaded")
+        .where(Recommendation.status == "downloaded", _rec_owned_by(user_id))
     )).all()
     if not recs:
         return {}, {}
@@ -978,11 +1023,16 @@ async def _get_engagement_multipliers(db: AsyncSession) -> tuple[dict[str, float
 
     plays = {
         tid: pc or 0
-        for tid, pc in (await db.execute(select(_Track.id, _Track.play_count))).all()
+        for tid, pc in (await db.execute(
+            select(UserTrackStats.track_id, UserTrackStats.play_count)
+            .where(UserTrackStats.user_id == user_id)
+        )).all()
         if tid in track_ids
     }
     fav_ids = {
-        tid for (tid,) in (await db.execute(select(Favorite.track_id).where(Favorite.track_id.isnot(None)))).all()
+        tid for (tid,) in (await db.execute(
+            select(Favorite.track_id).where(Favorite.user_id == user_id, Favorite.track_id.isnot(None))
+        )).all()
         if tid in track_ids
     }
 
@@ -998,15 +1048,17 @@ async def _get_engagement_multipliers(db: AsyncSession) -> tuple[dict[str, float
     return compute_engagement(rows)
 
 
-async def validate_downloaded_recommendations(db: AsyncSession) -> int:
-    """Validate downloaded recommendations against CLAP taste centroid.
+async def validate_downloaded_recommendations(db: AsyncSession, user_id: str | None = None) -> int:
+    """Validate one user's downloaded recommendations against their CLAP taste centroid
+    (user_id None = the owner).
 
     Compares each downloaded rec's track embedding to the centroid.
     Flags mismatches (cosine similarity < 0.3) by updating source_detail.
     Returns count of validated tracks.
     """
     # Load taste profile centroid
-    tp = await db.get(TasteProfile, "default")
+    user_id = await resolve_user_id(db, user_id)
+    tp = await db.get(TasteProfile, user_id or "default")
     if not tp or not tp.clap_centroid:
         return 0
 
@@ -1020,6 +1072,7 @@ async def validate_downloaded_recommendations(db: AsyncSession) -> int:
         .where(
             Recommendation.status == "downloaded",
             Recommendation.feedback.is_(None),
+            _rec_owned_by(user_id),
         )
     )).scalars().all()
 
@@ -1082,24 +1135,28 @@ async def refresh_recommendations(
     limit: int = 100,
     use_claude: bool = False,
     on_progress=None,
+    user_id: str | None = None,
 ) -> dict:
-    """Full recommendation refresh: build profile, source, score, store."""
+    """Full recommendation refresh for one user (None = the owner): build their profile,
+    source, score, and replace their pending recommendations. Other users' rows are
+    untouched."""
     total_steps = 6 if use_claude else 5
+    user_id = await resolve_user_id(db, user_id)
 
     if on_progress:
         await on_progress(0, total_steps, "Building taste profile...")
 
     # Step 1: Build taste profile
-    profile = await build_taste_profile(db)
+    profile = await build_taste_profile(db, user_id)
 
     # Validate any previously downloaded recommendations via CLAP
-    clap_validated = await validate_downloaded_recommendations(db)
+    clap_validated = await validate_downloaded_recommendations(db, user_id)
 
     if on_progress:
         await on_progress(1, total_steps, "Sourcing candidates from Last.fm...")
 
     # Step 2: Source candidates
-    candidates = await source_candidates(db, profile)
+    candidates = await source_candidates(db, profile, user_id)
 
     if on_progress:
         await on_progress(2, total_steps, f"Fetching tags for {len(candidates)} candidates...")
@@ -1112,10 +1169,10 @@ async def refresh_recommendations(
         await on_progress(3, total_steps, f"Scoring {len(candidates)} candidates...")
 
     # Step 3: Load CLAP centroid + feedback multipliers
-    tp = await db.get(TasteProfile, "default")
+    tp = await db.get(TasteProfile, user_id or "default")
     clap_centroid = tp.clap_centroid if tp else None
-    feedback_mults = await _get_feedback_multipliers(db)
-    source_eng, artist_eng = await _get_engagement_multipliers(db)
+    feedback_mults = await _get_feedback_multipliers(db, user_id)
+    source_eng, artist_eng = await _get_engagement_multipliers(db, user_id)
 
     # Step 4: Score and rank
     scored = []
@@ -1223,12 +1280,13 @@ async def refresh_recommendations(
         delete(Recommendation).where(
             Recommendation.status == "pending",
             Recommendation.created_at < datetime.utcnow() - timedelta(days=7),
+            _rec_owned_by(user_id),
         )
     )
 
-    # Step 6: Clear existing pending (but keep accepted/downloaded/rejected for history)
+    # Step 6: Clear this user's existing pending (keep accepted/downloaded/rejected for history)
     await db.execute(
-        delete(Recommendation).where(Recommendation.status == "pending")
+        delete(Recommendation).where(Recommendation.status == "pending", _rec_owned_by(user_id))
     )
 
     # Step 7: Insert new recommendations
@@ -1237,6 +1295,7 @@ async def refresh_recommendations(
     for c in top:
         rec = Recommendation(
             id=str(uuid.uuid4()),
+            user_id=user_id,
             artist=c["artist"],
             track=c["track"],
             source=c["source"],
@@ -1267,6 +1326,7 @@ async def refresh_recommendations(
         "top_score": top[0]["score"] if top else 0,
         "clap_validated": clap_validated,
         "clap_previews_scored": preview_stats["scored"],
+        "user_id": user_id,
     }
     if claude_usage:
         result["claude_usage"] = claude_usage

@@ -14,6 +14,7 @@ from backend.models.schedule import ScheduleTask
 from backend.models.blacklist import DownloadBlacklist
 from backend.models.stats import SoulseekSnapshot
 from backend.models.play_history import PlayHistory
+from backend.models.user_track_stats import UserTrackStats
 from backend.models.recommendation import Recommendation
 from backend.models.taste_profile import TasteProfile
 from backend.models.upgrade import TrackUpgrade
@@ -27,7 +28,7 @@ __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
     "Favorite", "TrackAnalysis", "TrackEmbedding", "Job", "User", "AuthSession", "DeviceToken",
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
-    "SoulseekSnapshot", "PlayHistory", "Recommendation", "TasteProfile",
+    "SoulseekSnapshot", "PlayHistory", "UserTrackStats", "Recommendation", "TasteProfile",
     "TrackUpgrade", "AppLog", "AIUsage", "TvVisualizerConfig", "TvEffectStat",
     "DownloadAttempt", "PreviewEmbedding",
 ]

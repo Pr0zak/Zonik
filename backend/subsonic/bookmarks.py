@@ -14,7 +14,8 @@ from backend.database import get_db
 from backend.models.bookmark import Bookmark
 from backend.models.play_queue import PlayQueue
 from backend.models.track import Track
-from backend.models.user import User
+from backend.services.user_data import caller_user
+from backend.subsonic.personal import personal_view
 from backend.subsonic.responses import subsonic_response, error_response, format_track
 
 router = APIRouter()
@@ -24,22 +25,27 @@ def _get_format(request: Request) -> str:
     return request.query_params.get("f", "json")
 
 
+# Bookmarks and the play queue always belong to the caller (the owner for anonymous
+# grace-mode calls); the `u` param is never trusted to pick someone else's.
+
+
 @router.get("/getBookmarks")
 @router.get("/getBookmarks.view")
 async def get_bookmarks(request: Request, db: AsyncSession = Depends(get_db)):
-    username = request.query_params.get("u", "admin")
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    user = await caller_user(request, db)
     if not user:
         return subsonic_response({"bookmarks": {}}, _get_format(request))
+    username = user.username
 
     result = await db.execute(
         select(Bookmark).options(
             selectinload(Bookmark.track).selectinload(Track.artist),
             selectinload(Bookmark.track).selectinload(Track.album),
+            selectinload(Bookmark.track).selectinload(Track.analysis),
         ).where(Bookmark.user_id == user.id)
     )
     bookmarks = result.scalars().all()
+    personal = await personal_view(request, db, tracks=[b.track for b in bookmarks], user_id=user.id)
 
     return subsonic_response({
         "bookmarks": {
@@ -50,7 +56,7 @@ async def get_bookmarks(request: Request, db: AsyncSession = Depends(get_db)):
                     "comment": b.comment or "",
                     "created": b.created_at.strftime("%Y-%m-%dT%H:%M:%S.000Z") if b.created_at else "",
                     "changed": b.updated_at.strftime("%Y-%m-%dT%H:%M:%S.000Z") if b.updated_at else "",
-                    "entry": format_track(b.track) if b.track else {},
+                    "entry": format_track(b.track, personal=personal) if b.track else {},
                 }
                 for b in bookmarks
             ]
@@ -71,9 +77,7 @@ async def create_bookmark(request: Request, db: AsyncSession = Depends(get_db)):
         position = 0
     comment = params.get("comment")
 
-    username = params.get("u", "admin")
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    user = await caller_user(request, db)
     if not user or not song_id:
         return error_response(10, "Missing parameters", _get_format(request))
 
@@ -99,9 +103,7 @@ async def create_bookmark(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/deleteBookmark.view")
 async def delete_bookmark(request: Request, db: AsyncSession = Depends(get_db)):
     song_id = request.query_params.get("id")
-    username = request.query_params.get("u", "admin")
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    user = await caller_user(request, db)
     if user and song_id:
         await db.execute(
             delete(Bookmark).where(Bookmark.user_id == user.id, Bookmark.track_id == song_id)
@@ -113,11 +115,10 @@ async def delete_bookmark(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/getPlayQueue")
 @router.get("/getPlayQueue.view")
 async def get_play_queue(request: Request, db: AsyncSession = Depends(get_db)):
-    username = request.query_params.get("u", "admin")
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    user = await caller_user(request, db)
     if not user:
         return subsonic_response({"playQueue": {}}, _get_format(request))
+    username = user.username
 
     result = await db.execute(select(PlayQueue).where(PlayQueue.user_id == user.id))
     pq = result.scalar_one_or_none()
@@ -132,7 +133,8 @@ async def get_play_queue(request: Request, db: AsyncSession = Depends(get_db)):
     )
     tracks = {t.id: t for t in tracks_result.scalars().all()}
 
-    entries = [format_track(tracks[tid]) for tid in track_ids if tid in tracks]
+    personal = await personal_view(request, db, tracks=tracks.values(), user_id=user.id)
+    entries = [format_track(tracks[tid], personal=personal) for tid in track_ids if tid in tracks]
 
     return subsonic_response({
         "playQueue": {
@@ -151,7 +153,6 @@ async def get_play_queue(request: Request, db: AsyncSession = Depends(get_db)):
 @router.post("/savePlayQueue.view")
 async def save_play_queue(request: Request, db: AsyncSession = Depends(get_db)):
     params = dict(request.query_params)
-    username = params.get("u", "admin")
     current = params.get("current")
     position = int(params.get("position", 0))
 
@@ -162,8 +163,7 @@ async def save_play_queue(request: Request, db: AsyncSession = Depends(get_db)):
     elif "id" in params:
         song_ids = [params["id"]]
 
-    user_result = await db.execute(select(User).where(User.username == username))
-    user = user_result.scalar_one_or_none()
+    user = await caller_user(request, db)
     if not user:
         return error_response(0, "User not found", _get_format(request))
 

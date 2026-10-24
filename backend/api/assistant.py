@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.services.ai.playlist_gen import generate_playlist
+from backend.services.user_data import caller_id
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class VoicePlaylistRequest(BaseModel):
 
 
 @router.post("/voice-playlist")
-async def voice_playlist(req: VoicePlaylistRequest, db: AsyncSession = Depends(get_db)):
+async def voice_playlist(req: VoicePlaylistRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Turn a spoken request into an ordered, playable list of track IDs.
 
     Returns {id, name, description, track_count, track_ids[], missing[]} or
@@ -50,7 +51,9 @@ async def voice_playlist(req: VoicePlaylistRequest, db: AsyncSession = Depends(g
     # the request so the ones not owned can be offered ("Get the 4 missing").
     from backend.services.ai import track_resolver
     wants_missing = req.suggest_missing and track_resolver.enabled()
-    playlist_task = generate_playlist(db, prompt, limit=size, save=req.save)
+    # The caller's listening steers the mix; a saved mix is the caller's playlist.
+    playlist_task = generate_playlist(db, prompt, limit=size, save=req.save,
+                                      user_id=await caller_id(request, db))
     if wants_missing:
         result, suggestions = await asyncio.gather(playlist_task, track_resolver.resolve(prompt, limit=8))
     else:

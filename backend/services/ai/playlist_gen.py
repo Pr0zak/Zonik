@@ -28,6 +28,7 @@ async def generate_playlist(
     name: str | None = None,
     limit: int = 30,
     save: bool = True,
+    user_id: str | None = None,
 ) -> dict:
     """Generate a playlist from a natural language prompt.
 
@@ -42,10 +43,19 @@ async def generate_playlist(
 
     Returns {"id", "name", "track_count", "description", "track_ids"} or
     {"error": ...}. ``id`` is None when ``save`` is False.
+
+    ``user_id`` is the listener (None = the owner): their most-played artists steer
+    the prompt, "play_count"/"rating" sorting uses their own counts and ratings, and a
+    saved playlist is theirs.
     """
+    from backend.models.user_track_stats import UserTrackStats
+    from backend.services.user_scope import resolve_user_id
+
     settings = get_settings()
     if not settings.assistant.ai_playlist_gen:
         return {"error": "AI playlist generation is disabled"}
+    user_id = await resolve_user_id(db, user_id)
+    uts = UserTrackStats
 
     # Step 1: Get library context for Claude
     genre_result = await db.execute(
@@ -68,6 +78,18 @@ async def generate_playlist(
 
     total_tracks = (await db.execute(select(func.count(Track.id)))).scalar() or 0
 
+    listener_artists = [a for (a,) in (await db.execute(
+        select(Artist.name)
+        .join(Track, Track.artist_id == Artist.id)
+        .join(uts, uts.track_id == Track.id)
+        .where(uts.user_id == user_id, uts.play_count > 0)
+        .group_by(Artist.name)
+        .order_by(func.sum(uts.play_count).desc())
+        .limit(15)
+    )).all()] if user_id else []
+    listener_line = (f"\n- This listener plays most: {', '.join(listener_artists)}"
+                     if listener_artists else "")
+
     # Step 2: Ask Claude for selection criteria
     interpret_prompt = f"""You are a music playlist curator. Given a user's request and their library info, suggest how to select tracks.
 
@@ -76,7 +98,7 @@ User request: "{prompt}"
 Library info:
 - {total_tracks} total tracks
 - Top genres: {json.dumps(genres[:15])}
-- Top artists: {', '.join(top_artists[:20])}
+- Top artists: {', '.join(top_artists[:20])}{listener_line}
 
 Pick criteria broad enough to fill roughly {limit} tracks for this request.
 
@@ -137,10 +159,12 @@ Return JSON with selection criteria:
     sort_by = criteria.get("sort_by", "random")
     if sort_by == "random":
         query = query.order_by(func.random())
-    elif sort_by == "play_count":
-        query = query.order_by(Track.play_count.desc())
-    elif sort_by == "rating":
-        query = query.order_by(Track.rating.desc().nullslast())
+    elif sort_by in ("play_count", "rating"):
+        query = query.outerjoin(uts, (uts.track_id == Track.id) & (uts.user_id == user_id))
+        if sort_by == "play_count":
+            query = query.order_by(func.coalesce(uts.play_count, 0).desc())
+        else:
+            query = query.order_by(uts.rating.desc().nullslast())
     else:
         query = query.order_by(Track.created_at.desc())
 
@@ -213,6 +237,7 @@ Return JSON with selection criteria:
             id=str(uuid.uuid4()),
             name=playlist_name,
             comment=description,
+            user_id=user_id,
         )
         db.add(playlist)
         for i, track in enumerate(tracks):

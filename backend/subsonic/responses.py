@@ -110,9 +110,12 @@ def _singular(name: str) -> str:
     return name
 
 
-def format_track(track, starred: bool = False) -> dict:
-    """Format a track for Subsonic API responses."""
-    from backend.models.track import Track
+def format_track(track, starred: bool = False, personal=None) -> dict:
+    """Format a track for Subsonic API responses.
+
+    `personal` (backend.subsonic.personal.Personal) supplies the caller's playCount,
+    userRating, played and starred. Without it the library-wide totals are used.
+    """
     data = {
         "id": track.id,
         "parent": track.album_id or track.artist_id or "1",
@@ -139,7 +142,17 @@ def format_track(track, starred: bool = False) -> dict:
         "userRating": track.rating,
         "created": _format_dt(track.created_at),
     }
-    if starred:
+    play_count, last_played = track.play_count, track.last_played_at
+    if personal is not None:
+        stats = personal.stats.get(track.id)
+        play_count = (stats.play_count or 0) if stats else 0
+        last_played = stats.last_played_at if stats else None
+        data["playCount"] = play_count
+        data["userRating"] = stats.rating if stats else None
+        starred_at = personal.starred_tracks.get(track.id)
+        if starred_at is not None:
+            data["starred"] = _format_dt(starred_at)
+    if starred and "starred" not in data:
         data["starred"] = _format_dt(datetime.utcnow())
     if track.musicbrainz_id:
         data["musicBrainzId"] = track.musicbrainz_id
@@ -151,8 +164,8 @@ def format_track(track, starred: bool = False) -> dict:
             "trackGain": track.replay_gain_track,
             "albumGain": track.replay_gain_album,
         }
-    if track.play_count and track.last_played_at:
-        data["played"] = _format_dt(track.last_played_at)
+    if play_count and last_played:
+        data["played"] = _format_dt(last_played)
     # Gapless: tell client what transcoded format to expect for lossless sources
     if track.suffix in ("flac", "wav", "alac", "aiff"):
         data["transcodedSuffix"] = "mp3"
@@ -162,7 +175,7 @@ def format_track(track, starred: bool = False) -> dict:
     return {k: v for k, v in data.items() if v is not None}
 
 
-def format_album(album, tracks=None, starred: bool = False) -> dict:
+def format_album(album, tracks=None, starred: bool = False, personal=None) -> dict:
     data = {
         "id": album.id,
         "name": album.title,
@@ -175,25 +188,31 @@ def format_album(album, tracks=None, starred: bool = False) -> dict:
         "genre": album.genre,
         "created": _format_dt(album.created_at),
     }
-    if starred:
+    starred_at = personal.starred_albums.get(album.id) if personal is not None else None
+    if starred_at is not None:
+        data["starred"] = _format_dt(starred_at)
+    elif starred:
         data["starred"] = _format_dt(datetime.utcnow())
     if tracks:
         data["duration"] = sum(int(t.duration_seconds or 0) for t in tracks)
-        data["song"] = [format_track(t) for t in tracks]
+        data["song"] = [format_track(t, personal=personal) for t in tracks]
     return {k: v for k, v in data.items() if v is not None}
 
 
-def format_artist(artist, albums=None, starred: bool = False) -> dict:
+def format_artist(artist, albums=None, starred: bool = False, personal=None) -> dict:
     data = {
         "id": artist.id,
         "name": artist.name,
         "coverArt": artist.id if artist.image_url else None,
         "albumCount": len(albums) if albums else 0,
     }
-    if starred:
+    starred_at = personal.starred_artists.get(artist.id) if personal is not None else None
+    if starred_at is not None:
+        data["starred"] = _format_dt(starred_at)
+    elif starred:
         data["starred"] = _format_dt(datetime.utcnow())
     if artist.musicbrainz_id:
         data["musicBrainzId"] = artist.musicbrainz_id
     if albums:
-        data["album"] = [format_album(a) for a in albums]
+        data["album"] = [format_album(a, personal=personal) for a in albums]
     return {k: v for k, v in data.items() if v is not None}

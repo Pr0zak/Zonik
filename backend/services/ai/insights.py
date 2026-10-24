@@ -16,27 +16,30 @@ from backend.services.ai.client import call_claude
 
 log = logging.getLogger(__name__)
 
-# In-memory cache (24h TTL)
-_insights_cache: dict | None = None
-_insights_cache_time: float = 0
+# In-memory cache per user (24h TTL): {user_id: (computed_at, insights)}
+_insights_cache: dict[str | None, tuple[float, dict]] = {}
 _INSIGHTS_CACHE_TTL = 86400  # 24 hours
 
 
-async def generate_insights(db: AsyncSession) -> dict:
-    """Generate AI listening insights based on recent play history.
+async def generate_insights(db: AsyncSession, user_id: str | None = None) -> dict:
+    """Generate AI listening insights from one user's recent play history (None = the
+    owner).
 
     Returns {"summary": str, "highlights": [...], "trends": [...]} or {"error": str}
     """
-    global _insights_cache, _insights_cache_time
+    from backend.services.user_scope import resolve_user_id
 
     settings = get_settings()
     if not settings.assistant.ai_insights:
         return {"error": "AI insights are disabled"}
 
+    user_id = await resolve_user_id(db, user_id)
+
     # Check cache
     now = time.time()
-    if _insights_cache and now - _insights_cache_time < _INSIGHTS_CACHE_TTL:
-        return _insights_cache
+    cached = _insights_cache.get(user_id)
+    if cached and now - cached[0] < _INSIGHTS_CACHE_TTL:
+        return cached[1]
 
     from datetime import datetime, timedelta, timezone
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
@@ -51,7 +54,7 @@ async def generate_insights(db: AsyncSession) -> dict:
         )
         .join(Track, PlayHistory.track_id == Track.id)
         .join(Artist, Track.artist_id == Artist.id, isouter=True)
-        .where(PlayHistory.played_at >= week_ago)
+        .where(PlayHistory.played_at >= week_ago, PlayHistory.user_id == user_id)
         .group_by(Track.id, Track.title, Artist.name, Track.genre)
         .order_by(func.count(PlayHistory.id).desc())
         .limit(20)
@@ -62,7 +65,7 @@ async def generate_insights(db: AsyncSession) -> dict:
     ]
 
     total_plays = await db.execute(
-        select(func.count(PlayHistory.id)).where(PlayHistory.played_at >= week_ago)
+        select(func.count(PlayHistory.id)).where(PlayHistory.played_at >= week_ago, PlayHistory.user_id == user_id)
     )
     play_count = total_plays.scalar() or 0
 
@@ -73,7 +76,7 @@ async def generate_insights(db: AsyncSession) -> dict:
     genre_result = await db.execute(
         select(Track.genre, func.count(PlayHistory.id).label("plays"))
         .join(Track, PlayHistory.track_id == Track.id)
-        .where(PlayHistory.played_at >= week_ago, Track.genre.isnot(None))
+        .where(PlayHistory.played_at >= week_ago, PlayHistory.user_id == user_id, Track.genre.isnot(None))
         .group_by(Track.genre)
         .order_by(func.count(PlayHistory.id).desc())
         .limit(10)
@@ -109,7 +112,6 @@ Return JSON:
     parsed["top_genre"] = genres[0]["genre"] if genres else None
 
     # Cache result
-    _insights_cache = parsed
-    _insights_cache_time = now
+    _insights_cache[user_id] = (now, parsed)
 
     return parsed

@@ -10,6 +10,7 @@ from backend.database import get_db
 from backend.models.artist import Artist
 from backend.models.album import Album
 from backend.models.track import Track
+from backend.subsonic.personal import personal_view
 from backend.subsonic.responses import subsonic_response, error_response, format_artist, format_album, format_track
 
 router = APIRouter()
@@ -76,7 +77,8 @@ async def get_music_directory(request: Request, db: AsyncSession = Depends(get_d
             select(Track).options(selectinload(Track.artist), selectinload(Track.album), selectinload(Track.analysis))
             .where(Track.artist_id == artist.id, Track.album_id.is_(None))
         )).scalars().all()
-        children.extend([format_track(t) for t in tracks])
+        personal = await personal_view(request, db, tracks=tracks)
+        children.extend([format_track(t, personal=personal) for t in tracks])
 
         return subsonic_response({
             "directory": {
@@ -97,13 +99,14 @@ async def get_music_directory(request: Request, db: AsyncSession = Depends(get_d
             .where(Track.album_id == album.id)
             .order_by(Track.disc_number, Track.track_number)
         )).scalars().all()
+        personal = await personal_view(request, db, tracks=tracks)
 
         return subsonic_response({
             "directory": {
                 "id": album.id,
                 "parent": album.artist_id,
                 "name": album.title,
-                "child": [format_track(t) for t in tracks],
+                "child": [format_track(t, personal=personal) for t in tracks],
             }
         }, _get_format(request))
 
@@ -162,8 +165,9 @@ async def get_artist(request: Request, db: AsyncSession = Depends(get_db)):
         select(Album).where(Album.artist_id == artist.id).order_by(Album.year.desc())
     )).scalars().all()
 
+    personal = await personal_view(request, db, albums=albums, artists=[artist])
     return subsonic_response({
-        "artist": format_artist(artist, albums)
+        "artist": format_artist(artist, albums, personal=personal)
     }, _get_format(request))
 
 
@@ -187,8 +191,9 @@ async def get_album(request: Request, db: AsyncSession = Depends(get_db)):
         .order_by(Track.disc_number, Track.track_number)
     )).scalars().all()
 
+    personal = await personal_view(request, db, tracks=tracks, albums=[album])
     return subsonic_response({
-        "album": format_album(album, tracks)
+        "album": format_album(album, tracks, personal=personal)
     }, _get_format(request))
 
 
@@ -207,7 +212,8 @@ async def get_song(request: Request, db: AsyncSession = Depends(get_db)):
     if not track:
         return error_response(70, "Song not found", _get_format(request))
 
-    return subsonic_response({"song": format_track(track)}, _get_format(request))
+    personal = await personal_view(request, db, tracks=[track])
+    return subsonic_response({"song": format_track(track, personal=personal)}, _get_format(request))
 
 
 @router.get("/getGenres")
@@ -270,7 +276,8 @@ async def get_similar_songs2(request: Request, db: AsyncSession = Depends(get_db
                 ).where(Track.id.in_(track_ids))
             )
             tracks = {t.id: t for t in result.scalars().all()}
-            songs = [format_track(tracks[tid]) for tid in track_ids if tid in tracks]
+            personal = await personal_view(request, db, tracks=tracks.values())
+            songs = [format_track(tracks[tid], personal=personal) for tid in track_ids if tid in tracks]
             return subsonic_response({"similarSongs2": {"song": songs}}, _get_format(request))
 
     # Fallback: random songs from same artist/genre
@@ -290,7 +297,9 @@ async def get_similar_songs2(request: Request, db: AsyncSession = Depends(get_db
 
     query = query.order_by(func.random()).limit(count)
     result = await db.execute(query)
-    songs = [format_track(t) for t in result.scalars().all()]
+    tracks = result.scalars().all()
+    personal = await personal_view(request, db, tracks=tracks)
+    songs = [format_track(t, personal=personal) for t in tracks]
 
     return subsonic_response({"similarSongs2": {"song": songs}}, _get_format(request))
 
@@ -310,6 +319,9 @@ async def get_top_songs(request: Request, db: AsyncSession = Depends(get_db)):
         ).join(Artist).where(Artist.name.ilike(f"%{artist_name}%"))
         .order_by(Track.play_count.desc()).limit(count)
     )
-    songs = [format_track(t) for t in result.scalars().all()]
+    # Ordered by library-wide popularity (like Last.fm's top songs); counts shown are the caller's.
+    tracks = result.scalars().all()
+    personal = await personal_view(request, db, tracks=tracks)
+    songs = [format_track(t, personal=personal) for t in tracks]
 
     return subsonic_response({"topSongs": {"song": songs}}, _get_format(request))

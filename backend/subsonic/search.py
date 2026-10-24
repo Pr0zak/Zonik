@@ -10,6 +10,7 @@ from backend.database import get_db
 from backend.models.track import Track
 from backend.models.album import Album
 from backend.models.artist import Artist
+from backend.subsonic.personal import personal_view
 from backend.subsonic.responses import subsonic_response, format_track, format_album, format_artist
 
 router = APIRouter()
@@ -66,9 +67,13 @@ async def search3(request: Request, db: AsyncSession = Depends(get_db)):
             ).order_by(Track.title).offset(song_offset).limit(song_count)
         )
 
-    artists = [format_artist(a) for a in artists_result.scalars().all()]
-    albums = [format_album(a) for a in albums_result.scalars().all()]
-    songs = [format_track(t) for t in songs_result.scalars().all()]
+    artist_rows = artists_result.scalars().all()
+    album_rows = albums_result.scalars().all()
+    song_rows = songs_result.scalars().all()
+    personal = await personal_view(request, db, tracks=song_rows, albums=album_rows, artists=artist_rows)
+    artists = [format_artist(a, personal=personal) for a in artist_rows]
+    albums = [format_album(a, personal=personal) for a in album_rows]
+    songs = [format_track(t, personal=personal) for t in song_rows]
 
     return subsonic_response({
         "searchResult3": {

@@ -1,11 +1,12 @@
 """Music Map API - graph data for library visualization."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, BackgroundTasks, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.services.user_data import caller_id
 
 router = APIRouter()
 
@@ -47,10 +48,38 @@ class PathRequest(BaseModel):
 
 
 @router.get("/soundscape")
-async def soundscape(db: AsyncSession = Depends(get_db)):
-    """Cached 2D sound projection + per-point metadata (parallel arrays)."""
+async def soundscape(request: Request, db: AsyncSession = Depends(get_db)):
+    """Cached 2D sound projection + per-point metadata (parallel arrays). The play heat
+    (play_count, skip_count, recency_days) is the caller's own listening."""
     from backend.services.soundscape import get_soundscape
-    return await get_soundscape(db)
+    data = await get_soundscape(db)
+    await _overlay_caller_heat(db, data, await caller_id(request, db))
+    return data
+
+
+async def _overlay_caller_heat(db: AsyncSession, data: dict, user_id: str | None) -> None:
+    """Swap the soundscape's global play/skip/recency arrays (library totals, which the
+    projection service keeps) for the caller's (multi-user P2)."""
+    ids = data.get("ids")
+    if not ids or user_id is None:
+        return
+    from datetime import datetime, timezone
+    from backend.services.user_data import stats_for
+    stats = await stats_for(db, user_id, ids)
+    now = datetime.now(timezone.utc)
+    plays, skips, recency = [], [], []
+    for tid in ids:
+        st = stats.get(tid)
+        plays.append((st.play_count or 0) if st else 0)
+        skips.append((st.skip_count or 0) if st else 0)
+        lp = st.last_played_at if st else None
+        if lp is not None:
+            if lp.tzinfo is None:
+                lp = lp.replace(tzinfo=timezone.utc)
+            recency.append(round((now - lp).total_seconds() / 86400, 1))
+        else:
+            recency.append(None)
+    data["play_count"], data["skip_count"], data["recency_days"] = plays, skips, recency
 
 
 @router.post("/soundscape/recompute")
@@ -77,17 +106,17 @@ async def soundscape_locate(req: LocateRequest, db: AsyncSession = Depends(get_d
 
 
 @router.get("/listening-clock")
-async def listening_clock(db: AsyncSession = Depends(get_db)):
+async def listening_clock(request: Request, db: AsyncSession = Depends(get_db)):
     """7×24 weekday×hour heatmap of when you listen (+ dominant genre per cell)."""
     from backend.services.insights import listening_clock as _clock
-    return await _clock(db)
+    return await _clock(db, user_id=await caller_id(request, db))
 
 
 @router.get("/neglected-gems")
-async def neglected_gems(limit: int = Query(40, ge=1, le=120), db: AsyncSession = Depends(get_db)):
+async def neglected_gems(request: Request, limit: int = Query(40, ge=1, le=120), db: AsyncSession = Depends(get_db)):
     """Owned-but-never-played tracks ranked by closeness to your taste centroid."""
     from backend.services.insights import neglected_gems as _gems
-    return await _gems(db, limit=limit)
+    return await _gems(db, limit=limit, user_id=await caller_id(request, db))
 
 
 class DismissRequest(BaseModel):
@@ -95,24 +124,24 @@ class DismissRequest(BaseModel):
 
 
 @router.post("/gems/dismiss")
-async def gems_dismiss(req: DismissRequest, db: AsyncSession = Depends(get_db)):
-    """Never suggest this track as a neglected gem again."""
+async def gems_dismiss(req: DismissRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Never suggest this track to the caller as a neglected gem again."""
     from backend.services.insights import dismiss_gem
-    return await dismiss_gem(db, req.track_id)
+    return await dismiss_gem(db, req.track_id, user_id=await caller_id(request, db))
 
 
 @router.get("/audio-features")
-async def audio_features(db: AsyncSession = Depends(get_db)):
+async def audio_features(request: Request, db: AsyncSession = Depends(get_db)):
     """Per-track Essentia features for the Camelot wheel + Tempo×Punch grid."""
     from backend.services.insights import audio_features as _af
-    return await _af(db)
+    return await _af(db, user_id=await caller_id(request, db))
 
 
 @router.get("/streak-calendar")
-async def streak_calendar(db: AsyncSession = Depends(get_db)):
+async def streak_calendar(request: Request, db: AsyncSession = Depends(get_db)):
     """Daily play counts for a GitHub-style listening-streak heatmap."""
     from backend.services.insights import streak_calendar as _sc
-    return await _sc(db)
+    return await _sc(db, user_id=await caller_id(request, db))
 
 
 @router.post("/sonic-path")
@@ -132,39 +161,39 @@ async def health(db: AsyncSession = Depends(get_db)):
 # --- Listening layers (plays over time, order, rotation) ---
 
 @router.get("/taste-river")
-async def taste_river(weeks: int = Query(52, ge=4, le=156), db: AsyncSession = Depends(get_db)):
+async def taste_river(request: Request, weeks: int = Query(52, ge=4, le=156), db: AsyncSession = Depends(get_db)):
     """Plays per genre family per week."""
     from backend.services.listening import taste_river as _tr
-    return await _tr(db, weeks=weeks)
+    return await _tr(db, weeks=weeks, user_id=await caller_id(request, db))
 
 
 @router.get("/genre-flow")
-async def genre_flow(days: int = Query(90, ge=7, le=730), db: AsyncSession = Depends(get_db)):
+async def genre_flow(request: Request, days: int = Query(90, ge=7, le=730), db: AsyncSession = Depends(get_db)):
     """Which genre family you play after each one, within a session."""
     from backend.services.listening import genre_flow as _gf
-    return await _gf(db, days=days)
+    return await _gf(db, days=days, user_id=await caller_id(request, db))
 
 
 @router.get("/rotation")
-async def rotation(days: int = Query(30, ge=7, le=180), db: AsyncSession = Depends(get_db)):
+async def rotation(request: Request, days: int = Query(30, ge=7, le=180), db: AsyncSession = Depends(get_db)):
     """Tracks by plays this period against the period before, with trend flags."""
     from backend.services.listening import rotation as _rot
-    return await _rot(db, days=days)
+    return await _rot(db, days=days, user_id=await caller_id(request, db))
 
 
 @router.get("/trail")
-async def trail(hours: int = Query(0, ge=0, le=24 * 30), db: AsyncSession = Depends(get_db)):
+async def trail(request: Request, hours: int = Query(0, ge=0, le=24 * 30), db: AsyncSession = Depends(get_db)):
     """Plays in order since midnight (hours=0) or the last N hours, plus now playing and the saved queue."""
     from backend.services.listening import trail as _trail
-    return await _trail(db, hours=hours)
+    return await _trail(db, hours=hours, user_id=await caller_id(request, db))
 
 
 @router.get("/track/{track_id}/listening")
-async def track_listening(track_id: str, db: AsyncSession = Depends(get_db)):
+async def track_listening(track_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     """One track's plays per month, devices, skips and what you usually play after it."""
     from fastapi import HTTPException
     from backend.services.listening import track_listening as _tl
-    r = await _tl(db, track_id)
+    r = await _tl(db, track_id, user_id=await caller_id(request, db))
     if r is None:
         raise HTTPException(404, "Track not found")
     return r

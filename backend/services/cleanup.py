@@ -80,6 +80,7 @@ async def remove_orphaned_tracks(db: AsyncSession) -> dict:
     from backend.models.analysis import TrackAnalysis
     from backend.models.embedding import TrackEmbedding
     from backend.models.play_history import PlayHistory
+    from backend.models.user_track_stats import UserTrackStats
     from backend.models.bookmark import Bookmark
     from backend.models.mood import TrackMood
     from backend.models.upgrade import TrackUpgrade
@@ -87,6 +88,7 @@ async def remove_orphaned_tracks(db: AsyncSession) -> dict:
     await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(orphan_ids)))
     await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(orphan_ids)))
     await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(orphan_ids)))
+    await db.execute(delete(UserTrackStats).where(UserTrackStats.track_id.in_(orphan_ids)))
     await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(orphan_ids)))
     await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(orphan_ids)))
     await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(orphan_ids)))
@@ -310,6 +312,7 @@ async def remove_duplicates(db: AsyncSession, remove_ids: list[str], delete_file
     from backend.models.analysis import TrackAnalysis
     from backend.models.embedding import TrackEmbedding
     from backend.models.play_history import PlayHistory
+    from backend.models.user_track_stats import UserTrackStats
     from backend.models.bookmark import Bookmark
     from backend.models.mood import TrackMood
     from backend.models.upgrade import TrackUpgrade
@@ -317,6 +320,7 @@ async def remove_duplicates(db: AsyncSession, remove_ids: list[str], delete_file
     await db.execute(delete(TrackAnalysis).where(TrackAnalysis.track_id.in_(remove_ids)))
     await db.execute(delete(TrackEmbedding).where(TrackEmbedding.track_id.in_(remove_ids)))
     await db.execute(delete(PlayHistory).where(PlayHistory.track_id.in_(remove_ids)))
+    await db.execute(delete(UserTrackStats).where(UserTrackStats.track_id.in_(remove_ids)))
     await db.execute(delete(PlaylistTrack).where(PlaylistTrack.track_id.in_(remove_ids)))
     await db.execute(delete(Bookmark).where(Bookmark.track_id.in_(remove_ids)))
     await db.execute(delete(TrackMood).where(TrackMood.track_id.in_(remove_ids)))

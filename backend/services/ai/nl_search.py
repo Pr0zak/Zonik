@@ -95,9 +95,20 @@ Be precise. Only include fields that the query clearly implies."""
     return parsed
 
 
-async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50) -> list[dict]:
-    """Execute a structured search against the library using interpreted filters."""
-    query = select(Track).options(selectinload(Track.artist), selectinload(Track.album))
+async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50,
+                              user_id: str | None = None) -> list[dict]:
+    """Execute a structured search against the library using interpreted filters.
+    play_count / rating (sorting and the returned values) are the given user's
+    (None = the owner)."""
+    from backend.models.user_track_stats import UserTrackStats as uts
+    from backend.services.user_scope import resolve_user_id
+
+    user_id = await resolve_user_id(db, user_id)
+    query = (
+        select(Track, uts.play_count, uts.rating)
+        .options(selectinload(Track.artist), selectinload(Track.album))
+        .outerjoin(uts, (uts.track_id == Track.id) & (uts.user_id == user_id))
+    )
     conditions = []
 
     if filters.get("genre"):
@@ -134,7 +145,12 @@ async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50) 
     # Sort
     sort_by = filters.get("sort_by", "created_at")
     sort_dir = filters.get("sort_dir", "desc")
-    sort_col = getattr(Track, sort_by, Track.created_at)
+    if sort_by == "play_count":
+        sort_col = func.coalesce(uts.play_count, 0)
+    elif sort_by == "rating":
+        sort_col = uts.rating
+    else:
+        sort_col = getattr(Track, sort_by or "created_at", Track.created_at)
     if sort_dir == "asc":
         query = query.order_by(sort_col.asc())
     else:
@@ -154,7 +170,7 @@ async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50) 
     query = query.limit(use_limit)
 
     result = await db.execute(query)
-    tracks = result.scalars().all()
+    rows = result.all()
 
     return [
         {
@@ -166,10 +182,10 @@ async def search_with_filters(db: AsyncSession, filters: dict, limit: int = 50) 
             "format": t.format,
             "bitrate": t.bitrate,
             "duration": t.duration_seconds,
-            "play_count": t.play_count,
-            "rating": t.rating,
+            "play_count": plays or 0,
+            "rating": rating,
             "file_path": t.file_path,
             "cover_art": t.album_id or t.id,
         }
-        for t in tracks
+        for t, plays, rating in rows
     ]

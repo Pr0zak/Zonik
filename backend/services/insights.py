@@ -1,4 +1,8 @@
-"""Listening insights for the Music Map — when you listen, and what you've neglected."""
+"""Listening insights for the Music Map — when you listen, and what you've neglected.
+
+Per listener (multi-user P2): each function takes the user id whose plays, stats, taste
+centroid and gem dismissals to use. user_id None reads the unowned rows of a server
+without accounts."""
 from __future__ import annotations
 
 import logging
@@ -16,7 +20,14 @@ from backend.services.genres import genre_family
 log = logging.getLogger(__name__)
 
 
-async def listening_clock(db: AsyncSession) -> dict:
+def _who(user_id: str | None, col: str = "user_id") -> tuple[str, dict]:
+    """SQL condition + params selecting one user's rows."""
+    if user_id is None:
+        return f"{col} IS NULL", {}
+    return f"{col} = :uid", {"uid": user_id}
+
+
+async def listening_clock(db: AsyncSession, user_id: str | None = None) -> dict:
     """7×24 weekday×hour grid of play counts (+ dominant genre per cell).
 
     Times use the server's local timezone via SQLite's 'localtime' modifier.
@@ -24,11 +35,12 @@ async def listening_clock(db: AsyncSession) -> dict:
     grid = [[0] * 24 for _ in range(7)]
     total = 0
     mx = 0
+    who, params = _who(user_id)
     rows = (await db.execute(text(
         "SELECT CAST(strftime('%w', played_at, 'localtime') AS INTEGER) wd, "
         "       CAST(strftime('%H', played_at, 'localtime') AS INTEGER) hr, COUNT(*) c "
-        "FROM play_history WHERE played_at IS NOT NULL GROUP BY wd, hr"
-    ))).all()
+        f"FROM play_history WHERE played_at IS NOT NULL AND {who} GROUP BY wd, hr"
+    ), params)).all()
     for wd, hr, c in rows:
         if wd is None or hr is None:
             continue
@@ -43,9 +55,9 @@ async def listening_clock(db: AsyncSession) -> dict:
         "SELECT CAST(strftime('%w', ph.played_at, 'localtime') AS INTEGER) wd, "
         "       CAST(strftime('%H', ph.played_at, 'localtime') AS INTEGER) hr, t.genre, COUNT(*) c "
         "FROM play_history ph JOIN tracks t ON t.id = ph.track_id "
-        "WHERE ph.played_at IS NOT NULL AND t.genre IS NOT NULL "
+        f"WHERE ph.played_at IS NOT NULL AND t.genre IS NOT NULL AND {_who(user_id, 'ph.user_id')[0]} "
         "GROUP BY wd, hr, t.genre"
-    ))).all()
+    ), params)).all()
     for wd, hr, genre, c in grows:
         if wd is None or hr is None:
             continue
@@ -98,29 +110,57 @@ def _holiday_season(now: datetime | None = None) -> bool:
 
 async def _ensure_dismissed_table(db: AsyncSession) -> None:
     # Ad-hoc like track_projection: upgrade.sh doesn't run alembic.
+    # gem_dismissed is the pre-multi-user list (the owner's); new dismissals are per user.
     await db.execute(text(
         "CREATE TABLE IF NOT EXISTS gem_dismissed (track_id TEXT PRIMARY KEY, dismissed_at TEXT)"
     ))
+    await db.execute(text(
+        "CREATE TABLE IF NOT EXISTS gem_dismissed_user (user_id TEXT NOT NULL, track_id TEXT NOT NULL, "
+        "dismissed_at TEXT, PRIMARY KEY (user_id, track_id))"
+    ))
 
 
-async def dismiss_gem(db: AsyncSession, track_id: str) -> dict:
+async def _dismissed_ids(db: AsyncSession, user_id: str | None) -> set[str]:
+    from backend.services.user_scope import is_owner
+    ids: set[str] = set()
+    if user_id is None or await is_owner(db, user_id):
+        ids |= {r[0] for r in (await db.execute(text("SELECT track_id FROM gem_dismissed"))).all()}
+    if user_id is not None:
+        ids |= {r[0] for r in (await db.execute(text(
+            "SELECT track_id FROM gem_dismissed_user WHERE user_id = :uid"
+        ), {"uid": user_id})).all()}
+    return ids
+
+
+async def dismiss_gem(db: AsyncSession, track_id: str, user_id: str | None = None) -> dict:
     await _ensure_dismissed_table(db)
-    await db.execute(
-        text("INSERT OR REPLACE INTO gem_dismissed (track_id, dismissed_at) VALUES (:tid, :at)"),
-        {"tid": track_id, "at": datetime.now(timezone.utc).isoformat()},
-    )
+    at = datetime.now(timezone.utc).isoformat()
+    if user_id is None:
+        await db.execute(
+            text("INSERT OR REPLACE INTO gem_dismissed (track_id, dismissed_at) VALUES (:tid, :at)"),
+            {"tid": track_id, "at": at},
+        )
+    else:
+        await db.execute(
+            text("INSERT OR REPLACE INTO gem_dismissed_user (user_id, track_id, dismissed_at) "
+                 "VALUES (:uid, :tid, :at)"),
+            {"uid": user_id, "tid": track_id, "at": at},
+        )
     await db.commit()
     return {"ok": True}
 
 
-async def neglected_gems(db: AsyncSession, limit: int = 40) -> dict:
+async def neglected_gems(db: AsyncSession, limit: int = 40, user_id: str | None = None) -> dict:
     """Owned-but-never-played tracks, ranked by how close they sound to your taste
     centroid — the stuff you'd probably love but forgot you have.
 
     Copies of one recording collapse to the best-quality file, and a recording
     you've already played in another copy doesn't count as neglected. Holiday
-    songs are held back outside Nov–Dec, and dismissed tracks never return."""
-    tp = (await db.execute(select(TasteProfile).limit(1))).scalar_one_or_none()
+    songs are held back outside Nov–Dec, and dismissed tracks never return.
+    "Played" and the centroid are the given user's."""
+    tp = await db.get(TasteProfile, user_id) if user_id else None
+    if tp is None and user_id is None:
+        tp = (await db.execute(select(TasteProfile).limit(1))).scalar_one_or_none()
     centroid = None
     if tp and tp.clap_centroid:
         centroid = np.frombuffer(tp.clap_centroid, dtype=np.float32)
@@ -128,21 +168,23 @@ async def neglected_gems(db: AsyncSession, limit: int = 40) -> dict:
         centroid = centroid / n if n else None
 
     await _ensure_dismissed_table(db)
-    rows = (await db.execute(text(
+    dismissed = await _dismissed_ids(db, user_id)
+    rows = [r for r in (await db.execute(text(
         "SELECT t.id, t.title, ar.name, t.format, t.bitrate, t.album_id, e.embedding, "
         "       t.genre, al.title "
         "FROM tracks t JOIN track_embeddings e ON e.track_id = t.id "
         "LEFT JOIN artists ar ON ar.id = t.artist_id "
         "LEFT JOIN albums al ON al.id = t.album_id "
-        "WHERE COALESCE(t.play_count, 0) = 0 "
-        "AND t.id NOT IN (SELECT track_id FROM gem_dismissed)"
-    ))).all()
+        "LEFT JOIN user_track_stats s ON s.track_id = t.id AND s.user_id = :uid "
+        "WHERE COALESCE(s.play_count, 0) = 0"
+    ), {"uid": user_id})).all() if r[0] not in dismissed]
 
     played_keys = {
         _recording_key(r[0], r[1]) for r in (await db.execute(text(
             "SELECT t.title, ar.name FROM tracks t LEFT JOIN artists ar ON ar.id = t.artist_id "
-            "WHERE COALESCE(t.play_count, 0) > 0"
-        ))).all()
+            "JOIN user_track_stats s ON s.track_id = t.id AND s.user_id = :uid "
+            "WHERE COALESCE(s.play_count, 0) > 0"
+        ), {"uid": user_id})).all()
     }
 
     in_season = _holiday_season()
@@ -196,17 +238,19 @@ async def neglected_gems(db: AsyncSession, limit: int = 40) -> dict:
     }
 
 
-async def audio_features(db: AsyncSession) -> dict:
+async def audio_features(db: AsyncSession, user_id: str | None = None) -> dict:
     """Per-track Essentia features (parallel arrays) — powers the Camelot wheel
-    (key/scale/bpm) and the Tempo×Punch grid (bpm/loudness)."""
+    (key/scale/bpm) and the Tempo×Punch grid (bpm/loudness). play_count/skip_count are
+    the given user's."""
     rows = (await db.execute(text(
         "SELECT t.id, t.title, ar.name, t.album_id, a.key, a.scale, a.bpm, "
-        "       a.loudness, a.danceability, a.energy, t.genre, COALESCE(t.play_count, 0), "
-        "       COALESCE(t.skip_count, 0) "
+        "       a.loudness, a.danceability, a.energy, t.genre, COALESCE(s.play_count, 0), "
+        "       COALESCE(s.skip_count, 0) "
         "FROM tracks t JOIN track_analysis a ON a.track_id = t.id "
         "LEFT JOIN artists ar ON ar.id = t.artist_id "
+        "LEFT JOIN user_track_stats s ON s.track_id = t.id AND s.user_id = :uid "
         "WHERE a.bpm IS NOT NULL AND a.key IS NOT NULL"
-    ))).all()
+    ), {"uid": user_id})).all()
     cols = list(zip(*rows)) if rows else [[]] * 13
     return {
         "count": len(rows),
@@ -218,18 +262,19 @@ async def audio_features(db: AsyncSession) -> dict:
     }
 
 
-async def streak_calendar(db: AsyncSession, days: int = 371) -> dict:
+async def streak_calendar(db: AsyncSession, days: int = 371, user_id: str | None = None) -> dict:
     """Daily play counts for a GitHub-style contribution heatmap (server-local dates)."""
+    who, params = _who(user_id)
     rows = (await db.execute(text(
         "SELECT date(played_at, 'localtime') d, COUNT(*) c "
-        "FROM play_history WHERE played_at IS NOT NULL "
+        f"FROM play_history WHERE played_at IS NOT NULL AND {who} "
         "AND played_at >= datetime('now', :since) GROUP BY d"
-    ), {"since": f"-{days} days"})).all()
+    ), {"since": f"-{days} days", **params})).all()
     by_day = {r[0]: r[1] for r in rows if r[0]}
     mx = max(by_day.values()) if by_day else 0
     # First play ever recorded, so the calendar can skip the weeks before
     # play tracking began instead of drawing them as empty.
     first_day = (await db.execute(text(
-        "SELECT date(MIN(played_at), 'localtime') FROM play_history WHERE played_at IS NOT NULL"
-    ))).scalar()
+        f"SELECT date(MIN(played_at), 'localtime') FROM play_history WHERE played_at IS NOT NULL AND {who}"
+    ), params)).scalar()
     return {"days": by_day, "max": mx, "total": sum(by_day.values()), "first_day": first_day}

@@ -20,8 +20,13 @@ async def forward_scrobble(artist: str, track: str, album: str = ""):
     await scrobble_track(artist, track, int(time.time()), session_key, album)
 
 
-async def sync_loved_tracks(session_key: str, username: str = "", on_progress=None) -> dict:
-    """Sync Zonik favorites → Last.fm loved tracks (incremental)."""
+async def sync_loved_tracks(session_key: str, username: str = "", on_progress=None,
+                            user_id: str | None = None) -> dict:
+    """Sync Zonik favorites → Last.fm loved tracks (incremental).
+
+    Whose favorites: `user_id`, else the owner's — the server has one Last.fm account,
+    connected by the owner, so other users' stars don't end up loved on it.
+    """
     from backend.database import async_session
     from backend.models.favorite import Favorite
     from backend.models.track import Track
@@ -38,11 +43,14 @@ async def sync_loved_tracks(session_key: str, username: str = "", on_progress=No
         except Exception as e:
             log.warning(f"Could not fetch Last.fm loved tracks: {e}")
 
+    from backend.services.user_data import owner_id
+
     async with async_session() as db:
+        uid = user_id or await owner_id(db)
         result = await db.execute(
             select(Favorite).options(
                 selectinload(Favorite.track).selectinload(Track.artist)
-            ).where(Favorite.track_id.isnot(None))
+            ).where(Favorite.track_id.isnot(None), Favorite.user_id == uid)
         )
         favorites = result.scalars().all()
 

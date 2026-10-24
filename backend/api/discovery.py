@@ -23,6 +23,7 @@ from backend.models.favorite import Favorite
 from backend.models.recommendation import Recommendation
 from backend.services import lastfm
 from backend.services.soulseek import normalize_text
+from backend.services.user_data import caller_id
 
 router = APIRouter()
 
@@ -420,23 +421,26 @@ _TAILORED_SOURCES = ("similar_track", "similar_artist", "tag")
 
 @router.get("/weekly-radar")
 async def weekly_radar(
+    request: Request,
     mode: str = Query("tailored", pattern="^(tailored|general)$"),
     db: AsyncSession = Depends(get_db),
 ):
     """Return missing-tracks-to-grab for the Weekly Radar tab.
 
-    Tailored: taste-driven pending recommendations from the recommender pipeline.
+    Tailored: the caller's taste-driven pending recommendations from the recommender pipeline.
     General: broader discovery — new-releases + Last.fm chart.getTopTracks
     filtered to tracks not yet in library.
     """
     fetched_at = datetime.now(timezone.utc).isoformat()
 
     if mode == "tailored":
+        user_id = await caller_id(request, db)
         result = await db.execute(
             select(Recommendation)
             .where(
                 Recommendation.status == "pending",
                 Recommendation.source.in_(_TAILORED_SOURCES),
+                (Recommendation.user_id == user_id) | Recommendation.user_id.is_(None),
             )
             .order_by(Recommendation.score.desc(), Recommendation.created_at.desc())
             .limit(50)
@@ -567,15 +571,16 @@ async def top_tracks(
 
 @router.get("/similar-tracks")
 async def similar_tracks(
+    request: Request,
     limit: int = Query(20, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get tracks similar to starred tracks via Last.fm."""
+    """Get tracks similar to the caller's starred tracks via Last.fm."""
     # Get starred tracks
     result = await db.execute(
         select(Favorite)
         .options(selectinload(Favorite.track).selectinload(Track.artist))
-        .where(Favorite.track_id.isnot(None))
+        .where(Favorite.track_id.isnot(None), Favorite.user_id == await caller_id(request, db))
         .limit(20)
     )
     favorites = result.scalars().all()
@@ -614,15 +619,16 @@ async def similar_tracks(
 
 @router.get("/similar-artists")
 async def similar_artists(
+    request: Request,
     limit: int = Query(20, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get artists similar to starred artists/tracks."""
+    """Get artists similar to the caller's starred tracks."""
     # Get unique artists from favorites
     result = await db.execute(
         select(Favorite)
         .options(selectinload(Favorite.track).selectinload(Track.artist))
-        .where(Favorite.track_id.isnot(None))
+        .where(Favorite.track_id.isnot(None), Favorite.user_id == await caller_id(request, db))
     )
     favorites = result.scalars().all()
 
@@ -757,28 +763,34 @@ async def find_remixes(
 
 @router.get("/remix-suggestions")
 async def remix_suggestions(
+    request: Request,
     source: str = Query("popular", pattern="^(popular|favorites|random)$"),
     tracks_to_scan: int = Query(20, le=50),
     limit: int = Query(50, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    """Find remixes across multiple library tracks for bulk discovery."""
+    """Find remixes across multiple library tracks for bulk discovery. "favorites" and
+    "popular" are the caller's stars and most-played tracks."""
     import asyncio
+    from backend.models.user_track_stats import UserTrackStats
     from backend.services.remix_discovery import find_remixes as _find_remixes
 
+    user_id = await caller_id(request, db)
     # Pick source tracks
     if source == "favorites":
         result = await db.execute(
             select(Track).options(selectinload(Track.artist))
             .join(Favorite, Favorite.track_id == Track.id)
+            .where(Favorite.user_id == user_id)
             .order_by(sqfunc.random())
             .limit(tracks_to_scan)
         )
     elif source == "popular":
         result = await db.execute(
             select(Track).options(selectinload(Track.artist))
-            .where(Track.play_count > 0)
-            .order_by(Track.play_count.desc())
+            .join(UserTrackStats, UserTrackStats.track_id == Track.id)
+            .where(UserTrackStats.user_id == user_id, UserTrackStats.play_count > 0)
+            .order_by(UserTrackStats.play_count.desc())
             .limit(tracks_to_scan)
         )
     else:  # random
@@ -992,13 +1004,13 @@ async def discover_playlists(req: PlaylistDiscoverRequest, db: AsyncSession = De
 
 
 @router.post("/playlists/ai-rank")
-async def ai_rank_playlists(playlists: list[dict], db: AsyncSession = Depends(get_db)):
-    """AI-rank discovered playlists by taste compatibility."""
+async def ai_rank_playlists(playlists: list[dict], request: Request, db: AsyncSession = Depends(get_db)):
+    """AI-rank discovered playlists by compatibility with the caller's taste."""
     from backend.services.ai.playlist_curator import rank_playlists
     from backend.services.recommender import build_taste_profile
 
-    profile = await build_taste_profile(db)
-    summary = f"Top genres: {', '.join(g['name'] for g in profile.get('genres', [])[:5])}. " \
+    profile = await build_taste_profile(db, await caller_id(request, db))
+    summary = f"Top genres: {', '.join(list(profile.get('genre_distribution', {}))[:5])}. " \
               f"Top artists: {', '.join(a['name'] for a in profile.get('top_artists', [])[:5])}."
 
     ranked = await rank_playlists(playlists, summary)

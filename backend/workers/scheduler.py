@@ -223,8 +223,9 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
                     "status": "running", "progress": current, "total": total,
                     "description": description or "Music Discovery AI",
                 })
-            result = await refresh_recommendations(db, on_progress=on_progress)
-            job.result = json.dumps(result)
+            job.result = json.dumps(await _run_recommendation_refresh(
+                db, refresh_recommendations, on_progress, task_config,
+            ))
 
         elif task_name == "upgrade_scan":
             await _run_upgrade_scan(db, job, count=count or 50, config=task_config)
@@ -340,6 +341,11 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     from sqlalchemy import select
     from backend.models.recommendation import Recommendation
 
+    from backend.services.user_scope import usernames
+
+    # Every user's pending recommendations compete for the same slots (downloads are
+    # global: one copy in the library serves everyone). Two users' recs for the same
+    # track take one slot and share its outcome.
     result = await db.execute(
         select(Recommendation)
         .where(Recommendation.status == "pending", Recommendation.score >= min_score)
@@ -347,15 +353,26 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     )
     # Tracks whose search failed recently stay pending and must not eat download slots.
     backoff_keys = await keys_in_backoff(db)
-    recs = [
+    candidates = [
         r for r in result.scalars().all()
         if attempt_key(r.artist, r.track) not in backoff_keys
-    ][:max_downloads]
+    ]
+    picked: set[str] = set()
+    for r in candidates:
+        if len(picked) >= max_downloads:
+            break
+        picked.add(attempt_key(r.artist, r.track))
+    recs = [r for r in candidates if attempt_key(r.artist, r.track) in picked]
     if not recs:
         log.info(f"No recommendations above {min_score} to auto-download")
         return
 
-    missing = [{"artist": r.artist, "track": r.track, "rec_id": r.id} for r in recs]
+    # Tag each download with the user whose recommendation asked for it (the
+    # highest-scoring one when several did): the job stays global.
+    names = await usernames(db)
+    missing = [{"artist": r.artist, "track": r.track, "rec_id": r.id,
+                **({"origin": f"recommendations:{names[r.user_id]}"} if names.get(r.user_id) else {})}
+               for r in recs]
     log.info(f"Auto-downloading {len(missing)} recommendations (score >= {min_score})")
 
     outcomes = await _auto_download_missing(missing, "recommendation_refresh", batch_id=batch_id)
@@ -381,6 +398,84 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     await db.commit()
     log.info(f"Auto-download recommendations: {n_ok} downloaded, {n_failed} failed, "
              f"{len(recs) - n_ok - n_failed} left pending")
+
+
+# Per-user recommendation refresh (multi-user P2). A user gets their own taste profile
+# and recommendations once they have REC_MIN_PLAYS plays, and only while they still
+# listen (a play in the last REC_IDLE_DAYS); both overridable in the task config as
+# "min_plays" / "idle_days" (0 = no idle check). The owner is always refreshed, so a
+# single-user server behaves exactly as before.
+REC_MIN_PLAYS = 20
+REC_IDLE_DAYS = 30
+
+
+async def _recommendation_user_ids(db: AsyncSession, config: dict | None = None) -> list[str | None]:
+    from backend.models.play_history import PlayHistory
+    from backend.services.user_data import active_user_ids, owner_id
+
+    cfg = config or {}
+    try:
+        min_plays = max(1, int(cfg.get("min_plays", REC_MIN_PLAYS)))
+        idle_days = max(0, int(cfg.get("idle_days", REC_IDLE_DAYS)))
+    except (TypeError, ValueError):
+        min_plays, idle_days = REC_MIN_PLAYS, REC_IDLE_DAYS
+    ids = await active_user_ids(db, min_plays=min_plays)
+    if ids and idle_days:
+        cutoff = datetime.utcnow() - timedelta(days=idle_days)
+        recent = set((await db.execute(
+            select(PlayHistory.user_id)
+            .where(PlayHistory.played_at >= cutoff, PlayHistory.user_id.in_(ids))
+            .distinct()
+        )).scalars().all())
+        ids = [u for u in ids if u in recent]
+    owner = await owner_id(db)
+    if owner is None:
+        return ids or [None]  # no accounts at all: the single, unowned profile
+    return [owner] + sorted(u for u in ids if u != owner)
+
+
+async def _run_recommendation_refresh(db: AsyncSession, refresh, on_progress, config: dict | None = None) -> dict:
+    """refresh_recommendations for every eligible user, one after another. The job
+    result keeps the single-user totals at the top level and adds `users`
+    ({username: that user's result}) and `skipped_users`."""
+    from backend.models.user import User
+    from backend.services.user_scope import usernames
+
+    user_ids = await _recommendation_user_ids(db, config)
+    names = await usernames(db)
+    all_enabled = (await db.execute(select(User.id).where(User.disabled.is_(False)))).scalars().all()
+    skipped = sorted(names.get(u, u) for u in all_enabled if u not in user_ids)
+
+    per_user: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    for n, uid in enumerate(user_ids):
+        label = names.get(uid, uid or "default")
+
+        async def user_progress(current, total, description="", _label=label):
+            prefix = f"{_label}: " if len(user_ids) > 1 else ""
+            await on_progress(current, total, prefix + (description or ""))
+        try:
+            per_user[label] = await refresh(db, on_progress=user_progress, user_id=uid)
+        except Exception as e:
+            log.error(f"Recommendation refresh for {label} failed: {e}")
+            await db.rollback()
+            errors[label] = str(e)
+    if errors and not per_user:
+        raise Exception("; ".join(f"{k}: {v}" for k, v in errors.items()))
+
+    results = list(per_user.values())
+    out = {
+        "candidates_sourced": sum(r.get("candidates_sourced", 0) for r in results),
+        "recommendations_saved": sum(r.get("recommendations_saved", 0) for r in results),
+        "top_score": max((r.get("top_score", 0) for r in results), default=0),
+        "clap_validated": sum(r.get("clap_validated", 0) for r in results),
+        "clap_previews_scored": sum(r.get("clap_previews_scored", 0) for r in results),
+        "users": per_user,
+        "skipped_users": skipped,
+    }
+    if errors:
+        out["errors"] = errors
+    return out
 
 
 async def _download_backend_ready() -> bool:
@@ -536,6 +631,8 @@ async def _auto_download_missing(missing: list[dict], source: str, batch_id: str
                 if not go:
                     return None
             sub_kw = {"batch": run_batch} if run_batch else {}
+            if t.get("origin"):
+                sub_kw["origin"] = t["origin"]
             sub = await submit_tracked(artist, track, source=dl_source, target_track_id=target_track_id,
                                        job_id=job_id, wait=False, **sub_kw)
         if sub["skipped"]:
@@ -707,9 +804,11 @@ async def _run_lastfm_top_tracks(db: AsyncSession, job: Job, count: int = 50):
 
 
 async def _load_stored_taste_profile(db: AsyncSession) -> dict | None:
+    """The owner's stored profile: the chart task feeds the shared library."""
     from backend.models.taste_profile import TasteProfile
+    from backend.services.user_data import owner_id
     try:
-        tp = await db.get(TasteProfile, "default")
+        tp = await db.get(TasteProfile, await owner_id(db) or "default")
         return json.loads(tp.profile_data) if tp and tp.profile_data else None
     except (ValueError, TypeError):
         return None
@@ -781,11 +880,23 @@ async def _run_discover_similar(db: AsyncSession, job: Job, count: int = 10):
     })
 
 
+async def _owned_auto_playlist(db: AsyncSession, name: str) -> Playlist | None:
+    """The scheduler's own playlist called `name`: the owner's (or an unowned leftover),
+    never another user's playlist that happens to share the name."""
+    from sqlalchemy import or_
+    from backend.services.user_data import owner_id
+    owner = await owner_id(db)
+    cond = Playlist.user_id.is_(None) if owner is None else or_(Playlist.user_id == owner, Playlist.user_id.is_(None))
+    return (await db.execute(
+        select(Playlist).where(Playlist.name == name, cond).order_by(Playlist.user_id.is_(None))
+    )).scalars().first()
+
+
 async def _run_auto_playlist(db: AsyncSession, name: str, source: str, count: int = 50):
     """Create/replace an auto-generated playlist."""
     # Delete existing playlist with same name
     from sqlalchemy import delete
-    existing = (await db.execute(select(Playlist).where(Playlist.name == name))).scalar_one_or_none()
+    existing = await _owned_auto_playlist(db, name)
     if existing:
         await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
         await db.execute(delete(Playlist).where(Playlist.id == existing.id))
@@ -811,7 +922,9 @@ async def _run_auto_playlist(db: AsyncSession, name: str, source: str, count: in
     if not track_ids:
         return
 
-    playlist = Playlist(id=str(uuid.uuid4()), name=name, is_public=True)
+    # Owned by the owner, shared read-only with everyone (multi-user P2).
+    from backend.services.user_data import owner_id
+    playlist = Playlist(id=str(uuid.uuid4()), name=name, is_public=True, user_id=await owner_id(db))
     db.add(playlist)
     await db.flush()
     for i, tid in enumerate(track_ids):
@@ -820,25 +933,31 @@ async def _run_auto_playlist(db: AsyncSession, name: str, source: str, count: in
 
 
 async def _run_favorites_playlist(db: AsyncSession):
-    """Create/replace Favorites playlist from all starred tracks."""
+    """Create/replace the owner's Favorites playlist from their starred tracks (each
+    user's own stars are their Starred list; this scheduled copy is the owner's)."""
     from sqlalchemy import delete
-    existing = (await db.execute(select(Playlist).where(Playlist.name == "Favorites"))).scalar_one_or_none()
+    from backend.services.user_data import owner_id
+    owner = await owner_id(db)
+    existing = await _owned_auto_playlist(db, "Favorites")
     if existing:
         await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
         await db.execute(delete(Playlist).where(Playlist.id == existing.id))
         await db.commit()
 
     # Join with Track to exclude stale favorite references to deleted tracks
-    favorites = (await db.execute(
+    fav_query = (
         select(Favorite.track_id)
         .join(Track, Track.id == Favorite.track_id)
         .where(Favorite.track_id.isnot(None))
-    )).scalars().all()
+    )
+    if owner:
+        fav_query = fav_query.where(Favorite.user_id == owner)
+    favorites = (await db.execute(fav_query)).scalars().all()
 
     if not favorites:
         return
 
-    playlist = Playlist(id=str(uuid.uuid4()), name="Favorites", is_public=True)
+    playlist = Playlist(id=str(uuid.uuid4()), name="Favorites", is_public=True, user_id=owner)
     db.add(playlist)
     await db.flush()
     for i, tid in enumerate(favorites):
@@ -847,18 +966,21 @@ async def _run_favorites_playlist(db: AsyncSession):
 
 
 async def _run_unfavorites_playlist(db: AsyncSession):
-    """Create/replace Unfavorites playlist from all tracks NOT starred."""
+    """Create/replace the owner's Unfavorites playlist: every track they have NOT starred."""
     from sqlalchemy import delete
+    from backend.services.user_data import owner_id
+    owner = await owner_id(db)
 
-    existing = (await db.execute(select(Playlist).where(Playlist.name == "Unfavorites"))).scalar_one_or_none()
+    existing = await _owned_auto_playlist(db, "Unfavorites")
     if existing:
         await db.execute(delete(PlaylistTrack).where(PlaylistTrack.playlist_id == existing.id))
         await db.execute(delete(Playlist).where(Playlist.id == existing.id))
         await db.commit()
 
-    fav_ids = (await db.execute(
-        select(Favorite.track_id).where(Favorite.track_id.isnot(None))
-    )).scalars().all()
+    fav_query = select(Favorite.track_id).where(Favorite.track_id.isnot(None))
+    if owner:
+        fav_query = fav_query.where(Favorite.user_id == owner)
+    fav_ids = (await db.execute(fav_query)).scalars().all()
 
     query = select(Track.id).order_by(Track.title)
     if fav_ids:
@@ -868,7 +990,7 @@ async def _run_unfavorites_playlist(db: AsyncSession):
     if not unfav_tracks:
         return
 
-    playlist = Playlist(id=str(uuid.uuid4()), name="Unfavorites", is_public=True)
+    playlist = Playlist(id=str(uuid.uuid4()), name="Unfavorites", is_public=True, user_id=owner)
     db.add(playlist)
     await db.flush()
     for i, tid in enumerate(unfav_tracks):

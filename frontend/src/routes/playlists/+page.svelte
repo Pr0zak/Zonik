@@ -5,6 +5,7 @@
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, formatRelativeTime, inputClass, coverUrl } from '$lib/utils.js';
 	import { ListMusic, Wand2, Plus, Clock, Play, Music, ArrowLeft, Trash2, ChevronDown, ChevronUp, Sparkles, Import, Search, Download, Check, Loader2, ExternalLink } from 'lucide-svelte';
+	import { currentUser } from '$lib/auth.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import ScheduleControl from '../../components/ui/ScheduleControl.svelte';
@@ -203,6 +204,29 @@
 	function playTrack(track) {
 		const queue = (playlistDetail || []).map(t => ({ id: t.id, title: t.title, artist: t.artist }));
 		storePlayTrack({ id: track.id, title: track.title, artist: track.artist }, queue);
+	}
+
+	function sharedBy(pl) {
+		const o = pl?.owner;
+		if (!o || (pl.can_edit !== false && o.id === $currentUser?.id)) return null;
+		if ($currentUser && o.id === $currentUser.id) return null;
+		return o.display_name || o.username || null;
+	}
+	let canEditDetail = $derived((playlistDetail?.can_edit ?? selectedPlaylist?.can_edit) !== false);
+	let isOwnDetail = $derived(!!playlistDetail?.owner && playlistDetail.owner.id === $currentUser?.id);
+	let togglingPublic = $state(false);
+
+	async function togglePublic() {
+		if (!playlistDetail || togglingPublic) return;
+		const next = !playlistDetail.is_public;
+		togglingPublic = true;
+		try {
+			await api.updatePlaylist(selectedPlaylist.id, { is_public: next });
+			playlistDetail = { ...playlistDetail, is_public: next };
+			playlists = playlists.map(p => p.id === selectedPlaylist.id ? { ...p, is_public: next } : p);
+			addToast(next ? 'Playlist is now public' : 'Playlist is now private', 'success');
+		} catch { addToast('Failed to update playlist', 'error'); }
+		finally { togglingPublic = false; }
 	}
 
 	async function deletePlaylist(id) {
@@ -505,11 +529,22 @@
 				{#if playlistDetail?.comment}
 					<p class="text-xs text-[var(--text-muted)]">{playlistDetail.comment}</p>
 				{/if}
+				{#if sharedBy(playlistDetail || selectedPlaylist)}
+					<p class="text-xs text-[var(--text-muted)]">Shared by {sharedBy(playlistDetail || selectedPlaylist)}</p>
+				{/if}
 			</div>
 			<span class="text-sm text-[var(--text-muted)] font-mono">{selectedPlaylist.track_count} tracks</span>
-			<Button variant="ghost" size="sm" loading={deleting} onclick={() => deletePlaylist(selectedPlaylist.id)}>
-				<Trash2 class="w-4 h-4 text-red-400" />
-			</Button>
+			{#if isOwnDetail && playlistDetail && 'is_public' in playlistDetail}
+				<Button variant="secondary" size="sm" loading={togglingPublic} onclick={togglePublic}
+					title={playlistDetail.is_public ? 'Visible to all users. Click to make private.' : 'Only you can see this. Click to make public.'}>
+					{playlistDetail.is_public ? 'Public' : 'Private'}
+				</Button>
+			{/if}
+			{#if canEditDetail}
+				<Button variant="ghost" size="sm" loading={deleting} onclick={() => deletePlaylist(selectedPlaylist.id)}>
+					<Trash2 class="w-4 h-4 text-red-400" />
+				</Button>
+			{/if}
 		</div>
 
 		{#if detailLoading}
@@ -585,6 +620,11 @@
 							<div class="flex-1 min-w-0">
 								<div class="flex items-center gap-2">
 									<h3 class="font-semibold text-sm text-[var(--text-primary)] truncate group-hover:text-white transition-colors">{playlist.name}</h3>
+									{#if sharedBy(playlist)}
+										<span class="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400 flex-shrink-0 truncate max-w-[50%]">Shared by {sharedBy(playlist)}</span>
+									{:else if playlist.is_public}
+										<span class="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 flex-shrink-0">Public</span>
+									{/if}
 									{#if isSmart}
 										<span class="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 flex-shrink-0">Auto</span>
 									{/if}

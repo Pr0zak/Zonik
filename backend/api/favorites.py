@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,17 +14,12 @@ from backend.models.favorite import Favorite
 from backend.models.track import Track
 from backend.models.artist import Artist
 from backend.models.album import Album
-
-from backend.models.user import User
+from backend.services.user_data import caller_id
 
 router = APIRouter()
 
-
-async def _resolve_user_id(username: str, db: AsyncSession) -> str:
-    """Resolve username to user ID."""
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    return user.id if user else username
+# Favorites always belong to the caller (the owner for anonymous grace-mode requests). The
+# old `user_id` query param is no longer read: nobody can list or change someone else's.
 
 
 class StarRequest(BaseModel):
@@ -35,12 +30,12 @@ class StarRequest(BaseModel):
 
 @router.get("")
 async def list_favorites(
-    user_id: str = "admin",
+    request: Request,
     offset: int = 0,
     limit: int = 25,
     db: AsyncSession = Depends(get_db),
 ):
-    user_id = await _resolve_user_id(user_id, db)
+    user_id = await caller_id(request, db)
     total = (await db.execute(
         select(func.count()).select_from(Favorite).where(Favorite.user_id == user_id)
     )).scalar()
@@ -84,9 +79,9 @@ async def list_favorites(
 
 
 @router.get("/ids")
-async def favorite_ids(user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+async def favorite_ids(request: Request, db: AsyncSession = Depends(get_db)):
     """Return sets of favorited track/album/artist IDs for quick lookup."""
-    user_id = await _resolve_user_id(user_id, db)
+    user_id = await caller_id(request, db)
     result = await db.execute(
         select(Favorite.track_id, Favorite.album_id, Favorite.artist_id)
         .where(Favorite.user_id == user_id)
@@ -100,8 +95,8 @@ async def favorite_ids(user_id: str = "admin", db: AsyncSession = Depends(get_db
 
 
 @router.post("/star")
-async def star(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depends(get_db)):
-    user_id = await _resolve_user_id(user_id, db)
+async def star(req: StarRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await caller_id(request, db)
     # Check for existing favorite to avoid duplicate
     query = select(Favorite).where(Favorite.user_id == user_id)
     if req.track_id:
@@ -128,8 +123,8 @@ async def star(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depe
 
 
 @router.post("/unstar")
-async def unstar(req: StarRequest, user_id: str = "admin", db: AsyncSession = Depends(get_db)):
-    user_id = await _resolve_user_id(user_id, db)
+async def unstar(req: StarRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await caller_id(request, db)
     query = delete(Favorite).where(Favorite.user_id == user_id)
     if req.track_id:
         query = query.where(Favorite.track_id == req.track_id)
@@ -147,12 +142,12 @@ class ImportRequest(BaseModel):
 
 
 @router.post("/import")
-async def import_favorites(req: ImportRequest, user_id: str = "admin", db: AsyncSession = Depends(get_db)):
+async def import_favorites(req: ImportRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Import favorites from external source (e.g. KimaHub).
 
     Matches tracks by file_path (relative) or by title+artist.
     """
-    user_id = await _resolve_user_id(user_id, db)
+    user_id = await caller_id(request, db)
     imported = 0
     skipped = 0
     not_found = 0

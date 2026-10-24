@@ -12,7 +12,7 @@ from pathlib import Path
 
 import httpx
 import tomllib
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -299,18 +299,21 @@ class ShuffleSettings(BaseModel):
     shuffle_artist_gap: int | None = None
 
 
-async def _shuffle_response(db: AsyncSession) -> dict:
-    from sqlalchemy import func, or_
+async def _shuffle_response(db: AsyncSession, user_id: str | None = None) -> dict:
+    """Settings plus library counts. never_played / in_cooldown are the caller's own
+    listening (user_track_stats), matching what their Shuffle Mix sees."""
+    from sqlalchemy import func
     from backend.models.track import Track
+    from backend.models.user_track_stats import UserTrackStats as uts
 
     sub = get_settings().subsonic
     out = {k: getattr(sub, k) for k in ShuffleSettings.model_fields}
+    played_ids = select(uts.track_id).where(uts.user_id == user_id, uts.play_count > 0)
     # Library counts shown beside the settings so the numbers mean something.
     out["library"] = {
         "tracks": await db.scalar(select(func.count()).select_from(Track)) or 0,
         "never_played": await db.scalar(
-            select(func.count()).select_from(Track)
-            .where(or_(Track.play_count == 0, Track.play_count.is_(None)))
+            select(func.count()).select_from(Track).where(Track.id.notin_(played_ids))
         ) or 0,
         "new": await db.scalar(
             select(func.count()).select_from(Track)
@@ -320,20 +323,23 @@ async def _shuffle_response(db: AsyncSession) -> dict:
     }
     if sub.shuffle_cooldown_days > 0:
         out["library"]["in_cooldown"] = await db.scalar(
-            select(func.count()).select_from(Track)
-            .where(Track.last_played_at >= func.datetime("now", f"-{sub.shuffle_cooldown_days} days"))
+            select(func.count()).select_from(uts)
+            .join(Track, Track.id == uts.track_id)
+            .where(uts.user_id == user_id,
+                   uts.last_played_at >= func.datetime("now", f"-{sub.shuffle_cooldown_days} days"))
         ) or 0
     return out
 
 
 @router.get("/shuffle")
-async def get_shuffle_settings(db: AsyncSession = Depends(get_db)):
-    """Shuffle Mix settings, plus library counts for context."""
-    return await _shuffle_response(db)
+async def get_shuffle_settings(request: Request, db: AsyncSession = Depends(get_db)):
+    """Shuffle Mix settings, plus library counts for context (listening counts are the caller's)."""
+    from backend.services.user_data import caller_id
+    return await _shuffle_response(db, await caller_id(request, db))
 
 
 @router.put("/shuffle")
-async def update_shuffle_settings(req: ShuffleSettings, db: AsyncSession = Depends(get_db)):
+async def update_shuffle_settings(req: ShuffleSettings, request: Request, db: AsyncSession = Depends(get_db)):
     """Change some or all Shuffle Mix settings. Out-of-range numbers are clamped."""
     raw = _read_raw_config()
     settings = get_settings()
@@ -351,7 +357,8 @@ async def update_shuffle_settings(req: ShuffleSettings, db: AsyncSession = Depen
         if section not in raw:
             raw[section] = getattr(settings, section).model_dump()
     _write_config(raw)
-    return await _shuffle_response(db)
+    from backend.services.user_data import caller_id
+    return await _shuffle_response(db, await caller_id(request, db))
 
 
 @router.post("/test/{service}")

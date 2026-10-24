@@ -28,18 +28,25 @@ async def ping(request: Request):
 # Everything a client's full library sync downloads, as cheap column lists. Play and skip
 # counts are left out on purpose, and so is tracks.updated_at, which a scrobble bumps: they
 # change on every song, and folding them in would make the library look "changed" the whole
-# time a client is playing, which defeats the check.
+# time a client is playing, which defeats the check. Ratings, stars and playlists are the
+# caller's own (:uid), so one user's changes don't trigger another user's resync.
 _LIBRARY_VERSION_QUERIES = (
     "SELECT id, title, artist_id, album_id, track_number, disc_number, duration_seconds,"
-    " file_size, format, bitrate, genre, year, cover_art_path, rating"
+    " file_size, format, bitrate, genre, year, cover_art_path"
     " FROM tracks ORDER BY id",
+    "SELECT track_id, rating FROM user_track_stats"
+    " WHERE user_id = :uid AND rating IS NOT NULL ORDER BY track_id",
     "SELECT id, title, artist_id, year, genre, cover_art_path, track_count, is_compilation"
     " FROM albums ORDER BY id",
     "SELECT id, name, sort_name, image_url FROM artists ORDER BY id",
     "SELECT track_id, bpm FROM track_analysis ORDER BY track_id",
-    "SELECT id, track_id, album_id, artist_id FROM favorites ORDER BY id",
-    "SELECT id, name, comment, is_public, updated_at FROM playlists ORDER BY id",
-    "SELECT playlist_id, track_id, position FROM playlist_tracks ORDER BY playlist_id, position",
+    "SELECT id, track_id, album_id, artist_id FROM favorites WHERE user_id = :uid ORDER BY id",
+    "SELECT id, name, comment, is_public, updated_at, user_id FROM playlists"
+    " WHERE user_id = :uid OR is_public = 1 OR user_id IS NULL ORDER BY id",
+    "SELECT pt.playlist_id, pt.track_id, pt.position FROM playlist_tracks pt"
+    " JOIN playlists p ON p.id = pt.playlist_id"
+    " WHERE p.user_id = :uid OR p.is_public = 1 OR p.user_id IS NULL"
+    " ORDER BY pt.playlist_id, pt.position",
 )
 
 
@@ -49,13 +56,16 @@ async def get_library_version(request: Request, db: AsyncSession = Depends(get_d
     """Zonik extension: a fingerprint of the library a client syncs.
 
     It changes whenever anything a full sync would fetch changes (tracks, albums, artists,
-    tempo, stars, playlists), so a client can compare it with the one from its last sync and
-    skip the sync when they match. Hashing the ~30k narrow rows takes about a tenth of a
-    second, against the ~20 s and dozens of requests a full sync costs.
+    tempo, the caller's ratings and stars, the playlists they see), so a client can compare
+    it with the one from its last sync and skip the sync when they match. Hashing the ~30k
+    narrow rows takes about a tenth of a second, against the ~20 s and dozens of requests a
+    full sync costs.
     """
+    from backend.services.user_data import caller_id
+    params = {"uid": await caller_id(request, db) or ""}
     digest = hashlib.sha1()
     for query in _LIBRARY_VERSION_QUERIES:
-        result = await db.execute(text(query))
+        result = await db.execute(text(query), params)
         for row in result:
             digest.update(repr(tuple(row)).encode())
         digest.update(b"|")

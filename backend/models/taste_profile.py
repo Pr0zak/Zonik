@@ -11,7 +11,7 @@ from backend.database import Base
 class TasteProfile(Base):
     __tablename__ = "taste_profiles"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)  # "default"
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # the user id (was "default" before multi-user)
     profile_data: Mapped[str] = mapped_column(Text, nullable=False)  # JSON
     clap_centroid: Mapped[bytes | None] = mapped_column(LargeBinary)
     track_count: Mapped[int] = mapped_column(Integer, default=0)

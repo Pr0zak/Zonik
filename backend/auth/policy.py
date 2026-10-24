@@ -20,7 +20,6 @@ _GET = frozenset({"GET", "HEAD"})
 _POST = frozenset({"POST"})
 _PUT = frozenset({"PUT"})
 _DELETE = frozenset({"DELETE"})
-_GET_PUT = frozenset({"GET", "HEAD", "PUT"})
 
 _ID = r"[^/]+"
 
@@ -45,7 +44,9 @@ _RAW_RULES: list[tuple[frozenset | None, str, str]] = [
     (_ANY, r"/api/map/soundscape/recompute", "library.manage"),
     # Config: user-safe reads first, everything else (third-party API keys, restart,
     # upgrade, backups, Soulseek settings) is admin.
-    (_GET_PUT, r"/api/config/shuffle", "own.write"),
+    # Shuffle Mix tuning is server-wide (the GET's never_played/in_cooldown are per caller).
+    (_GET, r"/api/config/shuffle", "library.read"),
+    (_PUT, r"/api/config/shuffle", "settings.manage"),
     (_GET, r"/api/config/(version|updates)", "library.read"),
     (_ANY, r"/api/config(/.*)?", "settings.manage"),
     # Track edits/deletes and bulk tag/analysis jobs.
@@ -56,8 +57,10 @@ _RAW_RULES: list[tuple[frozenset | None, str, str]] = [
 
     # --- user-allowed writes ----------------------------------------------------------
     (_ANY, r"/api/favorites(/.*)?", "own.write"),
-    (_ANY, r"/api/playlists(/.*)?", "own.write"),  # ownership arrives in P2
-    (_POST, r"/api/recommendations/refresh", "own.write"),
+    (_ANY, r"/api/playlists(/.*)?", "own.write"),  # owner-only edits enforced in the playlist routes
+    (_POST, rf"/api/recommendations/(refresh|feedback|{_ID}/explain)", "own.write"),
+    (_POST, r"/api/recommendations/bulk-download", "downloads.use"),
+    (_POST, rf"/api/live/skips/{_ID}/reset", "own.write"),
     (_ANY, r"/api/assistant(/.*)?", "play"),
     (_ANY, r"/api/search(/.*)?", "library.read"),  # AI search, NL detect, catalog
     (_POST, r"/api/discovery/(artwork/batch|playlists|playlists/ai-rank)", "library.read"),

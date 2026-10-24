@@ -3,6 +3,7 @@
 	import { Radio, Heart, Music, Globe, Plug, Disc3, History, SkipForward, RotateCcw } from 'lucide-svelte';
 	import { addToast, playTrack as storePlayTrack } from '$lib/stores.js';
 	import { formatDuration, formatRelativeTime, coverUrl } from '$lib/utils.js';
+	import { currentUser, isAdmin } from '$lib/auth.js';
 	import PageHeader from '../../components/ui/PageHeader.svelte';
 	import Card from '../../components/ui/Card.svelte';
 	import Badge from '../../components/ui/Badge.svelte';
@@ -21,6 +22,11 @@
 	let loadingNow = $state(true);
 	let loadingHistory = $state(true);
 	let loadingClients = $state(true);
+
+	let showUser = $derived(
+		isAdmin($currentUser) ||
+		new Set([...nowPlaying, ...history].map(x => x.username).filter(Boolean)).size > 1
+	);
 
 	let timer = null;
 	let tick = 0;
@@ -292,7 +298,7 @@
 										{np.artist || 'Unknown artist'}{#if np.album} &middot; {np.album}{/if}
 									</p>
 									<p class="text-xs text-[var(--text-disabled)] mt-0.5 truncate">
-										{np.username}{#if np.client} &middot; {np.client}{/if} &middot; started {formatRelativeTime(np.started_at)}
+										{#if showUser && np.username}{np.username} &middot; {/if}{#if np.client}{np.client} &middot; {/if}started {formatRelativeTime(np.started_at)}
 									</p>
 								</div>
 								<button onclick={() => toggleStar(np)}
@@ -346,7 +352,7 @@
 									{h.artist || 'Unknown'}{#if h.album} &middot; {h.album}{/if}
 								</p>
 								<p class="text-xs text-[var(--text-disabled)] truncate">
-									{#if clientLabel(h.source)}{clientLabel(h.source)} &middot; {/if}{formatRelativeTime(h.played_at)}
+									{#if showUser && h.username}{h.username} &middot; {/if}{#if clientLabel(h.source)}{clientLabel(h.source)} &middot; {/if}{formatRelativeTime(h.played_at)}
 								</p>
 							</div>
 							{#if h.duration}
