@@ -424,6 +424,22 @@ async def test_device_token_bearer_and_apikey(env, monkeypatch):
         assert row.token_hash != token and row.last_seen_at is not None
 
 
+async def test_issue_device_token_for_signed_in_caller(env):
+    """POST /api/auth/devices: the phone trades its Subsonic login for a token (and mints
+    one for the watch) without a password; anonymous callers get none, even in grace mode."""
+    await add_user()
+    async with client() as c:
+        assert (await c.post("/api/auth/devices", json={"label": "Watch"})).status_code == 401
+        r = await c.post("/api/auth/devices", params=subsonic_params(),
+                         json={"label": "Pixel Watch", "platform": "wear"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["token"].startswith("zk_") and body["device"]["platform"] == "wear"
+        assert body["user"]["username"] == "admin"
+        me = (await c.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"})).json()
+        assert me["auth_method"] == "device"
+
+
 async def test_devices_list_and_revoke(env):
     await add_user()
     async with client() as a, client() as b:

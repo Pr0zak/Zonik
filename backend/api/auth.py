@@ -48,6 +48,11 @@ class DeviceLoginRequest(BaseModel):
     platform: str | None = None
 
 
+class DeviceTokenRequest(BaseModel):
+    label: str | None = None
+    platform: str | None = None
+
+
 class JoinRequest(BaseModel):
     code: str
     username: str
@@ -288,6 +293,20 @@ async def list_devices(request: Request, db: AsyncSession = Depends(get_db)):
     user = _caller(request)
     return await list_user_items(db, user.id, current_session_id=request.state.session_id,
                                  current_device_id=request.state.device_token_id)
+
+
+@router.post("/devices")
+async def issue_device_token(body: DeviceTokenRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """A new device token for the signed-in caller, no password needed. The phone app uses
+    it to move its own legacy API-key login onto a token, and to hand the paired watch a
+    token of its own instead of the phone's credentials."""
+    user = _caller(request)
+    token, row = await create_device_token(db, user, label=body.label, platform=body.platform)
+    return {
+        "token": token,
+        "device": {"id": row.id, "label": row.label, "platform": row.platform},
+        "user": me_payload(user, request.state.auth_method),
+    }
 
 
 @router.delete("/devices/{item_id}")
