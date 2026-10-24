@@ -110,11 +110,37 @@ export function stopCasting() {
 	return position;
 }
 
+// The Chromecast fetches stream and cover URLs itself, without this browser's session
+// cookie, so they carry a device token. One token per browser ("Cast (web)" on the Account
+// page), kept in localStorage and re-minted if it was revoked.
+const CAST_TOKEN_KEY = 'zonik_cast_token';
+
+async function castToken() {
+	let token = null;
+	try { token = localStorage.getItem(CAST_TOKEN_KEY); } catch {}
+	if (token) {
+		const ok = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+			.then((r) => r.ok).catch(() => false);
+		if (ok) return token;
+	}
+	const res = await fetch('/api/auth/devices', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ label: 'Cast (web)', platform: 'other' }),
+	});
+	if (!res.ok) return null;
+	token = (await res.json()).token;
+	try { localStorage.setItem(CAST_TOKEN_KEY, token); } catch {}
+	return token;
+}
+
 export async function castLoadMedia(track, seekTo = 0) {
 	if (!castSession) return;
 	const origin = window.location.origin;
-	const streamUrl = `${origin}/rest/stream?id=${track.id}&v=1.16.1&c=zonik-web`;
-	const coverUrl = `${origin}/rest/getCoverArt?id=${track.id}&size=300`;
+	const token = await castToken();
+	const auth = token ? `&apiKey=${encodeURIComponent(token)}` : '';
+	const streamUrl = `${origin}/rest/stream?id=${track.id}&v=1.16.1&c=zonik-web${auth}`;
+	const coverUrl = `${origin}/rest/getCoverArt?id=${track.id}&size=300${auth}`;
 
 	const mediaInfo = new chrome.cast.media.MediaInfo(streamUrl, 'audio/mpeg');
 	mediaInfo.metadata = new chrome.cast.media.MusicTrackMediaMetadata();

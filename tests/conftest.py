@@ -14,6 +14,8 @@ _toml.write_text(
     f'[soulseek]\nstaging_dir = "{_tmp / "staging"}"\ndownload_dir = "{_tmp / "downloads"}"\n'
     # Never multicast/bind from the suite's many app instances; tests opt in explicitly.
     '[discovery]\nenabled = false\n'
+    # Most tests call the API anonymously; auth tests flip enforce on where they need it.
+    '[auth]\nenforce = false\n'
 )
 _config.CONFIG_PATHS[:] = [_toml]
 

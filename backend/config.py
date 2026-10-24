@@ -26,9 +26,10 @@ class ServerConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    # Grace mode while false: requests without credentials still run, as the owner (the first
-    # admin), and are logged. Set true once every client (web, phone, TV, watch, Zata) logs in.
-    enforce: bool = False
+    # true: every /api and /rest request needs credentials (session cookie, device token or
+    # Subsonic login). false is grace mode, for migrating old clients: requests without
+    # credentials run as the owner (the first admin) and are logged. Enforced since 0.49.0.
+    enforce: bool = True
     # Web sessions slide: each use (at most every 5 min) pushes the expiry this far out.
     session_days: int = 90
     # Login lockout per (client IP, username): this many failures within lockout_minutes.

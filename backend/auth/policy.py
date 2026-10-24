@@ -26,6 +26,7 @@ _ID = r"[^/]+"
 _RAW_RULES: list[tuple[frozenset | None, str, str]] = [
     # --- public: never authenticated --------------------------------------------------
     (_GET, r"/api/health", PUBLIC),
+    (_GET, r"/api/config/version", PUBLIC),  # version + commit only; uptime monitors poll it
     (_ANY, r"/api/auth/(status|login|setup|device|logout)", PUBLIC),
     (_GET, rf"/api/auth/invite/{_ID}", PUBLIC),  # invite link lookup + join (P3)
     (_POST, r"/api/auth/join", PUBLIC),
@@ -52,7 +53,7 @@ _RAW_RULES: list[tuple[frozenset | None, str, str]] = [
     # Shuffle Mix tuning is server-wide (the GET's never_played/in_cooldown are per caller).
     (_GET, r"/api/config/shuffle", "library.read"),
     (_PUT, r"/api/config/shuffle", "settings.manage"),
-    (_GET, r"/api/config/(version|updates)", "library.read"),
+    (_GET, r"/api/config/updates", "library.read"),
     (_ANY, r"/api/config(/.*)?", "settings.manage"),
     # Track edits/deletes and bulk tag/analysis jobs.
     (_ANY, rf"/api/tracks/(bulk-delete|bulk-analyze|ai-tag(/apply)?|ai-moods|repair-tags)", "library.manage"),

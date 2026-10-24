@@ -117,7 +117,7 @@ def test_every_api_route_is_behind_the_gate():
     ("POST", "/api/recommendations/abc/explain", "own.write"),
     ("POST", "/api/recommendations/bulk-download", "downloads.use"),
     ("POST", "/api/live/skips/abc/reset", "own.write"),
-    ("GET", "/api/config/version", "library.read"),
+    ("GET", "/api/config/version", "public"),
     ("GET", "/api/config/updates", "library.read"),
     ("POST", "/api/config/restart", "settings.manage"),
     ("GET", "/api/tidy/status", "library.manage"),
@@ -561,7 +561,22 @@ async def test_websocket_auth(env, monkeypatch):
         pass
 
 
+def test_enforce_is_the_default():
+    """Fresh installs require credentials; grace mode is an explicit opt-out."""
+    from backend.config import AuthConfig
+    assert AuthConfig().enforce is True
+
+
+async def test_version_is_public_when_enforced(env, monkeypatch):
+    await add_user()
+    enforce(monkeypatch)
+    async with client() as c:
+        assert (await c.get("/api/config/version")).status_code == 200
+        assert (await c.get("/api/config/updates")).status_code == 401
+
+
 # Mark the async tests only (a module-wide pytestmark warns on the sync policy tests).
 for _name, _fn in list(globals().items()):
     if _name.startswith("test_") and inspect.iscoroutinefunction(_fn):
         globals()[_name] = pytest.mark.asyncio(_fn)
+

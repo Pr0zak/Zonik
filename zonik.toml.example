@@ -4,10 +4,10 @@ port = 3000
 secret_key = "change-me-to-a-random-string"
 
 [auth]
-# false = grace mode: requests without credentials still work (as the owner, the first
-# admin) and are logged as "auth grace: unauthenticated ...". Flip to true once the web UI,
-# phone, TV, watch and any other caller (e.g. Zata) send credentials.
-enforce = false
+# true (default): every request needs credentials. false = grace mode for migrating old
+# clients: requests without credentials still work (as the owner, the first admin) and are
+# logged as "auth grace: unauthenticated ...".
+enforce = true
 session_days = 90        # web login cookie lifetime, sliding
 login_max_failures = 5   # failed logins per (IP, username) before a lockout
 lockout_minutes = 5
