@@ -23,6 +23,7 @@ describe('paths', () => {
 		expect(isAdminPath('/settings')).toBe(true);
 		expect(isAdminPath('/logs/x')).toBe(true);
 		expect(isAdminPath('/library')).toBe(false);
+		expect(isAdminPath('/analysis')).toBe(true);
 		expect(isAdminPath('/settingsfoo')).toBe(false);
 	});
 	it('public paths', () => {
@@ -33,6 +34,7 @@ describe('paths', () => {
 	it('nav visibility', () => {
 		expect(navVisible(user, '/downloads')).toBe(true);
 		expect(navVisible(user, '/logs')).toBe(false);
+		expect(navVisible(user, '/analysis')).toBe(false);
 		expect(navVisible(admin, '/logs')).toBe(true);
 	});
 });

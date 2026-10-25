@@ -13,10 +13,10 @@ export const authReady = writable(false);
 export const PUBLIC_PATHS = ['/login', '/join'];
 
 /** Pages only admins may open. */
-export const ADMIN_PATHS = ['/duplicates', '/upgrades', '/tidy', '/schedule', '/visualizer', '/logs', '/settings'];
+export const ADMIN_PATHS = ['/analysis', '/duplicates', '/upgrades', '/tidy', '/schedule', '/visualizer', '/logs', '/settings'];
 
 /** Sidebar entries a plain `user` sees; admins see every entry. */
-export const USER_NAV = ['/', '/library', '/favorites', '/stats', '/discover', '/map', '/analysis', '/live', '/downloads', '/playlists'];
+export const USER_NAV = ['/', '/library', '/favorites', '/stats', '/discover', '/map', '/live', '/downloads', '/playlists'];
 
 const ADMIN_ONLY_PERMS = ['downloads.admin', 'library.manage', 'settings.manage', 'users.manage', 'logs.read'];
 

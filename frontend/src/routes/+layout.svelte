@@ -144,7 +144,7 @@
 		if (key === '4') { goto('/downloads'); return; }
 		if (key === '5') { goto('/playlists'); return; }
 		if (key === '6') { goto('/favorites'); return; }
-		if (key === '7') { goto('/analysis'); return; }
+		if (key === '7' && isAdmin($currentUser)) { goto('/analysis'); return; }
 		if (key === '8') { goto('/stats'); return; }
 		if (key === '9') { goto('/schedule'); return; }
 		if (key === '0') { goto('/logs'); return; }
