@@ -997,14 +997,18 @@
 	let drawerSheet = $derived(jobStatusFilter !== 'live');
 	let drawerColumn = $derived(!!selectedJobId && !drawerSheet);
 
-	const drawerActions = {
+	// Declared before drawerActions reads it: reading a $derived above its `let` throws on load.
+	// Blacklist editing, bulk clear/retry and row deletion are admin-only on the server too.
+	let isDlAdmin = $derived(can($currentUser, 'downloads.admin'));
+
+	let drawerActions = $derived({
 		cancel: (job) => cancelJob(job.id),
 		retry: async (job) => { await retryJob(job.id); selectedJobId = null; },
 		stopTrying: isDlAdmin ? (job) => askStop(job) : undefined,
 		remove: isDlAdmin ? (job) => askRemove(job) : undefined,
 		// Same "Artist - Track" query as the row button, so the search's blacklist check applies.
 		searchByHand: (q, job) => { selectedJobId = null; if (job) searchByHandFor(job); else searchByHand(q); },
-	};
+	});
 
 	// Escape on a confirm opened from the drawer closes only the confirm: the drawer's
 	// window handler runs first and sees the modal still open.
@@ -1337,9 +1341,6 @@
 		const activeCount = liveJobs.filter(j => j.status === 'running' || j.status === 'pending').length;
 		loadJobsTimer = setTimeout(() => loadJobs(false), activeCount > 20 ? 10000 : activeCount > 5 ? 5000 : 2000);
 	}
-
-	// Blacklist editing, bulk clear/retry and row deletion are admin-only on the server too.
-	let isDlAdmin = $derived(can($currentUser, 'downloads.admin'));
 
 	onMount(() => {
 		if (isDlAdmin) loadBlacklist();
