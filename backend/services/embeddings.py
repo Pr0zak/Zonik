@@ -202,6 +202,12 @@ def generate_embedding(file_path: str) -> bytes | None:
 
         # Load audio (CLAP expects 48kHz)
         audio, sr = librosa.load(str(abs_path), sr=48000, duration=30)
+        if audio.size == 0:
+            # libsndfile refused the file and ffmpeg decoded no frames: the audio
+            # stream is damaged even though the header reports a duration. Say so
+            # instead of letting the resampler divide by zero.
+            log.warning(f"No decodable audio in {file_path} (damaged file?) — skipping embedding")
+            return None
         return _embed_audio(audio)
 
     except ImportError:

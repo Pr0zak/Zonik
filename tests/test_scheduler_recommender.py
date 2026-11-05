@@ -191,3 +191,25 @@ def test_primary_artist_ends_at_semicolon_too():
     assert key_artist("BB Cooper; Jake Daniels") == "bbcooper"
     assert key_artist("BB Cooper, Jake Daniels") == "bbcooper"
     assert key_artist("AC/DC") == "acdc"
+
+
+def test_library_match_sees_every_credited_artist():
+    """A file tagged "Miss Monique & Glowal" (or "... and Glowal") owns a Last.fm
+    recommendation for "Miss Monique, Glowal", and vice versa. Without this one
+    track was re-downloaded nightly for a week."""
+    from backend.services.library_match import _index_keys, _find
+    assert _index_keys("Miss Monique & Glowal") == ["missmoniqueglowal", "missmonique", "glowal"] or \
+        set(_index_keys("Miss Monique & Glowal")) == {"missmoniqueglowal", "missmonique", "glowal"}
+    assert _index_keys("Miss Monique and Glowal")[0] == "missmoniqueandglowal"
+    assert _index_keys("AC/DC")[0] == "acdc"
+    index = {}
+    for na in _index_keys("Miss Monique and Glowal"):
+        index.setdefault((na, "lostonadancefloor"), "t1")
+    assert _find(index, "Miss Monique, Glowal", "lostonadancefloor") == "t1"
+    assert _find(index, "Glowal", "lostonadancefloor") == "t1"
+    assert _find(index, "Miss Monique", "otherthing") is None
+    # The primary-artist key still wins over a component collision.
+    index2 = {("florence", "dogdays"): "wrong"}
+    for na in _index_keys("Florence and the Machine"):
+        index2.setdefault((na, "dogdays"), "right")
+    assert _find(index2, "Florence and the Machine", "dogdays") == "right"

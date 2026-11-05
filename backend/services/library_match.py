@@ -82,6 +82,24 @@ def key_title(s: str, strict: bool = False) -> str:
     return (norm_title_strict(s) if strict else norm_title(s)) or (s or "").casefold().strip()
 
 
+def _index_keys(artist: str) -> list[str]:
+    """Artist keys a library track is indexed under: the primary artist first, then
+    every other credited name. Files tag collaborations as "Miss Monique & Glowal" or
+    "Miss Monique and Glowal" while Last.fm says "Miss Monique, Glowal"; keyed only by
+    the primary-artist rule that was one track the library never owned, so the
+    recommendation downloaded it again every night."""
+    keys = [key_artist(artist)]
+    for name in artist_names(artist):
+        if name not in keys:
+            keys.append(name)
+    return keys
+
+
+def _lookup_keys(artist: str) -> list[str]:
+    """Keys tried for a query artist, most specific first."""
+    return _index_keys(artist)
+
+
 async def _library_index(db: AsyncSession, strict_title: bool = False) -> dict[tuple[str, str], str]:
     global _index, _index_strict, _index_built_at, _index_count
     count = (await db.execute(select(func.count(Track.id)))).scalar_one()
@@ -96,9 +114,10 @@ async def _library_index(db: AsyncSession, strict_title: bool = False) -> dict[t
     strict: dict[tuple[str, str], str] = {}
     for track_id, title, artist in rows.all():
         if title and artist:
-            na = key_artist(artist)
-            index.setdefault((na, key_title(title)), track_id)
-            strict.setdefault((na, key_title(title, strict=True)), track_id)
+            nt, nts = key_title(title), key_title(title, strict=True)
+            for na in _index_keys(artist):
+                index.setdefault((na, nt), track_id)
+                strict.setdefault((na, nts), track_id)
     _index, _index_strict = index, strict
     _index_built_at, _index_count = time.monotonic(), count
     return strict if strict_title else index
@@ -110,10 +129,16 @@ async def match_library(db: AsyncSession, artist: str, title: str, strict_title:
     if not artist or not title:
         return None
     index = await _library_index(db, strict_title)
-    na, ntt = key_artist(artist), key_title(title, strict=strict_title)
-    if not na or not ntt:
+    return _find(index, artist, key_title(title, strict=strict_title))
+
+
+def _find(index: dict[tuple[str, str], str], artist: str, ntt: str) -> str | None:
+    if not ntt:
         return None
-    return index.get((na, ntt))
+    for na in _lookup_keys(artist):
+        if na and (na, ntt) in index:
+            return index[(na, ntt)]
+    return None
 
 
 async def batch_library_match(
@@ -130,7 +155,6 @@ async def batch_library_match(
     for t in items:
         name = t.get(name_key) or ""
         artist = t.get(artist_key) or ""
-        na, ntt = key_artist(artist), key_title(name, strict=strict_title)
-        matched = index.get((na, ntt)) if na and ntt else None
+        matched = _find(index, artist, key_title(name, strict=strict_title))
         t["in_library"] = matched is not None
         t["track_id"] = matched
