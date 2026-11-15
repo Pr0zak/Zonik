@@ -94,6 +94,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -362,6 +363,14 @@ class TvViewModel @Inject constructor(
     private val _trackBpm = MutableStateFlow(0f)
     val trackBpm: StateFlow<Float> = _trackBpm.asStateFlow()
 
+    /**
+     * The current track's beat grid and what the visualizer takes from its analysis, or null
+     * while it loads or when the server has none. Fetched after the tempo, so the clock works
+     * from the tempo alone until it arrives.
+     */
+    private val _trackBeats = MutableStateFlow<TrackBeats?>(null)
+    val trackBeats: StateFlow<TrackBeats?> = _trackBeats.asStateFlow()
+
     private var visualizer: android.media.audiofx.Visualizer? = null
     private var analyzer: PulseAnalyzer? = null
 
@@ -380,6 +389,23 @@ class TvViewModel @Inject constructor(
                     com.zonik.app.data.DebugLog.w("TvVM", "No tempo for $id: ${e.message}")
                     0f
                 }
+            }
+        }
+        viewModelScope.launch {
+            // collectLatest: a track skipped while its grid is still being worked out stops
+            // asking for it.
+            currentTrack.collectLatest { track ->
+                _trackBeats.value = null
+                val id = track?.id ?: return@collectLatest
+                val r = kotlinx.coroutines.withContext(Dispatchers.IO) { libraryRepository.getTrackBeats(id) }
+                    ?: return@collectLatest
+                _trackBeats.value = TrackBeats.from(id, r)
+                com.zonik.app.data.DebugLog.d(
+                    "TvVM",
+                    "Beat grid for $id: ${r.status}, %.2f BPM, confidence %s, drops ${r.drops}".format(
+                        r.bpm ?: 0f, r.confidence?.toString() ?: "-"
+                    )
+                )
             }
         }
     }
@@ -850,10 +876,15 @@ private fun TvAmbientOverlay(
         if (rotateSec <= 0) return@LaunchedEffect
         while (true) {
             delay(rotateSec * 1000L)
-            advanceDeck()
+            // The Journey moves between its own worlds and stays for the whole track.
+            if (deck.getOrNull(deckIndex) != DemoEffect.JOURNEY) advanceDeck()
         }
     }
     val effect = deck.getOrElse(deckIndex) { enabled.first() }
+    // The Journey flies through the worlds that are switched on, or all of them if none are.
+    val journeyWorlds = remember(enabled) {
+        enabled.filter { it.world }.ifEmpty { JOURNEY_WORLDS }
+    }
 
     // Cover and title: always, never, or shown on each track change and remote press, then
     // faded so the effect gets the whole screen.
@@ -873,7 +904,21 @@ private fun TvAmbientOverlay(
 
     // The beat grid, from the server's stored tempo. The visualizer aligns its phase to the
     // onsets it hears and uses it to swell into each beat rather than trailing it.
-    val beatClock = remember(track.id, bpm) { BeatClock(bpm) }
+    val beats by viewModel.trackBeats.collectAsState()
+    val trackBeats = beats?.takeIf { it.trackId == track.id }
+    val beatClock = remember(track.id, bpm, trackBeats?.grid) { BeatClock(bpm, trackBeats?.grid) }
+    // With a grid, the clock follows the player itself: once a second, which also catches
+    // seeks and pauses.
+    LaunchedEffect(beatClock) {
+        if (beatClock.grid == null) return@LaunchedEffect
+        while (true) {
+            beatClock.syncPosition(viewModel.getCurrentPosition(), System.currentTimeMillis())
+            delay(1000L)
+        }
+    }
+    val journeyLook = remember(track.id, trackBeats) {
+        JourneyLook.of(track.id, trackBeats?.key, trackBeats?.scale, trackBeats?.energy)
+    }
     val art = rememberAmbientArt(track.coverArt)
 
     // No background on this Box: the GL surface sits behind the window and shows through a
@@ -890,6 +935,8 @@ private fun TvAmbientOverlay(
             colors = colors,
             title = "${track.title}  ·  ${track.artist}",
             trails = trails,
+            journeyWorlds = journeyWorlds,
+            journeyLook = journeyLook,
             modifier = Modifier.fillMaxSize()
         )
         // Keeps the type legible without burying the effect: darkness where the words are.

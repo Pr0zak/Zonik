@@ -93,6 +93,10 @@ interface ZonikApi {
     @GET("api/analysis/track/{trackId}")
     suspend fun getTrackAnalysis(@retrofit2.http.Path("trackId") trackId: String): TrackAnalysisResponse
 
+    /** The track's beat grid for the TV visualizer; `pending` while the server works it out. */
+    @GET("api/analysis/track/{trackId}/beats")
+    suspend fun getTrackBeats(@retrofit2.http.Path("trackId") trackId: String): TrackBeatsResponse
+
     // --- TV visualizer: settings shared with the web UI, and per-effect stats ---
 
     /** With [wait] and [since], a long poll: the server answers when the config changes. */
@@ -200,6 +204,20 @@ data class TrackAnalysisResponse(
     val energy: Float? = null,
     val danceability: Float? = null,
     val loudness: Float? = null,
+)
+
+/** `status` is ready, pending, none or failed; the grid fields are set only when ready. */
+@Serializable
+data class TrackBeatsResponse(
+    val status: String = "failed",
+    val bpm: Float? = null,
+    @SerialName("downbeat_s") val downbeatS: Float? = null,
+    @SerialName("beats_per_bar") val beatsPerBar: Int? = null,
+    val confidence: Float? = null,
+    val drops: List<Int> = emptyList(),
+    val key: String? = null,
+    val scale: String? = null,
+    val energy: Float? = null,
 )
 
 @Serializable

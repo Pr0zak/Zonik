@@ -42,6 +42,10 @@ fun DemoVisualizer(
     title: String = "",
     /** Motion trails on every effect. */
     trails: Boolean = false,
+    /** The worlds the Journey effect flies through. */
+    journeyWorlds: List<DemoEffect> = JOURNEY_WORLDS,
+    /** This track's colours, density, speed and world order for the Journey worlds. */
+    journeyLook: JourneyLook = JourneyLook(),
 ) {
     // One renderer for the life of the screen: changing [effect] fades between effects on the
     // same surface instead of tearing the GL context down.
@@ -52,6 +56,8 @@ fun DemoVisualizer(
     LaunchedEffect(renderer, colors) { renderer.colorMode = colors }
     LaunchedEffect(renderer, title) { renderer.setTitle(title) }
     LaunchedEffect(renderer, trails) { renderer.trails = trails }
+    LaunchedEffect(renderer, journeyWorlds) { renderer.journeyWorlds = journeyWorlds }
+    LaunchedEffect(renderer, journeyLook) { renderer.journeyLook = journeyLook }
 
     LaunchedEffect(renderer, pulse, beatClock) {
         var lastOnset = 0f

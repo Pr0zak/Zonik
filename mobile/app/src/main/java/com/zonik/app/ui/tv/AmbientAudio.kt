@@ -232,40 +232,107 @@ class PulseAnalyzer(private val sampleRate: Int) {
 }
 
 /**
+ * Where the bars fall in the current track, from the server's beat grid
+ * (`/api/analysis/track/{id}/beats`): a steady tempo, the first downbeat, and the bars where
+ * the music drops. Downbeat and drops are the server's estimates.
+ */
+data class BeatGrid(
+    val bpm: Float,
+    /** The first bar's first beat, in milliseconds of playback position. */
+    val downbeatMs: Float,
+    val beatsPerBar: Int,
+    /** Bar numbers, counted from the first downbeat, where the energy jumps up. */
+    val drops: List<Int>,
+)
+
+/**
  * A beat clock driven by the server's stored tempo.
  *
- * The server has a BPM for almost every track but no downbeat position, so the grid knows how
- * far apart the beats are and not where they start. Phase comes from the audio: an onset nudges
- * the clock into alignment. Once locked, the grid does the one thing listening cannot — it knows
- * when the NEXT beat lands, so motion can start early and peak exactly on it instead of always
- * beginning after the moment it is meant to mark.
+ * Without a [grid] the server knows how far apart the beats are but not where they start, so
+ * phase comes from the audio: an onset nudges the clock into alignment. Once locked, the grid
+ * does the one thing listening cannot — it knows when the NEXT beat lands, so motion can start
+ * early and peak exactly on it instead of always beginning after the moment it is meant to mark.
+ *
+ * With a [grid], the clock is set from the playback position instead ([syncPosition], about
+ * once a second, which also follows seeks and pauses): beat 0 is the track's first downbeat, so
+ * bars and phrases line up with the music and a drop can be seen coming. Onsets then only make
+ * a small correction (at most [MAX_FINE_MS]) for output latency, and log how far off the grid
+ * they land, which is the only way to check the sync from the device.
  */
-class BeatClock(bpm: Float) {
-    private val periodMs: Float = if (bpm > 20f) 60_000f / bpm else 0f
-    // Written on the main thread when an onset lands, read every frame on the GL thread.
-    @Volatile private var phaseOriginMs: Long = 0L
+class BeatClock(bpm: Float, val grid: BeatGrid? = null) {
+    private val periodMs: Float = when {
+        grid != null && grid.bpm > 20f -> 60_000f / grid.bpm
+        bpm > 20f -> 60_000f / bpm
+        else -> 0f
+    }
+    // Written on the main thread, read every frame on the GL thread. Wall-clock ms of beat 0:
+    // with a synced grid, the track's first downbeat.
+    @Volatile private var phaseOriginMs: Double = 0.0
 
     val hasTempo: Boolean get() = periodMs > 0f
+    val beatsPerBar: Int get() = grid?.beatsPerBar ?: 4
+
+    /** True once a grid has been lined up with the playback position. */
+    @Volatile var synced: Boolean = false
+        private set
 
     // Onsets in a row that landed well off the grid. A few of those means the grid itself is
     // wrong (a new song section, or the first lock was on an off-beat) and it should re-snap.
     private var offGrid = 0
     private var locked = false
 
+    // With a grid: the base origin from the position, and the onsets' small correction to it.
+    private var baseOriginMs = 0.0
+    private var fineMs = 0.0
+    private var residualSum = 0.0
+    private var residualCount = 0
+
     /** Snap the grid so a beat lands on this moment. */
     fun alignTo(nowMs: Long) {
-        phaseOriginMs = nowMs
+        phaseOriginMs = nowMs.toDouble()
         locked = true
         offGrid = 0
+    }
+
+    /** Lines the grid up with the player: [positionMs] is what is being heard at [nowMs]. */
+    fun syncPosition(positionMs: Long, nowMs: Long) {
+        val g = grid ?: return
+        if (!hasTempo) return
+        baseOriginMs = nowMs.toDouble() - positionMs + g.downbeatMs
+        phaseOriginMs = baseOriginMs + fineMs
+        synced = true
+        locked = true
     }
 
     /**
      * Feed a detected onset. Snapping to every onset made the grid jump onto each snare and
      * syncopated kick; instead an onset near a predicted beat pulls the grid part of the way
-     * toward it, and only a run of onsets that all miss the grid re-snaps it.
+     * toward it, and only a run of onsets that all miss the grid re-snaps it. With a synced
+     * grid the pull is small and bounded, and nothing re-snaps.
      */
     fun onOnset(nowMs: Long) {
         if (!hasTempo) return
+        if (synced) {
+            val p = progressAt(nowMs)
+            val error = if (p < 0.5f) p else p - 1f
+            if (kotlin.math.abs(error) < LOCK_WINDOW) {
+                residualSum += kotlin.math.abs(error * periodMs)
+                residualCount++
+                fineMs = (fineMs + error * periodMs * FINE_PULL).coerceIn(-MAX_FINE_MS, MAX_FINE_MS)
+                phaseOriginMs = baseOriginMs + fineMs
+                if (residualCount >= RESIDUAL_LOG_EVERY) {
+                    com.zonik.app.data.DebugLog.d(
+                        "BeatClock",
+                        "grid residual %.0f ms over %d onsets, correction %.0f ms".format(
+                            residualSum / residualCount, residualCount, fineMs
+                        )
+                    )
+                    residualSum = 0.0
+                    residualCount = 0
+                }
+            }
+            return
+        }
         if (!locked) {
             alignTo(nowMs)
             return
@@ -274,26 +341,58 @@ class BeatClock(bpm: Float) {
         // Signed distance to the nearest beat, as a fraction of a period: + means late.
         val error = if (p < 0.5f) p else p - 1f
         if (kotlin.math.abs(error) < LOCK_WINDOW) {
-            phaseOriginMs += (error * periodMs * PULL).toLong()
+            phaseOriginMs += error * periodMs * PULL
             offGrid = 0
         } else if (++offGrid >= RESNAP_AFTER) {
             alignTo(nowMs)
         }
     }
 
+    /** Beats since beat 0 (with a synced grid, the first downbeat); negative before it. */
+    fun beatAt(nowMs: Long): Double =
+        if (!hasTempo) 0.0 else (nowMs - phaseOriginMs) / periodMs
+
     /**
      * 0 at the instant of a beat, rising towards 1 just before the next one.
      */
     fun progressAt(nowMs: Long): Float {
         if (!hasTempo) return 0f
-        val since = (nowMs - phaseOriginMs).toFloat()
-        val p = (since % periodMs) / periodMs
-        return if (p < 0f) p + 1f else p
+        val b = beatAt(nowMs)
+        return (b - kotlin.math.floor(b)).toFloat()
     }
 
     /** Milliseconds until the next beat, for anticipation. */
     fun msToNextBeat(nowMs: Long): Float =
         if (!hasTempo) Float.MAX_VALUE else periodMs * (1f - progressAt(nowMs))
+
+    /** Length of one beat in milliseconds (0 without a tempo). */
+    val beatMs: Float get() = periodMs
+
+    /**
+     * Milliseconds until the next beat whose number is a multiple of [beats], at least [minMs]
+     * away: with a synced grid and [beats] a multiple of the bar, the start of a phrase.
+     */
+    fun msToNextMultiple(nowMs: Long, beats: Int, minMs: Float = 0f): Float {
+        if (!hasTempo || beats <= 0) return Float.MAX_VALUE
+        val from = beatAt(nowMs) + minMs / periodMs
+        val target = kotlin.math.ceil(from / beats) * beats
+        return ((target - beatAt(nowMs)) * periodMs).toFloat()
+    }
+
+    /**
+     * Milliseconds until the first drop between [minMs] and [maxMs] from now, or null: only
+     * with a synced grid.
+     */
+    fun msToDrop(nowMs: Long, minMs: Float, maxMs: Float): Float? {
+        val g = grid ?: return null
+        if (!synced || !hasTempo) return null
+        val now = beatAt(nowMs)
+        for (bar in g.drops) {
+            val ms = ((bar * g.beatsPerBar - now) * periodMs).toFloat()
+            if (ms in minMs..maxMs) return ms
+        }
+        return null
+    }
 
     /**
      * Motion that PEAKS on the beat rather than starting there: swells over the last
@@ -312,5 +411,9 @@ class BeatClock(bpm: Float) {
         /** How far toward an on-grid onset the grid moves. */
         const val PULL = 0.35f
         const val RESNAP_AFTER = 4
+        /** With a synced grid: how far toward an onset, and never more than this in all. */
+        const val FINE_PULL = 0.1f
+        const val MAX_FINE_MS = 60.0
+        const val RESIDUAL_LOG_EVERY = 64
     }
 }

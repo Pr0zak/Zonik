@@ -116,6 +116,25 @@ class LibraryRepository @Inject constructor(
         null
     }
 
+    /**
+     * The track's beat grid for the TV visualizer. The server works a grid out the first time
+     * it is asked (a few seconds) and answers `pending` meanwhile, so this asks again a few
+     * times. Null when the server has none, or is too old to know the endpoint.
+     */
+    suspend fun getTrackBeats(trackId: String): com.zonik.app.data.api.TrackBeatsResponse? {
+        repeat(BEATS_ATTEMPTS) { attempt ->
+            val r = try {
+                zonikApi.getTrackBeats(trackId)
+            } catch (e: Exception) {
+                com.zonik.app.data.DebugLog.d("LibraryRepo", "getTrackBeats failed: ${e.message}")
+                return null
+            }
+            if (r.status != "pending") return r
+            if (attempt < BEATS_ATTEMPTS - 1) kotlinx.coroutines.delay(BEATS_RETRY_MS)
+        }
+        return null
+    }
+
     /** Owned-but-never-played tracks ranked by closeness to your taste centroid
      *  (server-computed). Resolved to local Tracks, ranking order preserved. */
     suspend fun getNeglectedGems(count: Int = 100): List<Track> = try {
@@ -558,3 +577,7 @@ class LibraryRepository @Inject constructor(
         syncAllTracks()
     }
 }
+
+/** A new track's grid takes the server a few seconds: ask up to 8 times, 3 s apart. */
+private const val BEATS_ATTEMPTS = 8
+private const val BEATS_RETRY_MS = 3_000L
