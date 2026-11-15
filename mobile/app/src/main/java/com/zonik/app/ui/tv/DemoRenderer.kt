@@ -408,7 +408,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             val camZ = phase * 3.0 * Math.PI
             motion.update(beatClock, now, dt, camZ, cruiseUnits, path)
             camera.update(dt, camZ, path)
-            landmarks.update((next ?: current) == DemoEffect.SKY, travel, camZ, cruiseUnits, beatClock, now, dt, path)
+            landmarks.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
             if (path.version != pathUploaded) uploadPathData()
         }
         advanceJourney()
@@ -608,7 +608,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             // The camera: steady on the CPU. Halls and the open sky have a floor, so they bank
             // gently; the lattices roll right round.
             val rollDrift = 0.08f * sin(time * Math.PI * 2.0).toFloat()
-            val roll = if (e == DemoEffect.PILLARS || e == DemoEffect.SKY) {
+            val roll = if (JourneyWorld.of(e).bankOnly) {
                 0.25f * sin(spin * Math.PI).toFloat() + rollDrift + motion.bank
             } else {
                 (spin * Math.PI).toFloat() + rollDrift + motion.bank
@@ -702,7 +702,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
         // Bass is the throttle; the kick is a shove.
         // The open sky flies faster: there is room, and the structures are far apart.
-        val worldSpeed = if (current.world) lookCurrent.journey.speed * (if (current == DemoEffect.SKY) 1.5f else 1f) else 1f
+        // The open worlds fly faster: there is room, and their landmarks are far apart.
+        val worldSpeed = if (current.world) lookCurrent.journey.speed * JourneyWorld.of(current).speed else 1f
         var speed = (CRUISE + low * 0.55f + kick * 0.9f) * worldSpeed
         if (current.world) {
             // The worlds glide: bass sets the pace, eased, and kicks show as light, not lurches.
@@ -917,11 +918,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private fun setJourneyCamera(e: DemoEffect) {
         val z = phase * 3.0 * Math.PI
         val tau = 2.0 * Math.PI
-        val (cell, cells) = when (e) {
-            DemoEffect.BUBBLEFLIGHT -> 6.0 * Math.PI / 20.0 to 20.0
-            DemoEffect.PILLARS -> 6.0 * Math.PI / 12.0 to 12.0
-            else -> tau / 3.0 to 9.0
-        }
+        val w = JourneyWorld.of(e)
+        val cell = w.cell
+        val cells = w.cells
         fun wrap(x: Double, m: Double) = ((x % m) + m) % m
         uniforms["uCam"]?.let {
             if (it >= 0) GLES20.glUniform4f(

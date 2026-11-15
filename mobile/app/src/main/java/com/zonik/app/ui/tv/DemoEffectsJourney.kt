@@ -14,6 +14,13 @@ package com.zonik.app.ui.tv
  * 3. Pillar hall: square pillars between a glowing grid floor and ceiling.
  * 4. Megastructures: open sky over a glowing grid, with nothing but the landmarks in it: giant
  *    rings, tunnels and hollow spheres to fly through, arches, monoliths and crystals to pass.
+ * 5. Canyon: rough walls in strata lit by the spectrum, a glowing river below, sky above.
+ * 6. Sea stacks: low over water that mirrors a sunset, between columns of rock.
+ * 7. Night city: down a street between towers whose windows flicker with the hi-hats.
+ * 8. Orbital station: through square frames and along girders, over a planet.
+ * 9. Asteroid field: between rough rocks whose cracks glow on the kick.
+ * 10. Branching caves: a winding tunnel that opens into caverns, side tunnels branching off,
+ *    crystal veins glowing with the spectrum.
  *
  * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in every world: in the
  * enclosed ones only small objects inside the tube, now and then at random; in the open sky
@@ -67,6 +74,18 @@ const float JCELLS = 20.0;
 #elif VARIANT == 3
 const float JCELL = 1.5707963;  // 6π / 12
 const float JCELLS = 12.0;
+#elif VARIANT == 6
+const float JCELL = 3.1415927;  // 6π / 6: sea stacks
+const float JCELLS = 6.0;
+#elif VARIANT == 7 || VARIANT == 8
+const float JCELL = 2.3561945;  // 6π / 8: city blocks, station frames
+const float JCELLS = 8.0;
+#elif VARIANT == 9
+const float JCELL = 2.6927937;  // 6π / 7: asteroid cells
+const float JCELLS = 7.0;
+#elif VARIANT == 10
+const float JCELL = 3.7699112;  // 6π / 5: side tunnels in the caves
+const float JCELLS = 5.0;
 #else
 const float JCELL = 2.0943951;  // 2π / 3: the sheets' period, 9 to a wrap
 const float JCELLS = 9.0;
@@ -407,8 +426,8 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 4
-    // A hall, or the sky over its grid, has a floor: bank gently instead of rolling right round.
+#if VARIANT == 3 || VARIANT == 4 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7
+    // A hall, the sky, a canyon, the sea or a city has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
     sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0))) + uMood.w) * p;
@@ -434,16 +453,58 @@ vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, floa
     return col;
 }
 
-#if VARIANT == 4
-// Megastructures: open sky. A dusk gradient, stars, an aurora along the horizon lit by the
-// spectrum and a glowing grid far below, with nothing in the way but the landmarks.
-vec3 jSky(vec3 ro, vec3 rd, float hue) {
+#if VARIANT >= 4
+// ---- The open worlds ----------------------------------------------------------------------
+// Each has a backdrop (jBack), a scene to fly through (jEnv: the distance to it, positive in
+// the air, 9 for none) and a look for it (jEnvShade). shade() marches the scene, then the
+// landmarks on their own as far as the scene was hit (see the enclosed worlds for why), and
+// fogs everything into the backdrop towards JFAR.
+
+#if VARIANT == 10
+const float JFAR = 8.0;
+#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8
+const float JFAR = 14.0;
+#else
+const float JFAR = 17.0;
+#endif
+
+// Stars on the sky at a direction.
+float jStars(vec3 rd) {
+    vec2 sv = rd.xy / max(rd.z, 0.25) * 22.0;
+    return step(0.975, hash(floor(sv))) * smoothstep(0.35, 0.0, length(fract(sv) - 0.5)) * (0.35 + 0.65 * uHigh);
+}
+
+vec3 jBack(vec3 ro, vec3 rd, float hue) {
+#if VARIANT == 6
+    // Sunset over the sea: a sun on the horizon that swells with the bass.
+    vec3 col = mix(colorAt(hue * 2.0 + 0.05) * 0.35, colorAt(hue * 2.0 + 0.6) * 0.05, smoothstep(-0.05, 0.5, rd.y));
+    float sun = 1.0 / (1.0 + dot(rd.xy - vec2(0.0, 0.06), rd.xy - vec2(0.0, 0.06)) * (260.0 - 120.0 * uLow));
+    return col + colorAt(hue * 2.0 + 0.1) * sun * 0.9;
+#elif VARIANT == 7
+    // Night over the city: dark, with a glow along the horizon from the streets.
+    vec3 col = colorAt(hue * 2.0 + 0.7) * 0.02 + colorAt(hue * 2.0 + 0.2) * exp(-abs(rd.y + 0.05) * 9.0) * 0.18;
+    return col + vec3(1.0) * jStars(rd) * step(0.1, rd.y);
+#elif VARIANT == 8 || VARIANT == 9
+    // Space: stars, a nebula, and (for the station) a planet below.
+    vec3 col = colorAt(hue * 2.0 + 0.6) * 0.02 + vec3(1.0) * jStars(rd);
+    col += colorAt(hue * 2.0 + 0.3) * pow(max(0.0, 1.0 - abs(rd.y - 0.3 * rd.x)), 6.0) * 0.08;
+#if VARIANT == 8
+    vec3 pc = vec3(-0.3, -0.75, 0.6);
+    float planet = smoothstep(0.42, 0.40, length(normalize(rd) - normalize(pc)));
+    col = mix(col, colorAt(hue * 2.0 + 0.45) * (0.15 + 0.25 * band(10.0)), planet);
+    col += colorAt(hue * 2.0 + 0.5) * smoothstep(0.47, 0.41, length(normalize(rd) - normalize(pc))) * (1.0 - planet) * 0.35;
+#endif
+    return col;
+#elif VARIANT == 10
+    return vec3(0.0);
+#else
+    // Open sky (Megastructures, and above the canyon): dusk, stars, an aurora on the horizon
+    // lit by the spectrum, and for Megastructures a glowing grid far below.
     vec3 col = mix(colorAt(hue * 2.0 + 0.1) * 0.14, colorAt(hue * 2.0 + 0.6) * 0.02, smoothstep(-0.15, 0.6, rd.y));
     float a = abs(fastAtan2(rd.x, rd.z)) / PI;
     col += colorAt(a + hue * 2.0) * band(floor(a * 63.0)) * exp(-abs(rd.y - 0.04) * 14.0) * 0.55;
-    vec2 sv = rd.xy / max(rd.z, 0.25) * 22.0;
-    float st = hash(floor(sv));
-    col += vec3(1.0) * step(0.975, st) * smoothstep(0.35, 0.0, length(fract(sv) - 0.5)) * (0.35 + 0.65 * uHigh);
+    col += vec3(1.0) * jStars(rd);
+#if VARIANT == 4
     if (rd.y < -0.01) {
         float tp = (-4.5 - ro.y) / rd.y;
         if (tp < 60.0) {
@@ -453,7 +514,148 @@ vec3 jSky(vec3 ro, vec3 rd, float hue) {
             col += colorAt(hue * 2.0 + 0.3) * line * (0.12 + 0.6 * uLow) * exp(-tp * 0.045);
         }
     }
+#endif
     return col;
+#endif
+}
+
+// A cell along z and across x (and y), with the cell's absolute index modulo the world's count
+// in z, and whether its centre is clear of the flight path (so nothing stands in the way).
+vec3 jCellR(vec3 q, out vec3 cell) {
+    vec3 cq = jCellPos(q);
+    cell = floor(cq / JCELL + 0.5);
+    return cq - cell * JCELL;
+}
+
+float jEnv(vec3 q, vec2 off) {
+#if VARIANT == 5
+    // Canyon: rough walls either side of the path, a floor below, open to the sky above.
+    float bump = 0.18 * sin(wrapA(3.0 * q.y + 2.0 * q.x)) * sin(wrapA(3.0 * q.z + jCam.y))
+               + 0.1 * sin(wrapA(4.0 * q.z + jCam.z + 2.0 * q.y));
+    float walls = 1.5 + bump - abs(off.x);
+    return min(walls, off.y + 1.3) * 0.7;
+#elif VARIANT == 6
+    // Sea stacks: columns of rock rising from the water, none in the flight's way.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float h = hash(vec2(cell.x, jCellZ(cell.z)) + 2.3);
+    float clear = abs(cell.x * JCELL - (q.x - off.x));
+    float stack = (h > 0.35 && clear > 1.3) ? max(length(r.xz) - (0.35 + 0.45 * h), q.y - (0.3 + 3.0 * h)) : JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3;
+    float waves = 0.04 * sin(wrapA(3.0 * q.x + uTime * PI * 6.0)) * sin(wrapA(3.0 * q.z + jCam.y)) * (1.0 + 2.0 * uLow);
+    return min(min(stack, JCELL * 0.45), q.y + 1.1 - waves);
+#elif VARIANT == 7
+    // Night city: towers in blocks, the street the flight follows kept clear.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float h = hash(vec2(cell.x, jCellZ(cell.z)) + 7.1);
+    float clear = abs(cell.x * JCELL - (q.x - off.x));
+    float hw = 0.45 + 0.3 * hash(vec2(cell.z, cell.x) + 1.7);
+    float tower = (h > 0.2 && clear > 1.3) ? jBox(vec3(r.x, q.y + 2.2 - (1.0 + 5.0 * h) * 0.5, r.z), vec3(hw, (1.0 + 5.0 * h) * 0.5, hw)) : JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3;
+    return min(min(tower, JCELL * 0.45), q.y + 2.2);
+#elif VARIANT == 8
+    // Orbital station: square frames round the flight every few units, girders along it.
+    vec3 cq = jCellPos(q);
+    float zc = cq.z - floor(cq.z / JCELL + 0.5) * JCELL;
+    vec2 a = abs(off);
+    float sq = max(a.x, a.y);
+    float frame = max(max(sq - 1.55, 1.3 - sq), abs(zc) - 0.1);
+    float girder = length(a - 1.42) - 0.06;
+    return min(frame, girder);
+#elif VARIANT == 9
+    // Asteroid field: rough rocks scattered through space, none in the flight's way.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float h = hash(cell.xy * 1.3 + jCellZ(cell.z) * vec2(3.1, 7.7));
+    float clear = length(cell.xy * JCELL - (q.xy - off));
+    float rad = 0.35 + 0.7 * (h - 0.45);
+    float bumps = 0.07 * sin(wrapA(5.0 * r.x + 2.0 * r.z)) * sin(wrapA(5.0 * r.y + 3.0 * h));
+    float rock = (h > 0.45 && clear > 1.4) ? (length(r) - rad + bumps) * 0.8 : JCELL * 0.5 - max(abs(r.x), max(abs(r.y), abs(r.z))) + 0.3;
+    return min(rock, JCELL * 0.45);
+#elif VARIANT == 10
+    // Branching caves: a winding tunnel that swells into caverns, with side tunnels branching
+    // off it now and then.
+    vec3 cq = jCellPos(q);
+    float cz = floor(cq.z / JCELL + 0.5);
+    float zc = cq.z - cz * JCELL;
+    float h = hash(vec2(jCellZ(cz), 5.5));
+    float rad = 0.95 + 0.2 * sin(wrapA(3.0 * q.z + jCam.y)) + 0.1 * sin(wrapA(4.0 * q.z + jCam.z + 2.0 * off.x))
+              + 0.7 * smoothstep(0.75, 1.0, sin(wrapA(3.0 * q.z + jCam.y + 1.3)));
+    float air = length(off) - rad;
+    if (h > 0.4) {
+        float ang = h * 12.566;
+        vec3 dir = normalize(vec3(cos(wrapA(ang)), sin(wrapA(ang)), 0.5));
+        vec3 v = vec3(off, zc);
+        float along = max(dot(v, dir), 0.0);
+        air = min(air, length(v - dir * along) - 0.55);
+    }
+    return -air * 0.7;
+#else
+    return 9.0;
+#endif
+}
+
+vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
+    const vec2 k = vec2(1.0, -1.0);
+    const float h = 0.02;
+    vec3 n = normalize(k.xyy * jEnv(q + k.xyy * h, off + k.xy * h) + k.yyx * jEnv(q + k.yyx * h, off + k.yy * h)
+                     + k.yxy * jEnv(q + k.yxy * h, off + k.yx * h) + k.xxx * jEnv(q + k.xxx * h, off + k.xx * h));
+    float facing = clamp(dot(n, -rd), 0.0, 1.0);
+#if VARIANT == 5
+    // Canyon rock in strata, the strata lit by the spectrum; a glowing river on the floor.
+    if (off.y < -1.2) {
+        float river = exp(-abs(off.x) * 2.5);
+        return colorAt(hue * 2.0 + 0.55) * (0.05 + river * (0.3 + 0.8 * uLow));
+    }
+    float stratum = floor(q.y * 3.0);
+    float lvl = band(floor(fract(stratum * 0.137) * 63.0));
+    vec3 col = colorAt(hue * 2.0 + stratum * 0.06) * (0.05 + 0.4 * facing * facing);
+    col += colorAt(hue * 2.0 + stratum * 0.06 + 0.5) * exp(-abs(fract(q.y * 3.0) - 0.5) * 30.0) * lvl * 0.9;
+    return col;
+#elif VARIANT == 6
+    // Water mirrors the sky; the stacks are dark rock with a light at their tops.
+    if (q.y < -0.95) {
+        vec3 rr = reflect(rd, normalize(n + vec3(0.0, 2.0, 0.0)));
+        return jBack(q, rr, hue) * 0.55 + colorAt(hue * 2.0 + 0.1) * pow(facing, 30.0) * 0.2;
+    }
+    vec3 col = colorAt(hue * 2.0 + 0.35) * (0.03 + 0.3 * facing * facing);
+    return col + colorAt(hue * 2.0 + 0.1) * pow(1.0 - facing, 3.0) * (0.2 + 0.6 * uBeat);
+#elif VARIANT == 7
+    // Towers with lit windows that flicker with the hi-hats; the street a glowing grid.
+    if (q.y < -2.15) {
+        vec2 g = abs(fract(jCellPos(q).xz / JCELL * 2.0) - 0.5);
+        return colorAt(hue * 2.0 + 0.3) * exp(-min(g.x, g.y) * 20.0) * (0.15 + 0.5 * uLow);
+    }
+    vec3 cq = jCellPos(q);
+    vec2 w = vec2((abs(n.x) > 0.5 ? cq.z : cq.x) * 5.0, q.y * 6.0);
+    float lit = step(0.55, hash(floor(w) + floor(cq.x / JCELL) * 3.1)) * step(0.2, fract(w.x)) * step(0.25, fract(w.y));
+    vec3 col = colorAt(hue * 2.0 + 0.7) * (0.02 + 0.08 * facing);
+    return col + colorAt(hue * 2.0 + hash(floor(w)) * 0.3) * lit * (0.35 + 0.8 * uHigh);
+#elif VARIANT == 8
+    // Station metal: panels, blinking lights, and light racing along the girders.
+    vec3 cq = jCellPos(q);
+    float panel = step(0.06, abs(fract(cq.z * 2.0 + off.x * 2.0) - 0.5));
+    float blink = step(0.93, hash(floor(vec2(off.x * 4.0, cq.z * 4.0) + 3.0))) * (0.5 + 0.5 * uBeat);
+    float race = pow(0.5 + 0.5 * sin(wrapA(4.0 * q.z + jCam.z - uTime * PI * 24.0)), 12.0);
+    vec3 col = colorAt(hue * 2.0 + 0.6) * (0.04 + 0.35 * facing * facing) * (0.6 + 0.4 * panel);
+    col += colorAt(hue * 2.0 + 0.1) * (blink + race * 0.5 * (0.4 + uKick));
+    return col;
+#elif VARIANT == 9
+    // Rock lit by a sun, with cracks that glow on the kick.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float light = clamp(dot(n, normalize(vec3(0.6, 0.5, -0.4))), 0.0, 1.0);
+    float crack = exp(-abs(sin(wrapA(7.0 * r.x + 5.0 * r.y)) * sin(wrapA(6.0 * r.z + 4.0 * r.x))) * 12.0);
+    vec3 col = vec3(0.45, 0.42, 0.4) * (0.03 + 0.5 * light) + colorAt(hue * 2.0 + 0.1) * pow(1.0 - facing, 3.0) * 0.15;
+    return col + colorAt(hue * 2.0 + hash(cell.xy) * 0.4) * crack * (0.2 + 1.2 * uKick + 0.5 * band(20.0));
+#elif VARIANT == 10
+    // Wet cave rock with crystal veins that glow with the spectrum.
+    float vein = exp(-abs(sin(wrapA(5.0 * q.x + 3.0 * q.y)) * sin(wrapA(4.0 * q.z + jCam.z + 2.0 * q.y))) * 14.0);
+    float lvl = band(floor(fract(q.y * 0.3 + 0.5) * 63.0));
+    vec3 col = colorAt(hue * 2.0 + 0.6) * (0.02 + 0.2 * facing * facing) + vec3(0.5) * pow(facing, 20.0) * 0.15;
+    return col + colorAt(hue * 2.0 + 0.2) * vein * (0.15 + 1.0 * lvl + 0.5 * uKick);
+#else
+    return vec3(0.0);
+#endif
 }
 
 vec3 shade(vec2 p) {
@@ -461,28 +663,52 @@ vec3 shade(vec2 p) {
     jCamera(p, ro, fw, rt, up, sp, rd);
     jCull(sp);
     float t = 0.05;
-    float idx = -1.0;
     float steps = 0.0;
     bool hit = false;
-    for (int i = 0; i < 24; i++) {
+#if VARIANT != 4
+    for (int i = 0; i < 22; i++) {
         vec3 q = ro + rd * t;
-        float d = jMarks(q, q.xy - jPath(q.z), idx);
+        float d = jEnv(q, q.xy - jPath(q.z));
         if (d < JEPS + JEPS * t) { hit = true; break; }
         t += d;
         steps += 1.0;
-        if (t > 18.0) break;
+        if (t > JFAR) break;
+    }
+#endif
+    float tEnv = hit ? t : JFAR;
+    // The landmarks, as far as the scene was hit. A ray that ends its steps right at a surface
+    // counts as on it: thin shells far off otherwise broke into speckle.
+    float idx = -1.0;
+    float to = 0.05;
+    bool objHit = false;
+    if (jAny > 0.5) {
+        float d = 9.0;
+        for (int i = 0; i < 28; i++) {
+            vec3 q = ro + rd * to;
+            d = jMarks(q, q.xy - jPath(q.z), idx);
+            if (d < JEPS + JEPS * to) { objHit = true; break; }
+            to += d;
+            if (to > tEnv) break;
+        }
+        if (!objHit && to < tEnv && d < 0.02 + 0.015 * to) objHit = true;
     }
     float hue = jCam.x + uSeed.x + uMood.x;
-    vec3 sky = jSky(ro, rd, hue);
-    vec3 col = sky;
-    if (hit) {
-        vec3 q = ro + rd * t;
+    vec3 back = jBack(ro, rd, hue);
+    vec3 col = back;
+    float tHit = JFAR;
+    if (objHit && to < tEnv) {
+        vec3 q = ro + rd * to;
         col = jMarkShade(q, q.xy - jPath(q.z), rd, idx, hue + q.z / JZ);
-        col = mix(col, sky, smoothstep(10.0, 18.0, t));
+        tHit = to;
+    } else if (hit) {
+        vec3 q = ro + rd * t;
+        col = jEnvShade(q, q.xy - jPath(q.z), ro, rd, hue + q.z / JZ);
+        tHit = t;
     }
-    // Rays that grazed a structure took more steps: a glow round its edges.
-    col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 24.0, steps) * 0.12 * (0.5 + 1.5 * uKick);
-    col = jGate(col, sp, ro, fw, rt, up, hit, t);
+    col = mix(col, back, smoothstep(JFAR * 0.55, JFAR, tHit));
+    // Rays that grazed something took more steps: a glow round its edges.
+    col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 22.0, steps) * 0.1 * (0.5 + 1.5 * uKick);
+    col = jGate(col, sp, ro, fw, rt, up, objHit || hit, tHit);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }

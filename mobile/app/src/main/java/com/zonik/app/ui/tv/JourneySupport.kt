@@ -421,16 +421,26 @@ class JourneyLandmarks(seed: Int = 7) {
 
     fun types(): List<Int> = marks.filterNotNull().map { it.type }
 
+    /** For the tests: the open sky or an enclosed lattice. */
     fun update(
         open: Boolean, travel: Double, camZ: Double, unitsPerSec: Float,
         clock: BeatClock?, nowMs: Long, dt: Float, path: JourneyPath,
+    ) = update(
+        if (open) JourneyWorld.of(DemoEffect.SKY) else JourneyWorld.of(DemoEffect.GYROID),
+        travel, camZ, unitsPerSec, clock, nowMs, dt, path,
+    )
+
+    fun update(
+        world: JourneyWorld, travel: Double, camZ: Double, unitsPerSec: Float,
+        clock: BeatClock?, nowMs: Long, dt: Float, path: JourneyPath,
     ) {
+        val open = world.large.isNotEmpty()
         for (i in marks.indices) {
             val m = marks[i] ?: continue
             if (m.z + m.reach < travel - 1.0) marks[i] = null
         }
         val speed = unitsPerSec.coerceAtLeast(0.3f)
-        val spawn = if (open) OPEN_SPAWN else TUBE_SPAWN
+        val spawn = world.spawn
         if (nextSmallZ.isNaN()) nextSmallZ = travel + spawn + speed * (1f + random.nextFloat() * 3f)
         if (travel + spawn >= nextSmallZ) {
             if (add(small(open, travel + spawn))) nextSmallZ = travel + spawn + speed * (2.5f + random.nextFloat() * 4.5f)
@@ -440,7 +450,7 @@ class JourneyLandmarks(seed: Int = 7) {
         } else {
             if (nextLargeZ.isNaN()) nextLargeZ = travel + spawn
             if (travel + spawn >= nextLargeZ) {
-                val mark = large(travel, spawn, speed, clock, nowMs)
+                val mark = large(world.large, travel, spawn, speed, clock, nowMs)
                 if (add(mark)) nextLargeZ = mark.z + mark.reach + speed * (2f + random.nextFloat() * 3f)
             }
         }
@@ -545,7 +555,7 @@ class JourneyLandmarks(seed: Int = 7) {
         return Mark(z, type, size, spin, radius * kotlin.math.cos(angle), radius * kotlin.math.sin(angle), 0f, hue)
     }
 
-    private fun large(travel: Double, spawn: Double, speed: Float, clock: BeatClock?, nowMs: Long): Mark {
+    private fun large(allowed: IntArray, travel: Double, spawn: Double, speed: Float, clock: BeatClock?, nowMs: Long): Mark {
         val minMs = (spawn / speed * 1000.0).toFloat()
         val drop = clock?.msToDrop(nowMs, minMs, minMs + 20_000f)
         val ms = when {
@@ -556,19 +566,10 @@ class JourneyLandmarks(seed: Int = 7) {
         val z = travel + speed * ms / 1000.0
         val hue = random.nextFloat()
         val spin = (random.nextFloat() - 0.5f) * 0.6f
-        val type = if (drop != null) {
-            if (random.nextBoolean()) TUNNEL else SPHERE
-        } else {
-            val r = random.nextFloat()
-            when {
-                r < 0.3f -> RING
-                r < 0.45f -> TUNNEL
-                r < 0.6f -> ARCH
-                r < 0.75f -> MONOLITH
-                r < 0.85f -> SPHERE
-                else -> CRYSTAL
-            }
-        }
+        // A drop brings something to fly into, if the world has one; otherwise any of its own.
+        val flyInto = allowed.filter { it == TUNNEL || it == SPHERE }
+        val type = if (drop != null && flyInto.isNotEmpty()) flyInto[random.nextInt(flyInto.size)]
+        else allowed[random.nextInt(allowed.size)]
         return when (type) {
             RING -> Mark(z, RING, 1.0f + random.nextFloat() * 1.2f, 0f, 0f, 0f, 0.06f + random.nextFloat() * 0.08f, hue)
             TUNNEL -> Mark(z, TUNNEL, 0.8f + random.nextFloat() * 0.4f, 2f + random.nextFloat() * 3f, 0f, 0f, 0.12f, hue)
@@ -654,5 +655,40 @@ class JourneyCamera {
     private companion object {
         val LOOK = doubleArrayOf(1.5, 2.5, 3.5)
         const val HEADING_RATE = 2.5f
+    }
+}
+
+/**
+ * What each Journey world asks of the CPU side: which big landmarks suit it (none for the
+ * enclosed lattices), how far ahead they appear (just past its fog), how fast it flies, whether
+ * the camera only banks (worlds with a floor) or rolls right round, and its cell along z for
+ * `uCam.w` / `uCell` (matching JCELL / JCELLS in JOURNEY_BODY).
+ */
+data class JourneyWorld(
+    val large: IntArray,
+    val spawn: Double,
+    val speed: Float,
+    val bankOnly: Boolean,
+    val cell: Double,
+    val cells: Double,
+) {
+    companion object {
+        private val SHEET = 2.0 * Math.PI / 3.0
+        private val ENCLOSED = JourneyWorld(IntArray(0), JourneyLandmarks.TUBE_SPAWN, 1f, false, SHEET, 9.0)
+
+        fun of(e: DemoEffect): JourneyWorld = with(JourneyLandmarks) {
+            when (e) {
+                DemoEffect.BUBBLEFLIGHT -> ENCLOSED.copy(cell = 6.0 * Math.PI / 20.0, cells = 20.0)
+                DemoEffect.PILLARS -> ENCLOSED.copy(bankOnly = true, cell = 6.0 * Math.PI / 12.0, cells = 12.0)
+                DemoEffect.SKY -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, ARCH, MONOLITH, SPHERE, CRYSTAL), 17.0, 1.5f, true, SHEET, 9.0)
+                DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, MONOLITH, CRYSTAL), 13.0, 1.3f, true, SHEET, 9.0)
+                DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, MONOLITH), 16.0, 1.4f, true, Math.PI, 6.0)
+                DemoEffect.NIGHTCITY -> JourneyWorld(intArrayOf(RING, TUNNEL, ARCH), 13.0, 1.2f, true, 6.0 * Math.PI / 8.0, 8.0)
+                DemoEffect.STATION -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 1.3f, false, 6.0 * Math.PI / 8.0, 8.0)
+                DemoEffect.ASTEROIDS -> JourneyWorld(intArrayOf(SPHERE, RING, CRYSTAL), 13.0, 1.2f, false, 6.0 * Math.PI / 7.0, 7.0)
+                DemoEffect.CAVES -> JourneyWorld(intArrayOf(CRYSTAL, RING), 7.5, 1.0f, false, 6.0 * Math.PI / 5.0, 5.0)
+                else -> ENCLOSED
+            }
+        }
     }
 }

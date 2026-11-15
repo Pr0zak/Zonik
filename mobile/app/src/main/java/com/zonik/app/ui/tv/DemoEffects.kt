@@ -163,6 +163,12 @@ enum class DemoEffect(
     BUBBLEFLIGHT("Bubble flight", JOURNEY_BODY, halfRes = true, variant = 2, world = true),
     PILLARS("Pillar hall", JOURNEY_BODY, halfRes = true, variant = 3, world = true),
     SKY("Megastructures", JOURNEY_BODY, halfRes = true, variant = 4, world = true),
+    CANYON("Canyon", JOURNEY_BODY, halfRes = true, variant = 5, world = true),
+    SEASTACKS("Sea stacks", JOURNEY_BODY, halfRes = true, variant = 6, world = true),
+    NIGHTCITY("Night city", JOURNEY_BODY, halfRes = true, variant = 7, world = true),
+    STATION("Orbital station", JOURNEY_BODY, halfRes = true, variant = 8, world = true),
+    ASTEROIDS("Asteroid field", JOURNEY_BODY, halfRes = true, variant = 9, world = true),
+    CAVES("Branching caves", JOURNEY_BODY, halfRes = true, variant = 10, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
