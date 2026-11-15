@@ -152,7 +152,8 @@ enum class DemoEffect(
     PULSAR("Ridgelines", PULSAR_BODY),
     BUBBLES("Bubbles", BUBBLES_BODY),
     COVERBOUNCE("Bouncing cover", COVERBOUNCE_BODY, feedback = true),
-    RIBBONS("Ribbons", RIBBONS_BODY);
+    RIBBONS("Ribbons", RIBBONS_BODY),
+    GYROID("Gyroid flight", GYROID_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
 }
