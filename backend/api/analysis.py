@@ -449,3 +449,74 @@ async def get_track_analysis(track_id: str, db: AsyncSession = Depends(get_db)):
         "has_embedding": has_embedding,
         "analyzed_at": analysis.analyzed_at.isoformat() if analysis.analyzed_at else None,
     }
+
+
+def _beat_grid_payload(row: "TrackBeatGrid", analysis: TrackAnalysis | None) -> dict:
+    out: dict = {"status": row.status}
+    if row.status == "ready":
+        out.update({
+            "bpm": row.bpm,
+            "downbeat_s": row.downbeat_s,
+            "beats_per_bar": row.beats_per_bar,
+            "confidence": row.confidence,
+            "bar_energy": json.loads(row.bar_energy or "[]"),
+            "drops": json.loads(row.drops or "[]"),
+        })
+    elif row.error:
+        out["error"] = row.error
+    if analysis is not None:
+        out.update({"key": analysis.key, "scale": analysis.scale, "energy": analysis.energy})
+    return out
+
+
+@router.get("/track/{track_id}/beats")
+async def get_track_beats(track_id: str, db: AsyncSession = Depends(get_db)):
+    """The track's beat grid for the TV visualizer.
+
+    `status` is `ready` (grid included), `pending` (being worked out now: ask again in a few
+    seconds), `none` (no steady beat, or too short: use the tempo alone) or `failed`. The first
+    request for a track starts the work in the background and answers `pending` at once.
+    `key`, `scale` and `energy` come from the stored analysis, for the visualizer's colours
+    and speed.
+    """
+    from pathlib import Path
+
+    from backend.config import get_settings
+    from backend.models.analysis import TrackBeatGrid
+    from backend.services import beat_grid
+
+    analysis = (await db.execute(
+        select(TrackAnalysis).where(TrackAnalysis.track_id == track_id)
+    )).scalar_one_or_none()
+    row = await db.get(TrackBeatGrid, track_id)
+    if row is not None and row.version == beat_grid.VERSION:
+        return _beat_grid_payload(row, analysis)
+    if beat_grid.in_flight(track_id):
+        return {"status": "pending"}
+
+    file_path = (await db.execute(select(Track.file_path).where(Track.id == track_id))).scalar_one_or_none()
+    if file_path is None:
+        return {"status": "failed", "error": "unknown track"}
+    abs_path = Path(get_settings().library.music_dir) / file_path
+    if not abs_path.exists():
+        return {"status": "failed", "error": "file missing"}
+
+    async def store(tid: str, result: dict) -> None:
+        async with async_session() as s:
+            grid = await s.get(TrackBeatGrid, tid) or TrackBeatGrid(track_id=tid, status="failed")
+            grid.status = result.get("status", "failed")
+            grid.bpm = result.get("bpm")
+            grid.downbeat_s = result.get("downbeat_s")
+            grid.beats_per_bar = result.get("beats_per_bar")
+            grid.confidence = result.get("confidence")
+            grid.bar_energy = json.dumps(result["bar_energy"]) if "bar_energy" in result else None
+            grid.drops = json.dumps(result["drops"]) if "drops" in result else None
+            grid.error = (result.get("error") or None) and str(result["error"])[:300]
+            grid.version = beat_grid.VERSION
+            grid.computed_at = datetime.utcnow()
+            s.add(grid)
+            await s.commit()
+        log.info("Beat grid for %s: %s %s", tid, result.get("status"), result.get("error") or "")
+
+    beat_grid.start(track_id, abs_path, store)
+    return {"status": "pending"}
