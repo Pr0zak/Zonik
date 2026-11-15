@@ -6,7 +6,7 @@ import org.junit.Test
 
 class JourneyLandmarksTest {
 
-    private class Run(val open: Boolean, val clock: BeatClock? = null, seed: Int = 5) {
+    private class Run(val open: Boolean, val clock: BeatClock? = null, seed: Int = 5, val world: JourneyWorld? = null) {
         val lm = JourneyLandmarks(seed)
         val path = JourneyPath()
         val out = FloatArray(JourneyLandmarks.SLOTS * 8)
@@ -19,7 +19,8 @@ class JourneyLandmarksTest {
         fun fly(ms: Long, speed: Float = 1.2f) {
             val end = t + ms
             while (t < end) {
-                lm.update(open, travel, travel % JourneyPath.PERIOD, speed, clock, t, 0.016f, path)
+                if (world != null) lm.update(world, travel, travel % JourneyPath.PERIOD, speed, clock, t, 0.016f, path)
+                else lm.update(open, travel, travel % JourneyPath.PERIOD, speed, clock, t, 0.016f, path)
                 lm.pack(out, travel)
                 for (i in 0 until JourneyLandmarks.SLOTS) {
                     val type = out[i * 8 + 1].toInt()
@@ -34,30 +35,23 @@ class JourneyLandmarksTest {
     }
 
     @Test
-    fun `enclosed worlds get only small objects, inside the tube, spaced seconds apart`() {
+    fun `enclosed worlds get no landmarks at all`() {
         val r = Run(open = false)
         r.fly(120_000)
-        assertTrue("${r.firstSeen.size} objects", r.firstSeen.size in 12..40)
-        r.firstSeen.forEach { (ahead, type, _) ->
-            assertTrue(type <= JourneyLandmarks.RING)
-            assertTrue("appeared $ahead ahead", ahead >= 5.5f) // past the fog
-        }
-        val gaps = r.firstSeen.zipWithNext { a, b -> b.third - a.third }
-        // At least 2.5 s of flight at 1.2 units/s between spawns.
-        assertTrue(gaps.min() >= 2.5 * 1.2 - 0.05)
-        assertTrue(r.lm.types().size <= JourneyLandmarks.SLOTS)
+        assertEquals(0, r.firstSeen.size)
     }
 
     @Test
-    fun `the open sky gets big structures too, appearing beyond the fog`() {
+    fun `open worlds get big structures, appearing beyond the fog`() {
         val r = Run(open = true)
         r.fly(180_000)
-        val big = r.firstSeen.filter { it.second >= JourneyLandmarks.TUNNEL || it.second == JourneyLandmarks.RING }
-        assertTrue("${big.size} big", big.size >= 8)
-        // Three are placed straight away when the world comes in; everything after past the fog.
-        assertEquals(3, r.firstSeen.count { it.third == 0.0 && it.first < 16f })
-        r.firstSeen.filter { it.third > 0.0 }.forEach { (ahead, _, _) -> assertTrue("appeared $ahead ahead", ahead >= 16f) }
-        assertTrue(r.firstSeen.map { it.second }.toSet().size >= 5) // a real mix
+        assertTrue("${r.firstSeen.size} big", r.firstSeen.size >= 8)
+        // Canyon spawns 13 units ahead, just past its fog.
+        r.firstSeen.forEach { (ahead, type, _) ->
+            assertTrue("appeared $ahead ahead", ahead >= 12f)
+            assertTrue("type $type", type >= JourneyLandmarks.CRYSTAL)
+        }
+        assertTrue(r.firstSeen.map { it.second }.toSet().size >= 3) // a real mix
     }
 
     @Test
@@ -65,7 +59,8 @@ class JourneyLandmarksTest {
         // 120 BPM: a bar is 2 s; the drop is bar 15, 30 s in.
         val clock = BeatClock(120f, BeatGrid(120f, 0f, 4, drops = listOf(15)))
         clock.syncPosition(0, 0)
-        val r = Run(open = true, clock = clock)
+        // The orbital station has tunnels and hollow spheres.
+        val r = Run(open = true, clock = clock, world = JourneyWorld.of(DemoEffect.STATION))
         r.fly(16_000)
         val atDrop = r.firstSeen.filter { it.second == JourneyLandmarks.TUNNEL || it.second == JourneyLandmarks.SPHERE }
             .map { it.third + it.first } // where along the flight it stands
@@ -83,30 +78,7 @@ class JourneyLandmarksTest {
             if (r.out[i * 8 + 1] < 0) continue
             assertTrue(r.out[i * 8] > -6f)
         }
-        assertEquals(true, r.firstSeen.size > 100)
-    }
-
-    @Test
-    fun `Megastructures keeps three or more big structures in view`() {
-        val r = Run(open = true)
-        var frames = 0
-        var total = 0
-        var fewest = 99
-        r.fly(5_000)
-        repeat(3000) {
-            r.fly(16)
-            var n = 0
-            for (i in 0 until JourneyLandmarks.SLOTS) {
-                val o = i * 8
-                if (r.out[o + 1] < 0 || r.out[o + 2] < 0.8f) continue
-                if (r.out[o] in 0f..17f) n++
-            }
-            frames++
-            total += n
-            fewest = minOf(fewest, n)
-        }
-        assertTrue("average ${total.toFloat() / frames}", total.toFloat() / frames >= 3f)
-        assertTrue("fewest $fewest", fewest >= 2)
+        assertEquals(true, r.firstSeen.size > 30)
     }
 
     @Test

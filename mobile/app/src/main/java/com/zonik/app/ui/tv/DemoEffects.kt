@@ -162,7 +162,6 @@ enum class DemoEffect(
     SCHWARZ("Schwarz chambers", JOURNEY_BODY, halfRes = true, variant = 1, world = true),
     BUBBLEFLIGHT("Bubble flight", JOURNEY_BODY, halfRes = true, variant = 2, world = true),
     PILLARS("Pillar hall", JOURNEY_BODY, halfRes = true, variant = 3, world = true),
-    SKY("Megastructures", JOURNEY_BODY, halfRes = true, variant = 4, world = true),
     CANYON("Canyon", JOURNEY_BODY, halfRes = true, variant = 5, world = true),
     SEASTACKS("Sea stacks", JOURNEY_BODY, halfRes = true, variant = 6, world = true),
     NIGHTCITY("Night city", JOURNEY_BODY, halfRes = true, variant = 7, world = true),
@@ -313,8 +312,8 @@ uniform vec2 uSeed;
 uniform vec4 uCam;
 uniform float uCell;
 uniform vec4 uMood;
-uniform vec4 uMarks[16];
-uniform vec4 uMarkScr[8];
+uniform vec4 uMarks[8];
+uniform vec4 uMarkScr[4];
 uniform vec3 uCamRo;
 uniform vec3 uCamFw;
 uniform vec3 uCamRt;

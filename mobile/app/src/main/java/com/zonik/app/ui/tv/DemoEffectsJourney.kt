@@ -12,9 +12,7 @@ package com.zonik.app.ui.tv
  *    tiled, each room its own colour, the tile seams glowing on the beat.
  * 2. Bubble flight: a lattice of glassy spheres, each cell its own size, swelling on the kick.
  * 3. Pillar hall: square pillars between a glowing grid floor and ceiling.
- * 4. Megastructures: open sky over a glowing grid, with nothing but the landmarks in it: giant
- *    rings, tunnels and hollow spheres to fly through, arches, monoliths and crystals to pass,
- *    more of them standing off the path, and giant towers and rings on the horizon.
+ * 4. (Megastructures, an open sky with only landmarks in it: removed in app 1.62, too empty.)
  * 5. Canyon: rough walls in strata lit by the spectrum, a glowing river below, sky above.
  * 6. Sea stacks: low over water that mirrors a sunset, between columns of rock.
  * 7. Night city: down a street between towers whose windows flicker with the hi-hats.
@@ -26,9 +24,9 @@ package com.zonik.app.ui.tv
  *    the current, caustics on the rock pulsing with the bass, light shafts from the surface,
  *    drifting specks, rock arches to pass under, and schools of fish (JourneyFlock).
  *
- * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in every world: in the
- * enclosed ones only small objects inside the tube, now and then at random; in the open sky
- * the big structures too, timed so the camera reaches them on a downbeat or a drop.
+ * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in the open worlds: big
+ * structures timed so the camera reaches them on a downbeat or a drop. The enclosed worlds
+ * have none, and no landmark code is compiled into them.
  *
  * Every world carves a tube of radius 0.42 around the path, so the camera never meets a wall,
  * and draws neon where that tube cuts through it, lit by the spectrum (bass on the floor, treble
@@ -64,9 +62,12 @@ package com.zonik.app.ui.tv
  * from `uPhase` itself.
  */
 internal const val JOURNEY_BODY = """
-// The distance to what this pixel shows, / 20, for the fish (see FLOCK_FRAGMENT): 1 for sky.
+// The distance to what this pixel shows, / 20, for the fish (see FLOCK_FRAGMENT): 1 for open
+// water. Only the worlds with fish (JourneyWorld.flock) write it.
+#if VARIANT == 6 || VARIANT == 11
 #define J_DEPTH
 float gDepth;
+#endif
 const float JDEPTH = 20.0;     // JourneyFlock.DEPTH_RANGE
 const float JZ = 18.8495559;   // 6π: one wrap of the flight, the period of everything below
 const float TAU = 6.2831853;
@@ -297,7 +298,7 @@ vec3 jSurface(vec3 q, vec3 n, vec3 rd, float hue) {
     return mix(jSurfaceA(q, n, rd, hue), jSurfaceB(q, n, rd, hue), uMood.y);
 }
 
-// Landmarks: up to eight objects the CPU places along the route (JourneyLandmarks), from small
+// Landmarks: up to four objects the CPU places along the route (JourneyLandmarks), from small
 // orbs, crystals and cubes just off the path to giant rings, tunnels and hollow spheres the
 // camera flies through. Two vec4 each in uMarks: a = (z ahead of the camera, type, size,
 // spin or half length), b = (centre x, centre y, wall thickness, hue). Type -1 is an empty
@@ -335,10 +336,8 @@ float jMarkD(vec3 q, vec2 off, vec4 a, vec4 b) {
 // checking every one at every step halved the frame rate. The web previews, without the
 // circles, test every landmark. (Copying out the nearest few for the march instead was tried:
 // the extra values per pixel made every world three times slower on the Mali-470.)
-float jReach[8];
-vec2 jSp;      // this pixel's point on screen, for the scenery's circles
+float jReach[4];
 float jAny;
-float jAnyS;   // scenery (type + 10) this pixel can reach: intersected, not marched
 float jFar;    // past this distance along z no landmark this pixel can reach remains
 
 // The radius of a sphere round each shape (JourneyLandmarks.bound on the CPU): orb, crystal
@@ -350,18 +349,12 @@ float jBound(vec4 a, vec4 b) {
 }
 
 void jCull(vec2 sp) {
-    jSp = sp;
     jAny = 0.0;
-    jAnyS = 0.0;
     jFar = 0.0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 4; i++) {
         vec4 c = uMarkScr[i];
         vec4 a = uMarks[2 * i];
         float on = uPathOn > 0.5 ? (length(sp - c.xy) < c.z ? 1.0 : 0.0) : (a.y >= 0.0 ? 1.0 : 0.0);
-        if (a.y > 9.5) {
-            jAnyS += on;
-            on = 0.0;
-        }
         jReach[i] = on;
         jAny += on;
         float ext = (a.y > 3.5 && a.y < 4.5) ? a.w : jBound(a, uMarks[2 * i + 1]);
@@ -373,7 +366,7 @@ void jCull(vec2 sp) {
 float jMarks(vec3 q, vec2 off, out float idx) {
     float d = 9.0;
     idx = -1.0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 4; i++) {
         if (jReach[i] < 0.5) continue;
         vec4 a = uMarks[2 * i];
         vec4 b = uMarks[2 * i + 1];
@@ -397,13 +390,13 @@ float jMarks(vec3 q, vec2 off, out float idx) {
 
 vec4 jMarkA(float idx) {
     vec4 a = vec4(0.0);
-    for (int i = 0; i < 8; i++) if (float(i) == idx) a = uMarks[2 * i];
+    for (int i = 0; i < 4; i++) if (float(i) == idx) a = uMarks[2 * i];
     return a;
 }
 
 vec4 jMarkB(float idx) {
     vec4 b = vec4(0.0);
-    for (int i = 0; i < 8; i++) if (float(i) == idx) b = uMarks[2 * i + 1];
+    for (int i = 0; i < 4; i++) if (float(i) == idx) b = uMarks[2 * i + 1];
     return b;
 }
 
@@ -441,104 +434,6 @@ vec3 jMarkLook(vec3 q, vec3 n, vec3 rd, vec4 a, vec4 b, float hue) {
     return col;
 }
 
-// Scenery: big structures well off the path (type + 10 in uMarks), never flown through. Rather
-// than marched, each pixel's ray is intersected with them once in closed form, which costs
-// next to nothing: marched, three of them in view took the Mali-470 three times as long as
-// the whole sky. Boxes (monolith, the arch's posts and lintel), the crystal as four slabs, the
-// sphere solved round the ray's nearest point (so 16-bit floats stay small), and the ring as
-// a flat band.
-
-#if VARIANT == 4
-// Where along the ray |o + d·t| <= h holds: (entry, exit).
-vec2 jSlab(float o, float d, float h) {
-    float inv = 1.0 / (abs(d) < 0.001 ? 0.001 : d);
-    float t1 = (-h - o) * inv;
-    float t2 = (h - o) * inv;
-    return vec2(min(t1, t2), max(t1, t2));
-}
-
-// The scenery's nearest hit along the ray (99 for none), its normal and slot.
-float jScenery(vec3 ro, vec3 rd, out vec3 nrm, out float idx) {
-    float best = 99.0;
-    nrm = vec3(0.0, 0.0, -1.0);
-    idx = -1.0;
-    for (int i = 0; i < 8; i++) {
-        vec4 a = uMarks[2 * i];
-        if (a.y < 9.5) continue;
-        if (uPathOn > 0.5 && length(jSp - uMarkScr[i].xy) >= uMarkScr[i].z) continue;
-        vec4 b = uMarks[2 * i + 1];
-        float ty = a.y - 10.0;
-        float s = a.z;
-        vec3 o = ro - vec3(b.xy, a.x);
-        vec2 cs = vec2(cos(wrapA(a.w)), sin(wrapA(a.w)));
-        // Into the shape's own frame (the spin jMarkD applies), and the normal back out.
-        vec3 lo = vec3(o.x * cs.x - o.y * cs.y, o.x * cs.y + o.y * cs.x, o.z);
-        vec3 ld = vec3(rd.x * cs.x - rd.y * cs.y, rd.x * cs.y + rd.y * cs.x, rd.z);
-        float t = 99.0;
-        vec3 n = vec3(0.0);
-        if (ty > 5.5 && ty < 6.5) {
-            // Sphere (seen from outside, a hollow one looks solid).
-            float tc = -dot(o, rd);
-            vec3 pc = o + rd * tc;
-            float disc = s * s - dot(pc, pc);
-            if (disc > 0.0) {
-                t = tc - sqrt(disc);
-                n = normalize(o + rd * t);
-            }
-        } else if (ty > 2.5 && ty < 3.5) {
-            // Ring: a flat band facing along z.
-            float tp = -o.z / (abs(rd.z) < 0.001 ? 0.001 : rd.z);
-            vec3 pp = o + rd * tp;
-            if (tp > 0.0 && abs(length(pp.xy) - s) < b.z * 2.0) {
-                t = tp;
-                n = vec3(0.0, 0.0, -sign(rd.z));
-            }
-        } else if (ty > 0.5 && ty < 1.5) {
-            // Crystal: |x| + |y| + |z| <= s, the meeting of four slabs.
-            vec3 n0 = vec3(1.0, 1.0, 1.0); vec3 n1 = vec3(1.0, 1.0, -1.0);
-            vec3 n2 = vec3(1.0, -1.0, 1.0); vec3 n3 = vec3(-1.0, 1.0, 1.0);
-            vec2 s0 = jSlab(dot(n0, lo), dot(n0, ld), s);
-            vec2 s1 = jSlab(dot(n1, lo), dot(n1, ld), s);
-            vec2 s2 = jSlab(dot(n2, lo), dot(n2, ld), s);
-            vec2 s3 = jSlab(dot(n3, lo), dot(n3, ld), s);
-            float tin = max(max(s0.x, s1.x), max(s2.x, s3.x));
-            float tout = min(min(s0.y, s1.y), min(s2.y, s3.y));
-            if (tin < tout && tin > 0.0) {
-                t = tin;
-                vec3 ln = tin == s0.x ? n0 * -sign(dot(n0, ld)) : tin == s1.x ? n1 * -sign(dot(n1, ld))
-                        : tin == s2.x ? n2 * -sign(dot(n2, ld)) : n3 * -sign(dot(n3, ld));
-                n = ln * 0.57735;
-            }
-        } else {
-            // Boxes: a monolith, or an arch's two posts and lintel.
-            for (int k = 0; k < 3; k++) {
-                if (ty < 6.0 && k > 0) break;
-                vec3 c = ty < 6.0 ? vec3(0.0) : (k == 2 ? vec3(0.0, s * 1.2, 0.0) : vec3(k == 0 ? -s : s, 0.0, 0.0));
-                vec3 h = ty < 6.0 ? vec3(s * 0.35, s * 2.2, s * 0.35) : (k == 2 ? vec3(s + 0.22, 0.22, 0.22) : vec3(0.22, s * 1.2, 0.22));
-                vec3 bo = lo - c;
-                vec2 sx = jSlab(bo.x, ld.x, h.x);
-                vec2 sy = jSlab(bo.y, ld.y, h.y);
-                vec2 sz = jSlab(bo.z, ld.z, h.z);
-                float tin = max(sx.x, max(sy.x, sz.x));
-                float tout = min(sx.y, min(sy.y, sz.y));
-                if (tin < tout && tin > 0.0 && tin < t) {
-                    t = tin;
-                    n = tin == sx.x ? vec3(-sign(ld.x), 0.0, 0.0) : tin == sy.x ? vec3(0.0, -sign(ld.y), 0.0) : vec3(0.0, 0.0, -sign(ld.z));
-                }
-            }
-        }
-        if (t < best) {
-            best = t;
-            idx = float(i);
-            // Back to the world's frame: the spin's inverse.
-            nrm = (ty > 2.5 && ty < 3.5) || (ty > 5.5 && ty < 6.5) ? n
-                : vec3(n.x * cs.x + n.y * cs.y, -n.x * cs.y + n.y * cs.x, n.z);
-        }
-    }
-    return best;
-}
-#endif
-
 // The camera's place, frame and this pixel's ray. On the TV the CPU works the camera out in
 // full precision and smooths it (JourneyCamera: position on the path, heading eased toward a
 // point further ahead, roll and bank folded into rt/up), so it never shakes with 16-bit noise
@@ -566,7 +461,7 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 4 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11
+#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11
     // A hall, the sky, a canyon, the sea, a city or the sea floor has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
@@ -616,42 +511,6 @@ float jStars(vec3 rd) {
     return step(0.975, hash(floor(sv))) * smoothstep(0.35, 0.0, length(fract(sv) - 0.5)) * (0.35 + 0.65 * uHigh);
 }
 
-#if VARIANT == 4
-// Megastructures' horizon: giant towers and two standing rings, so far off they never come
-// nearer, dark against the aurora with rims and bands of light from the spectrum. Worked out
-// from the direction alone, so they cost a few operations a pixel and nothing in the march.
-vec3 jHorizon(vec3 col, vec3 rd, float hue) {
-    float az = fastAtan2(rd.x, rd.z) / PI;            // -1..1 round the horizon, 0 ahead
-    float el = rd.y / max(length(rd.xz), 0.2);         // height above the horizon
-    // Below -0.075 the grid floor (60 units out) is in front of them.
-    if (el > 0.3 || el < -0.075) return col;
-    float u = az * 16.0;
-    float cell = floor(u);
-    float f = fract(u) - 0.5;
-    float h = hash(vec2(cell, 4.7));
-    float w = 0.12 + 0.22 * hash(vec2(cell, 1.3));
-    float top = 0.03 + 0.14 * smoothstep(0.4, 1.0, h);
-    // A tower: dark, with a glowing rim and bands of windows lit by its own band.
-    float tower = h > 0.4 ? step(abs(f), w) * step(el, top) : 0.0;
-    float lvl = band(floor(fract(h * 7.3) * 63.0));
-    float rim = tower * (exp(-(w - abs(f)) * 60.0) + exp(-(top - el) * 160.0));
-    float rows = step(0.75, fract(el * 40.0)) * step(0.3, abs(f) / w) * step(abs(f), w * 0.8);
-    // Two rings standing on the horizon, a little to either side.
-    vec2 rc = vec2(abs(az) - 0.3, el - 0.05);
-    float rr = abs(length(rc * vec2(PI, 1.0)) - 0.1);
-    float ring = step(rr, 0.012);
-    float ringRim = exp(-rr * 90.0);
-    vec3 dark = colorAt(hue * 2.0 + 0.6) * 0.015;
-    float solid = max(tower, ring);
-    col = mix(col, dark, solid);
-    vec3 c = colorAt(hue * 2.0 + h * 0.4 + 0.2);
-    col += c * rim * (0.25 + 0.6 * lvl) * 0.6;
-    col += c * rows * tower * lvl * 0.35;
-    col += colorAt(hue * 2.0 + 0.5) * ringRim * (0.15 + 0.5 * uLow + 0.3 * uKick);
-    return col;
-}
-#endif
-
 vec3 jBack(vec3 ro, vec3 rd, float hue) {
 #if VARIANT == 6
     // Sunset over the sea: a sun on the horizon that swells with the bass.
@@ -683,24 +542,11 @@ vec3 jBack(vec3 ro, vec3 rd, float hue) {
     vec3 col = mix(deep, top, smoothstep(-0.4, 0.9, rd.y));
     return col + vec3(0.05, 0.12, 0.13) * pow(max(rd.y, 0.0), 3.0) * (0.5 + 0.8 * uLow);
 #else
-    // Open sky (Megastructures, and above the canyon): dusk, stars, an aurora on the horizon
-    // lit by the spectrum, and for Megastructures a glowing grid far below.
+    // Open sky above the canyon: dusk, stars, an aurora on the horizon lit by the spectrum.
     vec3 col = mix(colorAt(hue * 2.0 + 0.1) * 0.14, colorAt(hue * 2.0 + 0.6) * 0.02, smoothstep(-0.15, 0.6, rd.y));
     float a = abs(fastAtan2(rd.x, rd.z)) / PI;
     col += colorAt(a + hue * 2.0) * band(floor(a * 63.0)) * exp(-abs(rd.y - 0.04) * 14.0) * 0.55;
     col += vec3(1.0) * jStars(rd);
-#if VARIANT == 4
-    col = jHorizon(col, rd, hue);
-    if (rd.y < -0.01) {
-        float tp = (-4.5 - ro.y) / rd.y;
-        if (tp < 60.0) {
-            vec2 g = vec2(ro.x + rd.x * tp, rd.z * tp + jCam.w);
-            vec2 gg = abs(fract(g / (JCELL * 0.5)) - 0.5);
-            float line = exp(-min(gg.x, gg.y) * 26.0);
-            col += colorAt(hue * 2.0 + 0.3) * line * (0.12 + 0.6 * uLow) * exp(-tp * 0.045);
-        }
-    }
-#endif
     return col;
 #endif
 }
@@ -942,14 +788,12 @@ vec3 jWater(vec3 col, vec3 ro, vec3 rd, float tHit, float hue) {
 #endif
 
 vec3 shade(vec2 p) {
-    gDepth = 1.0;
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
     jCull(sp);
     float t = 0.05;
     float steps = 0.0;
     bool hit = false;
-#if VARIANT != 4
     for (int i = 0; i < 22; i++) {
         vec3 q = ro + rd * t;
         float d = jEnv(q, q.xy - jPath(q.z));
@@ -958,7 +802,6 @@ vec3 shade(vec2 p) {
         steps += 1.0;
         if (t > JFAR) break;
     }
-#endif
     float tEnv = hit ? t : JFAR;
     // The landmarks, as far as the scene was hit. A ray that ends its steps right at a surface
     // counts as on it: thin shells far off otherwise broke into speckle.
@@ -980,23 +823,7 @@ vec3 shade(vec2 p) {
     vec3 back = jBack(ro, rd, hue);
     vec3 col = back;
     float tHit = JFAR;
-    vec3 nS;
-    float idxS;
-#if VARIANT == 4
-    float tS = jAnyS > 0.5 ? jScenery(ro, rd, nS, idxS) : 99.0;
-#else
-    // Only Megastructures has scenery (JourneyWorld.scenery).
-    float tS = 99.0;
-    nS = vec3(0.0);
-    idxS = -1.0;
-#endif
-    float tObj = objHit && to < tEnv ? to : 99.0;
-    if (tS < tEnv && tS < tObj) {
-        vec3 q = ro + rd * tS;
-        vec4 a = jMarkA(idxS);
-        col = jMarkLook(q, nS, rd, vec4(a.x, a.y - 10.0, a.zw), jMarkB(idxS), hue + q.z / JZ);
-        tHit = tS;
-    } else if (tObj < 99.0) {
+    if (objHit && to < tEnv) {
         vec3 q = ro + rd * to;
         col = jMarkShade(q, q.xy - jPath(q.z), rd, idx, hue + q.z / JZ);
         tHit = to;
@@ -1022,16 +849,16 @@ vec3 shade(vec2 p) {
     // Rays that grazed something took more steps: a glow round its edges.
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 22.0, steps) * 0.1 * (0.5 + 1.5 * uKick);
     col = jGate(col, sp, ro, fw, rt, up, tHit < JFAR, tHit);
+#ifdef J_DEPTH
     gDepth = tHit < JFAR ? tHit / JDEPTH : 1.0;
+#endif
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
 #else
 vec3 shade(vec2 p) {
-    gDepth = 1.0;
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
-    jCull(sp);
 
     float th = (0.12 + 0.2 * uLow + 0.15 * uKick) * (1.0 + 0.6 * uSeed.y);
 #if VARIANT == 1
@@ -1059,36 +886,11 @@ vec3 shade(vec2 p) {
         steps += 1.0;
         if (t > 5.0) break;
     }
-    // The landmarks get a short march of their own, after the world's and only as far as the
-    // world was hit. Checked inside the world's march, the Mali-470 spent three times as long
-    // on them as on the world itself, culled or not. Here only small objects inside the tube
-    // appear, which need no path offset.
-    float objId = -1.0;
-    float to = 0.05;
-    bool objHit = false;
-    // Most rays reach no landmark at all: they skip this march.
-    if (jAny > 0.5) {
-        for (int i = 0; i < 12; i++) {
-            vec3 q = ro + rd * to;
-            float d = jMarks(q, vec2(1.0), objId);
-            if (d < JEPS + JEPS * to) { objHit = true; break; }
-            to += d;
-            if (to > t) break;
-        }
-    }
-    float obj = objHit && to < t ? 0.0 : 1.0;
-    if (obj < 0.5) {
-        t = to;
-        hit = true;
-    }
-
     vec3 haze = colorAt(0.66) * 0.025;
     vec3 col = haze;
     vec3 q = ro + rd * t;
     float hue = jCam.x + q.z / JZ + uSeed.x + uMood.x;
-    if (hit && obj < 0.5) {
-        col = jMarkShade(q, vec2(1.0), rd, objId, hue);
-    } else if (hit) {
+    if (hit) {
         vec2 off = q.xy - jPath(q.z);
         bool cut = tube > sheet;
         vec3 n = cut ? normalize(vec3(-off, 0.0)) : jNormal(q, th);

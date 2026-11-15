@@ -187,7 +187,7 @@ class JourneyFlock(seed: Int = 11) {
             val dl = sqrt(dx * dx + dy * dy)
             if (dl < 1e-4f) { dx = 1f; dy = 0f } else { dx /= dl; dy /= dl }
             // Longer when swimming across the view, never smaller than a few pixels.
-            val w = (FISH_WIDTH * sizeScale * 1.3f / depth).coerceAtLeast(0.004f)
+            val w = (FISH_WIDTH * sizeScale * 1.3f / depth).coerceAtLeast(0.007f)
             val l = w * (1.5f + (dl * 6f).coerceAtMost(1.8f))
             val fog = 1f - smoothstep(far * 0.55f, far, dist)
             val s = i / PER_SCHOOL
@@ -236,6 +236,6 @@ class JourneyFlock(seed: Int = 11) {
         private const val SPACING = 0.12f
         private const val DART = 0.7f
         private const val SCATTER = 0.9f
-        private const val FISH_WIDTH = 0.018f
+        private const val FISH_WIDTH = 0.03f
     }
 }

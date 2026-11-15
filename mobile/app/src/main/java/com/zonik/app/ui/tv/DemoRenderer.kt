@@ -534,7 +534,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             }
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, pass.fbo)
             GLES20.glViewport(0, 0, w, h)
-            depthOut = e.world
+            depthOut = e.world && JourneyWorld.of(e).flock
             drawWith(prog, e, passWipe, incomingSide, 1f, prevTex = 0, srcTex = 0)
             depthOut = false
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
