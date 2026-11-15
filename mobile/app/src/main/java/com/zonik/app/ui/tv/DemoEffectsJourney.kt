@@ -305,31 +305,18 @@ float jMarkD(vec3 q, vec2 off, vec4 a, vec4 b) {
 // against each one's bounding sphere. Most rays miss every landmark, so the march then costs
 // almost nothing extra; on the Mali-470 checking all six at every step halved the frame rate.
 float jReach[6];
+float jAny;
 
-float jBound(vec4 a, vec4 b) {
-    float ty = a.y;
-    if (ty < 1.5) return a.z + 0.05;                                   // orb, crystal
-    if (ty < 2.5) return a.z * 1.74 + 0.05;                            // cube
-    if (ty < 3.5) return a.z + b.z + 0.05;                             // ring
-    if (ty < 4.5) return length(vec2(a.w, a.z + 2.0 * b.z + 1.5));     // tunnel (the path may swerve)
-    if (ty < 5.5) return a.z * 2.3 + 0.05;                             // monolith
-    if (ty < 6.5) return a.z + b.z + 0.05;                             // hollow sphere
-    return a.z * 1.7 + 0.4;                                            // arch
-}
-
-void jCull(vec3 ro, vec3 rd, float tMax) {
+// The CPU projects each landmark's bounding sphere to a circle on screen (uMarkScr: centre,
+// radius; radius 0 for an empty slot or one behind the camera), so the test per pixel is a
+// single distance. The web previews, without it, test every landmark.
+void jCull(vec2 sp) {
+    jAny = 0.0;
     for (int i = 0; i < 6; i++) {
-        vec4 a = uMarks[2 * i];
-        vec4 b = uMarks[2 * i + 1];
-        float on = 0.0;
-        if (a.y >= 0.0) {
-            vec3 c = vec3(b.xy, a.x) - ro;
-            float r = jBound(a, b);
-            float tc = clamp(dot(c, rd), 0.0, tMax);
-            vec3 nearest = c - rd * tc;
-            on = dot(nearest, nearest) <= r * r ? 1.0 : 0.0;
-        }
+        vec4 c = uMarkScr[i];
+        float on = uPathOn > 0.5 ? (length(sp - c.xy) < c.z ? 1.0 : 0.0) : (uMarks[2 * i].y >= 0.0 ? 1.0 : 0.0);
         jReach[i] = on;
+        jAny += on;
     }
 }
 
@@ -393,12 +380,22 @@ vec3 jMarkShade(vec3 q, vec2 off, vec3 rd, float idx, float hue) {
     return col;
 }
 
-// The camera's place, frame and this pixel's ray.
+// The camera's place, frame and this pixel's ray. On the TV the CPU works the camera out in
+// full precision and smooths it (JourneyCamera: position on the path, heading eased toward a
+// point further ahead, roll and bank folded into rt/up), so it never shakes with 16-bit noise
+// or the path's small wiggles. The web previews work it out here.
 void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec2 sp, out vec3 rd) {
     if (uPathOn > 0.5) {
         jCam = uCam;
         jCell = uCell;
         jCamZ = 0.0;
+        ro = uCamRo;
+        fw = uCamFw;
+        rt = uCamRt;
+        up = uCamUp;
+        sp = p;
+        rd = normalize(fw * 1.3 + rt * p.x + up * p.y);
+        return;
     } else {
         // The web previews: highp, so the camera's place can be worked out here.
         jCamZ = uPhase * 3.0 * PI;
@@ -462,7 +459,7 @@ vec3 jSky(vec3 ro, vec3 rd, float hue) {
 vec3 shade(vec2 p) {
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
-    jCull(ro, rd, 18.0);
+    jCull(sp);
     float t = 0.05;
     float idx = -1.0;
     float steps = 0.0;
@@ -493,7 +490,7 @@ vec3 shade(vec2 p) {
 vec3 shade(vec2 p) {
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
-    jCull(ro, rd, 5.0);
+    jCull(sp);
 
     float th = (0.12 + 0.2 * uLow + 0.15 * uKick) * (1.0 + 0.6 * uSeed.y);
 #if VARIANT == 1
@@ -504,29 +501,52 @@ vec3 shade(vec2 p) {
     float t = 0.05;
     float sheet = 1.0;
     float tube = 0.0;
-    float obj = 1.0;
-    float objId = 0.0;
     float steps = 0.0;
     bool hit = false;
+#if VARIANT == 2
+    // The bubbles are the dearest world per step and rarely need the last few.
+    for (int i = 0; i < 16; i++) {
+#else
     for (int i = 0; i < 20; i++) {
+#endif
         vec3 q = ro + rd * t;
-        vec2 off = q.xy - jPath(q.z);
         sheet = jWorld(q, th);
-        tube = 0.42 - length(off);
-        obj = jMarks(q, off, objId);
-        float d = min(max(sheet, tube), obj);
+        tube = 0.42 - length(q.xy - jPath(q.z));
+        float d = max(sheet, tube);
         if (d < JEPS + JEPS * t) { hit = true; break; }
         t += d;
         steps += 1.0;
         if (t > 5.0) break;
+    }
+    // The landmarks get a short march of their own, after the world's and only as far as the
+    // world was hit. Checked inside the world's march, the Mali-470 spent three times as long
+    // on them as on the world itself, culled or not. Here only small objects inside the tube
+    // appear, which need no path offset.
+    float objId = -1.0;
+    float to = 0.05;
+    bool objHit = false;
+    // Most rays reach no landmark at all: they skip this march.
+    if (jAny > 0.5) {
+        for (int i = 0; i < 12; i++) {
+            vec3 q = ro + rd * to;
+            float d = jMarks(q, vec2(1.0), objId);
+            if (d < JEPS + JEPS * to) { objHit = true; break; }
+            to += d;
+            if (to > t) break;
+        }
+    }
+    float obj = objHit && to < t ? 0.0 : 1.0;
+    if (obj < 0.5) {
+        t = to;
+        hit = true;
     }
 
     vec3 haze = colorAt(0.66) * 0.025;
     vec3 col = haze;
     vec3 q = ro + rd * t;
     float hue = jCam.x + q.z / JZ + uSeed.x + uMood.x;
-    if (hit && obj < max(sheet, tube)) {
-        col = jMarkShade(q, q.xy - jPath(q.z), rd, objId, hue);
+    if (hit && obj < 0.5) {
+        col = jMarkShade(q, vec2(1.0), rd, objId, hue);
     } else if (hit) {
         vec2 off = q.xy - jPath(q.z);
         bool cut = tube > sheet;

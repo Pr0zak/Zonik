@@ -26,7 +26,7 @@ class JourneyPathTest {
         val p = JourneyPath()
         p.turn(camZ = 0.0, startZ = 7.0, target = 1.5f)
         assertEquals(0f, p.levelAt(6.5), 1e-4f)
-        assertEquals(1.5f, p.levelAt(9.0), 1e-3f)
+        assertEquals(1.5f, p.levelAt(10.0), 1e-3f)
         assertEquals(1.5f, p.levelAt(14.0), 1e-3f)
     }
 
@@ -60,7 +60,7 @@ class JourneyPathTest {
         val p = JourneyPath()
         p.turn(0.0, 7.0, 1.5f)
         val inTurn = p.bankAt(7.4)
-        assertTrue(abs(inTurn) > 0.1f)
+        assertTrue("bank $inTurn", abs(inTurn) > 0.05f)
         assertTrue(abs(inTurn) <= JourneyPath.MAX_BANK)
     }
 

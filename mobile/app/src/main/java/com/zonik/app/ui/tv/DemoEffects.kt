@@ -271,6 +271,11 @@ uniform vec4 uCam;
 uniform float uCell;
 uniform vec4 uMood;
 uniform vec4 uMarks[12];
+uniform vec4 uMarkScr[6];
+uniform vec3 uCamRo;
+uniform vec3 uCamFw;
+uniform vec3 uCamRt;
+uniform vec3 uCamUp;
 
 const float PI = 3.14159265;
 

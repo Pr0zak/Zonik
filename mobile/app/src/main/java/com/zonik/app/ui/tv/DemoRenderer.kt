@@ -175,6 +175,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val marks = FloatArray(JourneyLandmarks.SLOTS * 8)
     /** How far the camera has flown, in world units; never wraps (landmarks are placed on it). */
     private var travel = 0.0
+    /** The worlds' camera, smoothed on the CPU, and its right/up and landmark circles per draw. */
+    private val camera = JourneyCamera()
+    private val camBasis = FloatArray(6)
+    private val markScreen = FloatArray(JourneyLandmarks.SLOTS * 4)
+    /** The worlds' forward speed, eased so it glides instead of lurching on every kick. */
+    private var worldSpeedNow = CRUISE
     /** Fade-in from black when the surface first appears. */
     private var fade = 0f
 
@@ -401,6 +407,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             val now = System.currentTimeMillis()
             val camZ = phase * 3.0 * Math.PI
             motion.update(beatClock, now, dt, camZ, cruiseUnits, path)
+            camera.update(dt, camZ, path)
             landmarks.update((next ?: current) == DemoEffect.SKY, travel, camZ, cruiseUnits, beatClock, now, dt, path)
             if (path.version != pathUploaded) uploadPathData()
         }
@@ -598,6 +605,25 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
                     GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS * 2, marks, 0)
                 }
             }
+            // The camera: steady on the CPU. Halls and the open sky have a floor, so they bank
+            // gently; the lattices roll right round.
+            val rollDrift = 0.08f * sin(time * Math.PI * 2.0).toFloat()
+            val roll = if (e == DemoEffect.PILLARS || e == DemoEffect.SKY) {
+                0.25f * sin(spin * Math.PI).toFloat() + rollDrift + motion.bank
+            } else {
+                (spin * Math.PI).toFloat() + rollDrift + motion.bank
+            }
+            camera.basis(roll, camBasis)
+            uniforms["uCamRo"]?.let { if (it >= 0) GLES20.glUniform3f(it, camera.pos[0], camera.pos[1], camera.pos[2]) }
+            uniforms["uCamFw"]?.let { if (it >= 0) GLES20.glUniform3f(it, camera.fw[0], camera.fw[1], camera.fw[2]) }
+            uniforms["uCamRt"]?.let { if (it >= 0) GLES20.glUniform3f(it, camBasis[0], camBasis[1], camBasis[2]) }
+            uniforms["uCamUp"]?.let { if (it >= 0) GLES20.glUniform3f(it, camBasis[3], camBasis[4], camBasis[5]) }
+            uniforms["uMarkScr"]?.let {
+                if (it >= 0) {
+                    landmarks.screen(markScreen, travel, camera.pos, camera.fw, camBasis)
+                    GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS, markScreen, 0)
+                }
+            }
         }
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         uniforms["uTunnel"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 9, tunnelRings, 0) }
@@ -678,6 +704,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         // The open sky flies faster: there is room, and the structures are far apart.
         val worldSpeed = if (current.world) lookCurrent.journey.speed * (if (current == DemoEffect.SKY) 1.5f else 1f) else 1f
         var speed = (CRUISE + low * 0.55f + kick * 0.9f) * worldSpeed
+        if (current.world) {
+            // The worlds glide: bass sets the pace, eased, and kicks show as light, not lurches.
+            val target = (CRUISE + low * 0.55f) * worldSpeed
+            worldSpeedNow += (target - worldSpeedNow) * (1f - exp(-dt * 1.5f))
+            speed = worldSpeedNow
+        } else {
+            worldSpeedNow = speed
+        }
         cruiseUnits = (CRUISE + low * 0.55f) * worldSpeed * GATE_UNITS_PER_PHASE
         // A portal is a rush: the camera surges through the gate and settles again.
         sincePortal += dt
@@ -1239,7 +1273,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         /** Journey worlds travel 3π of z per unit of uPhase (see JOURNEY_BODY). */
         val GATE_UNITS_PER_PHASE = (3.0 * Math.PI).toFloat()
         const val PATH_SIZE = 256
-        const val MIN_WORLD_SCALE = 0.32f
+        const val MIN_WORLD_SCALE = 0.27f
         /** Below this over two seconds the worlds draw smaller: 60 fps is the aim, not "fast enough". */
         const val SCALE_DOWN_FPS = 56f
         const val SCALE_UP_FPS = 58.5f
@@ -1262,6 +1296,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp",
             "uC0", "uC1", "uC2", "uTex",
         )
 

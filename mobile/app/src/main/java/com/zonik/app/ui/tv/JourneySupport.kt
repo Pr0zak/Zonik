@@ -279,7 +279,8 @@ class JourneyPath(val size: Int = 256) {
         const val SAFE_AHEAD = 6.0
         /** Leaves the samples the camera's own position is filtered from alone. */
         const val SAFE_BEHIND = 0.4
-        const val TURN_LENGTH = 1.6
+        /** Long enough to read as a swerve, not a jolt. */
+        const val TURN_LENGTH = 2.4
         /** Turns keep the path within this far of the weave, so positions stay small. */
         const val MAX_LEVEL = 2.2f
         const val BANK_GAIN = 0.1
@@ -344,7 +345,7 @@ class JourneyMotion(seed: Int = 1) {
         else (style - dt / STYLE_FADE_SEC).coerceAtLeast(styleTarget)
         val e = clock?.barEnergyAt(nowMs) ?: 0f
         energy += (e - energy) * (1f - kotlin.math.exp(-dt * 3f))
-        bank += (path.bankAt(camZ) - bank) * (1f - kotlin.math.exp(-dt * 4f))
+        bank += (path.bankAt(camZ) - bank) * (1f - kotlin.math.exp(-dt * 2f))
 
         if (nowMs >= nextTurnAtMs) planTurn(clock, nowMs, camZ, unitsPerSec, path)
     }
@@ -460,6 +461,44 @@ class JourneyLandmarks(seed: Int = 7) {
         }
     }
 
+    /**
+     * Each slot's bounding sphere projected to a circle on screen (x, y, radius, 0), for the
+     * shader's per-pixel cull: radius 0 for an empty slot or one behind the camera, and a
+     * radius that covers the screen when the camera is inside or right at the sphere.
+     */
+    fun screen(out: FloatArray, travel: Double, pos: FloatArray, fw: FloatArray, basis: FloatArray) {
+        for (i in 0 until SLOTS) {
+            val m = marks[i]
+            val o = i * 4
+            out[o] = 0f; out[o + 1] = 0f; out[o + 2] = 0f; out[o + 3] = 0f
+            if (m == null || m.x.isNaN()) continue
+            val bx = m.x - pos[0]
+            val by = m.y - pos[1]
+            val bz = (m.z - travel).toFloat() - pos[2]
+            val r = bound(m)
+            val depth = bx * fw[0] + by * fw[1] + bz * fw[2]
+            if (depth + r < 0f) continue
+            if (depth - r < 0.15f) {
+                out[o + 2] = 99f
+                continue
+            }
+            out[o] = (bx * basis[0] + by * basis[1] + bz * basis[2]) * 1.3f / depth
+            out[o + 1] = (bx * basis[3] + by * basis[4] + bz * basis[5]) * 1.3f / depth
+            out[o + 2] = r * 1.3f / (depth - r) + 0.02f
+        }
+    }
+
+    /** The shader's bounding radius for each shape (JOURNEY_BODY). */
+    private fun bound(m: Mark): Float = when (m.type) {
+        0, CRYSTAL -> m.size + 0.05f
+        2 -> m.size * 1.74f + 0.05f
+        RING -> m.size + m.param + 0.05f
+        TUNNEL -> kotlin.math.sqrt(m.w * m.w + (m.size + 2 * m.param + 1.5f).let { it * it })
+        MONOLITH -> m.size * 2.3f + 0.05f
+        SPHERE -> m.size + m.param + 0.05f
+        else -> m.size * 1.7f + 0.4f
+    }
+
     /** 12 vec4s for `uMarks`: two per slot, type -1 for an empty one. */
     fun pack(out: FloatArray, travel: Double) {
         for (i in 0 until SLOTS) {
@@ -555,5 +594,65 @@ class JourneyLandmarks(seed: Int = 7) {
         /** Just past the fog: 5 units in the enclosed worlds, 18 in the open sky. */
         const val TUBE_SPAWN = 6.0
         const val OPEN_SPAWN = 17.0
+    }
+}
+
+/**
+ * The Journey's camera, worked out on the CPU in full precision so it is steady on GPUs with
+ * only 16-bit floats: its position is the path's at the camera, and its heading eases toward
+ * the average of three points 1.5 to 3.5 units ahead, so the path's small wiggles and a
+ * swerve's first jolt are smoothed into a glide. [basis] folds the roll in.
+ */
+class JourneyCamera {
+    /** Position: the path at the camera (x, y); the camera is always at z = 0. */
+    val pos = FloatArray(3)
+    /** Heading, a unit vector. */
+    val fw = floatArrayOf(0f, 0f, 1f)
+    private var started = false
+
+    fun update(dt: Float, camZ: Double, path: JourneyPath) {
+        val px = path.xAt(camZ)
+        val py = JourneyPath.baseY(camZ).toFloat()
+        pos[0] = px
+        pos[1] = py
+        pos[2] = 0f
+        var tx = 0f
+        var ty = 0f
+        var tz = 0f
+        for (d in LOOK) {
+            tx += path.xAt(camZ + d) - px
+            ty += JourneyPath.baseY(camZ + d).toFloat() - py
+            tz += d.toFloat()
+        }
+        val l = kotlin.math.sqrt(tx * tx + ty * ty + tz * tz)
+        tx /= l; ty /= l; tz /= l
+        val k = if (started) 1f - kotlin.math.exp(-dt * HEADING_RATE) else 1f
+        started = true
+        fw[0] += (tx - fw[0]) * k
+        fw[1] += (ty - fw[1]) * k
+        fw[2] += (tz - fw[2]) * k
+        val n = kotlin.math.sqrt(fw[0] * fw[0] + fw[1] * fw[1] + fw[2] * fw[2])
+        fw[0] /= n; fw[1] /= n; fw[2] /= n
+    }
+
+    /** Right and up for a [roll] in radians, into [out] (rx, ry, rz, ux, uy, uz). */
+    fun basis(roll: Float, out: FloatArray) {
+        // right = Y × fw, up = fw × right.
+        var rx = fw[2]
+        var rz = -fw[0]
+        val rl = kotlin.math.sqrt(rx * rx + rz * rz).coerceAtLeast(1e-4f)
+        rx /= rl; rz /= rl
+        val ux = fw[1] * rz
+        val uy = fw[2] * rx - fw[0] * rz
+        val uz = -fw[1] * rx
+        val c = kotlin.math.cos(roll)
+        val s = kotlin.math.sin(roll)
+        out[0] = c * rx + s * ux; out[1] = s * uy; out[2] = c * rz + s * uz
+        out[3] = -s * rx + c * ux; out[4] = c * uy; out[5] = -s * rz + c * uz
+    }
+
+    private companion object {
+        val LOOK = doubleArrayOf(1.5, 2.5, 3.5)
+        const val HEADING_RATE = 2.5f
     }
 }
