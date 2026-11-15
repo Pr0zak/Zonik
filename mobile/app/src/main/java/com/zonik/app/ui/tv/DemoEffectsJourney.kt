@@ -301,14 +301,46 @@ float jMarkD(vec3 q, vec2 off, vec4 a, vec4 b) {
     return min(post, lintel);
 }
 
-// The nearest landmark's distance, and which slot it is in.
+// Which landmarks this pixel's ray can reach at all, worked out once before the march: a test
+// against each one's bounding sphere. Most rays miss every landmark, so the march then costs
+// almost nothing extra; on the Mali-470 checking all six at every step halved the frame rate.
+float jReach[6];
+
+float jBound(vec4 a, vec4 b) {
+    float ty = a.y;
+    if (ty < 1.5) return a.z + 0.05;                                   // orb, crystal
+    if (ty < 2.5) return a.z * 1.74 + 0.05;                            // cube
+    if (ty < 3.5) return a.z + b.z + 0.05;                             // ring
+    if (ty < 4.5) return length(vec2(a.w, a.z + 2.0 * b.z + 1.5));     // tunnel (the path may swerve)
+    if (ty < 5.5) return a.z * 2.3 + 0.05;                             // monolith
+    if (ty < 6.5) return a.z + b.z + 0.05;                             // hollow sphere
+    return a.z * 1.7 + 0.4;                                            // arch
+}
+
+void jCull(vec3 ro, vec3 rd, float tMax) {
+    for (int i = 0; i < 6; i++) {
+        vec4 a = uMarks[2 * i];
+        vec4 b = uMarks[2 * i + 1];
+        float on = 0.0;
+        if (a.y >= 0.0) {
+            vec3 c = vec3(b.xy, a.x) - ro;
+            float r = jBound(a, b);
+            float tc = clamp(dot(c, rd), 0.0, tMax);
+            vec3 nearest = c - rd * tc;
+            on = dot(nearest, nearest) <= r * r ? 1.0 : 0.0;
+        }
+        jReach[i] = on;
+    }
+}
+
+// The nearest landmark's distance, and which slot it is in. Only the ones jCull kept.
 float jMarks(vec3 q, vec2 off, out float idx) {
     float d = 9.0;
     idx = -1.0;
     for (int i = 0; i < 6; i++) {
+        if (jReach[i] < 0.5) continue;
         vec4 a = uMarks[2 * i];
         vec4 b = uMarks[2 * i + 1];
-        if (a.y < 0.0) continue;
         // Far along z from it, the gap in z is a safe step and the shape need not be worked out.
         float ext = (a.y > 3.5 && a.y < 4.5) ? a.w + 0.1 : a.z * 1.3 + b.z + 0.3;
         float dz = abs(q.z - a.x) - ext;
@@ -378,8 +410,8 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3
-    // A hall has a floor: bank gently instead of rolling right round.
+#if VARIANT == 3 || VARIANT == 4
+    // A hall, or the sky over its grid, has a floor: bank gently instead of rolling right round.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
     sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0))) + uMood.w) * p;
@@ -430,6 +462,7 @@ vec3 jSky(vec3 ro, vec3 rd, float hue) {
 vec3 shade(vec2 p) {
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
+    jCull(ro, rd, 18.0);
     float t = 0.05;
     float idx = -1.0;
     float steps = 0.0;
@@ -460,6 +493,7 @@ vec3 shade(vec2 p) {
 vec3 shade(vec2 p) {
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
+    jCull(ro, rd, 5.0);
 
     float th = (0.12 + 0.2 * uLow + 0.15 * uKick) * (1.0 + 0.6 * uSeed.y);
 #if VARIANT == 1
