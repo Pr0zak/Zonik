@@ -2184,7 +2184,7 @@ wheels = [
 
 [[package]]
 name = "zonik"
-version = "0.50.3"
+version = "0.50.4"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
