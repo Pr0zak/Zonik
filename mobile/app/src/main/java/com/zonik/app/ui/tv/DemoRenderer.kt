@@ -179,6 +179,17 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val camera = JourneyCamera()
     private val camBasis = FloatArray(6)
     private val markScreen = FloatArray(JourneyLandmarks.SLOTS * 4)
+    /** Fish schools in the worlds that have them, the world they swim in, and their dashes. */
+    private val flock = JourneyFlock()
+    private var flockWorld: DemoEffect? = null
+    private val flockVerts = FloatArray(JourneyFlock.MAX_VERTICES * JourneyFlock.FLOATS)
+    private val flockBuffer: FloatBuffer = ByteBuffer.allocateDirect(flockVerts.size * 4)
+        .order(ByteOrder.nativeOrder()).asFloatBuffer()
+    private var flockProgram: Program? = null
+    private var flockShape = -1
+    private var flockFish = -1
+    /** Set while a world draws into the offscreen buffer, so it leaves its depth in alpha. */
+    private var depthOut = false
     /** The worlds' forward speed, eased so it glides instead of lurching on every kick. */
     private var worldSpeedNow = CRUISE
     /** Fade-in from black when the surface first appears. */
@@ -268,6 +279,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         }
         blit = buildPass(BLIT_FRAGMENT)
         trailsProgram = buildPass(TRAILS_FRAGMENT)
+        flockProgram = buildPass(FLOCK_FRAGMENT, FLOCK_VERTEX).also {
+            flockShape = GLES20.glGetAttribLocation(it.id, "aShape")
+            flockFish = GLES20.glGetAttribLocation(it.id, "aFish")
+        }
         // Buffers belonged to the old context; onSurfaceChanged makes new ones.
         scratch = null
         slotCurrent = null
@@ -328,7 +343,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         surfaceHeight = height.coerceAtLeast(1)
         listOfNotNull(scratch, slotCurrent?.prev, slotCurrent?.next, slotNext?.prev, slotNext?.next)
             .forEach { deleteTarget(it) }
-        scratch = makeTarget()
+        // RGBA: a Journey world leaves its depth in alpha there for the fish (FLOCK_FRAGMENT).
+        scratch = makeTarget(alpha = true)
         slotCurrent = Slot(makeTarget(), makeTarget())
         slotNext = Slot(makeTarget(), makeTarget())
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
@@ -347,12 +363,13 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     }
 
     /** A surface-sized offscreen buffer, cleared to black. */
-    private fun makeTarget(): Target {
+    private fun makeTarget(alpha: Boolean = false): Target {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE7)
         val tex = makeTexture(GLES20.GL_LINEAR)
+        val format = if (alpha) GLES20.GL_RGBA else GLES20.GL_RGB
         GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGB, surfaceWidth, surfaceHeight, 0,
-            GLES20.GL_RGB, GLES20.GL_UNSIGNED_BYTE, null
+            GLES20.GL_TEXTURE_2D, 0, format, surfaceWidth, surfaceHeight, 0,
+            format, GLES20.GL_UNSIGNED_BYTE, null
         )
         val ids = IntArray(1)
         GLES20.glGenFramebuffers(1, ids, 0)
@@ -379,8 +396,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glDeleteTextures(1, intArrayOf(t.tex), 0)
     }
 
-    private fun buildPass(fragment: String): Program {
-        val id = buildProgram(DEMO_VERTEX, fragment, DemoEffect.TUNNEL)
+    private fun buildPass(fragment: String, vertex: String = DEMO_VERTEX): Program {
+        val id = buildProgram(vertex, fragment, DemoEffect.TUNNEL)
         return Program(
             id,
             (UNIFORM_NAMES + listOf("uBlit", "uCur")).associateWith { GLES20.glGetUniformLocation(id, it) },
@@ -409,6 +426,17 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             motion.update(beatClock, now, dt, camZ, cruiseUnits, path)
             camera.update(dt, camZ, path)
             landmarks.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
+            val shown = next ?: current
+            val world = JourneyWorld.of(shown)
+            if (world.flock) {
+                if (flockWorld != shown) {
+                    flock.reset()
+                    flockWorld = shown
+                }
+                flock.update(dt, travel, camZ, camera.pos[0], camera.pos[1], cruiseUnits, world.far, low, kick, path)
+            } else {
+                flockWorld = null
+            }
             if (path.version != pathUploaded) uploadPathData()
         }
         advanceJourney()
@@ -506,11 +534,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             }
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, pass.fbo)
             GLES20.glViewport(0, 0, w, h)
+            depthOut = e.world
             drawWith(prog, e, passWipe, incomingSide, 1f, prevTex = 0, srcTex = 0)
+            depthOut = false
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
             GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight)
             blitScale = w / surfaceWidth.toFloat()
             drawWith(scaler, e, wipe, incomingSide, fade, prevTex = 0, srcTex = pass.tex)
+            // The fish over the world, before the other side of a transition reuses the buffer.
+            if (e.world && e == flockWorld) drawFlock(e, wipe, incomingSide, pass.tex)
             blitScale = 1f
             return
         }
@@ -533,9 +565,41 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         slot.swap()
     }
 
+    /**
+     * The fish (JourneyFlock) over world [e], just blitted to the screen from [sceneTex], whose
+     * alpha holds the world's depth: additive dashes, with the world's wipe and fade.
+     */
+    private fun drawFlock(e: DemoEffect, wipe: Float, incomingSide: Boolean, sceneTex: Int) {
+        val prog = flockProgram ?: return
+        if (flockShape < 0 || flockFish < 0) return
+        camera.basis(journeyRoll(e), camBasis)
+        // The world is drawn shifted by uCenter (see drawWith), so the fish are too.
+        val drift = clock * 0.1
+        val cx = (sin(drift * 3.7) * 0.12).toFloat()
+        val cy = (sin(drift * 2.9 + 1.3) * 0.08).toFloat()
+        val n = flock.build(flockVerts, travel, camera.pos, camera.fw, camBasis, aspect, cx, cy, JourneyWorld.of(e).far, 1f)
+        if (n == 0) return
+        flockBuffer.position(0)
+        flockBuffer.put(flockVerts, 0, n * JourneyFlock.FLOATS)
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE)
+        drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = sceneTex, flockCount = n)
+        GLES20.glDisable(GLES20.GL_BLEND)
+    }
+
+    /** The worlds' camera roll: halls and open worlds with a floor bank gently, lattices roll right round. */
+    private fun journeyRoll(e: DemoEffect): Float {
+        val rollDrift = 0.08f * sin(time * Math.PI * 2.0).toFloat()
+        return if (JourneyWorld.of(e).bankOnly) {
+            0.25f * sin(spin * Math.PI).toFloat() + rollDrift + motion.bank
+        } else {
+            (spin * Math.PI).toFloat() + rollDrift + motion.bank
+        }
+    }
+
     private fun drawWith(
         prog: Program, e: DemoEffect, wipe: Float, incomingSide: Boolean, fadeValue: Float,
-        prevTex: Int, srcTex: Int,
+        prevTex: Int, srcTex: Int, flockCount: Int = 0,
     ) {
         uniforms = prog.uniforms
         GLES20.glUseProgram(prog.id)
@@ -562,6 +626,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uWipe", wipe)
         u2("uPx", 1f / surfaceWidth, 1f / surfaceHeight)
         u1("uBlitScale", blitScale)
+        u1("uDepthOut", if (depthOut) 1f else 0f)
         val look = if (drawingIncoming) lookNext else lookCurrent
         u1("uRainbow", if (look.mode == "ALBUM") rainbow else 0f)
         u1("uTitleAspect", titleAspect)
@@ -605,15 +670,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
                     GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS * 2, marks, 0)
                 }
             }
-            // The camera: steady on the CPU. Halls and the open sky have a floor, so they bank
-            // gently; the lattices roll right round.
-            val rollDrift = 0.08f * sin(time * Math.PI * 2.0).toFloat()
-            val roll = if (JourneyWorld.of(e).bankOnly) {
-                0.25f * sin(spin * Math.PI).toFloat() + rollDrift + motion.bank
-            } else {
-                (spin * Math.PI).toFloat() + rollDrift + motion.bank
-            }
-            camera.basis(roll, camBasis)
+            // The camera: steady on the CPU.
+            camera.basis(journeyRoll(e), camBasis)
             uniforms["uCamRo"]?.let { if (it >= 0) GLES20.glUniform3f(it, camera.pos[0], camera.pos[1], camera.pos[2]) }
             uniforms["uCamFw"]?.let { if (it >= 0) GLES20.glUniform3f(it, camera.fw[0], camera.fw[1], camera.fw[2]) }
             uniforms["uCamRt"]?.let { if (it >= 0) GLES20.glUniform3f(it, camBasis[0], camBasis[1], camBasis[2]) }
@@ -664,6 +722,25 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         uniforms["uRings"]?.let { if (it >= 0) GLES20.glUniform4f(it, ringAges[0], ringAges[1], ringAges[2], ringAges[3]) }
         uniforms["uDrops"]?.let { if (it >= 0) GLES20.glUniform2fv(it, 4, dropPos, 0) }
 
+        if (flockCount > 0) {
+            // The fish: position, shape and look interleaved, 8 floats a vertex.
+            val stride = JourneyFlock.FLOATS * 4
+            GLES20.glEnableVertexAttribArray(prog.aPos)
+            GLES20.glEnableVertexAttribArray(flockShape)
+            GLES20.glEnableVertexAttribArray(flockFish)
+            flockBuffer.position(0)
+            GLES20.glVertexAttribPointer(prog.aPos, 2, GLES20.GL_FLOAT, false, stride, flockBuffer)
+            flockBuffer.position(2)
+            GLES20.glVertexAttribPointer(flockShape, 2, GLES20.GL_FLOAT, false, stride, flockBuffer)
+            flockBuffer.position(4)
+            GLES20.glVertexAttribPointer(flockFish, 4, GLES20.GL_FLOAT, false, stride, flockBuffer)
+            flockBuffer.position(0)
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, flockCount)
+            GLES20.glDisableVertexAttribArray(flockShape)
+            GLES20.glDisableVertexAttribArray(flockFish)
+            GLES20.glDisableVertexAttribArray(prog.aPos)
+            return
+        }
         GLES20.glEnableVertexAttribArray(prog.aPos)
         GLES20.glVertexAttribPointer(prog.aPos, 2, GLES20.GL_FLOAT, false, 0, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -1295,7 +1372,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut",
             "uC0", "uC1", "uC2", "uTex",
         )
 

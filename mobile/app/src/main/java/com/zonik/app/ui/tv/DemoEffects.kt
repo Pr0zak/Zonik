@@ -169,6 +169,7 @@ enum class DemoEffect(
     STATION("Orbital station", JOURNEY_BODY, halfRes = true, variant = 8, world = true),
     ASTEROIDS("Asteroid field", JOURNEY_BODY, halfRes = true, variant = 9, world = true),
     CAVES("Branching caves", JOURNEY_BODY, halfRes = true, variant = 10, world = true),
+    ABYSS("Abyss", JOURNEY_BODY, halfRes = true, variant = 11, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
@@ -198,6 +199,42 @@ vec3 shade(vec2 p) {
     vec3 cur = texture2D(uCur, uv).rgb;
     vec3 old = prevAt((uv - 0.5) * 0.992 + 0.5) * 0.86 - 0.01;
     return max(cur, old);
+}
+""" + FOOTER
+
+/**
+ * The Journey's fish (JourneyFlock): small glowing dashes the CPU lays out on screen, two
+ * triangles each, drawn additively over a world after its blit. A fish is hidden wherever the
+ * world (its depth in the offscreen buffer's alpha, see J_DEPTH) is nearer. The shared FOOTER
+ * gives them the same wipe and fade as the world under them.
+ */
+internal const val FLOCK_VERTEX = """
+attribute vec2 aPos;
+attribute vec2 aShape;
+attribute vec4 aFish;
+varying vec2 vPos;
+varying vec2 vShape;
+varying vec4 vFish;
+void main() {
+    vPos = aPos;
+    vShape = aShape;
+    vFish = aFish;
+    gl_Position = vec4(aPos, 0.0, 1.0);
+}
+"""
+
+internal val FLOCK_FRAGMENT: String = HEADER + """
+uniform sampler2D uBlit;
+uniform float uBlitScale;
+varying vec2 vShape;   // along, across the dash: -1..1
+varying vec4 vFish;    // distance / 20, hue, spectrum band, brightness
+vec3 shade(vec2 p) {
+    float scene = texture2D(uBlit, (vPos * 0.5 + 0.5) * uBlitScale).a;
+    if (vFish.x > scene + 0.004) return vec3(0.0);
+    float body = smoothstep(1.0, 0.25, length(vShape));
+    float head = smoothstep(-0.6, 0.8, vShape.x);
+    float lvl = band(vFish.z);
+    return colorAt(vFish.y) * body * (0.3 + 0.7 * head) * vFish.w * (0.55 + 1.2 * lvl + 0.5 * uKick);
 }
 """ + FOOTER
 
@@ -282,6 +319,8 @@ uniform vec3 uCamRo;
 uniform vec3 uCamFw;
 uniform vec3 uCamRt;
 uniform vec3 uCamUp;
+// 1 while a Journey world draws into the offscreen buffer: alpha carries its depth (J_DEPTH).
+uniform float uDepthOut;
 
 const float PI = 3.14159265;
 
@@ -465,7 +504,13 @@ void main() {
     }
     vec3 col = shade(p - uCenter - uFloat);
     col += vivid(uC0) * seam * 0.9;
+#ifdef J_DEPTH
+    // A Journey world leaves the distance to what each pixel shows in alpha, for the fish
+    // drawn over it (FLOCK_FRAGMENT) to hide behind.
+    gl_FragColor = vec4(col * uFade, uDepthOut > 0.5 ? gDepth : 1.0);
+#else
     gl_FragColor = vec4(col * uFade, 1.0);
+#endif
 }
 """
 

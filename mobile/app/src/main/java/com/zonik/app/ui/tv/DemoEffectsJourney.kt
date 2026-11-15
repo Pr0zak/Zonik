@@ -22,6 +22,9 @@ package com.zonik.app.ui.tv
  * 9. Asteroid field: between rough rocks whose cracks glow on the kick.
  * 10. Branching caves: a winding tunnel that opens into caverns, side tunnels branching off,
  *    crystal veins glowing with the spectrum.
+ * 11. Abyss: along a channel between rough boulder walls on the sea floor, kelp swaying in
+ *    the current, caustics on the rock pulsing with the bass, light shafts from the surface,
+ *    drifting specks, rock arches to pass under, and schools of fish (JourneyFlock).
  *
  * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in every world: in the
  * enclosed ones only small objects inside the tube, now and then at random; in the open sky
@@ -61,6 +64,10 @@ package com.zonik.app.ui.tv
  * from `uPhase` itself.
  */
 internal const val JOURNEY_BODY = """
+// The distance to what this pixel shows, / 20, for the fish (see FLOCK_FRAGMENT): 1 for sky.
+#define J_DEPTH
+float gDepth;
+const float JDEPTH = 20.0;     // JourneyFlock.DEPTH_RANGE
 const float JZ = 18.8495559;   // 6π: one wrap of the flight, the period of everything below
 const float TAU = 6.2831853;
 const float JRANGE = 4.0;      // path coordinates are packed as -4..4 (JourneyPath.RANGE)
@@ -72,8 +79,8 @@ const float JEPS = 0.007;
 #if VARIANT == 2
 const float JCELL = 0.9424778;  // 6π / 20
 const float JCELLS = 20.0;
-#elif VARIANT == 3
-const float JCELL = 1.5707963;  // 6π / 12
+#elif VARIANT == 3 || VARIANT == 11
+const float JCELL = 1.5707963;  // 6π / 12: pillars, kelp
 const float JCELLS = 12.0;
 #elif VARIANT == 6
 const float JCELL = 3.1415927;  // 6π / 6: sea stacks
@@ -559,8 +566,8 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 4 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7
-    // A hall, the sky, a canyon, the sea or a city has a floor: bank gently, never roll over.
+#if VARIANT == 3 || VARIANT == 4 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11
+    // A hall, the sky, a canyon, the sea, a city or the sea floor has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
     sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0))) + uMood.w) * p;
@@ -595,6 +602,8 @@ vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, floa
 
 #if VARIANT == 10
 const float JFAR = 8.0;
+#elif VARIANT == 11
+const float JFAR = 11.0;
 #elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8
 const float JFAR = 14.0;
 #else
@@ -666,6 +675,13 @@ vec3 jBack(vec3 ro, vec3 rd, float hue) {
     return col;
 #elif VARIANT == 10
     return vec3(0.0);
+#elif VARIANT == 11
+    // Deep water: dark below, lighter toward the surface, a glow overhead that swells with
+    // the bass.
+    vec3 deep = colorAt(hue * 2.0 + 0.55) * 0.012 + vec3(0.0, 0.012, 0.025);
+    vec3 top = colorAt(hue * 2.0 + 0.5) * 0.05 + vec3(0.01, 0.06, 0.08);
+    vec3 col = mix(deep, top, smoothstep(-0.4, 0.9, rd.y));
+    return col + vec3(0.05, 0.12, 0.13) * pow(max(rd.y, 0.0), 3.0) * (0.5 + 0.8 * uLow);
 #else
     // Open sky (Megastructures, and above the canyon): dusk, stars, an aurora on the horizon
     // lit by the spectrum, and for Megastructures a glowing grid far below.
@@ -696,6 +712,59 @@ vec3 jCellR(vec3 q, out vec3 cell) {
     cell = floor(cq / JCELL + 0.5);
     return cq - cell * JCELL;
 }
+
+#if VARIANT == 11
+// The abyss: a channel between walls of boulders (lumps from wrapped sines, the cheapest kind
+// of rock on the Mali-470) over a rippled floor.
+float jRock(vec3 q, vec2 off) {
+    float lumps = 0.45 * abs(sin(wrapA(2.0 * q.y + 1.3 * q.x)) * sin(wrapA(3.0 * q.z + jCam.y)))
+                + 0.25 * sin(wrapA(4.0 * q.z + jCam.z + 1.7 * q.y));
+    float walls = 1.8 + lumps - abs(off.x);
+    float ground = off.y + 1.4 - 0.12 * sin(wrapA(2.0 * q.x + 3.0 * q.z + jCam.y));
+    return min(walls, ground) * 0.7;
+}
+
+// Kelp: one column per cell beside the path, on either side, leaning back and forth in the
+// current. Not marched: each pixel's ray is intersected with the columns of the six cells
+// ahead in closed form (in the march they took as long as the whole rest of the world on the
+// Mali-470). Returns the distance along the ray (99 for none), the normal, and how far up the
+// column and which column it hit.
+float jKelp(vec3 ro, vec3 rd, float tMax, out vec3 n, out float rise, out float h) {
+    float best = 99.0;
+    n = vec3(0.0);
+    rise = 0.0;
+    h = 0.0;
+    float lean = 0.1 * sin(wrapA(uTime * PI * 3.0));
+    for (int k = 0; k < 6; k++) {
+        float zc = float(k) * JCELL - jCam.w;
+        if (zc > tMax * rd.z + 0.2) break;
+        float hk = hash(vec2(jCellZ(float(k)), 3.3));
+        vec2 pc = jPath(zc);
+        float side = hk > 0.5 ? 1.0 : -1.0;
+        float x0 = pc.x + side * (0.9 + 0.5 * fract(hk * 7.1));
+        float y0 = pc.y - 1.4;
+        float lk = lean * (0.6 + 0.8 * fract(hk * 5.3));
+        // Sheared so the leaning column stands upright: x' = x - lean·(y - y0).
+        vec2 o = vec2(ro.x - x0 - lk * (ro.y - y0), ro.z - zc);
+        vec2 d = vec2(rd.x - lk * rd.y, rd.z);
+        float dd = dot(d, d);
+        float tc = -dot(o, d) / dd;
+        vec2 pcl = o + d * tc;
+        float disc = (0.0169 - dot(pcl, pcl)) / dd;      // radius 0.13
+        if (disc <= 0.0) continue;
+        float t = tc - sqrt(disc);
+        float y = ro.y + rd.y * t - y0;
+        if (t > 0.05 && t < best && y > 0.0 && y < 1.6 + 1.4 * fract(hk * 3.7)) {
+            best = t;
+            vec2 at = o + d * t;
+            n = normalize(vec3(at.x, -lk * at.x, at.y));
+            rise = y;
+            h = hk;
+        }
+    }
+    return best;
+}
+#endif
 
 float jEnv(vec3 q, vec2 off) {
 #if VARIANT == 5
@@ -759,6 +828,8 @@ float jEnv(vec3 q, vec2 off) {
         air = min(air, length(v - dir * along) - 0.55);
     }
     return -air * 0.7;
+#elif VARIANT == 11
+    return jRock(q, off);
 #else
     return 9.0;
 #endif
@@ -823,12 +894,55 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     float lvl = band(floor(fract(q.y * 0.3 + 0.5) * 63.0));
     vec3 col = colorAt(hue * 2.0 + 0.6) * (0.02 + 0.2 * facing * facing) + vec3(0.5) * pow(facing, 20.0) * 0.15;
     return col + colorAt(hue * 2.0 + 0.2) * vein * (0.15 + 1.0 * lvl + 0.5 * uKick);
+#elif VARIANT == 11
+    // Rock lit from above, with caustics on the faces turned up, pulsing with the bass.
+    float upward = clamp(n.y, 0.0, 1.0);
+    float c1 = sin(wrapA(3.0 * q.x + 1.3 * sin(wrapA(3.0 * q.z + jCam.y + uTime * PI * 2.0))));
+    float c2 = sin(wrapA(3.0 * q.z + jCam.y + 1.2 * sin(wrapA(2.0 * q.x - uTime * PI * 1.5))));
+    float caustic = exp(-abs(c1 * c2) * 9.0);
+    vec3 col = vec3(0.05, 0.09, 0.11) * (0.25 + 0.6 * upward * upward + 0.3 * facing) + colorAt(hue * 2.0 + 0.55) * 0.03;
+    col += colorAt(hue * 2.0 + 0.5) * pow(1.0 - facing, 3.0) * 0.12;
+    return col + mix(vec3(0.4, 0.8, 0.85), colorAt(hue * 2.0 + 0.5), 0.4) * caustic * upward * (0.15 + 0.7 * uLow + 0.4 * uKick);
 #else
     return vec3(0.0);
 #endif
 }
 
+#if VARIANT == 11
+// Kelp: dark green fronds lit along their edges, the tips glowing with their own band.
+vec3 jKelpShade(vec3 n, vec3 rd, float rise, float h, float hue) {
+    float facing = clamp(abs(dot(n, rd)), 0.0, 1.0);
+    float lvl = band(floor(h * 40.0) + 4.0);
+    vec3 col = mix(vec3(0.02, 0.07, 0.03), colorAt(hue * 2.0 + 0.3) * 0.08, 0.4) * (0.4 + 0.8 * facing);
+    col += colorAt(hue * 2.0 + 0.3) * pow(1.0 - facing, 2.0) * 0.25;
+    return col + colorAt(hue * 2.0 + 0.25) * smoothstep(1.2, 2.8, rise) * (0.1 + 0.9 * lvl);
+}
+
+// Light shafts from the surface, slanting and drifting, brighter the more water a ray crosses
+// (worked out from the direction, not marched), and specks drifting in the water, placed in
+// one layer of cells at a fixed distance from the camera.
+vec3 jWater(vec3 col, vec3 ro, vec3 rd, float tHit, float hue) {
+    float a = rd.x / (max(rd.y, 0.0) + 0.7);
+    float shaft = max(0.0, sin(wrapA(a * 7.0 + uTime * PI * 0.8)));
+    shaft *= shaft;
+    float depth = min(tHit, JFAR) / JFAR;
+    col += vec3(0.1, 0.2, 0.22) * shaft * shaft * smoothstep(-0.3, 0.6, rd.y) * depth * (0.6 + 0.6 * uLow);
+    float d = 1.6;
+    if (d < tHit) {
+        vec3 sp = ro + rd * d;
+        // z in cells of the world's own cell, so the specks stay put as the camera wraps a cell.
+        vec3 g = vec3(sp.x * 3.0, sp.y * 3.0 + uTime * 2.0, (sp.z + jCam.w) * (6.0 / JCELL));
+        vec3 c = floor(g);
+        float h = hash(vec2(c.x + 17.0 * mod(c.z + jCell * 6.0, JCELLS * 6.0), c.y));
+        float speck = smoothstep(0.22, 0.0, length(fract(g) - 0.5)) * step(0.93, h);
+        col += mix(vec3(0.5, 0.8, 0.8), colorAt(hue * 2.0 + h), 0.4) * speck * (0.15 + 0.4 * uHigh) * (1.0 - d / 6.0);
+    }
+    return col;
+}
+#endif
+
 vec3 shade(vec2 p) {
+    gDepth = 1.0;
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
     jCull(sp);
@@ -891,15 +1005,30 @@ vec3 shade(vec2 p) {
         col = jEnvShade(q, q.xy - jPath(q.z), ro, rd, hue + q.z / JZ);
         tHit = t;
     }
+#if VARIANT == 11
+    vec3 nK;
+    float riseK;
+    float hK;
+    float tK = jKelp(ro, rd, min(tHit, JFAR), nK, riseK, hK);
+    if (tK < tHit) {
+        col = jKelpShade(nK, rd, riseK, hK, hue + tK * rd.z / JZ);
+        tHit = tK;
+    }
+#endif
     col = mix(col, back, smoothstep(JFAR * 0.55, JFAR, tHit));
+#if VARIANT == 11
+    col = jWater(col, ro, rd, tHit, hue);
+#endif
     // Rays that grazed something took more steps: a glow round its edges.
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 22.0, steps) * 0.1 * (0.5 + 1.5 * uKick);
     col = jGate(col, sp, ro, fw, rt, up, tHit < JFAR, tHit);
+    gDepth = tHit < JFAR ? tHit / JDEPTH : 1.0;
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
 #else
 vec3 shade(vec2 p) {
+    gDepth = 1.0;
     vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
     jCamera(p, ro, fw, rt, up, sp, rd);
     jCull(sp);

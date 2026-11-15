@@ -729,6 +729,10 @@ data class JourneyWorld(
     val cells: Double,
     /** Big structures placed well off the path, untimed (JourneyLandmarks), none for most. */
     val scenery: IntArray = IntArray(0),
+    /** Whether schools of fish (or birds) fly in it (JourneyFlock). */
+    val flock: Boolean = false,
+    /** Its fog distance, JFAR in JOURNEY_BODY (the fish fade out by it). */
+    val far: Float = 17f,
 ) {
     companion object {
         private val SHEET = 2.0 * Math.PI / 3.0
@@ -745,12 +749,13 @@ data class JourneyWorld(
                 DemoEffect.PILLARS -> ENCLOSED.copy(bankOnly = true, cell = 6.0 * Math.PI / 12.0, cells = 12.0)
                 DemoEffect.SKY -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, ARCH, MONOLITH, SPHERE, CRYSTAL), 17.0, 1.5f, true, SHEET, 9.0,
                     scenery = intArrayOf(MONOLITH, MONOLITH, CRYSTAL, SPHERE, RING, ARCH))
-                DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, MONOLITH, CRYSTAL), 13.0, 1.3f, true, SHEET, 9.0)
-                DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, MONOLITH), 16.0, 1.4f, true, Math.PI, 6.0)
-                DemoEffect.NIGHTCITY -> JourneyWorld(intArrayOf(RING, TUNNEL, ARCH), 13.0, 1.2f, true, 6.0 * Math.PI / 8.0, 8.0)
-                DemoEffect.STATION -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 1.3f, false, 6.0 * Math.PI / 8.0, 8.0)
-                DemoEffect.ASTEROIDS -> JourneyWorld(intArrayOf(SPHERE, RING, CRYSTAL), 13.0, 1.2f, false, 6.0 * Math.PI / 7.0, 7.0)
-                DemoEffect.CAVES -> JourneyWorld(intArrayOf(CRYSTAL, RING), 7.5, 1.0f, false, 6.0 * Math.PI / 5.0, 5.0)
+                DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, MONOLITH, CRYSTAL), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
+                DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, MONOLITH), 16.0, 1.4f, true, Math.PI, 6.0, flock = true)
+                DemoEffect.NIGHTCITY -> JourneyWorld(intArrayOf(RING, TUNNEL, ARCH), 13.0, 1.2f, true, 6.0 * Math.PI / 8.0, 8.0, far = 14f)
+                DemoEffect.STATION -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 1.3f, false, 6.0 * Math.PI / 8.0, 8.0, far = 14f)
+                DemoEffect.ASTEROIDS -> JourneyWorld(intArrayOf(SPHERE, RING, CRYSTAL), 13.0, 1.2f, false, 6.0 * Math.PI / 7.0, 7.0, far = 14f)
+                DemoEffect.CAVES -> JourneyWorld(intArrayOf(CRYSTAL, RING), 7.5, 1.0f, false, 6.0 * Math.PI / 5.0, 5.0, far = 8f)
+                DemoEffect.ABYSS -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, CRYSTAL, SPHERE), 10.5, 1.0f, true, 6.0 * Math.PI / 12.0, 12.0, flock = true, far = 11f)
                 else -> ENCLOSED
             }
         }
