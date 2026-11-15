@@ -79,10 +79,13 @@ vec3 wrapA(vec3 a) { return a - TAU * floor(a / TAU + 0.5); }
 vec2 jPath(float z) {
     if (uPathOn > 0.5) {
         // Two 16-bit values packed hi/lo into RGBA; linear filtering of hi and lo separately is
-        // still exact, because the value is a linear function of them.
+        // still exact, because the value is a linear function of them. Decoded in two small
+        // parts: 16-bit floats on the Mali-400/470 stop at 2^15, so building the whole 0..65535
+        // value first overflowed there and every point of the path came out as (-4, -4).
         vec4 s = texture2D(uPath, vec2(jCam.x + z / JZ, 0.5));
-        vec2 u = s.rg * (255.0 * 256.0) + s.ba * 255.0;
-        return (u / 65535.0 * 2.0 - 1.0) * JRANGE;
+        vec2 hi = s.rg * (65280.0 / 65535.0 * 2.0 * JRANGE);
+        vec2 lo = s.ba * (255.0 / 65535.0 * 2.0 * JRANGE);
+        return hi + lo - JRANGE;
     }
     float a = z + jCamZ;
     return vec2(0.7 * sin(a / 3.0) + 0.2 * sin(a), 0.5 * cos(a / 3.0));
