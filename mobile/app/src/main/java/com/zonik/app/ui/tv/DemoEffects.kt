@@ -266,6 +266,8 @@ uniform sampler2D uPath;
 uniform float uPathOn;
 uniform float uGate;
 uniform vec2 uSeed;
+uniform vec4 uCam;
+uniform float uCell;
 
 const float PI = 3.14159265;
 

@@ -570,6 +570,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             // The gate belongs to the world being left, never the one arrived in.
             u1("uGate", if (drawingIncoming) 0f else journey.gate)
             u2("uSeed", look.journey.hue, look.journey.density)
+            setJourneyCamera(e)
         }
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         uniforms["uTunnel"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 9, tunnelRings, 0) }
@@ -844,6 +845,33 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
      * Kept bound on texture unit 1, which nothing else uses. Sampling it costs the shader one
      * texture read per step where evaluating the sines cost six.
      */
+    /**
+     * Where the camera is along a Journey world, worked out here in full precision because
+     * the shader may have only 16-bit floats (see JOURNEY_BODY): the camera's z as a fraction
+     * of the 6π wrap, 3·z and 4·z wrapped to 2π (the sheets' and the rings' phase), z within the
+     * world's cell, and which cell, modulo the world's cell count.
+     */
+    private fun setJourneyCamera(e: DemoEffect) {
+        val z = phase * 3.0 * Math.PI
+        val tau = 2.0 * Math.PI
+        val (cell, cells) = when (e) {
+            DemoEffect.BUBBLEFLIGHT -> 6.0 * Math.PI / 20.0 to 20.0
+            DemoEffect.PILLARS -> 6.0 * Math.PI / 12.0 to 12.0
+            else -> tau / 3.0 to 9.0
+        }
+        fun wrap(x: Double, m: Double) = ((x % m) + m) % m
+        uniforms["uCam"]?.let {
+            if (it >= 0) GLES20.glUniform4f(
+                it,
+                wrap(z / (6.0 * Math.PI), 1.0).toFloat(),
+                wrap(3.0 * z, tau).toFloat(),
+                wrap(4.0 * z, tau).toFloat(),
+                wrap(z, cell).toFloat(),
+            )
+        }
+        u1("uCell", wrap(kotlin.math.floor(z / cell), cells).toFloat())
+    }
+
     /** Runs the Journey's sequencer while the Journey effect is up; see [JourneySequencer]. */
     private fun advanceJourney() {
         if (effect != DemoEffect.JOURNEY) {
@@ -1202,7 +1230,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
-            "uPath", "uPathOn", "uGate", "uSeed",
+            "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell",
             "uC0", "uC1", "uC2", "uTex",
         )
 
