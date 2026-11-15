@@ -243,6 +243,8 @@ data class BeatGrid(
     val beatsPerBar: Int,
     /** Bar numbers, counted from the first downbeat, where the energy jumps up. */
     val drops: List<Int>,
+    /** Loudness of each bar from the first downbeat, 0..1. */
+    val barEnergy: List<Float> = emptyList(),
 )
 
 /**
@@ -392,6 +394,14 @@ class BeatClock(bpm: Float, val grid: BeatGrid? = null) {
             if (ms in minMs..maxMs) return ms
         }
         return null
+    }
+
+    /** The current bar's loudness (0..1) with a synced grid, or null. */
+    fun barEnergyAt(nowMs: Long): Float? {
+        val g = grid ?: return null
+        if (!synced || !hasTempo || g.barEnergy.isEmpty()) return null
+        val bar = kotlin.math.floor(beatAt(nowMs) / g.beatsPerBar).toInt()
+        return g.barEnergy.getOrNull(bar)
     }
 
     /**

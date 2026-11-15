@@ -164,6 +164,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var scaleCeiling = 0.5f
     private var scaleCeilingUntil = 0.0
     private var pathTexture = 0
+    /** The flight path, turns included; uploaded again whenever it changes. */
+    private val path = JourneyPath(PATH_SIZE)
+    private var pathUploaded = -1
+    private val pathBytes = ByteBuffer.allocateDirect(PATH_SIZE * 4)
+    /** Turns, colour steps, look fades, bar energy and banking for the worlds. */
+    private val motion = JourneyMotion()
     /** Fade-in from black when the surface first appears. */
     private var fade = 0f
 
@@ -386,6 +392,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         // Only fades in from black when the surface first appears; switching effects uses a
         // transition instead.
         fade = (fade + dt * FADE_RATE).coerceAtMost(1f)
+        if (current.world || next?.world == true) {
+            motion.update(beatClock, System.currentTimeMillis(), dt, phase * 3.0 * Math.PI, cruiseUnits, path)
+            if (path.version != pathUploaded) uploadPathData()
+        }
         advanceJourney()
         updateTransition(dt)
 
@@ -571,6 +581,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             u1("uGate", if (drawingIncoming) 0f else journey.gate)
             u2("uSeed", look.journey.hue, look.journey.density)
             setJourneyCamera(e)
+            uniforms["uMood"]?.let {
+                if (it >= 0) GLES20.glUniform4f(it, motion.hue, motion.style, motion.energy, motion.bank)
+            }
         }
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         uniforms["uTunnel"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 9, tunnelRings, 0) }
@@ -927,25 +940,11 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     /**
      * The Journey's flight path over one wrap (6π of z), as a 256x1 texture the worlds read
-     * instead of working out three sines at every march step. Each coordinate is 16 bits, high
-     * byte in R/G and low byte in B/A; see `jPath` in [JOURNEY_BODY], whose closed form this
-     * must match.
+     * instead of working out three sines at every march step: [JourneyPath], turns included.
+     * Each coordinate is 16 bits, high byte in R/G and low byte in B/A; see `jPath` in
+     * [JOURNEY_BODY], whose closed form (web previews only) is the path without its turns.
      */
     private fun uploadPath() {
-        val n = PATH_SIZE
-        val bytes = ByteBuffer.allocateDirect(n * 4)
-        val period = 6.0 * Math.PI
-        for (i in 0 until n) {
-            // Texel centres, where linear filtering returns the stored value exactly.
-            val z = (i + 0.5) / n * period
-            val x = 0.7 * kotlin.math.sin(z / 3.0) + 0.2 * kotlin.math.sin(z)
-            val y = 0.5 * kotlin.math.cos(z / 3.0)
-            val ux = (((x + 1.0) / 2.0) * 65535.0).roundToInt().coerceIn(0, 65535)
-            val uy = (((y + 1.0) / 2.0) * 65535.0).roundToInt().coerceIn(0, 65535)
-            bytes.put((ux shr 8).toByte()).put((uy shr 8).toByte())
-                .put((ux and 0xFF).toByte()).put((uy and 0xFF).toByte())
-        }
-        bytes.position(0)
         val ids = IntArray(1)
         GLES20.glGenTextures(1, ids, 0)
         pathTexture = ids[0]
@@ -955,11 +954,27 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        path.pack(pathBytes)
         GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, n, 1, 0,
-            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, bytes
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, PATH_SIZE, 1, 0,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pathBytes
+        )
+        pathUploaded = path.version
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+    }
+
+    /** The path changed (a turn was placed): send the new samples. A kilobyte. */
+    private fun uploadPathData() {
+        if (pathTexture == 0) return
+        path.pack(pathBytes)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE7)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, pathTexture)
+        GLES20.glTexSubImage2D(
+            GLES20.GL_TEXTURE_2D, 0, 0, 0, PATH_SIZE, 1,
+            GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, pathBytes
         )
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        pathUploaded = path.version
     }
 
     private fun uploadHeightmap() {
@@ -1230,7 +1245,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
-            "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell",
+            "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood",
             "uC0", "uC1", "uC2", "uTex",
         )
 

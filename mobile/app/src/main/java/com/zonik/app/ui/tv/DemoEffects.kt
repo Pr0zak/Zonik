@@ -268,6 +268,7 @@ uniform float uGate;
 uniform vec2 uSeed;
 uniform vec4 uCam;
 uniform float uCell;
+uniform vec4 uMood;
 
 const float PI = 3.14159265;
 

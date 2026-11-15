@@ -215,6 +215,7 @@ data class TrackBeatsResponse(
     @SerialName("beats_per_bar") val beatsPerBar: Int? = null,
     val confidence: Float? = null,
     val drops: List<Int> = emptyList(),
+    @SerialName("bar_energy") val barEnergy: List<Float> = emptyList(),
     val key: String? = null,
     val scale: String? = null,
     val energy: Float? = null,

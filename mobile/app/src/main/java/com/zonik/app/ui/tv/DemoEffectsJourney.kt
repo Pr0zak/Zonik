@@ -34,6 +34,11 @@ package com.zonik.app.ui.tv
  * works out in full precision (`uCam`, `uCell`, see DemoRenderer.setJourneyCamera). Every trig
  * argument is wrapped to ±π first, and the march's hit threshold is wider without highp.
  *
+ * Over the song (uMood, worked out on the CPU, all "off" at 0): x shifts the colours round the
+ * wheel at phrases, y fades each world between its two looks ([jSurfaceA] / [jSurfaceB]), z is
+ * the current bar's energy (louder bars, thicker walls) and w banks the camera into the path's
+ * turns. The path itself is rebuilt on the CPU with a sharp turn now and then (JourneyPath).
+ *
  * Uniforms only these worlds read, all meaning "off" at 0: `uGate` (world units to the next
  * portal's gate, 0 when none), `uSeed` (x: hue shift, y: density, both per track), and with
  * `uPathOn` set, `uCam` (x: camera z / 6π, wrapped; y: 3·z and z: 4·z, each wrapped to 2π;
@@ -44,6 +49,7 @@ package com.zonik.app.ui.tv
 internal const val JOURNEY_BODY = """
 const float JZ = 18.8495559;   // 6π: one wrap of the flight, the period of everything below
 const float TAU = 6.2831853;
+const float JRANGE = 4.0;      // path coordinates are packed as -4..4 (JourneyPath.RANGE)
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 const float JEPS = 0.002;
 #else
@@ -76,7 +82,7 @@ vec2 jPath(float z) {
         // still exact, because the value is a linear function of them.
         vec4 s = texture2D(uPath, vec2(jCam.x + z / JZ, 0.5));
         vec2 u = s.rg * (255.0 * 256.0) + s.ba * 255.0;
-        return u / 65535.0 * 2.0 - 1.0;
+        return (u / 65535.0 * 2.0 - 1.0) * JRANGE;
     }
     float a = z + jCamZ;
     return vec2(0.7 * sin(a / 3.0) + 0.2 * sin(a), 0.5 * cos(a / 3.0));
@@ -150,7 +156,8 @@ vec3 jNormal(vec3 q, float th) {
 }
 
 // The world's own colour at a hit: how its surfaces take the light.
-vec3 jSurface(vec3 q, vec3 n, vec3 rd, float hue) {
+// The world's first look.
+vec3 jSurfaceA(vec3 q, vec3 n, vec3 rd, float hue) {
     float facing = clamp(dot(n, -rd), 0.0, 1.0);
 #if VARIANT == 1
     // Schwarz chambers: dark tiled walls, the tile seams glowing on the beat, each room
@@ -198,6 +205,143 @@ vec3 jSurface(vec3 q, vec3 n, vec3 rd, float hue) {
 #endif
 }
 
+// The world's second look, which the renderer fades to and from over the song (uMood.y).
+vec3 jSurfaceB(vec3 q, vec3 n, vec3 rd, float hue) {
+    float facing = clamp(dot(n, -rd), 0.0, 1.0);
+#if VARIANT == 1
+    // Schwarz chambers, lit rooms: no seams, bands of light running down each room, coloured
+    // by the spectrum.
+    vec3 cq = jCellPos(q);
+    float room = hash(floor(cq.xy / JCELL) + jCellZ(floor(cq.z / JCELL)) * vec2(5.3, 1.7));
+    float stripe = smoothstep(0.35, 0.5, abs(fract(cq.z * 2.0 + room) - 0.5));
+    float lvl = band(floor(room * 63.0));
+    vec3 col = colorAt(hue * 2.0 + room * 0.4 + 0.25) * (0.03 + 0.16 * facing * facing);
+    col += colorAt(hue * 2.0 + room * 0.4 + 0.6) * stripe * (0.1 + 0.8 * lvl) * facing;
+    return col;
+#elif VARIANT == 2
+    // Bubble flight, neon: solid glowing cores, each bubble lit by its own band of the spectrum.
+    const float C = JCELL;
+    vec3 cell = floor(jCellPos(q) / C + 0.5);
+    float h = hash(cell.yx + jCellZ(cell.z) * vec2(3.9, 8.3));
+    float lvl = band(floor(h * 63.0));
+    vec3 col = colorAt(hue * 2.0 + h * 0.6 + 0.3) * (0.15 + 0.8 * facing) * (0.35 + 1.3 * lvl);
+    col += vec3(1.0) * pow(1.0 - facing, 6.0) * 0.4;
+    return col;
+#elif VARIANT == 3
+    // Pillar hall, outlined: dark pillars with neon on their edges, the floor a solid glow
+    // that pulses with the bass.
+    const float C = JCELL;
+    if (abs(q.y) > 0.98) {
+        vec2 g = abs(fract(jCellPos(q).xz / C) - 0.5);
+        return colorAt(hue * 2.0 + 0.8) * (0.04 + (0.1 + 0.5 * uLow) * smoothstep(0.2, 0.5, max(g.x, g.y)));
+    }
+    vec2 cq = jCellPos(q).xz;
+    vec2 r2 = abs(cq - floor(cq / C + 0.5) * C);
+    float edge = exp(-abs(r2.x - r2.y) * 60.0);
+    vec3 col = colorAt(hue * 2.0 + 0.4) * 0.03;
+    col += colorAt(hue * 2.0 + 0.9) * edge * (0.4 + 1.0 * uBeat);
+    return col;
+#else
+    // Gyroid flight, contours: a dark sheet drawn over with glowing contour lines.
+    vec3 a = jArg(q);
+    vec3 s = sin(a);
+    vec3 c = cos(a);
+    float g = dot(s.yzx, c.zxy);
+    float line = exp(-abs(fract(g * 3.0) - 0.5) * 18.0);
+    vec3 col = colorAt(hue * 2.0 + 0.5) * (0.03 + 0.15 * facing);
+    col += colorAt(hue * 2.0 + g * 0.3) * line * (0.35 + 0.8 * uBeat) * facing;
+    return col;
+#endif
+}
+
+vec3 jSurface(vec3 q, vec3 n, vec3 rd, float hue) {
+    // The look in between is only worked out while the renderer is fading between the two.
+    if (uMood.y < 0.01) return jSurfaceA(q, n, rd, hue);
+    if (uMood.y > 0.99) return jSurfaceB(q, n, rd, hue);
+    return mix(jSurfaceA(q, n, rd, hue), jSurfaceB(q, n, rd, hue), uMood.y);
+}
+
+// Objects floating in the open space round the flight path, one to a cell along it, each at
+// its own angle a little off the path so the camera flies close past it: orbs in the gyroid,
+// crystals in the chambers, rings round the path (flown through) among the bubbles, lanterns
+// in the hall. The cell's index (absolute, modulo the cell count, so it repeats with the wrap)
+// picks the angle and the colour.
+#if VARIANT == 2
+const float OCELL = JCELL * 2.0;
+#elif VARIANT == 3
+const float OCELL = JCELL;
+#else
+const float OCELL = JCELL * 0.5;
+#endif
+
+// z within the object's cell (-OCELL/2..OCELL/2) and the cell's index.
+vec2 jObjCell(float z) {
+#if VARIANT == 2
+    float w = jCam.w + JCELL * mod(jCell, 2.0);
+    float base = floor(jCell / 2.0);
+    float count = JCELLS / 2.0;
+#elif VARIANT == 3
+    float w = jCam.w;
+    float base = jCell;
+    float count = JCELLS;
+#else
+    float w = mod(jCam.w, OCELL);
+    float base = jCell * 2.0 + floor(jCam.w / OCELL);
+    float count = JCELLS * 2.0;
+#endif
+    float zc = z + w;
+    float c = floor(zc / OCELL + 0.5);
+    return vec2(zc - c * OCELL, mod(c + base, count));
+}
+
+// Distance to this cell's object; `off` is the point's offset from the path at its z.
+float jObject(vec3 q, vec2 off, out float id) {
+    vec2 oc = jObjCell(q.z);
+    id = hash(vec2(oc.y * 1.7 + 3.1, 9.2));
+    float size = 1.0 + 0.6 * uKick;
+#if VARIANT == 2
+    // A ring round the path.
+    float d = length(vec2(length(off) - 0.33, oc.x)) - 0.014 * size;
+#else
+    vec2 dir = normalize(vec2(id - 0.5, hash(vec2(oc.y, 4.4)) - 0.5) + 1e-3);
+    vec3 r = vec3(off - dir * 0.26, oc.x);
+#if VARIANT == 1
+    // A crystal: an octahedron.
+    float d = (abs(r.x) + abs(r.y) + abs(r.z) - 0.09 * size) * 0.577;
+#elif VARIANT == 3
+    // A lantern: a small cube.
+    vec3 b = abs(r) - 0.055 * size;
+    float d = length(max(b, 0.0)) + min(max(b.x, max(b.y, b.z)), 0.0);
+#else
+    // An orb.
+    float d = length(r) - 0.06 * size;
+#endif
+#endif
+    // Capped near the cell's ends, where the next cell's object may be the nearer one.
+    return min(d, OCELL * 0.5 - abs(oc.x) + 0.08);
+}
+
+// The object's surface normal at a hit.
+vec3 jObjNormal(vec3 q, vec2 off, float id) {
+    vec2 oc = jObjCell(q.z);
+#if VARIANT == 2
+    float l = length(off);
+    return normalize(vec3((l - 0.33) * off / max(l, 1e-3), oc.x));
+#else
+    vec2 dir = normalize(vec2(id - 0.5, hash(vec2(oc.y, 4.4)) - 0.5) + 1e-3);
+    vec3 r = vec3(off - dir * 0.26, oc.x);
+#if VARIANT == 1
+    return normalize(sign(r));
+#elif VARIANT == 3
+    vec3 a = abs(r);
+    return a.x > a.y && a.x > a.z ? vec3(sign(r.x), 0.0, 0.0)
+         : (a.y > a.z ? vec3(0.0, sign(r.y), 0.0) : vec3(0.0, 0.0, sign(r.z)));
+#else
+    return normalize(r);
+#endif
+#endif
+}
+
 vec3 shade(vec2 p) {
     if (uPathOn > 0.5) {
         jCam = uCam;
@@ -216,9 +360,9 @@ vec3 shade(vec2 p) {
     vec3 up = cross(fw, rt);
 #if VARIANT == 3
     // A hall has a floor: bank gently instead of rolling right round.
-    vec2 sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0))) * p;
+    vec2 sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
-    vec2 sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0)))) * p;
+    vec2 sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0))) + uMood.w) * p;
 #endif
     vec3 rd = normalize(fw * 1.3 + rt * sp.x + up * sp.y);
 
@@ -226,16 +370,22 @@ vec3 shade(vec2 p) {
 #if VARIANT == 1
     th = th * 2.0 + 0.1;
 #endif
+    // Louder bars, thicker walls (uMood.z is the bar's energy, 0 when there is no grid).
+    th *= uMood.z > 0.0 ? 0.7 + 0.6 * uMood.z : 1.0;
     float t = 0.05;
     float sheet = 1.0;
     float tube = 0.0;
+    float obj = 1.0;
+    float objId = 0.0;
     float steps = 0.0;
     bool hit = false;
     for (int i = 0; i < 20; i++) {
         vec3 q = ro + rd * t;
+        vec2 off = q.xy - jPath(q.z);
         sheet = jWorld(q, th);
-        tube = 0.42 - length(q.xy - jPath(q.z));
-        float d = max(sheet, tube);
+        tube = 0.42 - length(off);
+        obj = jObject(q, off, objId);
+        float d = min(max(sheet, tube), obj);
         if (d < JEPS + JEPS * t) { hit = true; break; }
         t += d;
         steps += 1.0;
@@ -245,8 +395,18 @@ vec3 shade(vec2 p) {
     vec3 haze = colorAt(0.66) * 0.025;
     vec3 col = haze;
     vec3 q = ro + rd * t;
-    float hue = jCam.x + q.z / JZ + uSeed.x;
-    if (hit) {
+    float hue = jCam.x + q.z / JZ + uSeed.x + uMood.x;
+    if (hit && obj < max(sheet, tube)) {
+        // An object: shaded, glowing at its rim, each lit by its own band of the spectrum and
+        // flaring on the kick.
+        vec2 off = q.xy - jPath(q.z);
+        float lvl = band(floor(objId * 63.0));
+        float facing = clamp(dot(jObjNormal(q, off, objId), -rd), 0.0, 1.0);
+        vec3 oc = colorAt(hue * 2.0 + objId);
+        col = oc * (0.12 + 0.5 * facing) * (0.5 + 1.1 * lvl + 0.6 * uKick);
+        col += oc * pow(1.0 - facing, 2.0) * (0.4 + 0.8 * lvl);
+        col += vec3(1.0) * pow(facing, 24.0) * 0.35;
+    } else if (hit) {
         vec2 off = q.xy - jPath(q.z);
         bool cut = tube > sheet;
         vec3 n = cut ? normalize(vec3(-off, 0.0)) : jNormal(q, th);

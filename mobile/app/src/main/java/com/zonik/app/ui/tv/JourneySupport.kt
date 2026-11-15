@@ -14,7 +14,7 @@ data class TrackBeats(
     companion object {
         fun from(trackId: String, r: TrackBeatsResponse): TrackBeats {
             val grid = if (r.status == "ready" && r.bpm != null && r.downbeatS != null) {
-                BeatGrid(r.bpm, r.downbeatS * 1000f, r.beatsPerBar ?: 4, r.drops)
+                BeatGrid(r.bpm, r.downbeatS * 1000f, r.beatsPerBar ?: 4, r.drops, r.barEnergy)
             } else null
             return TrackBeats(trackId, grid, r.key, r.scale, r.energy)
         }
@@ -194,5 +194,183 @@ class JourneySequencer {
             val seed = order.toLong()
             return worlds.sortedBy { ((it.ordinal + 1) * 2654435761L xor seed) and 0xFFFFFL }
         }
+    }
+}
+
+/**
+ * The Journey's flight path over one wrap of the flight (6π of z), as the shader reads it from
+ * a texture: a gentle weave in closed form plus a sideways offset per sample that turns add.
+ *
+ * A turn rewrites the path from a point well ahead of the camera ([SAFE_AHEAD], past the fog)
+ * round to just behind it: the path swerves sharply to a new offset there and holds it, and
+ * eases back to the old offset at the far end, so the ring stays continuous; that far end is
+ * the next turn unless a newer one replaces it first. The part the camera can see is never
+ * touched, so nothing on screen jumps.
+ */
+class JourneyPath(val size: Int = 256) {
+    private val level = FloatArray(size)
+
+    /** Bumped on every change, so the renderer knows to upload the texture again. */
+    var version = 0
+        private set
+
+    fun sampleZ(i: Int): Double = (i + 0.5) / size * PERIOD
+
+    /** The sideways offset at [z], linearly between samples, as the texture filter reads it. */
+    fun levelAt(z: Double): Float {
+        val f = wrap(z, PERIOD) / PERIOD * size - 0.5
+        val i0 = kotlin.math.floor(f).toInt()
+        val k = (f - i0).toFloat()
+        val a = level[((i0 % size) + size) % size]
+        val b = level[(((i0 + 1) % size) + size) % size]
+        return a + (b - a) * k
+    }
+
+    fun xAt(z: Double): Float = (baseX(z) + levelAt(z)).toFloat()
+
+    /** Sideways offset the path holds at the camera now. */
+    fun levelNow(camZ: Double): Float = levelAt(camZ)
+
+    /**
+     * Swerves the path to [target] over [length] units starting at [startZ] (absolute z, any
+     * wrap). False when the start is too close to the camera to be off screen, or too far.
+     */
+    fun turn(camZ: Double, startZ: Double, target: Float, length: Double = TURN_LENGTH): Boolean {
+        val ahead = wrap(startZ - camZ, PERIOD)
+        val end = PERIOD - SAFE_BEHIND
+        if (ahead < SAFE_AHEAD || ahead > end - 2 * length) return false
+        val from = levelAt(startZ)
+        val back = levelAt(camZ + end)
+        for (i in 0 until size) {
+            val a = wrap(sampleZ(i) - camZ, PERIOD)
+            if (a < ahead || a > end) continue
+            val swerved = from + (target - from) * smooth((a - ahead) / length)
+            level[i] = back + (swerved - back) * smooth((end - a) / length)
+        }
+        version++
+        return true
+    }
+
+    /** Roll into the path's curve at the camera, in radians. */
+    fun bankAt(camZ: Double): Float {
+        val h = 0.6
+        val curve = (xAt(camZ + h) - 2 * xAt(camZ) + xAt(camZ - h)) / (h * h)
+        return (-curve * BANK_GAIN).toFloat().coerceIn(-MAX_BANK, MAX_BANK)
+    }
+
+    /** RGBA bytes for the texture: x and y each as 16 bits, high byte in R/G, low in B/A. */
+    fun pack(out: java.nio.ByteBuffer) {
+        out.position(0)
+        for (i in 0 until size) {
+            val z = sampleZ(i)
+            val ux = encode(baseX(z) + level[i])
+            val uy = encode(baseY(z))
+            out.put((ux shr 8).toByte()).put((uy shr 8).toByte())
+                .put((ux and 0xFF).toByte()).put((uy and 0xFF).toByte())
+        }
+        out.position(0)
+    }
+
+    companion object {
+        val PERIOD = 6.0 * Math.PI
+        /** The shader's `JRANGE`: path coordinates are packed as -RANGE..RANGE. */
+        const val RANGE = 4.0
+        /** Past the fog (5 units) plus a margin. */
+        const val SAFE_AHEAD = 6.0
+        /** Leaves the samples the camera's own position is filtered from alone. */
+        const val SAFE_BEHIND = 0.4
+        const val TURN_LENGTH = 1.6
+        /** Turns keep the path within this far of the weave, so positions stay small. */
+        const val MAX_LEVEL = 2.2f
+        const val BANK_GAIN = 0.1
+        const val MAX_BANK = 0.4f
+
+        fun baseX(z: Double) = 0.7 * kotlin.math.sin(z / 3.0) + 0.2 * kotlin.math.sin(z)
+        fun baseY(z: Double) = 0.5 * kotlin.math.cos(z / 3.0)
+
+        private fun encode(v: Double): Int =
+            kotlin.math.round((v / RANGE + 1.0) / 2.0 * 65535.0).toInt().coerceIn(0, 65535)
+
+        private fun wrap(x: Double, m: Double) = ((x % m) + m) % m
+
+        private fun smooth(x: Double): Float {
+            val t = x.coerceIn(0.0, 1.0)
+            return (t * t * (3 - 2 * t)).toFloat()
+        }
+    }
+}
+
+/**
+ * How a Journey world changes over the song, once a frame on the CPU:
+ * - a sharp turn of the path now and then: on a 16-beat boundary (skipping about half of
+ *   them) with a tempo, or every 9-16 s without one, placed where the camera should be then;
+ * - the colours turning a step round the wheel at every 16 beats ([hue]);
+ * - each world fading between its two looks every 32 beats, half a phrase off the portals
+ *   ([style]);
+ * - the current bar's loudness from the beat grid ([energy], 0 without one);
+ * - the camera banking into the path's curves ([bank]).
+ */
+class JourneyMotion(seed: Int = 1) {
+    var hue = 0f
+        private set
+    var style = 0f
+        private set
+    var energy = 0f
+        private set
+    var bank = 0f
+        private set
+
+    private val random = kotlin.random.Random(seed)
+    private var hueTarget = 0f
+    private var styleTarget = 0f
+    private var lastPhrase = Long.MIN_VALUE
+    private var nextTurnAtMs = 0L
+
+    fun update(clock: BeatClock?, nowMs: Long, dt: Float, camZ: Double, unitsPerSec: Float, path: JourneyPath) {
+        // Phrases: 16 beats with a tempo, 20 s without.
+        val phrase = if (clock != null && clock.hasTempo) {
+            kotlin.math.floor(clock.beatAt(nowMs) / 16.0).toLong()
+        } else {
+            nowMs / 20_000L
+        }
+        if (phrase != lastPhrase) {
+            if (lastPhrase != Long.MIN_VALUE) hueTarget += 0.12f + random.nextFloat() * 0.2f
+            val m = ((phrase % 4) + 4) % 4
+            styleTarget = if (m == 1L || m == 2L) 1f else 0f
+            lastPhrase = phrase
+        }
+        hue += (hueTarget - hue) * (1f - kotlin.math.exp(-dt * 0.8f))
+        style = if (style < styleTarget) (style + dt / STYLE_FADE_SEC).coerceAtMost(styleTarget)
+        else (style - dt / STYLE_FADE_SEC).coerceAtLeast(styleTarget)
+        val e = clock?.barEnergyAt(nowMs) ?: 0f
+        energy += (e - energy) * (1f - kotlin.math.exp(-dt * 3f))
+        bank += (path.bankAt(camZ) - bank) * (1f - kotlin.math.exp(-dt * 4f))
+
+        if (nowMs >= nextTurnAtMs) planTurn(clock, nowMs, camZ, unitsPerSec, path)
+    }
+
+    private fun planTurn(clock: BeatClock?, nowMs: Long, camZ: Double, unitsPerSec: Float, path: JourneyPath) {
+        val speed = unitsPerSec.coerceAtLeast(0.3f)
+        // The turn's middle must be past the fog when it is placed.
+        val minMs = ((JourneyPath.SAFE_AHEAD + JourneyPath.TURN_LENGTH) / speed * 1000.0).toFloat()
+        var ms = if (clock != null && clock.hasTempo) {
+            clock.msToNextMultiple(nowMs, 16, minMs).let {
+                if (random.nextBoolean()) it + 16 * clock.beatMs else it
+            }
+        } else {
+            maxOf(minMs, 9_000f + random.nextFloat() * 7_000f)
+        }
+        val middle = camZ + speed * ms / 1000.0
+        val now = path.levelNow(camZ)
+        var dir = if (random.nextBoolean()) 1f else -1f
+        val size = 0.7f + random.nextFloat() * 0.7f
+        if (kotlin.math.abs(now + dir * size) > JourneyPath.MAX_LEVEL) dir = -dir
+        val placed = path.turn(camZ, middle - JourneyPath.TURN_LENGTH / 2, now + dir * size)
+        if (!placed) ms = 4_000f // too far for this speed: look again shortly
+        nextTurnAtMs = nowMs + ms.toLong() + 500L
+    }
+
+    private companion object {
+        const val STYLE_FADE_SEC = 1.5f
     }
 }
