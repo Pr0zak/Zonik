@@ -48,6 +48,11 @@ enum class DemoEffect(
      * the whole composition slowly around the screen through `uFloat`.
      */
     val floats: Boolean = false,
+    /**
+     * One of the Journey's 3D worlds ([JOURNEY_BODY]): it shares the flight path with the
+     * others, so the Journey can fly from one into the next through a portal.
+     */
+    val world: Boolean = false,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
@@ -153,7 +158,11 @@ enum class DemoEffect(
     BUBBLES("Bubbles", BUBBLES_BODY),
     COVERBOUNCE("Bouncing cover", COVERBOUNCE_BODY, feedback = true),
     RIBBONS("Ribbons", RIBBONS_BODY),
-    GYROID("Gyroid flight", GYROID_BODY, halfRes = true);
+    GYROID("Gyroid flight", JOURNEY_BODY, halfRes = true, world = true),
+    SCHWARZ("Schwarz chambers", JOURNEY_BODY, halfRes = true, variant = 1, world = true),
+    BUBBLEFLIGHT("Bubble flight", JOURNEY_BODY, halfRes = true, variant = 2, world = true),
+    PILLARS("Pillar hall", JOURNEY_BODY, halfRes = true, variant = 3, world = true),
+    JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
 }
@@ -253,6 +262,10 @@ uniform vec2 uPx;
 uniform vec2 uDrops[4];
 // Kicks so far, counting 0..255 and round again; for effects that change state on a kick.
 uniform float uKicks;
+uniform sampler2D uPath;
+uniform float uPathOn;
+uniform float uGate;
+uniform vec2 uSeed;
 
 const float PI = 3.14159265;
 
