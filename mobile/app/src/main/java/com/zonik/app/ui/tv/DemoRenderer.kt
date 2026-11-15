@@ -144,20 +144,14 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
     private var current = if (initial == DemoEffect.JOURNEY) JOURNEY_WORLDS.first() else initial
 
-    // The Journey: which world it is in or flying to, when the next portal opens (wall-clock
-    // ms, 0 when none is planned), the beat clock that plan was made with, and the gate's
-    // distance ahead in world units (0 when no gate is up).
-    private var journeyWorld: DemoEffect? = null
-    private var journeySwitchAtMs = 0L
-    private var journeyPlannedWith: BeatClock? = null
-    private var journeyPlannedSynced = false
-    private var gate = 0f
+    /** The Journey: which world it is flying to, when the next portal opens, the gate. */
+    private val journey = JourneySequencer()
     /** The running transition is a portal: an iris from the vanishing point, with no kick wait. */
     private var portal = false
     /** Seconds since the last portal opened, for its speed burst. */
     private var sincePortal = 99f
-    /** The scene's speed this frame, in units of uPhase per second. */
-    private var lastSpeed = CRUISE
+    /** The camera's cruising speed (no kicks, no portal surge), in world units per second. */
+    private var cruiseUnits = 0f
 
     // Adaptive resolution for the Journey worlds: the fraction of the surface they are drawn
     // at, lowered when frames run slow and raised again after a stretch at full rate.
@@ -165,6 +159,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var scaleFrames = 0
     private var scaleSeconds = 0f
     private var scaleSteadySeconds = 0f
+    /** Seconds since the scale last went up, and a ceiling set when that step failed. */
+    private var sinceScaleUp = 99f
+    private var scaleCeiling = 0.5f
+    private var scaleCeilingUntil = 0.0
     private var pathTexture = 0
     /** Fade-in from black when the surface first appears. */
     private var fade = 0f
@@ -430,7 +428,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             }
             return
         }
-        val requested = if (effect == DemoEffect.JOURNEY) journeyWorld ?: current else effect
+        val requested = if (effect == DemoEffect.JOURNEY) journey.world ?: current else effect
         if (requested == current) {
             waitedForBeat = 0f
             return
@@ -570,7 +568,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             u1("uPathOn", if (pathTexture != 0) 1f else 0f)
             // The gate belongs to the world being left, never the one arrived in.
-            u1("uGate", if (drawingIncoming) 0f else gate)
+            u1("uGate", if (drawingIncoming) 0f else journey.gate)
             u2("uSeed", look.journey.hue, look.journey.density)
         }
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
@@ -649,12 +647,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         kick *= exp(-dt * KICK_DECAY)
 
         // Bass is the throttle; the kick is a shove.
-        var speed = CRUISE + low * 0.55f + kick * 0.9f
-        if (current.world) speed *= lookCurrent.journey.speed
+        val worldSpeed = if (current.world) lookCurrent.journey.speed else 1f
+        var speed = (CRUISE + low * 0.55f + kick * 0.9f) * worldSpeed
+        cruiseUnits = (CRUISE + low * 0.55f) * worldSpeed * GATE_UNITS_PER_PHASE
         // A portal is a rush: the camera surges through the gate and settles again.
         sincePortal += dt
         if (sincePortal < PORTAL_BURST_SEC) speed += PORTAL_BURST * sin(Math.PI * sincePortal / PORTAL_BURST_SEC).toFloat()
-        lastSpeed = speed
         phase = (phase + speed * dt) % WRAP
         spin = (spin + (0.012f + mid * 0.03f) * dt) % WRAP
         time = (time + TIME_RATE * dt) % WRAP
@@ -846,102 +844,53 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
      * Kept bound on texture unit 1, which nothing else uses. Sampling it costs the shader one
      * texture read per step where evaluating the sines cost six.
      */
-    /**
-     * The Journey's sequencer. While the Journey effect is up it keeps [journeyWorld] (the
-     * world [updateTransition] flies to) and plans the next portal: with a beat grid lined up to
-     * the player, the start of the next 32-beat phrase at least [MIN_WORLD_MS] away, or a drop
-     * if one lands in the half-minute after that; with only a tempo, a 16-beat boundary after
-     * [FALLBACK_WORLD_MS]; with neither, [FALLBACK_WORLD_MS] and the next kick. For the last
-     * stretch before it, the gate is shown closing in so the camera passes through it as the
-     * iris opens.
-     */
+    /** Runs the Journey's sequencer while the Journey effect is up; see [JourneySequencer]. */
     private fun advanceJourney() {
         if (effect != DemoEffect.JOURNEY) {
-            journeyWorld = null
-            journeySwitchAtMs = 0L
-            gate = 0f
+            journey.reset()
             return
         }
-        val now = System.currentTimeMillis()
-        val worlds = journeyWorlds.ifEmpty { JOURNEY_WORLDS }
-        val world = journeyWorld
-        if (world == null || world !in worlds) {
-            journeyWorld = if (current.world && current in worlds) current else journeyOrder(worlds).first()
-            journeySwitchAtMs = 0L
-        }
-        val clock = beatClock
-        // The clock is rebuilt when a track's grid arrives and syncs a moment later: plan
-        // again with the better one, unless the gate is already up.
-        val replan = journeySwitchAtMs == 0L ||
-            ((clock !== journeyPlannedWith || (clock?.synced == true) != journeyPlannedSynced) && gate == 0f)
-        if (replan) planPortal(now)
-        if (next != null || worlds.size < 2) {
-            gate = 0f
-            return
-        }
-        val left = journeySwitchAtMs - now
-        val lead = gateLeadMs()
-        gate = if (left in 0..lead) (left / 1000f) * lastSpeed * GATE_UNITS_PER_PHASE else 0f
-        if (left > 0) return
-        // Due. On a beat grid the moment is the beat itself; without one, wait for a kick.
-        val onBeat = clock?.hasTempo == true || kick > 0.9f || left < -BEAT_WAIT_SEC * 1000f
-        if (!onBeat) return
-        val order = journeyOrder(worlds)
-        val from = order.indexOf(journeyWorld)
-        journeyWorld = order[(from + 1) % order.size]
-        gate = 0f
-        planPortal(now)
-    }
-
-    private fun planPortal(now: Long) {
-        val clock = beatClock
-        journeyPlannedWith = clock
-        journeyPlannedSynced = clock?.synced == true
-        val ms = when {
-            clock != null && clock.synced ->
-                clock.msToDrop(now, MIN_WORLD_MS, MIN_WORLD_MS + DROP_WINDOW_MS)
-                    ?: clock.msToNextMultiple(now, PHRASE_BEATS, MIN_WORLD_MS)
-            clock != null && clock.hasTempo -> clock.msToNextMultiple(now, 16, FALLBACK_WORLD_MS)
-            else -> FALLBACK_WORLD_MS
-        }
-        journeySwitchAtMs = now + ms.toLong()
-    }
-
-    /** One bar before the portal, between 1.2 and 3 seconds. */
-    private fun gateLeadMs(): Long {
-        val beat = beatClock?.takeIf { it.hasTempo }?.beatMs ?: return 2000L
-        return (beat * (beatClock?.beatsPerBar ?: 4)).toLong().coerceIn(1200L, 3000L)
-    }
-
-    /** The worlds in this track's order. */
-    private fun journeyOrder(worlds: List<DemoEffect>): List<DemoEffect> {
-        val seed = journeyLook.order.toLong()
-        return worlds.sortedBy { ((it.ordinal + 1) * 2654435761L xor seed) and 0xFFFFFL }
+        journey.update(
+            current, journeyWorlds, journeyLook.order, beatClock, System.currentTimeMillis(),
+            kick, cruiseUnits, transitioning = next != null,
+        )
     }
 
     /**
      * Lowers a Journey world's resolution while frames run slow (under [SCALE_DOWN_FPS] over
      * two seconds) and raises it again after [SCALE_UP_AFTER_SEC] at full rate, so each box
-     * runs the worlds as sharp as it can hold 60 fps.
+     * runs the worlds as sharp as it can hold 60 fps. A step up that drops the rate straight
+     * away is taken back and not tried again for [SCALE_CEILING_SEC].
      */
     private fun adaptWorldScale(dt: Float) {
         scaleFrames++
         scaleSeconds += dt
+        sinceScaleUp += dt
         if (scaleSeconds < 2f) return
         val fps = scaleFrames / scaleSeconds
         scaleFrames = 0
         scaleSeconds = 0f
         when {
             fps < SCALE_DOWN_FPS && worldScale > MIN_WORLD_SCALE -> {
-                worldScale = (worldScale - 0.06f).coerceAtLeast(MIN_WORLD_SCALE)
+                if (sinceScaleUp < 4f) {
+                    // The last step up cost the frame rate: take it back and stay below it
+                    // for a while rather than trying it again every few seconds.
+                    worldScale = (worldScale - SCALE_UP_STEP).coerceAtLeast(MIN_WORLD_SCALE)
+                    scaleCeiling = worldScale
+                    scaleCeilingUntil = clock + SCALE_CEILING_SEC
+                } else {
+                    worldScale = (worldScale - SCALE_DOWN_STEP).coerceAtLeast(MIN_WORLD_SCALE)
+                }
                 scaleSteadySeconds = 0f
                 DebugLog.d("DemoRenderer", "${current.name} %.1f fps: world scale -> %.2f".format(fps, worldScale))
             }
             fps >= SCALE_UP_FPS -> {
                 scaleSteadySeconds += 2f
-                if (scaleSteadySeconds >= SCALE_UP_AFTER_SEC && worldScale < 0.5f) {
-                    worldScale = (worldScale + 0.03f).coerceAtMost(0.5f)
+                val ceiling = if (clock < scaleCeilingUntil) scaleCeiling else 0.5f
+                if (scaleSteadySeconds >= SCALE_UP_AFTER_SEC && worldScale < ceiling) {
+                    worldScale = (worldScale + SCALE_UP_STEP).coerceAtMost(ceiling)
                     scaleSteadySeconds = 0f
+                    sinceScaleUp = 0f
                 }
             }
             else -> scaleSteadySeconds = 0f
@@ -1230,15 +1179,16 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val PORTAL_BURST_SEC = 1.4f
         /** Journey worlds travel 3π of z per unit of uPhase (see JOURNEY_BODY). */
         val GATE_UNITS_PER_PHASE = (3.0 * Math.PI).toFloat()
-        const val MIN_WORLD_MS = 20_000f
-        const val DROP_WINDOW_MS = 30_000f
-        const val FALLBACK_WORLD_MS = 24_000f
-        const val PHRASE_BEATS = 32
         const val PATH_SIZE = 256
         const val MIN_WORLD_SCALE = 0.32f
-        const val SCALE_DOWN_FPS = 50f
+        /** Below this over two seconds the worlds draw smaller: 60 fps is the aim, not "fast enough". */
+        const val SCALE_DOWN_FPS = 56f
         const val SCALE_UP_FPS = 58.5f
         const val SCALE_UP_AFTER_SEC = 12f
+        const val SCALE_DOWN_STEP = 0.06f
+        const val SCALE_UP_STEP = 0.03f
+        /** How long a failed step up stays off limits. */
+        const val SCALE_CEILING_SEC = 300.0
         const val ATTACK_RATE = 30f
         const val RELEASE_RATE = 11f
         const val KICK_DECAY = 6f
