@@ -674,13 +674,13 @@ data class JourneyWorld(
                 // Bubbles and pillars stand close together, so the same speed felt too fast there.
                 DemoEffect.BUBBLEFLIGHT -> ENCLOSED.copy(speed = 0.6f, cell = 6.0 * Math.PI / 20.0, cells = 20.0)
                 DemoEffect.PILLARS -> ENCLOSED.copy(speed = 0.6f, bankOnly = true, cell = 6.0 * Math.PI / 12.0, cells = 12.0)
-                DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, MONOLITH, CRYSTAL), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
-                DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, MONOLITH), 16.0, 1.4f, true, Math.PI, 6.0, flock = true)
-                DemoEffect.NIGHTCITY -> JourneyWorld(intArrayOf(RING, TUNNEL, ARCH), 13.0, 1.2f, true, 6.0 * Math.PI / 8.0, 8.0, far = 14f)
-                DemoEffect.STATION -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 1.3f, false, 6.0 * Math.PI / 8.0, 8.0, far = 14f)
-                DemoEffect.ASTEROIDS -> JourneyWorld(intArrayOf(SPHERE, RING, CRYSTAL), 13.0, 1.2f, false, 6.0 * Math.PI / 7.0, 7.0, far = 14f)
-                DemoEffect.CAVES -> JourneyWorld(intArrayOf(CRYSTAL, RING), 7.5, 1.0f, false, 6.0 * Math.PI / 5.0, 5.0, far = 8f)
-                DemoEffect.ABYSS -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, CRYSTAL, SPHERE), 10.5, 1.0f, true, 6.0 * Math.PI / 12.0, 12.0, flock = true, far = 11f)
+                DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, TUNNEL, TUNNEL, MONOLITH), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
+                DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, TUNNEL, TUNNEL), 16.0, 1.4f, true, Math.PI, 6.0, flock = true)
+                DemoEffect.NIGHTCITY -> JourneyWorld(intArrayOf(RING, TUNNEL, TUNNEL, ARCH), 13.0, 1.2f, true, 6.0 * Math.PI / 8.0, 8.0, far = 14f)
+                DemoEffect.STATION -> JourneyWorld(intArrayOf(RING, TUNNEL, TUNNEL, SPHERE), 13.0, 1.3f, false, 6.0 * Math.PI / 8.0, 8.0, far = 14f)
+                DemoEffect.ASTEROIDS -> JourneyWorld(intArrayOf(SPHERE, RING, TUNNEL, TUNNEL), 13.0, 1.2f, false, 6.0 * Math.PI / 7.0, 7.0, far = 14f)
+                DemoEffect.CAVES -> JourneyWorld(intArrayOf(RING, TUNNEL), 7.5, 1.0f, false, 6.0 * Math.PI / 5.0, 5.0, far = 8f)
+                DemoEffect.ABYSS -> JourneyWorld(intArrayOf(ARCH, ARCH, TUNNEL, TUNNEL, SPHERE), 10.5, 1.0f, true, 6.0 * Math.PI / 12.0, 12.0, flock = true, far = 11f)
                 else -> ENCLOSED
             }
         }

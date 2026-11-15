@@ -314,6 +314,8 @@ uniform float uCell;
 uniform vec4 uMood;
 uniform vec4 uMarks[8];
 uniform vec4 uMarkScr[4];
+// Rings to fly through (JourneyHoops): (z ahead, centre x, y, radius; width, hue, 0, 0).
+uniform vec4 uHoops[8];
 uniform vec3 uCamRo;
 uniform vec3 uCamFw;
 uniform vec3 uCamRt;

@@ -488,6 +488,28 @@ vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, floa
     return col;
 }
 
+// Rings to fly through (JourneyHoops on the CPU, every world): where the ray crosses each
+// ring's plane, a glowing band and a halo, nearer than whatever the world shows there. Closed
+// form, so they cost a few operations a pixel and nothing in the march. Pulsing with the beat
+// and the kick, each lit by its own band of the spectrum.
+vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
+    for (int i = 0; i < 4; i++) {
+        vec4 a = uHoops[2 * i];
+        if (a.w <= 0.0 || a.x < 0.05) continue;
+        float t = a.x / max(rd.z, 0.05);
+        if (t > tHit) continue;
+        vec4 b = uHoops[2 * i + 1];
+        float r = length(ro.xy + rd.xy * t - a.yz);
+        float e = abs(r - a.w * (1.0 + 0.1 * uKick));
+        float fog = 1.0 - smoothstep(far * 0.5, far, t);
+        float lvl = band(floor(fract(b.y) * 40.0) + 4.0);
+        vec3 c = colorAt(hue * 2.0 + b.y);
+        col = mix(col, c * (0.7 + 1.3 * lvl + 0.8 * uKick), smoothstep(b.x, b.x * 0.3, e) * fog);
+        col += c * exp(-e / (b.x * 3.0)) * (0.12 + 0.6 * uBeat + 0.5 * uKick) * fog;
+    }
+    return col;
+}
+
 #if VARIANT >= 4
 // ---- The open worlds ----------------------------------------------------------------------
 // Each has a backdrop (jBack), a scene to fly through (jEnv: the distance to it, positive in
@@ -626,8 +648,8 @@ float jEnv(vec3 q, vec2 off) {
     float h = hash(vec2(cell.x, jCellZ(cell.z)) + 2.3);
     float clear = abs(cell.x * JCELL - (q.x - off.x));
     float stack = (h > 0.35 && clear > 1.3) ? max(length(r.xz) - (0.35 + 0.45 * h), q.y - (0.3 + 3.0 * h)) : JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3;
-    float waves = 0.04 * sin(wrapA(3.0 * q.x + uTime * PI * 6.0)) * sin(wrapA(3.0 * q.z + jCam.y)) * (1.0 + 2.0 * uLow);
-    return min(min(stack, JCELL * 0.45), q.y + 1.1 - waves);
+    // The sea itself is not in here: shade() works out where the ray meets it directly.
+    return min(stack, JCELL * 0.45);
 #elif VARIANT == 7
     // Night city: towers in blocks, the street the flight follows kept clear.
     vec3 cell;
@@ -699,13 +721,18 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     col += colorAt(hue * 2.0 + stratum * 0.06 + 0.5) * exp(-abs(fract(q.y * 3.0) - 0.5) * 30.0) * lvl * 0.9;
     return col;
 #elif VARIANT == 6
-    // Water mirrors the sky; the stacks are dark rock with a light at their tops.
-    if (q.y < -0.95) {
-        vec3 rr = reflect(rd, normalize(n + vec3(0.0, 2.0, 0.0)));
-        return jBack(q, rr, hue) * 0.55 + colorAt(hue * 2.0 + 0.1) * pow(facing, 30.0) * 0.2;
-    }
+    // Dark rock banded with light like the Pillar hall: bands rising up each stack, each stack
+    // lit by its own band of the spectrum and flaring on the beat, its top glowing.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float hc = hash(vec2(cell.x, jCellZ(cell.z)) + 2.3);
+    float lvl = band(floor(fract(hc * 7.3) * 48.0) + 4.0);
+    float bands = smoothstep(0.8, 1.0, sin(wrapA(q.y * 5.0 - uTime * PI * 6.0 + hc * 6.0)));
+    float top = smoothstep(-0.25, 0.0, q.y - (0.3 + 3.0 * hc));
     vec3 col = colorAt(hue * 2.0 + 0.35) * (0.03 + 0.3 * facing * facing);
-    return col + colorAt(hue * 2.0 + 0.1) * pow(1.0 - facing, 3.0) * (0.2 + 0.6 * uBeat);
+    col += colorAt(hue * 2.0 + 0.1) * pow(1.0 - facing, 3.0) * (0.15 + 0.4 * uBeat);
+    col += colorAt(hue * 2.0 + hc * 0.5) * bands * (0.15 + 1.1 * lvl + 0.6 * uBeat);
+    return col + colorAt(hue * 2.0 + 0.1) * top * (0.3 + 0.9 * lvl);
 #elif VARIANT == 7
     // Towers with lit windows that flicker with the hi-hats; the street a glowing grid.
     if (q.y < -2.15) {
@@ -754,6 +781,20 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
 #endif
 }
 
+#if VARIANT == 6
+// The sea: a plane at y = -1.1 with waves only in its normal (cheap, and no march steps lost
+// skimming it), mirroring the sky.
+vec3 jSea(vec3 q, vec3 rd, float hue) {
+    float k = 0.12 * (1.0 + 2.0 * uLow);
+    float a = wrapA(3.0 * q.x + uTime * PI * 6.0);
+    float b = wrapA(3.0 * q.z + jCam.y);
+    vec3 n = normalize(vec3(-k * cos(a) * sin(b), 1.0, -k * sin(a) * cos(b)));
+    float facing = clamp(dot(n, -rd), 0.0, 1.0);
+    vec3 rr = reflect(rd, normalize(n + vec3(0.0, 2.0, 0.0)));
+    return jBack(q, rr, hue) * 0.55 + colorAt(hue * 2.0 + 0.1) * pow(facing, 30.0) * 0.2;
+}
+#endif
+
 #if VARIANT == 11
 // Kelp: dark green fronds lit along their edges, the tips glowing with their own band.
 vec3 jKelpShade(vec3 n, vec3 rd, float rise, float h, float hue) {
@@ -794,15 +835,24 @@ vec3 shade(vec2 p) {
     float t = 0.05;
     float steps = 0.0;
     bool hit = false;
+    float tMax = JFAR;
+#if VARIANT == 6
+    float tSea = rd.y < -0.001 ? (-1.1 - ro.y) / rd.y : 99.0;
+    tMax = min(tMax, tSea);
+#endif
     for (int i = 0; i < 22; i++) {
         vec3 q = ro + rd * t;
         float d = jEnv(q, q.xy - jPath(q.z));
         if (d < JEPS + JEPS * t) { hit = true; break; }
         t += d;
         steps += 1.0;
-        if (t > JFAR) break;
+        if (t > tMax) break;
     }
     float tEnv = hit ? t : JFAR;
+#if VARIANT == 6
+    bool sea = !hit && tSea < JFAR;
+    if (sea) tEnv = tSea;
+#endif
     // The landmarks, as far as the scene was hit. A ray that ends its steps right at a surface
     // counts as on it: thin shells far off otherwise broke into speckle.
     float idx = -1.0;
@@ -832,6 +882,13 @@ vec3 shade(vec2 p) {
         col = jEnvShade(q, q.xy - jPath(q.z), ro, rd, hue + q.z / JZ);
         tHit = t;
     }
+#if VARIANT == 6
+    else if (sea) {
+        vec3 q = ro + rd * tSea;
+        col = jSea(q, rd, hue + q.z / JZ);
+        tHit = tSea;
+    }
+#endif
 #if VARIANT == 11
     vec3 nK;
     float riseK;
@@ -846,6 +903,7 @@ vec3 shade(vec2 p) {
 #if VARIANT == 11
     col = jWater(col, ro, rd, tHit, hue);
 #endif
+    col = jHoops(col, ro, rd, tHit, hue, JFAR);
     // Rays that grazed something took more steps: a glow round its edges.
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 22.0, steps) * 0.1 * (0.5 + 1.5 * uKick);
     col = jGate(col, sp, ro, fw, rt, up, tHit < JFAR, tHit);
@@ -912,6 +970,7 @@ vec3 shade(vec2 p) {
     // Rays that grazed walls took more steps: a cheap stand-in for the glow between them.
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(6.0, 20.0, steps) * 0.12 * (0.5 + 1.5 * uKick);
     col = mix(col, haze, smoothstep(1.5, 5.0, t));
+    col = jHoops(col, ro, rd, hit ? t : 5.0, jCam.x + uSeed.x + uMood.x, 5.0);
 
     col = jGate(col, sp, ro, fw, rt, up, hit, t);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);

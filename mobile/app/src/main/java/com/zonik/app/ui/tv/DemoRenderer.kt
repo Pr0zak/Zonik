@@ -179,6 +179,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val camera = JourneyCamera()
     private val camBasis = FloatArray(6)
     private val markScreen = FloatArray(JourneyLandmarks.SLOTS * 4)
+    /** Runs of rings to fly through, on the beat, in every world. */
+    private val hoops = JourneyHoops()
+    private val hoopData = FloatArray(JourneyHoops.SLOTS * 8)
     /** Fish schools in the worlds that have them, the world they swim in, and their dashes. */
     private val flock = JourneyFlock()
     private var flockWorld: DemoEffect? = null
@@ -426,6 +429,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             motion.update(beatClock, now, dt, camZ, cruiseUnits, path)
             camera.update(dt, camZ, path)
             landmarks.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
+            hoops.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
             val shown = next ?: current
             val world = JourneyWorld.of(shown)
             if (world.flock) {
@@ -663,6 +667,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             setJourneyCamera(e)
             uniforms["uMood"]?.let {
                 if (it >= 0) GLES20.glUniform4f(it, motion.hue, motion.style, motion.energy, motion.bank)
+            }
+            uniforms["uHoops"]?.let {
+                if (it >= 0) {
+                    hoops.pack(hoopData, travel)
+                    GLES20.glUniform4fv(it, JourneyHoops.SLOTS * 2, hoopData, 0)
+                }
             }
             uniforms["uMarks"]?.let {
                 if (it >= 0) {
@@ -1372,7 +1382,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut", "uHoops",
             "uC0", "uC1", "uC2", "uTex",
         )
 
