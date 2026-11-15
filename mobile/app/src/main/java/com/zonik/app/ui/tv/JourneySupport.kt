@@ -383,10 +383,14 @@ class JourneyMotion(seed: Int = 1) {
  * - Small objects (orbs, crystals, cubes, little rings) come at random gaps of 2.5 to 7
  *   seconds of flight, in a random mix. In the enclosed worlds they sit inside the flight tube;
  *   in the open sky anywhere from just off the path to a few units out, and bigger.
- * - Big structures come only in the open sky ([open]): giant rings, tunnels and hollow spheres
- *   to fly through, arches to pass under, monoliths and giant crystals to pass by. They are
- *   placed where the camera should be at the next 16-beat boundary, or at a drop when one is
- *   coming (a tunnel or a hollow sphere then, so the drop is the moment it flies in).
+ * - Big structures (the "hero") come only in the open worlds: giant rings, tunnels and hollow
+ *   spheres to fly through, arches to pass under, monoliths and giant crystals to pass by.
+ *   They are placed where the camera should be at the next 16-beat boundary, or at a drop
+ *   when one is coming (a tunnel or a hollow sphere then, so the drop is the moment it flies
+ *   in). One slot is always kept free for the next one.
+ * - Scenery, in worlds that have it (Megastructures): more big structures well off the path,
+ *   untimed, every 3.5 to 5.5 units, so three or four stand in view at once. Three are placed
+ *   straight away when the world comes in, so it never opens empty.
  *
  * Everything is placed beyond the fog, so nothing pops in. Positions are measured along the
  * flight ([travel], which never wraps) and handed over as distances ahead of the camera. Each
@@ -404,6 +408,7 @@ class JourneyLandmarks(seed: Int = 7) {
         val offY: Float,
         val param: Float,
         val hue: Float,
+        val kind: Int = SMALL,
     ) {
         var x = Float.NaN
         var y = 0f
@@ -415,6 +420,8 @@ class JourneyLandmarks(seed: Int = 7) {
     private val marks = arrayOfNulls<Mark>(SLOTS)
     private var nextSmallZ = Double.NaN
     private var nextLargeZ = Double.NaN
+    private var nextSceneryZ = Double.NaN
+    private var lastWorld: JourneyWorld? = null
 
     /** How many slots are in use (for tests). */
     val count: Int get() = marks.count { it != null }
@@ -435,14 +442,29 @@ class JourneyLandmarks(seed: Int = 7) {
         clock: BeatClock?, nowMs: Long, dt: Float, path: JourneyPath,
     ) {
         val open = world.large.isNotEmpty()
+        val spawn = world.spawn
         for (i in marks.indices) {
             val m = marks[i] ?: continue
             if (m.z + m.reach < travel - 1.0) marks[i] = null
         }
+        if (world !== lastWorld) {
+            // A new world: what the last one placed further ahead does not belong in it.
+            if (lastWorld != null) for (i in marks.indices) if ((marks[i]?.z ?: 0.0) > travel + 4.0) marks[i] = null
+            lastWorld = world
+            nextSmallZ = Double.NaN
+            nextLargeZ = Double.NaN
+            nextSceneryZ = Double.NaN
+            if (world.scenery.isNotEmpty()) {
+                for (k in 0 until 3) add(scenery(world.scenery, travel + 6.0 + 4.0 * k + random.nextFloat() * 1.5))
+                nextSceneryZ = travel + spawn + random.nextFloat() * 2.0
+            }
+        }
         val speed = unitsPerSec.coerceAtLeast(0.3f)
-        val spawn = world.spawn
+        // Open worlds keep a slot for the next hero; worlds with scenery keep the small ones few.
+        val keep = if (open) 1 else 0
+        val smallCap = if (world.scenery.isNotEmpty()) 2 else SLOTS
         if (nextSmallZ.isNaN()) nextSmallZ = travel + spawn + speed * (1f + random.nextFloat() * 3f)
-        if (travel + spawn >= nextSmallZ) {
+        if (travel + spawn >= nextSmallZ && free() > keep && marks.count { it?.kind == SMALL } < smallCap) {
             if (add(small(open, travel + spawn))) nextSmallZ = travel + spawn + speed * (2.5f + random.nextFloat() * 4.5f)
         }
         if (!open) {
@@ -452,6 +474,13 @@ class JourneyLandmarks(seed: Int = 7) {
             if (travel + spawn >= nextLargeZ) {
                 val mark = large(world.large, travel, spawn, speed, clock, nowMs)
                 if (add(mark)) nextLargeZ = mark.z + mark.reach + speed * (2f + random.nextFloat() * 3f)
+            }
+        }
+        if (world.scenery.isNotEmpty()) {
+            if (nextSceneryZ.isNaN()) nextSceneryZ = travel + spawn
+            if (travel + spawn >= nextSceneryZ && free() > 1) {
+                add(scenery(world.scenery, travel + spawn))
+                nextSceneryZ = travel + spawn + 3.5 + random.nextFloat() * 2.0
             }
         }
         for (m in marks) {
@@ -509,7 +538,7 @@ class JourneyLandmarks(seed: Int = 7) {
         else -> m.size * 1.7f + 0.4f
     }
 
-    /** 12 vec4s for `uMarks`: two per slot, type -1 for an empty one. */
+    /** 16 vec4s for `uMarks`: two per slot, type -1 for an empty one, type + 10 for scenery. */
     fun pack(out: FloatArray, travel: Double) {
         for (i in 0 until SLOTS) {
             val m = marks[i]
@@ -520,7 +549,8 @@ class JourneyLandmarks(seed: Int = 7) {
                 continue
             }
             out[o] = (m.z - travel).toFloat()
-            out[o + 1] = m.type.toFloat()
+            // Scenery is told apart by type + 10: the shader intersects it rather than marching.
+            out[o + 1] = (if (m.kind == SCENERY) m.type + 10 else m.type).toFloat()
             out[o + 2] = m.size
             out[o + 3] = if (m.type == TUNNEL) m.w else m.spin
             out[o + 4] = m.x
@@ -529,6 +559,8 @@ class JourneyLandmarks(seed: Int = 7) {
             out[o + 7] = m.hue
         }
     }
+
+    private fun free(): Int = marks.count { it == null }
 
     private fun add(m: Mark): Boolean {
         val i = marks.indexOfFirst { it == null }
@@ -571,21 +603,45 @@ class JourneyLandmarks(seed: Int = 7) {
         val type = if (drop != null && flyInto.isNotEmpty()) flyInto[random.nextInt(flyInto.size)]
         else allowed[random.nextInt(allowed.size)]
         return when (type) {
-            RING -> Mark(z, RING, 1.0f + random.nextFloat() * 1.2f, 0f, 0f, 0f, 0.06f + random.nextFloat() * 0.08f, hue)
-            TUNNEL -> Mark(z, TUNNEL, 0.8f + random.nextFloat() * 0.4f, 2f + random.nextFloat() * 3f, 0f, 0f, 0.12f, hue)
-            ARCH -> Mark(z, ARCH, 1.1f + random.nextFloat() * 0.7f, spin * 0.2f, 0f, 0f, 0f, hue)
-            SPHERE -> Mark(z, SPHERE, 2.2f + random.nextFloat() * 1.0f, 0f, 0f, 0f, 0.12f, hue)
+            RING -> Mark(z, RING, 1.0f + random.nextFloat() * 1.2f, 0f, 0f, 0f, 0.06f + random.nextFloat() * 0.08f, hue, HERO)
+            TUNNEL -> Mark(z, TUNNEL, 0.8f + random.nextFloat() * 0.4f, 2f + random.nextFloat() * 3f, 0f, 0f, 0.12f, hue, HERO)
+            ARCH -> Mark(z, ARCH, 1.1f + random.nextFloat() * 0.7f, spin * 0.2f, 0f, 0f, 0f, hue, HERO)
+            SPHERE -> Mark(z, SPHERE, 2.2f + random.nextFloat() * 1.0f, 0f, 0f, 0f, 0.12f, hue, HERO)
             else -> {
                 // Off to one side, close enough to rush past.
                 val side = if (random.nextBoolean()) 1f else -1f
                 val size = if (type == MONOLITH) 0.8f + random.nextFloat() * 0.8f else 0.6f + random.nextFloat() * 0.6f
-                Mark(z, type, size, spin, side * (1.4f + random.nextFloat() * 1.6f), (random.nextFloat() - 0.5f) * 1.5f, 0f, hue)
+                Mark(z, type, size, spin, side * (1.4f + random.nextFloat() * 1.6f), (random.nextFloat() - 0.5f) * 1.5f, 0f, hue, HERO)
             }
         }
     }
 
+    /**
+     * A big structure well off the path, never in the camera's way: its offset clears its own
+     * half-width by at least a unit. Off to either side, a little above or below the line.
+     */
+    private fun scenery(allowed: IntArray, z: Double): Mark {
+        val type = allowed[random.nextInt(allowed.size)]
+        val hue = random.nextFloat()
+        val spin = (random.nextFloat() - 0.5f) * 0.4f
+        val (size, param, halfWidth) = when (type) {
+            MONOLITH -> (1.2f + random.nextFloat() * 0.8f).let { Triple(it, 0f, it * 0.5f) }
+            CRYSTAL -> (1.0f + random.nextFloat() * 0.8f).let { Triple(it, 0f, it) }
+            SPHERE -> (1.4f + random.nextFloat() * 1.0f).let { Triple(it, 0.2f, it + 0.2f) }
+            RING -> (1.6f + random.nextFloat() * 1.2f).let { Triple(it, 0.15f, it + 0.15f) }
+            else -> (1.4f + random.nextFloat() * 0.8f).let { Triple(it, 0f, it * 1.45f + 0.3f) } // arch, spun
+        }
+        val dist = halfWidth + 1.0f + random.nextFloat() * 2.5f
+        val tilt = -0.3f + random.nextFloat() * 0.9f
+        val side = if (random.nextBoolean()) 1f else -1f
+        return Mark(z, type, size, spin, side * dist * kotlin.math.cos(tilt), dist * kotlin.math.sin(tilt), param, hue, SCENERY)
+    }
+
     companion object {
-        const val SLOTS = 6
+        const val SLOTS = 8
+        const val SMALL = 0
+        const val HERO = 1
+        const val SCENERY = 2
         const val CRYSTAL = 1
         const val RING = 3
         const val TUNNEL = 4
@@ -671,16 +727,24 @@ data class JourneyWorld(
     val bankOnly: Boolean,
     val cell: Double,
     val cells: Double,
+    /** Big structures placed well off the path, untimed (JourneyLandmarks), none for most. */
+    val scenery: IntArray = IntArray(0),
 ) {
     companion object {
         private val SHEET = 2.0 * Math.PI / 3.0
         private val ENCLOSED = JourneyWorld(IntArray(0), JourneyLandmarks.TUBE_SPAWN, 1f, false, SHEET, 9.0)
 
-        fun of(e: DemoEffect): JourneyWorld = with(JourneyLandmarks) {
+        // Built once: the renderer asks every frame, and JourneyLandmarks tells worlds apart by identity.
+        private val worlds = HashMap<DemoEffect, JourneyWorld>()
+
+        fun of(e: DemoEffect): JourneyWorld = worlds.getOrPut(e) { build(e) }
+
+        private fun build(e: DemoEffect): JourneyWorld = with(JourneyLandmarks) {
             when (e) {
                 DemoEffect.BUBBLEFLIGHT -> ENCLOSED.copy(cell = 6.0 * Math.PI / 20.0, cells = 20.0)
                 DemoEffect.PILLARS -> ENCLOSED.copy(bankOnly = true, cell = 6.0 * Math.PI / 12.0, cells = 12.0)
-                DemoEffect.SKY -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, ARCH, MONOLITH, SPHERE, CRYSTAL), 17.0, 1.5f, true, SHEET, 9.0)
+                DemoEffect.SKY -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, ARCH, MONOLITH, SPHERE, CRYSTAL), 17.0, 1.5f, true, SHEET, 9.0,
+                    scenery = intArrayOf(MONOLITH, MONOLITH, CRYSTAL, SPHERE, RING, ARCH))
                 DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, MONOLITH, CRYSTAL), 13.0, 1.3f, true, SHEET, 9.0)
                 DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, MONOLITH), 16.0, 1.4f, true, Math.PI, 6.0)
                 DemoEffect.NIGHTCITY -> JourneyWorld(intArrayOf(RING, TUNNEL, ARCH), 13.0, 1.2f, true, 6.0 * Math.PI / 8.0, 8.0)

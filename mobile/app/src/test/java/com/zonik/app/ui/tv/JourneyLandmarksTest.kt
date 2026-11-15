@@ -54,7 +54,9 @@ class JourneyLandmarksTest {
         r.fly(180_000)
         val big = r.firstSeen.filter { it.second >= JourneyLandmarks.TUNNEL || it.second == JourneyLandmarks.RING }
         assertTrue("${big.size} big", big.size >= 8)
-        r.firstSeen.forEach { (ahead, _, _) -> assertTrue("appeared $ahead ahead", ahead >= 16f) }
+        // Three are placed straight away when the world comes in; everything after past the fog.
+        assertEquals(3, r.firstSeen.count { it.third == 0.0 && it.first < 16f })
+        r.firstSeen.filter { it.third > 0.0 }.forEach { (ahead, _, _) -> assertTrue("appeared $ahead ahead", ahead >= 16f) }
         assertTrue(r.firstSeen.map { it.second }.toSet().size >= 5) // a real mix
     }
 
@@ -82,5 +84,46 @@ class JourneyLandmarksTest {
             assertTrue(r.out[i * 8] > -6f)
         }
         assertEquals(true, r.firstSeen.size > 100)
+    }
+
+    @Test
+    fun `Megastructures keeps three or more big structures in view`() {
+        val r = Run(open = true)
+        var frames = 0
+        var total = 0
+        var fewest = 99
+        r.fly(5_000)
+        repeat(3000) {
+            r.fly(16)
+            var n = 0
+            for (i in 0 until JourneyLandmarks.SLOTS) {
+                val o = i * 8
+                if (r.out[o + 1] < 0 || r.out[o + 2] < 0.8f) continue
+                if (r.out[o] in 0f..17f) n++
+            }
+            frames++
+            total += n
+            fewest = minOf(fewest, n)
+        }
+        assertTrue("average ${total.toFloat() / frames}", total.toFloat() / frames >= 3f)
+        assertTrue("fewest $fewest", fewest >= 2)
+    }
+
+    @Test
+    fun `a new world drops what the last one placed far ahead`() {
+        val lm = JourneyLandmarks(3)
+        val path = JourneyPath()
+        val out = FloatArray(JourneyLandmarks.SLOTS * 8)
+        var travel = 0.0
+        repeat(600) {
+            lm.update(true, travel, travel, 1.2f, null, it * 16L, 0.016f, path)
+            travel += 1.2 * 0.016
+        }
+        lm.update(false, travel, travel, 1.2f, null, 10_000L, 0.016f, path)
+        lm.pack(out, travel)
+        for (i in 0 until JourneyLandmarks.SLOTS) {
+            if (out[i * 8 + 1] < 0) continue
+            assertTrue("${out[i * 8]} ahead", out[i * 8] <= 4f)
+        }
     }
 }
