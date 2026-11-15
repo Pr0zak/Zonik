@@ -23,6 +23,15 @@ package com.zonik.app.ui.tv
  * 11. Abyss: along a channel between rough boulder walls on the sea floor, kelp swaying in
  *    the current, caustics on the rock pulsing with the bass, light shafts from the surface,
  *    drifting specks, rock arches to pass under, and schools of fish (JourneyFlock).
+ * 12. Lava canyon: black basalt walls cracked with magma veins that glow on the bass, a river
+ *    of lava below, embers rising, a smoky red sky.
+ * 13. Coral reef: shallow bright water over coral mounds in the palette's colours, caustics,
+ *    light shafts and schools of fish.
+ * 14. Cyber highway: a dark void with streams of light running along the path on two
+ *    cylinders round it, each lane lit by its own spectrum band, packets racing down them.
+ *    Not marched at all: the ray is intersected with the cylinders in closed form.
+ * 15. Aurora tundra: low over snow dunes between ice spires, under curtains of aurora that
+ *    move with the spectrum.
  *
  * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in the open worlds: big
  * structures timed so the camera reaches them on a downbeat or a drop. The enclosed worlds
@@ -64,7 +73,7 @@ package com.zonik.app.ui.tv
 internal const val JOURNEY_BODY = """
 // The distance to what this pixel shows, / 20, for the fish (see FLOCK_FRAGMENT): 1 for open
 // water. Only the worlds with fish (JourneyWorld.flock) write it.
-#if VARIANT == 6 || VARIANT == 11
+#if VARIANT == 6 || VARIANT == 11 || VARIANT == 13
 #define J_DEPTH
 float gDepth;
 #endif
@@ -461,7 +470,7 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11
+#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15
     // A hall, the sky, a canyon, the sea, a city or the sea floor has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
@@ -521,7 +530,9 @@ vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
 const float JFAR = 8.0;
 #elif VARIANT == 11
 const float JFAR = 11.0;
-#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8
+#elif VARIANT == 13
+const float JFAR = 12.0;
+#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8 || VARIANT == 12 || VARIANT == 14
 const float JFAR = 14.0;
 #else
 const float JFAR = 17.0;
@@ -532,6 +543,29 @@ float jStars(vec3 rd) {
     vec2 sv = rd.xy / max(rd.z, 0.25) * 22.0;
     return step(0.975, hash(floor(sv))) * smoothstep(0.35, 0.0, length(fract(sv) - 0.5)) * (0.35 + 0.65 * uHigh);
 }
+
+#if VARIANT == 15
+// The polar night: stars and curtains of aurora that ripple across the sky, each fold lit by
+// its own band of the spectrum.
+vec3 jAurora(vec3 rd, float hue) {
+    float az = fastAtan2(rd.x, rd.z) / PI;
+    float el = rd.y / max(length(rd.xz), 0.2);
+    vec3 col = mix(colorAt(hue * 2.0 + 0.65) * 0.03, vec3(0.0, 0.005, 0.015), smoothstep(-0.1, 0.6, el));
+    // Below the horizon, snow far off.
+    col = mix(col, vec3(0.12, 0.15, 0.2), smoothstep(0.0, -0.08, el));
+    col += vec3(1.0) * jStars(rd) * step(0.05, el);
+    for (int k = 0; k < 2; k++) {
+        float fk = float(k);
+        float base = 0.18 + 0.14 * fk + 0.06 * sin(wrapA(az * (5.0 + 3.0 * fk) + uTime * PI * (1.0 + fk)));
+        float h = el - base;
+        float lvl = band(floor(fract(az * 0.5 + 0.5 + fk * 0.3) * 48.0) + 4.0);
+        float folds = 0.6 + 0.4 * sin(wrapA(az * 40.0 + uTime * PI * 3.0 + fk * 2.0));
+        float curtain = smoothstep(-0.02, 0.0, h) * exp(-max(h, 0.0) * (6.0 - 2.0 * lvl)) * folds;
+        col += mix(vec3(0.1, 0.9, 0.5), colorAt(hue * 2.0 + 0.3 + fk * 0.35), 0.5) * curtain * (0.3 + 0.9 * lvl + 0.3 * uBeat);
+    }
+    return col;
+}
+#endif
 
 vec3 jBack(vec3 ro, vec3 rd, float hue) {
 #if VARIANT == 6
@@ -563,6 +597,21 @@ vec3 jBack(vec3 ro, vec3 rd, float hue) {
     vec3 top = colorAt(hue * 2.0 + 0.5) * 0.05 + vec3(0.01, 0.06, 0.08);
     vec3 col = mix(deep, top, smoothstep(-0.4, 0.9, rd.y));
     return col + vec3(0.05, 0.12, 0.13) * pow(max(rd.y, 0.0), 3.0) * (0.5 + 0.8 * uLow);
+#elif VARIANT == 12
+    // Smoke over the lava: dark red, glowing low down from the river.
+    vec3 col = mix(vec3(0.25, 0.05, 0.01), vec3(0.02, 0.005, 0.005), smoothstep(-0.2, 0.5, rd.y));
+    col = mix(col, colorAt(hue * 2.0 + 0.05) * 0.05, 0.3);
+    return col + vec3(0.6, 0.15, 0.02) * exp(-abs(rd.y + 0.05) * 6.0) * (0.15 + 0.35 * uLow);
+#elif VARIANT == 13
+    // Shallow water: turquoise, bright toward the surface.
+    vec3 deep = mix(vec3(0.0, 0.06, 0.09), colorAt(hue * 2.0 + 0.5) * 0.05, 0.3);
+    vec3 top = mix(vec3(0.1, 0.35, 0.4), colorAt(hue * 2.0 + 0.45) * 0.3, 0.3);
+    return mix(deep, top, smoothstep(-0.3, 0.8, rd.y)) + vec3(0.2, 0.35, 0.3) * pow(max(rd.y, 0.0), 4.0) * (0.6 + 0.6 * uLow);
+#elif VARIANT == 14
+    // The void.
+    return colorAt(hue * 2.0 + 0.7) * 0.012;
+#elif VARIANT == 15
+    return jAurora(rd, hue);
 #else
     // Open sky above the canyon: dusk, stars, an aurora on the horizon lit by the spectrum.
     vec3 col = mix(colorAt(hue * 2.0 + 0.1) * 0.14, colorAt(hue * 2.0 + 0.6) * 0.02, smoothstep(-0.15, 0.6, rd.y));
@@ -698,6 +747,27 @@ float jEnv(vec3 q, vec2 off) {
     return -air * 0.7;
 #elif VARIANT == 11
     return jRock(q, off);
+#elif VARIANT == 12
+    // Lava canyon: basalt walls in ledges either side, the lava river below.
+    float bump = 0.22 * sin(wrapA(3.0 * q.y + 2.0 * q.x)) * sin(wrapA(3.0 * q.z + jCam.y))
+               + 0.15 * abs(sin(wrapA(4.0 * q.z + jCam.z + 1.5 * q.y)));
+    float walls = 1.45 + bump + 0.25 * floor(max(off.y + 1.3, 0.0) * 1.5) - abs(off.x);
+    return min(walls, off.y + 1.25) * 0.65;
+#elif VARIANT == 13
+    // Coral reef: a valley floor of coral mounds, rising to either side.
+    float mounds = 0.55 * smoothstep(0.1, 1.0, sin(wrapA(2.3 * q.x + 0.5)) * sin(wrapA(3.0 * q.z + jCam.y)))
+                 + 0.18 * sin(wrapA(4.0 * q.z + jCam.z + 3.0 * q.x));
+    return (off.y + 1.2 - mounds - 0.35 * max(abs(off.x) - 0.9, 0.0)) * 0.6;
+#elif VARIANT == 15
+    // Aurora tundra: snow dunes, and ice spires away from the path.
+    float dunes = 0.18 * sin(wrapA(1.5 * q.x + 3.0 * q.z + jCam.y)) + 0.1 * sin(wrapA(2.5 * q.x - 4.0 * q.z - jCam.z));
+    // Spires: the peaks of two crossed sines, sharpened, their heights varied by a slow wave.
+    float sp = max(sin(wrapA(2.0 * q.x + 1.0)) * sin(wrapA(3.0 * q.z + jCam.y + 0.7)), 0.0);
+    sp *= sp;
+    float tall = 0.5 + 0.5 * sin(wrapA(q.z + jCam.x * JZ + 0.8 * q.x));
+    float spires = 2.2 * sp * sp * tall * smoothstep(1.0, 2.2, abs(off.x));
+    // Careful steps only among the spires; near the path the dunes allow long ones.
+    return (off.y + 1.3 - dunes - spires) * (abs(off.x) < 1.0 ? 0.85 : 0.4);
 #else
     return 9.0;
 #endif
@@ -776,10 +846,99 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     vec3 col = vec3(0.05, 0.09, 0.11) * (0.25 + 0.6 * upward * upward + 0.3 * facing) + colorAt(hue * 2.0 + 0.55) * 0.03;
     col += colorAt(hue * 2.0 + 0.5) * pow(1.0 - facing, 3.0) * 0.12;
     return col + mix(vec3(0.4, 0.8, 0.85), colorAt(hue * 2.0 + 0.5), 0.4) * caustic * upward * (0.15 + 0.7 * uLow + 0.4 * uKick);
+#elif VARIANT == 12
+    vec3 lava = mix(vec3(1.0, 0.32, 0.04), colorAt(hue * 2.0 + 0.05), 0.2);
+    if (off.y < -1.15) {
+        // The river: flowing bands of molten rock, brighter with the bass.
+        float flow = 0.5 + 0.5 * sin(wrapA(3.0 * q.z + jCam.y - uTime * PI * 3.0 + 2.0 * sin(wrapA(2.0 * q.x))));
+        return lava * (0.5 + 0.6 * flow + 0.6 * uLow) + vec3(1.0, 0.8, 0.3) * flow * flow * flow * 0.3;
+    }
+    // Basalt, lit red from below, cracked with veins that glow on the bass and the kick.
+    float vein = exp(-abs(sin(wrapA(5.0 * q.y + 2.0 * q.x)) * sin(wrapA(3.0 * q.z + jCam.y + 2.0 * q.y))) * 14.0);
+    float below = smoothstep(0.6, -1.2, off.y);
+    vec3 col = vec3(0.04, 0.03, 0.03) * (0.3 + 0.7 * facing) + lava * below * 0.25 * (0.6 + 0.6 * uLow);
+    return col + lava * vein * (0.1 + 1.1 * uLow + 0.7 * uKick);
+#elif VARIANT == 13
+    // Coral in the palette's colours, a colour per mound, caustics dancing on top.
+    float upward = clamp(n.y, 0.0, 1.0);
+    float mound = floor(2.3 * q.x / TAU + 0.5) * 0.37 + floor((3.0 * q.z + jCam.y) / TAU + 0.5) * 0.21;
+    float lvl = band(floor(fract(mound) * 48.0) + 4.0);
+    vec3 coral = colorAt(hue * 2.0 + fract(mound));
+    float c1 = sin(wrapA(3.0 * q.x + 1.3 * sin(wrapA(3.0 * q.z + jCam.y + uTime * PI * 2.0))));
+    float c2 = sin(wrapA(3.0 * q.z + jCam.y + 1.2 * sin(wrapA(2.0 * q.x - uTime * PI * 1.5))));
+    float caustic = exp(-abs(c1 * c2) * 8.0);
+    vec3 col = coral * (0.12 + 0.45 * upward + 0.25 * facing) * (0.7 + 0.6 * lvl);
+    return col + vec3(0.6, 0.9, 0.85) * caustic * upward * (0.15 + 0.6 * uLow + 0.3 * uKick);
+#elif VARIANT == 15
+    // Snow lit blue-white and tinted by the aurora, glittering; ice spires glassy and lit
+    // from within on the beat.
+    float upward = clamp(n.y, 0.0, 1.0);
+    vec3 sky = jAurora(normalize(vec3(0.0, 1.0, 0.6)), hue);
+    float glit = step(0.994, hash(floor(vec2(q.x * 40.0, (q.z + jCam.w) * 40.0)))) * (0.2 + 0.5 * uHigh);
+    if (n.y < 0.55) {
+        vec3 ice = mix(vec3(0.5, 0.8, 1.0), colorAt(hue * 2.0 + 0.55), 0.35);
+        return ice * (0.06 + 0.25 * facing) + ice * pow(1.0 - facing, 3.0) * (0.3 + 0.6 * uBeat);
+    }
+    vec3 col = vec3(0.55, 0.65, 0.8) * (0.06 + 0.3 * upward) + sky * 1.5 * upward;
+    return col + vec3(1.0) * glit;
 #else
     return vec3(0.0);
 #endif
 }
+
+#if VARIANT == 12
+// Embers rising from the lava: a layer of glowing points at a fixed distance from the camera.
+vec3 jEmbers(vec3 col, vec3 ro, vec3 rd, float tHit, float hue) {
+    for (int k = 0; k < 2; k++) {
+        float d = 1.4 + float(k) * 1.6;
+        if (d > tHit) break;
+        vec3 sp = ro + rd * d;
+        vec3 g = vec3(sp.x * 3.0, sp.y * 3.0 - uTime * (3.0 + float(k)), (sp.z + jCam.w) * (6.0 / JCELL));
+        vec3 c = floor(g);
+        float h = hash(vec2(c.x + 17.0 * mod(c.z + jCell * 6.0, JCELLS * 6.0), c.y));
+        float ember = smoothstep(0.2, 0.0, length(fract(g) - 0.5)) * step(0.9, h);
+        col += mix(vec3(1.0, 0.45, 0.1), colorAt(hue * 2.0 + 0.05), 0.2) * ember * (0.4 + 0.6 * uLow + 0.5 * uKick);
+    }
+    return col;
+}
+#endif
+
+#if VARIANT == 14
+// The cyber highway: two cylinders round the path, made of nothing but lanes of light. The
+// ray is met with each in closed form (a quadratic against the path's line at the camera, then
+// once more against its line where that first hit fell), and both are drawn see-through.
+vec3 jCyber(vec3 ro, vec3 rd, float hue) {
+    vec3 col = vec3(0.0);
+    for (int k = 0; k < 2; k++) {
+        float fk = float(k);
+        float R = 1.1 + 1.3 * fk;
+        vec2 c = jPath(0.0);
+        float t = JFAR;
+        for (int it = 0; it < 2; it++) {
+            vec2 o = ro.xy - c;
+            float a = max(dot(rd.xy, rd.xy), 0.002);
+            float b = dot(o, rd.xy);
+            float disc = b * b - a * (dot(o, o) - R * R);
+            t = min((-b + sqrt(max(disc, 0.0))) / a, JFAR * 1.2);
+            c = jPath(min(t * rd.z, JFAR));
+        }
+        vec3 q = ro + rd * t;
+        vec2 off = q.xy - c;
+        float ang = fastAtan2(off.y, off.x) / TAU + 0.5;
+        float lanes = 12.0 - 5.0 * fk;
+        float li = floor(ang * lanes);
+        float f = abs(fract(ang * lanes) - 0.5) * R * 6.0;
+        float lvl = band(floor(fract(li * 0.37 + fk * 0.5) * 48.0) + 4.0);
+        float line = exp(-f * (7.0 - 2.0 * fk)) + exp(-f * 1.5) * 0.12;
+        float packet = pow(0.5 + 0.5 * sin(wrapA(3.0 * q.z + jCam.y + li * 1.7 - uTime * PI * (8.0 + 4.0 * fk))), 10.0);
+        float cross = exp(-abs(sin(wrapA(3.0 * q.z + jCam.y))) * 20.0) * (0.3 + 0.8 * uBeat) * (1.0 - fk);
+        float fog = 1.0 - smoothstep(JFAR * 0.25, JFAR, t);
+        vec3 lc = colorAt(hue * 2.0 + li / lanes + fk * 0.3);
+        col += lc * (line * (0.12 + 0.9 * lvl + packet * (0.7 + 0.8 * uKick)) + cross) * fog * (1.0 - 0.5 * fk);
+    }
+    return col;
+}
+#endif
 
 #if VARIANT == 6
 // The sea: a plane at y = -1.1 with waves only in its normal (cheap, and no march steps lost
@@ -804,7 +963,9 @@ vec3 jKelpShade(vec3 n, vec3 rd, float rise, float h, float hue) {
     col += colorAt(hue * 2.0 + 0.3) * pow(1.0 - facing, 2.0) * 0.25;
     return col + colorAt(hue * 2.0 + 0.25) * smoothstep(1.2, 2.8, rise) * (0.1 + 0.9 * lvl);
 }
+#endif
 
+#if VARIANT == 11 || VARIANT == 13
 // Light shafts from the surface, slanting and drifting, brighter the more water a ray crosses
 // (worked out from the direction, not marched), and specks drifting in the water, placed in
 // one layer of cells at a fixed distance from the camera.
@@ -840,6 +1001,7 @@ vec3 shade(vec2 p) {
     float tSea = rd.y < -0.001 ? (-1.1 - ro.y) / rd.y : 99.0;
     tMax = min(tMax, tSea);
 #endif
+#if VARIANT != 14
     for (int i = 0; i < 22; i++) {
         vec3 q = ro + rd * t;
         float d = jEnv(q, q.xy - jPath(q.z));
@@ -848,6 +1010,7 @@ vec3 shade(vec2 p) {
         steps += 1.0;
         if (t > tMax) break;
     }
+#endif
     float tEnv = hit ? t : JFAR;
 #if VARIANT == 6
     bool sea = !hit && tSea < JFAR;
@@ -900,8 +1063,13 @@ vec3 shade(vec2 p) {
     }
 #endif
     col = mix(col, back, smoothstep(JFAR * 0.55, JFAR, tHit));
-#if VARIANT == 11
+#if VARIANT == 11 || VARIANT == 13
     col = jWater(col, ro, rd, tHit, hue);
+#elif VARIANT == 12
+    col = jEmbers(col, ro, rd, tHit, hue);
+#elif VARIANT == 14
+    // The highway's lanes, dimmed where a structure stands in front of them.
+    col += jCyber(ro, rd, hue) * (tHit < JFAR ? 0.35 : 1.0);
 #endif
     col = jHoops(col, ro, rd, tHit, hue, JFAR);
     // Rays that grazed something took more steps: a glow round its edges.

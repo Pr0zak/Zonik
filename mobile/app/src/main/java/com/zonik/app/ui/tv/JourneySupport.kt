@@ -681,6 +681,10 @@ data class JourneyWorld(
                 DemoEffect.ASTEROIDS -> JourneyWorld(intArrayOf(SPHERE, RING, TUNNEL, TUNNEL), 13.0, 1.2f, false, 6.0 * Math.PI / 7.0, 7.0, far = 14f)
                 DemoEffect.CAVES -> JourneyWorld(intArrayOf(RING, TUNNEL), 7.5, 1.0f, false, 6.0 * Math.PI / 5.0, 5.0, far = 8f)
                 DemoEffect.ABYSS -> JourneyWorld(intArrayOf(ARCH, ARCH, TUNNEL, TUNNEL, SPHERE), 10.5, 1.0f, true, 6.0 * Math.PI / 12.0, 12.0, flock = true, far = 11f)
+                DemoEffect.LAVA -> JourneyWorld(intArrayOf(ARCH, ARCH, TUNNEL, RING, MONOLITH), 13.0, 1.2f, true, SHEET, 9.0, far = 14f)
+                DemoEffect.REEF -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, SPHERE), 11.5, 1.0f, true, SHEET, 9.0, flock = true, far = 12f)
+                DemoEffect.CYBER -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, TUNNEL, SPHERE), 13.0, 1.5f, false, SHEET, 9.0, far = 14f)
+                DemoEffect.TUNDRA -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, MONOLITH), 16.0, 1.3f, true, SHEET, 9.0)
                 else -> ENCLOSED
             }
         }

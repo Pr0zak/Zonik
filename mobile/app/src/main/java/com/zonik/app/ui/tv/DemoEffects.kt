@@ -169,6 +169,10 @@ enum class DemoEffect(
     ASTEROIDS("Asteroid field", JOURNEY_BODY, halfRes = true, variant = 9, world = true),
     CAVES("Branching caves", JOURNEY_BODY, halfRes = true, variant = 10, world = true),
     ABYSS("Abyss", JOURNEY_BODY, halfRes = true, variant = 11, world = true),
+    LAVA("Lava canyon", JOURNEY_BODY, halfRes = true, variant = 12, world = true),
+    REEF("Coral reef", JOURNEY_BODY, halfRes = true, variant = 13, world = true),
+    CYBER("Cyber highway", JOURNEY_BODY, halfRes = true, variant = 14, world = true),
+    TUNDRA("Aurora tundra", JOURNEY_BODY, halfRes = true, variant = 15, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
