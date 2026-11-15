@@ -40,6 +40,9 @@ VERSION = 1
 
 _pool: ProcessPoolExecutor | None = None
 _in_flight: dict[str, asyncio.Task] = {}
+# One at a time, so a track's timeout runs from when its work starts, not from when it queued
+# behind another TV's request.
+_one_at_a_time: asyncio.Semaphore | None = None
 
 
 def _nice():
@@ -204,14 +207,20 @@ def compute_beat_grid(abs_path_str: str) -> dict:
 
 
 async def compute_async(abs_path: Path) -> dict:
+    """The grid for one file. `status` "retry" means the worker died or ran out of time: not the
+    file's fault, so the caller must not cache it."""
+    global _one_at_a_time
+    if _one_at_a_time is None:
+        _one_at_a_time = asyncio.Semaphore(1)
     loop = asyncio.get_running_loop()
     try:
-        return await asyncio.wait_for(
-            loop.run_in_executor(_get_pool(), compute_beat_grid, str(abs_path)), timeout=TIMEOUT_S,
-        )
+        async with _one_at_a_time:
+            return await asyncio.wait_for(
+                loop.run_in_executor(_get_pool(), compute_beat_grid, str(abs_path)), timeout=TIMEOUT_S,
+            )
     except (BrokenProcessPool, asyncio.TimeoutError) as e:
         _reset_pool()
-        return {"status": "failed", "error": type(e).__name__}
+        return {"status": "retry", "error": type(e).__name__}
     except Exception as e:  # decoding or Essentia failed on this file
         return {"status": "failed", "error": str(e)[:300]}
 

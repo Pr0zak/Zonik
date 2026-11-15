@@ -111,3 +111,29 @@ async def test_beats_endpoint_pending_then_cached(db_ready, tmp_path, monkeypatc
     assert none == {"status": "none", "error": "no steady beat"}
     assert unknown["status"] == "failed"
     assert len(calls) == 2  # computed once per track, then served from the cache
+
+
+@pytest.mark.asyncio
+async def test_worker_crash_is_not_cached(db_ready, tmp_path, monkeypatch):
+    from backend.api.analysis import get_track_beats
+    from backend.database import async_session
+    from backend.models.analysis import TrackBeatGrid
+    from backend.models.track import Track
+
+    song = tmp_path / "crash.mp3"
+    song.write_bytes(b"x")
+    async with async_session() as s:
+        s.add(Track(id="trk-c", title="Crash", file_path=str(song), format="mp3", bitrate=320))
+        await s.commit()
+
+    async def crashed(_path):
+        return {"status": "retry", "error": "BrokenProcessPool"}
+
+    monkeypatch.setattr(bg, "compute_async", crashed)
+    async with async_session() as db:
+        assert await get_track_beats("trk-c", db) == {"status": "pending"}
+    await asyncio.gather(*list(bg._in_flight.values()))
+    async with async_session() as db:
+        assert await db.get(TrackBeatGrid, "trk-c") is None
+        assert await get_track_beats("trk-c", db) == {"status": "pending"}  # tried again
+    await asyncio.gather(*list(bg._in_flight.values()))

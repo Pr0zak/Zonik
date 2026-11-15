@@ -502,6 +502,10 @@ async def get_track_beats(track_id: str, db: AsyncSession = Depends(get_db)):
         return {"status": "failed", "error": "file missing"}
 
     async def store(tid: str, result: dict) -> None:
+        if result.get("status") == "retry":
+            # The worker died or timed out: the next request tries again.
+            log.warning("Beat grid for %s not stored: %s", tid, result.get("error"))
+            return
         async with async_session() as s:
             grid = await s.get(TrackBeatGrid, tid) or TrackBeatGrid(track_id=tid, status="failed")
             grid.status = result.get("status", "failed")
