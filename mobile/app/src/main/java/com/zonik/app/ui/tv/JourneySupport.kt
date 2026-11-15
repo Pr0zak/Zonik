@@ -659,6 +659,8 @@ data class JourneyWorld(
     val flock: Boolean = false,
     /** Its fog distance, JFAR in JOURNEY_BODY (the fish fade out by it). */
     val far: Float = 17f,
+    /** Its flock is jellyfish rather than fish. */
+    val jelly: Boolean = false,
 ) {
     companion object {
         private val SHEET = 2.0 * Math.PI / 3.0
@@ -673,6 +675,7 @@ data class JourneyWorld(
             when (e) {
                 // Bubbles and pillars stand close together, so the same speed felt too fast there.
                 DemoEffect.BUBBLEFLIGHT -> ENCLOSED.copy(speed = 0.6f, cell = 6.0 * Math.PI / 20.0, cells = 20.0)
+                DemoEffect.TEMPLE -> ENCLOSED.copy(speed = 0.7f)
                 DemoEffect.PILLARS -> ENCLOSED.copy(speed = 0.6f, bankOnly = true, cell = 6.0 * Math.PI / 12.0, cells = 12.0)
                 DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, TUNNEL, TUNNEL, MONOLITH), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
                 DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, TUNNEL, TUNNEL), 16.0, 1.4f, true, Math.PI, 6.0, flock = true)
@@ -685,6 +688,8 @@ data class JourneyWorld(
                 DemoEffect.REEF -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, SPHERE), 11.5, 1.0f, true, SHEET, 9.0, flock = true, far = 12f)
                 DemoEffect.CYBER -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, TUNNEL, SPHERE), 13.0, 1.5f, false, SHEET, 9.0, far = 14f)
                 DemoEffect.TUNDRA -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, MONOLITH), 16.0, 1.3f, true, SHEET, 9.0)
+                DemoEffect.DEEP -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 11.0, 0.9f, true, SHEET, 9.0, flock = true, far = 12f, jelly = true)
+                DemoEffect.SYNTHWAVEROAD -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, RING, TUNNEL), 16.0, 1.6f, true, SHEET, 9.0)
                 else -> ENCLOSED
             }
         }

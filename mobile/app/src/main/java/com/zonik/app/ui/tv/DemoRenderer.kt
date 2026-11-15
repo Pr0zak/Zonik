@@ -435,6 +435,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             if (world.flock) {
                 if (flockWorld != shown) {
                     flock.reset()
+                    flock.jelly = world.jelly
                     flockWorld = shown
                 }
                 flock.update(dt, travel, camZ, camera.pos[0], camera.pos[1], cruiseUnits, world.far, low, kick, path)
@@ -587,6 +588,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         flockBuffer.put(flockVerts, 0, n * JourneyFlock.FLOATS)
         GLES20.glEnable(GLES20.GL_BLEND)
         GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE)
+        GLES20.glUseProgram(prog.id)
+        prog.uniforms["uFlockStyle"]?.let { if (it >= 0) GLES20.glUniform1f(it, if (flock.jelly) 1f else 0f) }
         drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = sceneTex, flockCount = n)
         GLES20.glDisable(GLES20.GL_BLEND)
     }
@@ -1382,7 +1385,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut", "uHoops",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut", "uHoops", "uFlockStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

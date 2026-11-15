@@ -173,6 +173,9 @@ enum class DemoEffect(
     REEF("Coral reef", JOURNEY_BODY, halfRes = true, variant = 13, world = true),
     CYBER("Cyber highway", JOURNEY_BODY, halfRes = true, variant = 14, world = true),
     TUNDRA("Aurora tundra", JOURNEY_BODY, halfRes = true, variant = 15, world = true),
+    DEEP("Bioluminescent deep", JOURNEY_BODY, halfRes = true, variant = 16, world = true),
+    SYNTHWAVEROAD("Synthwave road", JOURNEY_BODY, halfRes = true, variant = 17, world = true),
+    TEMPLE("Fractal temple", JOURNEY_BODY, halfRes = true, variant = 4, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
@@ -229,14 +232,30 @@ void main() {
 internal val FLOCK_FRAGMENT: String = HEADER + """
 uniform sampler2D uBlit;
 uniform float uBlitScale;
+uniform float uFlockStyle;   // 0 fish, 1 jellyfish
 varying vec2 vShape;   // along, across the dash: -1..1
 varying vec4 vFish;    // distance / 20, hue, spectrum band, brightness
 vec3 shade(vec2 p) {
     float scene = texture2D(uBlit, (vPos * 0.5 + 0.5) * uBlitScale).a;
     if (vFish.x > scene + 0.004) return vec3(0.0);
+    float lvl = band(vFish.z);
+    if (uFlockStyle > 0.5) {
+        // A jellyfish, upright (along = up): a glowing bell that pulses on the beat, its rim
+        // brightest, and four tentacles trailing below, waving.
+        float a = vShape.x;
+        float c = vShape.y;
+        float squeeze = 1.0 + 0.2 * uBeat;
+        float r = length(vec2(c * squeeze, (a - 0.05) * 1.6));
+        float bell = step(0.05, a) * smoothstep(0.95, 0.75, r);
+        float rim = step(0.05, a) * exp(-abs(r - 0.85) * 14.0);
+        float wave = c + 0.12 * sin(a * 9.0 + uTime * 30.0 + vFish.y * 20.0);
+        float tent = step(a, 0.1) * exp(-abs(fract(wave * 2.0 + 0.5) - 0.5) * 18.0)
+                   * smoothstep(-1.0, 0.0, a) * step(abs(c), 0.8);
+        vec3 jc = colorAt(vFish.y);
+        return jc * (bell * 0.35 + rim * 0.9 + tent * 0.45) * vFish.w * (0.6 + 1.1 * lvl + 0.4 * uKick);
+    }
     float body = smoothstep(1.0, 0.25, length(vShape));
     float head = smoothstep(-0.6, 0.8, vShape.x);
-    float lvl = band(vFish.z);
     return colorAt(vFish.y) * body * (0.3 + 0.7 * head) * vFish.w * (0.55 + 1.2 * lvl + 0.5 * uKick);
 }
 """ + FOOTER

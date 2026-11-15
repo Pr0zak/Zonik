@@ -36,6 +36,12 @@ class JourneyFlock(seed: Int = 11) {
     val band = FloatArray(SCHOOLS)
     private var lastKick = 0f
 
+    /**
+     * Jellyfish rather than fish: slow, spread out, drifting upward with a pulse on the beat,
+     * drawn bigger and upright (the shader draws the bell and tentacles, uFlockStyle).
+     */
+    var jelly = false
+
     /** For tests: fish [i]'s position (x, y, z ahead of [travel]). */
     fun position(i: Int, travel: Double) = Triple(px[i], py[i], (pz[i] - travel).toFloat())
     val size: Int get() = n
@@ -62,7 +68,8 @@ class JourneyFlock(seed: Int = 11) {
             // The anchor swims at a fraction of the camera's speed, so the camera catches it up.
             anchorZ[s] += cruise * ANCHOR_SPEED * h
         }
-        val maxSpeed = (0.35f + 0.6f * low) * cruise.coerceAtLeast(0.5f)
+        val maxSpeed = (0.35f + 0.6f * low) * cruise.coerceAtLeast(0.5f) * (if (jelly) 0.3f else 1f)
+        val spacing = if (jelly) 0.5f else SPACING
         for (s in 0 until SCHOOLS) {
             val o = s * PER_SCHOOL
             // The school's middle and its heading.
@@ -91,7 +98,7 @@ class JourneyFlock(seed: Int = 11) {
                     val dy = py[i] - py[j]
                     val dz = (pz[i] - pz[j]).toFloat()
                     val d2 = dx * dx + dy * dy + dz * dz
-                    if (d2 < SPACING * SPACING && d2 > 1e-6f) {
+                    if (d2 < spacing * spacing && d2 > 1e-6f) {
                         val k = SEPARATE / d2
                         fx += dx * k; fy += dy * k; fz += dz * k
                     }
@@ -114,6 +121,8 @@ class JourneyFlock(seed: Int = 11) {
                     vx[i] += sx * k; vy[i] += sy * k; vz[i] += rz * k
                 }
                 vx[i] += fx * h; vy[i] += fy * h; vz[i] += fz * h
+                // Jellyfish rise in pulses, a push up with each kick.
+                if (jelly && kicked) vy[i] += 0.15f
                 val sp = sqrt(vx[i] * vx[i] + vy[i] * vy[i] + vz[i] * vz[i])
                 if (sp > maxSpeed) {
                     val k = maxSpeed / sp
@@ -177,18 +186,19 @@ class JourneyFlock(seed: Int = 11) {
             val sx = (rx * basis[0] + ry * basis[1] + rz * basis[2]) * 1.3f / depth
             val sy = (rx * basis[3] + ry * basis[4] + rz * basis[5]) * 1.3f / depth
             if (abs(sx) > aspect + 0.3f || abs(sy) > 1.3f) continue
-            // Which way it swims on screen: a point a little ahead along its velocity.
-            val qx = rx + vx[i] * 0.2f
-            val qy = ry + vy[i] * 0.2f
-            val qz = rz + vz[i] * 0.2f
+            // Which way it swims on screen: a point a little ahead along its velocity (for a
+            // jellyfish, straight up, so it is drawn upright).
+            val qx = if (jelly) rx else rx + vx[i] * 0.2f
+            val qy = if (jelly) ry + 0.2f else ry + vy[i] * 0.2f
+            val qz = if (jelly) rz else rz + vz[i] * 0.2f
             val qd = (qx * fw[0] + qy * fw[1] + qz * fw[2]).coerceAtLeast(0.05f)
             var dx = (qx * basis[0] + qy * basis[1] + qz * basis[2]) * 1.3f / qd - sx
             var dy = (qx * basis[3] + qy * basis[4] + qz * basis[5]) * 1.3f / qd - sy
             val dl = sqrt(dx * dx + dy * dy)
             if (dl < 1e-4f) { dx = 1f; dy = 0f } else { dx /= dl; dy /= dl }
             // Longer when swimming across the view, never smaller than a few pixels.
-            val w = (FISH_WIDTH * sizeScale * 1.3f / depth).coerceAtLeast(0.007f)
-            val l = w * (1.5f + (dl * 6f).coerceAtMost(1.8f))
+            val w = (FISH_WIDTH * sizeScale * (if (jelly) 3.5f else 1f) * 1.3f / depth).coerceAtLeast(0.007f)
+            val l = if (jelly) w * 1.6f else w * (1.5f + (dl * 6f).coerceAtMost(1.8f))
             val fog = 1f - smoothstep(far * 0.55f, far, dist)
             val s = i / PER_SCHOOL
             val glow = fog * (0.7f + 0.3f * sin(i * 1.7f))

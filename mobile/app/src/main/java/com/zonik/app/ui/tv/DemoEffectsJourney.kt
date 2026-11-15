@@ -12,7 +12,9 @@ package com.zonik.app.ui.tv
  *    tiled, each room its own colour, the tile seams glowing on the beat.
  * 2. Bubble flight: a lattice of glassy spheres, each cell its own size, swelling on the kick.
  * 3. Pillar hall: square pillars between a glowing grid floor and ceiling.
- * 4. (Megastructures, an open sky with only landmarks in it: removed in app 1.62, too empty.)
+ * 4. Fractal temple: a Menger sponge, cell after cell of square halls pierced by smaller and
+ *    smaller square passages, its carvings lit by the spectrum. (The slot was Megastructures,
+ *    removed in app 1.62.)
  * 5. Canyon: rough walls in strata lit by the spectrum, a glowing river below, sky above.
  * 6. Sea stacks: low over water that mirrors a sunset, between columns of rock.
  * 7. Night city: down a street between towers whose windows flicker with the hi-hats.
@@ -32,6 +34,10 @@ package com.zonik.app.ui.tv
  *    Not marched at all: the ray is intersected with the cylinders in closed form.
  * 15. Aurora tundra: low over snow dunes between ice spires, under curtains of aurora that
  *    move with the spectrum.
+ * 16. Bioluminescent deep: the black of the deep sea over a floor speckled with glowing life,
+ *    jellyfish drifting (JourneyFlock's jelly style), marine snow.
+ * 17. Synthwave road: a neon grid road under a striped sun and a wireframe skyline.
+ * The floors of 16 and 17 are planes met in closed form: neither is marched.
  *
  * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in the open worlds: big
  * structures timed so the camera reaches them on a downbeat or a drop. The enclosed worlds
@@ -73,7 +79,7 @@ package com.zonik.app.ui.tv
 internal const val JOURNEY_BODY = """
 // The distance to what this pixel shows, / 20, for the fish (see FLOCK_FRAGMENT): 1 for open
 // water. Only the worlds with fish (JourneyWorld.flock) write it.
-#if VARIANT == 6 || VARIANT == 11 || VARIANT == 13
+#if VARIANT == 6 || VARIANT == 11 || VARIANT == 13 || VARIANT == 16
 #define J_DEPTH
 float gDepth;
 #endif
@@ -141,6 +147,25 @@ vec3 jArg(vec3 q) { return wrapA(vec3(3.0 * q.x, 3.0 * q.y, 3.0 * q.z + jCam.y))
 vec3 jCellPos(vec3 q) { return vec3(q.x, q.y, q.z + jCam.w); }
 float jCellZ(float c) { return mod(c + jCell, JCELLS); }
 
+#if VARIANT == 4
+// A Menger sponge filling each cell: three levels of square passages, each a third the size of
+// the last. Worked in cell units (-1..1), so every level repeats with the cell and the wrap.
+float jSponge(vec3 q) {
+    vec3 cq = jCellPos(q);
+    vec3 p = (cq - floor(cq / JCELL + 0.5) * JCELL) / (JCELL * 0.5);
+    float d = -1.0;
+    float s = 1.0;
+    for (int m = 0; m < 3; m++) {
+        vec3 a = mod(p * s + 1.0, 2.0) - 1.0;
+        s *= 3.0;
+        vec3 r = abs(1.0 - 3.0 * abs(a));
+        float c = (min(max(r.x, r.y), min(max(r.y, r.z), max(r.z, r.x))) - 1.0) / s;
+        d = max(d, c);
+    }
+    return d * JCELL * 0.5;
+}
+#endif
+
 // The world's distance alone, before the tube is carved out of it.
 float jWorld(vec3 q, float th) {
 #if VARIANT == 1
@@ -167,6 +192,8 @@ float jWorld(vec3 q, float th) {
     float pillar = min(length(max(dd, 0.0)) + min(max(dd.x, dd.y), 0.0), 0.5);
     float slab = min(q.y + 1.05, 1.05 - q.y);
     return min(pillar, slab);
+#elif VARIANT == 4
+    return jSponge(q);
 #else
     vec3 a = jArg(q);
     vec3 s = sin(a);
@@ -192,6 +219,12 @@ vec3 jNormal(vec3 q, float th) {
     vec2 cq = jCellPos(q).xz;
     vec2 r2 = cq - floor(cq / C + 0.5) * C;
     return abs(r2.x) > abs(r2.y) ? vec3(sign(r2.x), 0.0, 0.0) : vec3(0.0, 0.0, sign(r2.y));
+#elif VARIANT == 4
+    // The sponge's faces are all square: the gradient, worked out once per pixel.
+    const vec2 k = vec2(1.0, -1.0);
+    const float h = 0.01;
+    return normalize(k.xyy * jSponge(q + k.xyy * h) + k.yyx * jSponge(q + k.yyx * h)
+                   + k.yxy * jSponge(q + k.yxy * h) + k.xxx * jSponge(q + k.xxx * h));
 #else
     vec3 a = jArg(q);
     vec3 s = sin(a);
@@ -239,6 +272,16 @@ vec3 jSurfaceA(vec3 q, vec3 n, vec3 rd, float hue) {
     vec3 col = colorAt(hue * 2.0) * (0.02 + 0.22 * facing * facing);
     col += colorAt(hue * 2.0 + 0.5) * bands * (0.3 + 0.8 * uBeat);
     return col;
+#elif VARIANT == 4
+    // Fractal temple, stone: pale stone lit by the facing, the passage edges carved with light
+    // from the spectrum, a level of the sponge to each band.
+    vec3 cq = jCellPos(q);
+    vec3 p = (cq - floor(cq / JCELL + 0.5) * JCELL) / (JCELL * 0.5);
+    vec3 a = abs(mod(p * 9.0 + 1.0, 2.0) - 1.0);
+    float groove = exp(-min(min(abs(a.x - 0.333), abs(a.y - 0.333)), abs(a.z - 0.333)) * 30.0);
+    float lvl = band(floor(fract(dot(floor(cq / JCELL), vec3(0.37, 0.21, 0.13))) * 48.0) + 4.0);
+    vec3 col = mix(vec3(0.5, 0.45, 0.38), colorAt(hue * 2.0 + 0.1), 0.35) * (0.04 + 0.35 * facing * facing);
+    return col + colorAt(hue * 2.0 + 0.55) * groove * (0.1 + 1.0 * lvl + 0.4 * uBeat);
 #else
     // Gyroid flight: coloured by depth and by which side of the sheet it is.
     vec3 a = jArg(q);
@@ -287,6 +330,13 @@ vec3 jSurfaceB(vec3 q, vec3 n, vec3 rd, float hue) {
     vec3 col = colorAt(hue * 2.0 + 0.4) * 0.03;
     col += colorAt(hue * 2.0 + 0.9) * edge * (0.4 + 1.0 * uBeat);
     return col;
+#elif VARIANT == 4
+    // Fractal temple, neon: dark halls outlined in light where the faces meet.
+    float rim = pow(1.0 - facing, 4.0);
+    vec3 cq = jCellPos(q);
+    float glow = 0.5 + 0.5 * sin(wrapA(3.0 * q.z + jCam.y - uTime * PI * 8.0));
+    vec3 col = colorAt(hue * 2.0 + 0.7) * (0.02 + 0.08 * facing);
+    return col + colorAt(hue * 2.0 + 0.2 + rim * 0.3) * rim * (0.4 + 0.9 * uBeat) * (0.5 + 0.5 * glow);
 #else
     // Gyroid flight, contours: a dark sheet drawn over with glowing contour lines.
     vec3 a = jArg(q);
@@ -470,7 +520,7 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15
+#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15 || VARIANT == 16 || VARIANT == 17
     // A hall, the sky, a canyon, the sea, a city or the sea floor has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
@@ -519,7 +569,7 @@ vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
     return col;
 }
 
-#if VARIANT >= 4
+#if VARIANT >= 5
 // ---- The open worlds ----------------------------------------------------------------------
 // Each has a backdrop (jBack), a scene to fly through (jEnv: the distance to it, positive in
 // the air, 9 for none) and a look for it (jEnvShade). shade() marches the scene, then the
@@ -530,7 +580,7 @@ vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
 const float JFAR = 8.0;
 #elif VARIANT == 11
 const float JFAR = 11.0;
-#elif VARIANT == 13
+#elif VARIANT == 13 || VARIANT == 16
 const float JFAR = 12.0;
 #elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8 || VARIANT == 12 || VARIANT == 14
 const float JFAR = 14.0;
@@ -543,6 +593,35 @@ float jStars(vec3 rd) {
     vec2 sv = rd.xy / max(rd.z, 0.25) * 22.0;
     return step(0.975, hash(floor(sv))) * smoothstep(0.35, 0.0, length(fract(sv) - 0.5)) * (0.35 + 0.65 * uHigh);
 }
+
+#if VARIANT == 17
+// Synthwave sky: purple into orange, a striped sun that swells with the bass, and a wireframe
+// skyline along the horizon.
+vec3 jSunset(vec3 rd, float hue) {
+    float az = fastAtan2(rd.x, rd.z) / PI;
+    float el = rd.y / max(length(rd.xz), 0.2);
+    vec3 top = mix(vec3(0.08, 0.0, 0.18), colorAt(hue * 2.0 + 0.75) * 0.1, 0.3);
+    vec3 low = mix(vec3(0.9, 0.25, 0.4), colorAt(hue * 2.0 + 0.05) * 0.8, 0.3);
+    vec3 col = mix(low, top, smoothstep(-0.02, 0.45, el));
+    col += vec3(1.0) * jStars(rd) * smoothstep(0.2, 0.5, el);
+    // The sun: bands cut out of its lower half.
+    vec2 sc = vec2(az * PI, el - 0.12);
+    float r = length(sc);
+    float size = 0.28 + 0.05 * uLow;
+    float cut = step(0.6, fract((el - 0.12) * 22.0 - uTime * 2.0)) * smoothstep(0.12, -0.05, el - 0.12);
+    float sun = smoothstep(size, size - 0.01, r) * (1.0 - cut);
+    col = mix(col, mix(vec3(1.0, 0.85, 0.2), vec3(1.0, 0.2, 0.55), smoothstep(0.3, -0.15, el - 0.12)), sun);
+    col += vec3(1.0, 0.4, 0.5) * exp(-max(r - size, 0.0) * 9.0) * 0.25 * (1.0 - sun);
+    // The skyline: mountains drawn in wireframe.
+    float h = 0.07 + 0.05 * sin(wrapA(az * 9.0 + 1.0)) + 0.03 * sin(wrapA(az * 23.0)) + 0.02 * sin(wrapA(az * 51.0));
+    if (el < h && el > -0.05) {
+        float lines = exp(-abs(fract(el * 40.0) - 0.5) * 12.0) * 0.4 + exp(-abs(fract(az * 30.0) - 0.5) * 12.0) * 0.3;
+        col = vec3(0.04, 0.0, 0.08) + colorAt(hue * 2.0 + 0.8) * lines * (0.4 + 0.8 * uMid);
+        col += vec3(1.0, 0.3, 0.8) * exp(-(h - el) * 120.0) * 0.8;
+    }
+    return col;
+}
+#endif
 
 #if VARIANT == 15
 // The polar night: stars and curtains of aurora that ripple across the sky, each fold lit by
@@ -612,6 +691,11 @@ vec3 jBack(vec3 ro, vec3 rd, float hue) {
     return colorAt(hue * 2.0 + 0.7) * 0.012;
 #elif VARIANT == 15
     return jAurora(rd, hue);
+#elif VARIANT == 16
+    // The deep: almost black, a faint blue far above.
+    return vec3(0.0, 0.006, 0.016) + vec3(0.0, 0.02, 0.05) * pow(max(rd.y, 0.0), 2.0) + colorAt(hue * 2.0 + 0.6) * 0.006;
+#elif VARIANT == 17
+    return jSunset(rd, hue);
 #else
     // Open sky above the canyon: dusk, stars, an aurora on the horizon lit by the spectrum.
     vec3 col = mix(colorAt(hue * 2.0 + 0.1) * 0.14, colorAt(hue * 2.0 + 0.6) * 0.02, smoothstep(-0.15, 0.6, rd.y));
@@ -940,6 +1024,40 @@ vec3 jCyber(vec3 ro, vec3 rd, float hue) {
 }
 #endif
 
+#if VARIANT == 16
+// The deep floor: dark silt speckled with glowing life, each patch lit by its band of the
+// spectrum and breathing with the beat.
+vec3 jDeepFloor(vec3 q, vec3 rd, float hue) {
+    vec2 g = vec2(q.x * 2.5, (q.z + jCam.w) * (6.0 / JCELL));
+    vec2 c = floor(g);
+    float h = hash(vec2(c.x, mod(c.y + jCell * 6.0, JCELLS * 6.0)));
+    float spot = smoothstep(0.35, 0.0, length(fract(g) - 0.5)) * step(0.55, h);
+    float lvl = band(floor(h * 48.0) + 4.0);
+    vec3 col = vec3(0.01, 0.015, 0.02) * (0.5 + 0.5 * sin(wrapA(3.0 * q.x)) * sin(wrapA(3.0 * q.z + jCam.y)));
+    vec3 life = mix(vec3(0.1, 0.9, 0.8), colorAt(hue * 2.0 + h), 0.5);
+    // A soft glow over the floor near the lit patches, so the floor reads as a floor.
+    col += life * 0.04 * (0.5 + lvl);
+    return col + life * spot * (0.45 + 1.6 * lvl + 0.6 * uBeat);
+}
+#endif
+
+#if VARIANT == 17
+// The road: a neon grid floor, the road along the path darker with glowing edges and a dashed
+// centre line racing past.
+vec3 jRoad(vec3 q, float hue) {
+    vec2 off = q.xy - jPath(q.z);
+    vec2 g = vec2(q.x, q.z + jCam.w) / (JCELL / 3.0);
+    vec2 gg = abs(fract(g) - 0.5);
+    float grid = exp(-min(gg.x, gg.y) * 30.0);
+    vec3 col = vec3(0.02, 0.0, 0.05) + colorAt(hue * 2.0 + 0.85) * grid * (0.35 + 0.8 * uLow);
+    float road = smoothstep(0.62, 0.58, abs(off.x));
+    float edge = exp(-abs(abs(off.x) - 0.6) * 40.0);
+    float dash = step(0.5, fract((q.z + jCam.w) / (JCELL / 4.0))) * exp(-abs(off.x) * 60.0);
+    col = mix(col, vec3(0.01, 0.0, 0.02), road * 0.85);
+    return col + vec3(1.0, 0.3, 0.7) * edge * (0.5 + 0.8 * uBeat) + vec3(1.0, 0.9, 0.5) * dash * 0.8;
+}
+#endif
+
 #if VARIANT == 6
 // The sea: a plane at y = -1.1 with waves only in its normal (cheap, and no march steps lost
 // skimming it), mirroring the sky.
@@ -965,7 +1083,7 @@ vec3 jKelpShade(vec3 n, vec3 rd, float rise, float h, float hue) {
 }
 #endif
 
-#if VARIANT == 11 || VARIANT == 13
+#if VARIANT == 11 || VARIANT == 13 || VARIANT == 16
 // Light shafts from the surface, slanting and drifting, brighter the more water a ray crosses
 // (worked out from the direction, not marched), and specks drifting in the water, placed in
 // one layer of cells at a fixed distance from the camera.
@@ -974,6 +1092,9 @@ vec3 jWater(vec3 col, vec3 ro, vec3 rd, float tHit, float hue) {
     float shaft = max(0.0, sin(wrapA(a * 7.0 + uTime * PI * 0.8)));
     shaft *= shaft;
     float depth = min(tHit, JFAR) / JFAR;
+#if VARIANT == 16
+    shaft *= 0.15;   // the deep: barely any light from the surface
+#endif
     col += vec3(0.1, 0.2, 0.22) * shaft * shaft * smoothstep(-0.3, 0.6, rd.y) * depth * (0.6 + 0.6 * uLow);
     float d = 1.6;
     if (d < tHit) {
@@ -1000,8 +1121,10 @@ vec3 shade(vec2 p) {
 #if VARIANT == 6
     float tSea = rd.y < -0.001 ? (-1.1 - ro.y) / rd.y : 99.0;
     tMax = min(tMax, tSea);
+#elif VARIANT == 16 || VARIANT == 17
+    float tSea = rd.y < -0.001 ? (-1.4 - ro.y) / rd.y : 99.0;
 #endif
-#if VARIANT != 14
+#if VARIANT != 14 && VARIANT != 16 && VARIANT != 17
     for (int i = 0; i < 22; i++) {
         vec3 q = ro + rd * t;
         float d = jEnv(q, q.xy - jPath(q.z));
@@ -1012,7 +1135,7 @@ vec3 shade(vec2 p) {
     }
 #endif
     float tEnv = hit ? t : JFAR;
-#if VARIANT == 6
+#if VARIANT == 6 || VARIANT == 16 || VARIANT == 17
     bool sea = !hit && tSea < JFAR;
     if (sea) tEnv = tSea;
 #endif
@@ -1045,10 +1168,16 @@ vec3 shade(vec2 p) {
         col = jEnvShade(q, q.xy - jPath(q.z), ro, rd, hue + q.z / JZ);
         tHit = t;
     }
-#if VARIANT == 6
+#if VARIANT == 6 || VARIANT == 16 || VARIANT == 17
     else if (sea) {
         vec3 q = ro + rd * tSea;
+#if VARIANT == 6
         col = jSea(q, rd, hue + q.z / JZ);
+#elif VARIANT == 16
+        col = jDeepFloor(q, rd, hue + q.z / JZ);
+#else
+        col = jRoad(q, hue + q.z / JZ);
+#endif
         tHit = tSea;
     }
 #endif
@@ -1063,7 +1192,7 @@ vec3 shade(vec2 p) {
     }
 #endif
     col = mix(col, back, smoothstep(JFAR * 0.55, JFAR, tHit));
-#if VARIANT == 11 || VARIANT == 13
+#if VARIANT == 11 || VARIANT == 13 || VARIANT == 16
     col = jWater(col, ro, rd, tHit, hue);
 #elif VARIANT == 12
     col = jEmbers(col, ro, rd, tHit, hue);
