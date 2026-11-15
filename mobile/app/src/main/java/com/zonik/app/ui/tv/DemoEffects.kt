@@ -162,6 +162,7 @@ enum class DemoEffect(
     SCHWARZ("Schwarz chambers", JOURNEY_BODY, halfRes = true, variant = 1, world = true),
     BUBBLEFLIGHT("Bubble flight", JOURNEY_BODY, halfRes = true, variant = 2, world = true),
     PILLARS("Pillar hall", JOURNEY_BODY, halfRes = true, variant = 3, world = true),
+    SKY("Megastructures", JOURNEY_BODY, halfRes = true, variant = 4, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
@@ -269,6 +270,7 @@ uniform vec2 uSeed;
 uniform vec4 uCam;
 uniform float uCell;
 uniform vec4 uMood;
+uniform vec4 uMarks[12];
 
 const float PI = 3.14159265;
 

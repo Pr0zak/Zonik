@@ -12,6 +12,12 @@ package com.zonik.app.ui.tv
  *    tiled, each room its own colour, the tile seams glowing on the beat.
  * 2. Bubble flight: a lattice of glassy spheres, each cell its own size, swelling on the kick.
  * 3. Pillar hall: square pillars between a glowing grid floor and ceiling.
+ * 4. Megastructures: open sky over a glowing grid, with nothing but the landmarks in it: giant
+ *    rings, tunnels and hollow spheres to fly through, arches, monoliths and crystals to pass.
+ *
+ * Landmarks (uMarks, placed by JourneyLandmarks on the CPU) appear in every world: in the
+ * enclosed ones only small objects inside the tube, now and then at random; in the open sky
+ * the big structures too, timed so the camera reaches them on a downbeat or a drop.
  *
  * Every world carves a tube of radius 0.42 around the path, so the camera never meets a wall,
  * and draws neon where that tube cuts through it, lit by the spectrum (bass on the floor, treble
@@ -264,88 +270,99 @@ vec3 jSurface(vec3 q, vec3 n, vec3 rd, float hue) {
     return mix(jSurfaceA(q, n, rd, hue), jSurfaceB(q, n, rd, hue), uMood.y);
 }
 
-// Objects floating in the open space round the flight path, one to a cell along it, each at
-// its own angle a little off the path so the camera flies close past it: orbs in the gyroid,
-// crystals in the chambers, rings round the path (flown through) among the bubbles, lanterns
-// in the hall. The cell's index (absolute, modulo the cell count, so it repeats with the wrap)
-// picks the angle and the colour.
-#if VARIANT == 2
-const float OCELL = JCELL * 2.0;
-#elif VARIANT == 3
-const float OCELL = JCELL;
-#else
-const float OCELL = JCELL * 0.5;
-#endif
-
-// z within the object's cell (-OCELL/2..OCELL/2) and the cell's index.
-vec2 jObjCell(float z) {
-#if VARIANT == 2
-    float w = jCam.w + JCELL * mod(jCell, 2.0);
-    float base = floor(jCell / 2.0);
-    float count = JCELLS / 2.0;
-#elif VARIANT == 3
-    float w = jCam.w;
-    float base = jCell;
-    float count = JCELLS;
-#else
-    float w = mod(jCam.w, OCELL);
-    float base = jCell * 2.0 + floor(jCam.w / OCELL);
-    float count = JCELLS * 2.0;
-#endif
-    float zc = z + w;
-    float c = floor(zc / OCELL + 0.5);
-    return vec2(zc - c * OCELL, mod(c + base, count));
+// Landmarks: up to six objects the CPU places along the route (JourneyLandmarks), from small
+// orbs, crystals and cubes just off the path to giant rings, tunnels and hollow spheres the
+// camera flies through. Two vec4 each in uMarks: a = (z ahead of the camera, type, size,
+// spin or half length), b = (centre x, centre y, wall thickness, hue). Type -1 is an empty
+// slot. `off` is the point's offset from the path at its own z, for the shapes that follow it.
+float jBox(vec3 r, vec3 h) {
+    vec3 d = abs(r) - h;
+    return length(max(d, 0.0)) + min(max(d.x, max(d.y, d.z)), 0.0);
 }
 
-// Distance to this cell's object; `off` is the point's offset from the path at its z.
-float jObject(vec3 q, vec2 off, out float id) {
-    vec2 oc = jObjCell(q.z);
-    id = hash(vec2(oc.y * 1.7 + 3.1, 9.2));
-    float size = 1.0 + 0.6 * uKick;
-#if VARIANT == 2
-    // A ring round the path.
-    float d = length(vec2(length(off) - 0.33, oc.x)) - 0.014 * size;
-#else
-    vec2 dir = normalize(vec2(id - 0.5, hash(vec2(oc.y, 4.4)) - 0.5) + 1e-3);
-    vec3 r = vec3(off - dir * 0.26, oc.x);
-#if VARIANT == 1
-    // A crystal: an octahedron.
-    float d = (abs(r.x) + abs(r.y) + abs(r.z) - 0.09 * size) * 0.577;
-#elif VARIANT == 3
-    // A lantern: a small cube.
-    vec3 b = abs(r) - 0.055 * size;
-    float d = length(max(b, 0.0)) + min(max(b.x, max(b.y, b.z)), 0.0);
-#else
-    // An orb.
-    float d = length(r) - 0.06 * size;
-#endif
-#endif
-    // Capped near the cell's ends, where the next cell's object may be the nearer one.
-    return min(d, OCELL * 0.5 - abs(oc.x) + 0.08);
+float jMarkD(vec3 q, vec2 off, vec4 a, vec4 b) {
+    vec3 r = vec3(q.xy - b.xy, q.z - a.x);
+    float ty = a.y;
+    if (ty < 0.5) return length(r) - a.z;                                       // orb
+    vec2 cs = vec2(cos(wrapA(a.w)), sin(wrapA(a.w)));
+    vec3 rr = vec3(r.x * cs.x - r.y * cs.y, r.x * cs.y + r.y * cs.x, r.z);
+    if (ty < 1.5) return (abs(rr.x) + abs(rr.y) + abs(rr.z) - a.z) * 0.577;     // crystal
+    if (ty < 2.5) return jBox(rr, vec3(a.z));                                   // cube
+    if (ty < 3.5) return length(vec2(length(r.xy) - a.z, r.z)) - b.z;           // ring
+    if (ty < 4.5) {                                                              // tunnel
+        float shell = abs(length(off) - a.z - b.z) - b.z;
+        return max(shell, abs(r.z) - a.w);
+    }
+    if (ty < 5.5) return jBox(rr, vec3(a.z * 0.35, a.z * 2.2, a.z * 0.35));      // monolith
+    if (ty < 6.5) return max(abs(length(r) - a.z) - b.z, 0.75 - length(off));    // hollow sphere
+    // Arch: two posts and a lintel, the path running between the posts.
+    float post = jBox(vec3(abs(rr.x) - a.z, rr.y, rr.z), vec3(0.22, a.z * 1.2, 0.22));
+    float lintel = jBox(vec3(rr.x, rr.y - a.z * 1.2, rr.z), vec3(a.z + 0.22, 0.22, 0.22));
+    return min(post, lintel);
 }
 
-// The object's surface normal at a hit.
-vec3 jObjNormal(vec3 q, vec2 off, float id) {
-    vec2 oc = jObjCell(q.z);
-#if VARIANT == 2
-    float l = length(off);
-    return normalize(vec3((l - 0.33) * off / max(l, 1e-3), oc.x));
-#else
-    vec2 dir = normalize(vec2(id - 0.5, hash(vec2(oc.y, 4.4)) - 0.5) + 1e-3);
-    vec3 r = vec3(off - dir * 0.26, oc.x);
-#if VARIANT == 1
-    return normalize(sign(r));
-#elif VARIANT == 3
-    vec3 a = abs(r);
-    return a.x > a.y && a.x > a.z ? vec3(sign(r.x), 0.0, 0.0)
-         : (a.y > a.z ? vec3(0.0, sign(r.y), 0.0) : vec3(0.0, 0.0, sign(r.z)));
-#else
-    return normalize(r);
-#endif
-#endif
+// The nearest landmark's distance, and which slot it is in.
+float jMarks(vec3 q, vec2 off, out float idx) {
+    float d = 9.0;
+    idx = -1.0;
+    for (int i = 0; i < 6; i++) {
+        vec4 a = uMarks[2 * i];
+        vec4 b = uMarks[2 * i + 1];
+        if (a.y < 0.0) continue;
+        // Far along z from it, the gap in z is a safe step and the shape need not be worked out.
+        float ext = (a.y > 3.5 && a.y < 4.5) ? a.w + 0.1 : a.z * 1.3 + b.z + 0.3;
+        float dz = abs(q.z - a.x) - ext;
+        float m = dz > 0.0 ? dz + 0.02 : jMarkD(q, off, a, b);
+        if (m < d) {
+            d = m;
+            idx = float(i);
+        }
+    }
+    return d;
 }
 
-vec3 shade(vec2 p) {
+vec4 jMarkA(float idx) {
+    vec4 a = vec4(0.0);
+    for (int i = 0; i < 6; i++) if (float(i) == idx) a = uMarks[2 * i];
+    return a;
+}
+
+vec4 jMarkB(float idx) {
+    vec4 b = vec4(0.0);
+    for (int i = 0; i < 6; i++) if (float(i) == idx) b = uMarks[2 * i + 1];
+    return b;
+}
+
+// A landmark's look at a hit: small ones lit from within by their own band of the spectrum,
+// rings blazing, the big structures dark with glowing rims and light racing round them.
+vec3 jMarkShade(vec3 q, vec2 off, vec3 rd, float idx, float hue) {
+    vec4 a = jMarkA(idx);
+    vec4 b = jMarkB(idx);
+    const vec2 k = vec2(1.0, -1.0);
+    const float h = 0.02;
+    vec3 n = normalize(k.xyy * jMarkD(q + k.xyy * h, off + k.xy * h, a, b)
+                     + k.yyx * jMarkD(q + k.yyx * h, off + k.yy * h, a, b)
+                     + k.yxy * jMarkD(q + k.yxy * h, off + k.yx * h, a, b)
+                     + k.xxx * jMarkD(q + k.xxx * h, off + k.xx * h, a, b));
+    float facing = clamp(abs(dot(n, rd)), 0.0, 1.0);
+    float lvl = band(floor(fract(b.w) * 63.0));
+    vec3 c = colorAt(hue * 2.0 + b.w);
+    if (a.y < 2.5) {
+        vec3 col = c * (0.12 + 0.5 * facing) * (0.5 + 1.1 * lvl + 0.6 * uKick);
+        col += c * pow(1.0 - facing, 2.0) * (0.4 + 0.8 * lvl);
+        return col + vec3(1.0) * pow(facing, 24.0) * 0.35;
+    }
+    if (a.y < 3.5) return c * (0.6 + 1.4 * lvl + 0.9 * uKick) + vec3(0.3) * pow(facing, 8.0);
+    // Light racing round the big structures, a quarter-period apart, brightest on the beat.
+    float race = pow(0.5 + 0.5 * sin(wrapA(q.z * 4.0 + jCam.z - uTime * PI * 16.0)), 16.0);
+    vec3 col = c * (0.03 + 0.22 * facing * facing);
+    col += c * pow(1.0 - facing, 3.0) * (0.35 + 1.0 * lvl);
+    col += colorAt(hue * 2.0 + b.w + 0.5) * race * (0.25 + 0.8 * uBeat + 0.6 * uKick);
+    return col;
+}
+
+// The camera's place, frame and this pixel's ray.
+void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec2 sp, out vec3 rd) {
     if (uPathOn > 0.5) {
         jCam = uCam;
         jCell = uCell;
@@ -357,17 +374,92 @@ vec3 shade(vec2 p) {
         jCell = mod(floor(jCamZ / JCELL), JCELLS);
     }
     // The camera sits at z = 0; everything below is relative to it.
-    vec3 ro = vec3(jPath(0.0), 0.0);
-    vec3 fw = normalize(vec3(jPath(1.2), 1.2) - ro);
-    vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
-    vec3 up = cross(fw, rt);
+    ro = vec3(jPath(0.0), 0.0);
+    fw = normalize(vec3(jPath(1.2), 1.2) - ro);
+    rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
+    up = cross(fw, rt);
 #if VARIANT == 3
     // A hall has a floor: bank gently instead of rolling right round.
-    vec2 sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
+    sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
-    vec2 sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0))) + uMood.w) * p;
+    sp = rot(wrapA(uSpin * PI + 0.08 * sin(wrapA(uTime * PI * 2.0))) + uMood.w) * p;
 #endif
-    vec3 rd = normalize(fw * 1.3 + rt * sp.x + up * sp.y);
+    rd = normalize(fw * 1.3 + rt * sp.x + up * sp.y);
+}
+
+// The portal gate: a ring round the path, uGate units ahead, drawn where nothing nearer hides
+// it. It sweeps out to the screen edge as the camera reaches it.
+vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, float t) {
+    if (uGate <= 0.0) return col;
+    float gz = uGate;
+    vec3 rel = vec3(jPath(gz), gz) - ro;
+    float depth = max(dot(rel, fw), 0.05);
+    vec2 centre = vec2(dot(rel, rt), dot(rel, up)) * 1.3 / depth;
+    float radius = 0.5 * 1.3 / depth;
+    float ringD = abs(length(sp - centre) - radius);
+    float seen = (hit && t < depth) ? 0.0 : 1.0;
+    // The same colour as the iris rim that follows it, so gate and portal read as one ring.
+    vec3 gc = vivid(uC0);
+    col += gc * seen * (exp(-ringD * 120.0) * 1.4 + exp(-ringD * 14.0) * 0.25) * (0.7 + 0.8 * uBeat);
+    col += gc * seen * smoothstep(radius, 0.0, length(sp - centre)) * 0.08;
+    return col;
+}
+
+#if VARIANT == 4
+// Megastructures: open sky. A dusk gradient, stars, an aurora along the horizon lit by the
+// spectrum and a glowing grid far below, with nothing in the way but the landmarks.
+vec3 jSky(vec3 ro, vec3 rd, float hue) {
+    vec3 col = mix(colorAt(hue * 2.0 + 0.1) * 0.14, colorAt(hue * 2.0 + 0.6) * 0.02, smoothstep(-0.15, 0.6, rd.y));
+    float a = abs(fastAtan2(rd.x, rd.z)) / PI;
+    col += colorAt(a + hue * 2.0) * band(floor(a * 63.0)) * exp(-abs(rd.y - 0.04) * 14.0) * 0.55;
+    vec2 sv = rd.xy / max(rd.z, 0.25) * 22.0;
+    float st = hash(floor(sv));
+    col += vec3(1.0) * step(0.975, st) * smoothstep(0.35, 0.0, length(fract(sv) - 0.5)) * (0.35 + 0.65 * uHigh);
+    if (rd.y < -0.01) {
+        float tp = (-4.5 - ro.y) / rd.y;
+        if (tp < 60.0) {
+            vec2 g = vec2(ro.x + rd.x * tp, rd.z * tp + jCam.w);
+            vec2 gg = abs(fract(g / (JCELL * 0.5)) - 0.5);
+            float line = exp(-min(gg.x, gg.y) * 26.0);
+            col += colorAt(hue * 2.0 + 0.3) * line * (0.12 + 0.6 * uLow) * exp(-tp * 0.045);
+        }
+    }
+    return col;
+}
+
+vec3 shade(vec2 p) {
+    vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
+    jCamera(p, ro, fw, rt, up, sp, rd);
+    float t = 0.05;
+    float idx = -1.0;
+    float steps = 0.0;
+    bool hit = false;
+    for (int i = 0; i < 24; i++) {
+        vec3 q = ro + rd * t;
+        float d = jMarks(q, q.xy - jPath(q.z), idx);
+        if (d < JEPS + JEPS * t) { hit = true; break; }
+        t += d;
+        steps += 1.0;
+        if (t > 18.0) break;
+    }
+    float hue = jCam.x + uSeed.x + uMood.x;
+    vec3 sky = jSky(ro, rd, hue);
+    vec3 col = sky;
+    if (hit) {
+        vec3 q = ro + rd * t;
+        col = jMarkShade(q, q.xy - jPath(q.z), rd, idx, hue + q.z / JZ);
+        col = mix(col, sky, smoothstep(10.0, 18.0, t));
+    }
+    // Rays that grazed a structure took more steps: a glow round its edges.
+    col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 24.0, steps) * 0.12 * (0.5 + 1.5 * uKick);
+    col = jGate(col, sp, ro, fw, rt, up, hit, t);
+    col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
+    return col;
+}
+#else
+vec3 shade(vec2 p) {
+    vec3 ro; vec3 fw; vec3 rt; vec3 up; vec2 sp; vec3 rd;
+    jCamera(p, ro, fw, rt, up, sp, rd);
 
     float th = (0.12 + 0.2 * uLow + 0.15 * uKick) * (1.0 + 0.6 * uSeed.y);
 #if VARIANT == 1
@@ -387,7 +479,7 @@ vec3 shade(vec2 p) {
         vec2 off = q.xy - jPath(q.z);
         sheet = jWorld(q, th);
         tube = 0.42 - length(off);
-        obj = jObject(q, off, objId);
+        obj = jMarks(q, off, objId);
         float d = min(max(sheet, tube), obj);
         if (d < JEPS + JEPS * t) { hit = true; break; }
         t += d;
@@ -400,15 +492,7 @@ vec3 shade(vec2 p) {
     vec3 q = ro + rd * t;
     float hue = jCam.x + q.z / JZ + uSeed.x + uMood.x;
     if (hit && obj < max(sheet, tube)) {
-        // An object: shaded, glowing at its rim, each lit by its own band of the spectrum and
-        // flaring on the kick.
-        vec2 off = q.xy - jPath(q.z);
-        float lvl = band(floor(objId * 63.0));
-        float facing = clamp(dot(jObjNormal(q, off, objId), -rd), 0.0, 1.0);
-        vec3 oc = colorAt(hue * 2.0 + objId);
-        col = oc * (0.12 + 0.5 * facing) * (0.5 + 1.1 * lvl + 0.6 * uKick);
-        col += oc * pow(1.0 - facing, 2.0) * (0.4 + 0.8 * lvl);
-        col += vec3(1.0) * pow(facing, 24.0) * 0.35;
+        col = jMarkShade(q, q.xy - jPath(q.z), rd, objId, hue);
     } else if (hit) {
         vec2 off = q.xy - jPath(q.z);
         bool cut = tube > sheet;
@@ -432,22 +516,9 @@ vec3 shade(vec2 p) {
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(6.0, 20.0, steps) * 0.12 * (0.5 + 1.5 * uKick);
     col = mix(col, haze, smoothstep(1.5, 5.0, t));
 
-    // The portal gate: a ring round the path, uGate units ahead, drawn where nothing nearer
-    // hides it. It sweeps out to the screen edge as the camera reaches it.
-    if (uGate > 0.0) {
-        float gz = uGate;
-        vec3 rel = vec3(jPath(gz), gz) - ro;
-        float depth = max(dot(rel, fw), 0.05);
-        vec2 centre = vec2(dot(rel, rt), dot(rel, up)) * 1.3 / depth;
-        float radius = 0.5 * 1.3 / depth;
-        float ringD = abs(length(sp - centre) - radius);
-        float seen = (hit && t < depth) ? 0.0 : 1.0;
-        // The same colour as the iris rim that follows it, so gate and portal read as one ring.
-        vec3 gc = vivid(uC0);
-        col += gc * seen * (exp(-ringD * 120.0) * 1.4 + exp(-ringD * 14.0) * 0.25) * (0.7 + 0.8 * uBeat);
-        col += gc * seen * smoothstep(radius, 0.0, length(sp - centre)) * 0.08;
-    }
+    col = jGate(col, sp, ro, fw, rt, up, hit, t);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;
 }
+#endif
 """

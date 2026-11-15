@@ -170,6 +170,11 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val pathBytes = ByteBuffer.allocateDirect(PATH_SIZE * 4)
     /** Turns, colour steps, look fades, bar energy and banking for the worlds. */
     private val motion = JourneyMotion()
+    /** Objects and structures placed along the route. */
+    private val landmarks = JourneyLandmarks()
+    private val marks = FloatArray(JourneyLandmarks.SLOTS * 8)
+    /** How far the camera has flown, in world units; never wraps (landmarks are placed on it). */
+    private var travel = 0.0
     /** Fade-in from black when the surface first appears. */
     private var fade = 0f
 
@@ -393,7 +398,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         // transition instead.
         fade = (fade + dt * FADE_RATE).coerceAtMost(1f)
         if (current.world || next?.world == true) {
-            motion.update(beatClock, System.currentTimeMillis(), dt, phase * 3.0 * Math.PI, cruiseUnits, path)
+            val now = System.currentTimeMillis()
+            val camZ = phase * 3.0 * Math.PI
+            motion.update(beatClock, now, dt, camZ, cruiseUnits, path)
+            landmarks.update((next ?: current) == DemoEffect.SKY, travel, camZ, cruiseUnits, beatClock, now, dt, path)
             if (path.version != pathUploaded) uploadPathData()
         }
         advanceJourney()
@@ -584,6 +592,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             uniforms["uMood"]?.let {
                 if (it >= 0) GLES20.glUniform4f(it, motion.hue, motion.style, motion.energy, motion.bank)
             }
+            uniforms["uMarks"]?.let {
+                if (it >= 0) {
+                    landmarks.pack(marks, travel)
+                    GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS * 2, marks, 0)
+                }
+            }
         }
         uniforms["uBalls"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 5, balls, 0) }
         uniforms["uTunnel"]?.let { if (it >= 0) GLES20.glUniform3fv(it, 9, tunnelRings, 0) }
@@ -661,13 +675,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         kick *= exp(-dt * KICK_DECAY)
 
         // Bass is the throttle; the kick is a shove.
-        val worldSpeed = if (current.world) lookCurrent.journey.speed else 1f
+        // The open sky flies faster: there is room, and the structures are far apart.
+        val worldSpeed = if (current.world) lookCurrent.journey.speed * (if (current == DemoEffect.SKY) 1.5f else 1f) else 1f
         var speed = (CRUISE + low * 0.55f + kick * 0.9f) * worldSpeed
         cruiseUnits = (CRUISE + low * 0.55f) * worldSpeed * GATE_UNITS_PER_PHASE
         // A portal is a rush: the camera surges through the gate and settles again.
         sincePortal += dt
         if (sincePortal < PORTAL_BURST_SEC) speed += PORTAL_BURST * sin(Math.PI * sincePortal / PORTAL_BURST_SEC).toFloat()
         phase = (phase + speed * dt) % WRAP
+        travel += speed * dt * GATE_UNITS_PER_PHASE
         spin = (spin + (0.012f + mid * 0.03f) * dt) % WRAP
         time = (time + TIME_RATE * dt) % WRAP
         clock += dt
@@ -1245,7 +1261,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uWipe", "uWipeSide", "uWipeKind", "uZoomCenter", "uZoomScale", "uZoomRot", "uZoomFlash",
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
-            "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood",
+            "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
             "uC0", "uC1", "uC2", "uTex",
         )
 

@@ -374,3 +374,186 @@ class JourneyMotion(seed: Int = 1) {
         const val STYLE_FADE_SEC = 1.5f
     }
 }
+
+/**
+ * Places the Journey's landmarks along the route: up to [SLOTS] objects, each with a type,
+ * size, position and spin of its own, handed to the shader as `uMarks` (see JOURNEY_BODY).
+ *
+ * - Small objects (orbs, crystals, cubes, little rings) come at random gaps of 2.5 to 7
+ *   seconds of flight, in a random mix. In the enclosed worlds they sit inside the flight tube;
+ *   in the open sky anywhere from just off the path to a few units out, and bigger.
+ * - Big structures come only in the open sky ([open]): giant rings, tunnels and hollow spheres
+ *   to fly through, arches to pass under, monoliths and giant crystals to pass by. They are
+ *   placed where the camera should be at the next 16-beat boundary, or at a drop when one is
+ *   coming (a tunnel or a hollow sphere then, so the drop is the moment it flies in).
+ *
+ * Everything is placed beyond the fog, so nothing pops in. Positions are measured along the
+ * flight ([travel], which never wraps) and handed over as distances ahead of the camera. Each
+ * landmark keeps to the path's line at its own z, eased, so when a turn rewrites the path ahead
+ * the structures drift across to it instead of jumping.
+ */
+class JourneyLandmarks(seed: Int = 7) {
+    private class Mark(
+        val z: Double,
+        val type: Int,
+        val size: Float,
+        /** Spin rate in radians per second, or a tunnel's half length. */
+        val w: Float,
+        val offX: Float,
+        val offY: Float,
+        val param: Float,
+        val hue: Float,
+    ) {
+        var x = Float.NaN
+        var y = 0f
+        var spin = 0f
+        val reach: Double get() = if (type == TUNNEL) w.toDouble() else size * 1.3 + 0.3
+    }
+
+    private val random = kotlin.random.Random(seed)
+    private val marks = arrayOfNulls<Mark>(SLOTS)
+    private var nextSmallZ = Double.NaN
+    private var nextLargeZ = Double.NaN
+
+    /** How many slots are in use (for tests). */
+    val count: Int get() = marks.count { it != null }
+
+    fun types(): List<Int> = marks.filterNotNull().map { it.type }
+
+    fun update(
+        open: Boolean, travel: Double, camZ: Double, unitsPerSec: Float,
+        clock: BeatClock?, nowMs: Long, dt: Float, path: JourneyPath,
+    ) {
+        for (i in marks.indices) {
+            val m = marks[i] ?: continue
+            if (m.z + m.reach < travel - 1.0) marks[i] = null
+        }
+        val speed = unitsPerSec.coerceAtLeast(0.3f)
+        val spawn = if (open) OPEN_SPAWN else TUBE_SPAWN
+        if (nextSmallZ.isNaN()) nextSmallZ = travel + spawn + speed * (1f + random.nextFloat() * 3f)
+        if (travel + spawn >= nextSmallZ) {
+            if (add(small(open, travel + spawn))) nextSmallZ = travel + spawn + speed * (2.5f + random.nextFloat() * 4.5f)
+        }
+        if (!open) {
+            nextLargeZ = Double.NaN
+        } else {
+            if (nextLargeZ.isNaN()) nextLargeZ = travel + spawn
+            if (travel + spawn >= nextLargeZ) {
+                val mark = large(travel, spawn, speed, clock, nowMs)
+                if (add(mark)) nextLargeZ = mark.z + mark.reach + speed * (2f + random.nextFloat() * 3f)
+            }
+        }
+        for (m in marks) {
+            m ?: continue
+            val along = camZ + (m.z - travel)
+            val tx = path.xAt(along) + m.offX
+            val ty = JourneyPath.baseY(along).toFloat() + m.offY
+            if (m.x.isNaN()) {
+                m.x = tx
+                m.y = ty
+            } else {
+                val k = 1f - kotlin.math.exp(-dt * 1.5f)
+                m.x += (tx - m.x) * k
+                m.y += (ty - m.y) * k
+            }
+            if (m.type != TUNNEL) m.spin = (m.spin + m.w * dt) % (2f * Math.PI.toFloat())
+        }
+    }
+
+    /** 12 vec4s for `uMarks`: two per slot, type -1 for an empty one. */
+    fun pack(out: FloatArray, travel: Double) {
+        for (i in 0 until SLOTS) {
+            val m = marks[i]
+            val o = i * 8
+            if (m == null) {
+                java.util.Arrays.fill(out, o, o + 8, 0f)
+                out[o + 1] = -1f
+                continue
+            }
+            out[o] = (m.z - travel).toFloat()
+            out[o + 1] = m.type.toFloat()
+            out[o + 2] = m.size
+            out[o + 3] = if (m.type == TUNNEL) m.w else m.spin
+            out[o + 4] = m.x
+            out[o + 5] = m.y
+            out[o + 6] = m.param
+            out[o + 7] = m.hue
+        }
+    }
+
+    private fun add(m: Mark): Boolean {
+        val i = marks.indexOfFirst { it == null }
+        if (i < 0) return false
+        marks[i] = m
+        return true
+    }
+
+    private fun small(open: Boolean, z: Double): Mark {
+        val type = if (random.nextFloat() < 0.2f) RING else random.nextInt(3)
+        val angle = random.nextFloat() * 2f * Math.PI.toFloat()
+        val hue = random.nextFloat()
+        val spin = (random.nextFloat() - 0.5f) * 3f
+        if (type == RING) {
+            // A little ring round the path, to fly through.
+            return if (open) Mark(z, RING, 0.5f + random.nextFloat() * 0.5f, 0f, 0f, 0f, 0.03f, hue)
+            else Mark(z, RING, 0.33f, 0f, 0f, 0f, 0.014f, hue)
+        }
+        val (radius, size) = if (open) {
+            (0.4f + random.nextFloat() * 2.1f) to (0.08f + random.nextFloat() * 0.25f)
+        } else {
+            (0.16f + random.nextFloat() * 0.14f) to (0.04f + random.nextFloat() * 0.05f)
+        }
+        return Mark(z, type, size, spin, radius * kotlin.math.cos(angle), radius * kotlin.math.sin(angle), 0f, hue)
+    }
+
+    private fun large(travel: Double, spawn: Double, speed: Float, clock: BeatClock?, nowMs: Long): Mark {
+        val minMs = (spawn / speed * 1000.0).toFloat()
+        val drop = clock?.msToDrop(nowMs, minMs, minMs + 20_000f)
+        val ms = when {
+            drop != null -> drop
+            clock != null && clock.hasTempo -> clock.msToNextMultiple(nowMs, 16, minMs)
+            else -> minMs + random.nextFloat() * 4_000f
+        }
+        val z = travel + speed * ms / 1000.0
+        val hue = random.nextFloat()
+        val spin = (random.nextFloat() - 0.5f) * 0.6f
+        val type = if (drop != null) {
+            if (random.nextBoolean()) TUNNEL else SPHERE
+        } else {
+            val r = random.nextFloat()
+            when {
+                r < 0.3f -> RING
+                r < 0.45f -> TUNNEL
+                r < 0.6f -> ARCH
+                r < 0.75f -> MONOLITH
+                r < 0.85f -> SPHERE
+                else -> CRYSTAL
+            }
+        }
+        return when (type) {
+            RING -> Mark(z, RING, 1.0f + random.nextFloat() * 1.2f, 0f, 0f, 0f, 0.06f + random.nextFloat() * 0.08f, hue)
+            TUNNEL -> Mark(z, TUNNEL, 0.8f + random.nextFloat() * 0.4f, 2f + random.nextFloat() * 3f, 0f, 0f, 0.12f, hue)
+            ARCH -> Mark(z, ARCH, 1.1f + random.nextFloat() * 0.7f, spin * 0.2f, 0f, 0f, 0f, hue)
+            SPHERE -> Mark(z, SPHERE, 2.2f + random.nextFloat() * 1.0f, 0f, 0f, 0f, 0.12f, hue)
+            else -> {
+                // Off to one side, close enough to rush past.
+                val side = if (random.nextBoolean()) 1f else -1f
+                val size = if (type == MONOLITH) 0.8f + random.nextFloat() * 0.8f else 0.6f + random.nextFloat() * 0.6f
+                Mark(z, type, size, spin, side * (1.4f + random.nextFloat() * 1.6f), (random.nextFloat() - 0.5f) * 1.5f, 0f, hue)
+            }
+        }
+    }
+
+    companion object {
+        const val SLOTS = 6
+        const val CRYSTAL = 1
+        const val RING = 3
+        const val TUNNEL = 4
+        const val MONOLITH = 5
+        const val SPHERE = 6
+        const val ARCH = 7
+        /** Just past the fog: 5 units in the enclosed worlds, 18 in the open sky. */
+        const val TUBE_SPAWN = 6.0
+        const val OPEN_SPAWN = 17.0
+    }
+}
