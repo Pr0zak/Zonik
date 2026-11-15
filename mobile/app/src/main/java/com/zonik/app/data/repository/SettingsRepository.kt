@@ -287,6 +287,13 @@ class SettingsRepository @Inject constructor(
         dataStore.edit { prefs -> prefs[TV_AMBIENT_COLORS] = mode }
     }
 
+    /** The Journey's options (JourneyOptions.encode), null until first changed. */
+    val tvJourneyOptions: Flow<String?> = dataStore.data.map { prefs -> prefs[TV_JOURNEY_OPTIONS] }
+
+    suspend fun setTvJourneyOptions(encoded: String) {
+        dataStore.edit { prefs -> prefs[TV_JOURNEY_OPTIONS] = encoded }
+    }
+
     /** Motion trails on every visualizer effect. */
     val tvAmbientTrails: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[TV_AMBIENT_TRAILS] ?: false
@@ -348,6 +355,7 @@ class SettingsRepository @Inject constructor(
         private val TV_AMBIENT_TRANSITION_MS = intPreferencesKey("tv_ambient_transition_ms")
         private val TV_AMBIENT_COLORS = stringPreferencesKey("tv_ambient_colors")
         private val TV_AMBIENT_TRAILS = booleanPreferencesKey("tv_ambient_trails")
+        private val TV_JOURNEY_OPTIONS = stringPreferencesKey("tv_journey_options")
         private val EQ_ENABLED = booleanPreferencesKey("eq_enabled")
         private val EQ_PRESET = intPreferencesKey("eq_preset")
         private val EQ_BAND_LEVELS = stringPreferencesKey("eq_band_levels")

@@ -356,6 +356,15 @@ class TvViewModel @Inject constructor(
         visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(trails = enabled))
     }
 
+    /** The Journey's options; kept on this TV only (the web page does not show them). */
+    val journeyOptions: StateFlow<JourneyOptions> = settingsRepository.tvJourneyOptions
+        .map { JourneyOptions.decode(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, JourneyOptions())
+
+    fun setJourneyOptions(options: JourneyOptions) {
+        viewModelScope.launch { settingsRepository.setTvJourneyOptions(options.encode()) }
+    }
+
     private val _pulse = MutableStateFlow(AmbientPulse())
     val pulse: StateFlow<AmbientPulse> = _pulse.asStateFlow()
 
@@ -858,6 +867,7 @@ private fun TvAmbientOverlay(
     val transitionMs by viewModel.ambientTransitionMs.collectAsState()
     val colors by viewModel.ambientColors.collectAsState()
     val trails by viewModel.ambientTrails.collectAsState()
+    val journeyOptions by viewModel.journeyOptions.collectAsState()
     var deck by remember(enabled) { mutableStateOf(enabled.shuffled()) }
     var deckIndex by remember(enabled) { mutableIntStateOf(0) }
     fun advanceDeck() {
@@ -937,6 +947,7 @@ private fun TvAmbientOverlay(
             trails = trails,
             journeyWorlds = journeyWorlds,
             journeyLook = journeyLook,
+            journeyOptions = journeyOptions,
             modifier = Modifier.fillMaxSize()
         )
         // Keeps the type legible without burying the effect: darkness where the words are.

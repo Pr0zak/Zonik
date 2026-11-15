@@ -76,6 +76,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
     val colors by viewModel.ambientColors.collectAsState()
     val trails by viewModel.ambientTrails.collectAsState()
     val enabled by viewModel.ambientEffects.collectAsState()
+    val journeyOptions by viewModel.journeyOptions.collectAsState()
 
     val track by viewModel.currentTrack.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
@@ -89,7 +90,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
             ambientOn = ambientOn, delaySec = delaySec, beatOn = beatOn, rotateSec = rotateSec,
             infoMode = infoMode, transition = transition, transitionMs = transitionMs, colors = colors,
             trails = trails, enabled = enabled,
-            isPlaying = isPlaying,
+            isPlaying = isPlaying, journey = journeyOptions,
         ),
         actions = VisualizerSettingsActions(
             setAmbientEnabled = viewModel::setAmbientEnabled,
@@ -103,6 +104,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
             setTrails = viewModel::setAmbientTrails,
             setEffects = viewModel::setAmbientEffects,
             toggleEffect = viewModel::toggleAmbientEffect,
+            setJourney = viewModel::setJourneyOptions,
         ),
     ) { effect ->
         DemoVisualizer(
@@ -116,6 +118,7 @@ fun TvVisualizerSettings(viewModel: TvViewModel, onBack: () -> Unit) {
             colors = colors,
             title = track?.let { "${it.title}  ·  ${it.artist}" } ?: "Zonik",
             trails = trails,
+            journeyOptions = journeyOptions,
             modifier = Modifier.fillMaxSize()
         )
     }
@@ -134,6 +137,7 @@ internal data class VisualizerSettingsState(
     val trails: Boolean,
     val enabled: List<DemoEffect>,
     val isPlaying: Boolean,
+    val journey: JourneyOptions = JourneyOptions(),
 )
 
 internal class VisualizerSettingsActions(
@@ -148,6 +152,7 @@ internal class VisualizerSettingsActions(
     val setTrails: (Boolean) -> Unit,
     val setEffects: (Set<DemoEffect>) -> Unit,
     val toggleEffect: (DemoEffect) -> Unit,
+    val setJourney: (JourneyOptions) -> Unit = {},
 )
 
 /** The page itself; [preview] draws the live effect into the preview box. */
@@ -265,6 +270,26 @@ internal fun TvVisualizerSettingsContent(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // The Journey effect's own options.
+                val j = state.journey
+                Spacer(Modifier.height(4.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    SettingRow("Journey: time per world", JourneyOptions.LENGTH_LABELS[j.length]) {
+                        actions.setJourney(j.copy(length = (j.length + 1) % 3))
+                    }
+                    SettingRow("Journey: speed", JourneyOptions.SPEED_LABELS[j.speed]) {
+                        actions.setJourney(j.copy(speed = (j.speed + 1) % 3))
+                    }
+                    SettingRow("Journey: rings", if (j.rings) "On" else "Off") {
+                        actions.setJourney(j.copy(rings = !j.rings))
+                    }
+                    SettingRow("Journey: fish", if (j.fish) "On" else "Off") {
+                        actions.setJourney(j.copy(fish = !j.fish))
+                    }
+                    SettingRow("Journey: world order", if (j.shuffle) "Per track" else "Fixed") {
+                        actions.setJourney(j.copy(shuffle = !j.shuffle))
+                    }
+                }
             }
         }
 

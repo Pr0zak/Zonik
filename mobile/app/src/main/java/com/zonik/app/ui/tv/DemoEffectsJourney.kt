@@ -547,12 +547,27 @@ vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, floa
     return col;
 }
 
+// The track's style over whatever world it is in (JourneyLook.style): as made; a duotone, the
+// picture's brightness mapped from deep shadow in one palette colour up to another, so every
+// world wears the album's colours; or night, darker and harder, with only the brightest light
+// left, and that pushed brighter.
+vec3 jStyle(vec3 col, float hue) {
+    if (uStyle < 0.5) return col;
+    float l = dot(col, vec3(0.3, 0.55, 0.15));
+    if (uStyle < 1.5) {
+        vec3 lo = colorAt(hue * 2.0 + 0.6) * 0.04;
+        vec3 mid = colorAt(hue * 2.0 + 0.1);
+        return mix(mix(lo, mid * 0.6, smoothstep(0.0, 0.35, l)), vec3(1.0, 0.95, 0.9), smoothstep(0.45, 1.2, l));
+    }
+    return col * col * (1.4 + 1.2 * l) + colorAt(hue * 2.0 + 0.7) * 0.004;
+}
+
 // Rings to fly through (JourneyHoops on the CPU, every world): where the ray crosses each
 // ring's plane, a glowing band and a halo, nearer than whatever the world shows there. Closed
 // form, so they cost a few operations a pixel and nothing in the march. Pulsing with the beat
 // and the kick, each lit by its own band of the spectrum.
 vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 6; i++) {
         vec4 a = uHoops[2 * i];
         if (a.w <= 0.0 || a.x < 0.05) continue;
         float t = a.x / max(rd.z, 0.05);
@@ -1203,6 +1218,7 @@ vec3 shade(vec2 p) {
     col = jHoops(col, ro, rd, tHit, hue, JFAR);
     // Rays that grazed something took more steps: a glow round its edges.
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 22.0, steps) * 0.1 * (0.5 + 1.5 * uKick);
+    col = jStyle(col, hue);
     col = jGate(col, sp, ro, fw, rt, up, tHit < JFAR, tHit);
 #ifdef J_DEPTH
     gDepth = tHit < JFAR ? tHit / JDEPTH : 1.0;
@@ -1269,6 +1285,7 @@ vec3 shade(vec2 p) {
     col = mix(col, haze, smoothstep(1.5, 5.0, t));
     col = jHoops(col, ro, rd, hit ? t : 5.0, jCam.x + uSeed.x + uMood.x, 5.0);
 
+    col = jStyle(col, jCam.x + uSeed.x + uMood.x);
     col = jGate(col, sp, ro, fw, rt, up, hit, t);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
     return col;

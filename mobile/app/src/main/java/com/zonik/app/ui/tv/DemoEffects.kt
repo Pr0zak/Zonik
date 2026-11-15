@@ -337,8 +337,10 @@ uniform float uCell;
 uniform vec4 uMood;
 uniform vec4 uMarks[8];
 uniform vec4 uMarkScr[4];
+// The Journey track's style over every world: 0 as made, 1 duotone, 2 night (jStyle).
+uniform float uStyle;
 // Rings to fly through (JourneyHoops): (z ahead, centre x, y, radius; width, hue, 0, 0).
-uniform vec4 uHoops[8];
+uniform vec4 uHoops[12];
 uniform vec3 uCamRo;
 uniform vec3 uCamFw;
 uniform vec3 uCamRt;

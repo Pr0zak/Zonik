@@ -46,6 +46,8 @@ fun DemoVisualizer(
     journeyWorlds: List<DemoEffect> = JOURNEY_WORLDS,
     /** This track's colours, density, speed and world order for the Journey worlds. */
     journeyLook: JourneyLook = JourneyLook(),
+    /** The viewer's Journey options: time per world, speed, rings, fish, order. */
+    journeyOptions: JourneyOptions = JourneyOptions(),
 ) {
     // One renderer for the life of the screen: changing [effect] fades between effects on the
     // same surface instead of tearing the GL context down.
@@ -58,6 +60,7 @@ fun DemoVisualizer(
     LaunchedEffect(renderer, trails) { renderer.trails = trails }
     LaunchedEffect(renderer, journeyWorlds) { renderer.journeyWorlds = journeyWorlds }
     LaunchedEffect(renderer, journeyLook) { renderer.journeyLook = journeyLook }
+    LaunchedEffect(renderer, journeyOptions) { renderer.journeyOptions = journeyOptions }
 
     LaunchedEffect(renderer, pulse, beatClock) {
         var lastOnset = 0f

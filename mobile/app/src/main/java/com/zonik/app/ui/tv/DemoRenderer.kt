@@ -37,6 +37,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     @Volatile var journeyWorlds: List<DemoEffect> = JOURNEY_WORLDS
     /** This track's colours, density, speed and world order for the Journey worlds. */
     @Volatile var journeyLook: JourneyLook = JourneyLook()
+    /** The viewer's Journey options (time per world, speed, rings, fish, world order). */
+    @Volatile var journeyOptions: JourneyOptions = JourneyOptions()
     /** Motion trails on every effect: each frame is laid over a faded copy of the last. */
     @Volatile var trails: Boolean = false
     @Volatile private var pendingTitle: android.graphics.Bitmap? = null
@@ -432,7 +434,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             hoops.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
             val shown = next ?: current
             val world = JourneyWorld.of(shown)
-            if (world.flock) {
+            if (world.flock && journeyOptions.fish) {
                 if (flockWorld != shown) {
                     flock.reset()
                     flock.jelly = world.jelly
@@ -667,6 +669,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             // The gate belongs to the world being left, never the one arrived in.
             u1("uGate", if (drawingIncoming) 0f else journey.gate)
             u2("uSeed", look.journey.hue, look.journey.density)
+            u1("uStyle", look.journey.style.toFloat())
             setJourneyCamera(e)
             uniforms["uMood"]?.let {
                 if (it >= 0) GLES20.glUniform4f(it, motion.hue, motion.style, motion.energy, motion.bank)
@@ -674,6 +677,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             uniforms["uHoops"]?.let {
                 if (it >= 0) {
                     hoops.pack(hoopData, travel)
+                    if (!journeyOptions.rings) java.util.Arrays.fill(hoopData, 0f)
                     GLES20.glUniform4fv(it, JourneyHoops.SLOTS * 2, hoopData, 0)
                 }
             }
@@ -793,7 +797,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         // Bass is the throttle; the kick is a shove.
         // The open sky flies faster: there is room, and the structures are far apart.
         // The open worlds fly faster: there is room, and their landmarks are far apart.
-        val worldSpeed = if (current.world) lookCurrent.journey.speed * JourneyWorld.of(current).speed else 1f
+        val worldSpeed = if (current.world) lookCurrent.journey.speed * JourneyWorld.of(current).speed * journeyOptions.speedScale else 1f
         var speed = (CRUISE + low * 0.55f + kick * 0.9f) * worldSpeed
         if (current.world) {
             // The worlds glide: bass sets the pace, eased, and kicks show as light, not lurches.
@@ -1030,8 +1034,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             journey.reset()
             return
         }
+        journey.lengthScale = journeyOptions.lengthScale
         journey.update(
-            current, journeyWorlds, journeyLook.order, beatClock, System.currentTimeMillis(),
+            current, journeyWorlds, if (journeyOptions.shuffle) journeyLook.order else JourneySequencer.FIXED_ORDER,
+            beatClock, System.currentTimeMillis(),
             kick, cruiseUnits, transitioning = next != null,
         )
     }
@@ -1385,7 +1391,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut", "uHoops", "uFlockStyle",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

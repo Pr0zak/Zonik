@@ -55,4 +55,30 @@ class JourneyHoopsTest {
         r.fly(20_000)
         for (i in 0 until JourneyHoops.SLOTS) assertTrue(r.hoops.radiusOf(i) < 0.42f)
     }
+
+    @Test
+    fun `runs take every pattern, and the tunnel worlds never spiral`() {
+        val open = mutableSetOf<Int>()
+        val r = Run(JourneyWorld.of(DemoEffect.CANYON))
+        repeat(40) { r.fly(10_000); open += r.hoops.pattern }
+        assertTrue("open patterns $open", open.containsAll(listOf(0, 1, 2, 3)))
+        val g = Run(JourneyWorld.of(DemoEffect.GYROID))
+        repeat(40) { g.fly(10_000); assertTrue(g.hoops.pattern != 1) }
+    }
+}
+
+class JourneyOptionsTest {
+    @Test
+    fun `options survive a round trip and fall back field by field`() {
+        val o = JourneyOptions(length = 2, speed = 0, rings = false, fish = true, shuffle = false)
+        org.junit.Assert.assertEquals(o, JourneyOptions.decode(o.encode()))
+        org.junit.Assert.assertEquals(JourneyOptions(), JourneyOptions.decode(null))
+        org.junit.Assert.assertEquals(JourneyOptions(length = 0), JourneyOptions.decode("0,9"))
+    }
+
+    @Test
+    fun `a fixed order keeps the worlds as listed`() {
+        val ws = JOURNEY_WORLDS.take(5)
+        org.junit.Assert.assertEquals(ws, JourneySequencer.ordered(ws, JourneySequencer.FIXED_ORDER))
+    }
 }

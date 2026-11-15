@@ -1,11 +1,15 @@
 package com.zonik.app.ui.tv
 
 /**
- * Rings to fly through, in every Journey world: runs of three or four glowing rings round the
+ * Rings to fly through, in every Journey world: runs of three to six glowing rings round the
  * path, each placed where the camera will be on a beat, so it passes through them in time with
  * the music. A run starts on the next 8-beat boundary past the fog, and the next run waits for
  * the next 16-beat one after the last ring of this one. Without a tempo the rings come at
  * random gaps of a few seconds.
+ *
+ * Each run takes a pattern: straight down the path; a spiral, each ring a little round from
+ * the last (open worlds only: the tunnel worlds' tube has no room); sizes alternating big and
+ * small; or a long run of six on every beat.
  *
  * The shader draws them in closed form (`jHoops` in JOURNEY_BODY: where the ray crosses each
  * ring's plane), not in a ray march, so they cost the slow TVs almost nothing. Pure logic, no
@@ -19,6 +23,11 @@ class JourneyHoops(seed: Int = 23) {
     private val radius = FloatArray(SLOTS)
     private val width = FloatArray(SLOTS)
     private val hue = FloatArray(SLOTS)
+    private val offX = FloatArray(SLOTS)
+    private val offY = FloatArray(SLOTS)
+    /** The last run's pattern (for tests): 0 straight, 1 spiral, 2 sizes, 3 long. */
+    var pattern = 0
+        private set
     private var nextRunZ = Double.NaN
     private var lastWorld: JourneyWorld? = null
 
@@ -61,12 +70,13 @@ class JourneyHoops(seed: Int = 23) {
 
     private fun placeRun(world: JourneyWorld, travel: Double, spawn: Double, speed: Float, clock: BeatClock?, nowMs: Long) {
         val enclosed = world.large.isEmpty()
-        val count = 3 + random.nextInt(2)
+        pattern = random.nextInt(4).let { if (enclosed && it == 1) 0 else it }
+        val count = if (pattern == 3) SLOTS else 3 + random.nextInt(2)
         val minMs = (spawn / speed * 1000.0).toFloat()
         val beat = clock?.takeIf { it.hasTempo }
         // On beats when the tempo is known: every beat, or every other one when beats come so
         // fast the rings would crowd together.
-        val stepMs = if (beat != null) beat.beatMs * (if (beat.beatMs * speed / 1000f < 0.45f) 2 else 1) else 700f
+        val stepMs = if (beat != null) beat.beatMs * (if (pattern != 3 && beat.beatMs * speed / 1000f < 0.45f) 2 else 1) else 700f
         val startMs = beat?.msToNextMultiple(nowMs, 8, minMs) ?: minMs
         val h = random.nextFloat()
         val r = if (enclosed) 0.3f else 0.55f + random.nextFloat() * 0.35f
@@ -75,8 +85,12 @@ class JourneyHoops(seed: Int = 23) {
             val zk = travel + speed * (startMs + k * stepMs) / 1000.0
             z[k] = zk
             x[k] = Float.NaN
-            radius[k] = r
+            radius[k] = if (pattern == 2 && k % 2 == 1) r * 0.6f else r
             width[k] = if (enclosed) 0.022f else 0.045f
+            // A spiral: each ring's centre a quarter turn round from the last.
+            val a = k * 1.4f + h * 6.28f
+            offX[k] = if (pattern == 1) 0.35f * kotlin.math.cos(a) else 0f
+            offY[k] = if (pattern == 1) 0.25f * kotlin.math.sin(a) else 0f
             hue[k] = h + k * 0.06f
             lastZ = zk
         }
@@ -85,15 +99,15 @@ class JourneyHoops(seed: Int = 23) {
         nextRunZ = lastZ + speed * gapMs / 1000.0
     }
 
-    /** 8 vec4s for `uHoops`: (z ahead, centre x, centre y, radius; width, hue, 0, 0), radius 0 for none. */
+    /** 12 vec4s for `uHoops`: (z ahead, centre x, centre y, radius; width, hue, 0, 0), radius 0 for none. */
     fun pack(out: FloatArray, travel: Double) {
         for (i in 0 until SLOTS) {
             val o = i * 8
             java.util.Arrays.fill(out, o, o + 8, 0f)
             if (z[i].isNaN() || x[i].isNaN()) continue
             out[o] = (z[i] - travel).toFloat()
-            out[o + 1] = x[i]
-            out[o + 2] = y[i]
+            out[o + 1] = x[i] + offX[i]
+            out[o + 2] = y[i] + offY[i]
             out[o + 3] = radius[i]
             out[o + 4] = width[i]
             out[o + 5] = hue[i]
@@ -101,6 +115,6 @@ class JourneyHoops(seed: Int = 23) {
     }
 
     companion object {
-        const val SLOTS = 4
+        const val SLOTS = 6
     }
 }

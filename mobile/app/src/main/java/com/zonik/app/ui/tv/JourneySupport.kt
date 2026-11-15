@@ -36,6 +36,8 @@ data class JourneyLook(
     val speed: Float = 1f,
     /** Seeds the order of the worlds. */
     val order: Int = 0,
+    /** The track's style over every world: 0 as made, 1 duotone in the palette, 2 night. */
+    val style: Int = 0,
 ) {
     companion object {
         private val SHARPS = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -56,6 +58,8 @@ data class JourneyLook(
                 density = frac(8) * 0.7f,
                 speed = 0.8f + 0.5f * (energy ?: 0.4f).coerceIn(0f, 1f),
                 order = h,
+                // Half the tracks as made, a quarter each in the other two styles.
+                style = when ((h ushr 16) and 3) { 0 -> 1; 1 -> 2; else -> 0 },
             )
         }
     }
@@ -91,6 +95,9 @@ class JourneySequencer {
     private var plannedWith: BeatClock? = null
     private var plannedSynced = false
     private var planned = false
+
+    /** How long each world lasts against normal (JourneyOptions): phrases and minimums scale. */
+    var lengthScale = 1f
 
     fun reset() {
         world = null
@@ -128,7 +135,7 @@ class JourneySequencer {
             return
         }
         var left = msLeft(nowMs)
-        if (left > MAX_PLAN_MS || left < -STALE_MS) {
+        if (left > MAX_PLAN_MS * lengthScale || left < -STALE_MS) {
             // A seek moved the music far from the plan.
             plan(clock, nowMs)
             left = msLeft(nowMs)
@@ -159,12 +166,14 @@ class JourneySequencer {
         plannedSynced = clock?.synced == true
         planned = true
         targetBeat = Double.NaN
+        val minMs = MIN_WORLD_MS * lengthScale
+        val phrase = (PHRASE_BEATS * lengthScale).toInt().coerceAtLeast(8)
         val ms = when {
             clock != null && clock.synced ->
-                clock.msToDrop(nowMs, MIN_WORLD_MS, MIN_WORLD_MS + DROP_WINDOW_MS)
-                    ?: clock.msToNextMultiple(nowMs, PHRASE_BEATS, MIN_WORLD_MS)
-            clock != null && clock.hasTempo -> clock.msToNextMultiple(nowMs, 16, FALLBACK_WORLD_MS)
-            else -> FALLBACK_WORLD_MS
+                clock.msToDrop(nowMs, minMs, minMs + DROP_WINDOW_MS * lengthScale)
+                    ?: clock.msToNextMultiple(nowMs, phrase, minMs)
+            clock != null && clock.hasTempo -> clock.msToNextMultiple(nowMs, phrase / 2, FALLBACK_WORLD_MS * lengthScale)
+            else -> FALLBACK_WORLD_MS * lengthScale
         }
         if (clock != null && clock.hasTempo) {
             targetBeat = Math.round(clock.beatAt(nowMs) + ms / clock.beatMs).toDouble()
@@ -189,8 +198,12 @@ class JourneySequencer {
             return (c.beatMs * c.beatsPerBar).coerceIn(1_200f, 3_000f)
         }
 
-        /** The worlds in a track's order. */
+        /** The order value for "always the same order": the worlds as listed. */
+        const val FIXED_ORDER = Int.MIN_VALUE
+
+        /** The worlds in a track's order ([FIXED_ORDER]: as listed). */
         fun ordered(worlds: List<DemoEffect>, order: Int): List<DemoEffect> {
+            if (order == FIXED_ORDER) return worlds
             val seed = order.toLong()
             return worlds.sortedBy { ((it.ordinal + 1) * 2654435761L xor seed) and 0xFFFFFL }
         }
@@ -692,6 +705,48 @@ data class JourneyWorld(
                 DemoEffect.SYNTHWAVEROAD -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, RING, TUNNEL), 16.0, 1.6f, true, SHEET, 9.0)
                 else -> ENCLOSED
             }
+        }
+    }
+}
+
+/**
+ * The viewer's Journey options from the TV's Visualizer settings, stored as one string
+ * ([encode]/[decode]) so an unknown or partial value falls back field by field.
+ *
+ * - [length]: time in each world, 0 short (16-beat phrases, from 10 s), 1 normal (32 beats,
+ *   from 20 s), 2 long (64 beats, from 40 s).
+ * - [speed]: 0 calm, 1 normal, 2 fast.
+ * - [rings], [fish]: the rings to fly through and the fish and jellyfish.
+ * - [shuffle]: each track flies the worlds in its own order; off, always the same order.
+ */
+data class JourneyOptions(
+    val length: Int = 1,
+    val speed: Int = 1,
+    val rings: Boolean = true,
+    val fish: Boolean = true,
+    val shuffle: Boolean = true,
+) {
+    /** How much longer than normal each world lasts. */
+    val lengthScale: Float get() = when (length) { 0 -> 0.5f; 2 -> 2f; else -> 1f }
+    /** The flight speed against normal. */
+    val speedScale: Float get() = when (speed) { 0 -> 0.65f; 2 -> 1.4f; else -> 1f }
+
+    fun encode(): String = listOf(length, speed, if (rings) 1 else 0, if (fish) 1 else 0, if (shuffle) 1 else 0).joinToString(",")
+
+    companion object {
+        val LENGTH_LABELS = listOf("Short", "Normal", "Long")
+        val SPEED_LABELS = listOf("Calm", "Normal", "Fast")
+
+        fun decode(raw: String?): JourneyOptions {
+            val p = raw?.split(",")?.map { it.trim().toIntOrNull() } ?: emptyList()
+            val d = JourneyOptions()
+            return JourneyOptions(
+                length = p.getOrNull(0)?.takeIf { it in 0..2 } ?: d.length,
+                speed = p.getOrNull(1)?.takeIf { it in 0..2 } ?: d.speed,
+                rings = p.getOrNull(2)?.let { it != 0 } ?: d.rings,
+                fish = p.getOrNull(3)?.let { it != 0 } ?: d.fish,
+                shuffle = p.getOrNull(4)?.let { it != 0 } ?: d.shuffle,
+            )
         }
     }
 }
