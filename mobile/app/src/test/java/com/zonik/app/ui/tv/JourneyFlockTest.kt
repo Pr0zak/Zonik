@@ -71,8 +71,9 @@ class JourneyFlockTest {
         r.fly(0.3f, kick = { if (it == 0) 1f else 0f })
         val scattered = r.spread()
         assertTrue("calm $calm scattered $scattered", scattered > calm * 1.3f)
-        r.fly(3f)
-        assertTrue("gathered ${r.spread()}", r.spread() < scattered)
+        // A loose school takes a while to draw together again.
+        r.fly(8f)
+        assertTrue("gathered ${r.spread()} after scattering to $scattered", r.spread() < scattered)
     }
 
     @Test

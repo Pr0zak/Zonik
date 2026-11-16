@@ -69,7 +69,7 @@ class JourneyFlock(seed: Int = 11) {
             anchorZ[s] += cruise * ANCHOR_SPEED * h
         }
         val maxSpeed = (0.35f + 0.6f * low) * cruise.coerceAtLeast(0.5f) * (if (jelly) 0.3f else 1f)
-        val spacing = if (jelly) 0.5f else SPACING
+        val spacing = if (jelly) 0.5f else SPACING * 2f
         for (s in 0 until SCHOOLS) {
             val o = s * PER_SCHOOL
             // The school's middle and its heading.
@@ -88,8 +88,8 @@ class JourneyFlock(seed: Int = 11) {
             for (i in o until o + PER_SCHOOL) {
                 val rz = (pz[i] - cz).toFloat()
                 // Toward the middle, with the school's heading, toward the anchor.
-                // Jellyfish barely keep together: they drift as a loose bloom, not a school.
-                val coh = if (jelly) COHESION * 0.08f else COHESION
+                // A loose school; jellyfish barely keep together at all, a drifting bloom.
+                val coh = if (jelly) COHESION * 0.08f else COHESION * 0.4f
                 val goal = if (jelly) GOAL * 0.25f else GOAL
                 var fx = (cx - px[i]) * coh + (ax - vx[i]) * ALIGN + (gx - px[i]) * goal
                 var fy = (cy - py[i]) * coh + (ay - vy[i]) * ALIGN + (gy - py[i]) * goal
@@ -158,9 +158,9 @@ class JourneyFlock(seed: Int = 11) {
         val bx = path.xAt(along) + anchorX[s]
         val by = JourneyPath.baseY(along).toFloat() + anchorY[s]
         // A school starts tight; jellyfish start scattered through a wide stretch of water.
-        val sx = if (jelly) 3.0f else 0.6f
-        val sy = if (jelly) 1.8f else 0.4f
-        val sz = if (jelly) 6.0 else 0.8
+        val sx = if (jelly) 3.0f else 1.6f
+        val sy = if (jelly) 1.8f else 0.9f
+        val sz = if (jelly) 6.0 else 2.4
         for (i in o until o + PER_SCHOOL) {
             px[i] = bx + (random.nextFloat() - 0.5f) * sx
             py[i] = by + (random.nextFloat() - 0.5f) * sy
