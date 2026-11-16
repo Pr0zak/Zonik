@@ -68,7 +68,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val mode = if (colorMode == "MIXED") LOOK_MODES[kotlin.random.Random.nextInt(LOOK_MODES.size)] else colorMode
         // The track's Journey look rides with the effect's look, so a track change takes it up
         // at the next portal instead of popping the walls mid-flight.
-        return Look(mode, randomVividPalette(), journeyLook)
+        // A fresh style for each world, so none sticks for a whole track.
+        return Look(mode, randomVividPalette(), journeyLook.copy(style = journeyOptions.pickStyle(kotlin.random.Random)))
     }
     @Volatile var pulse: AmbientPulse = AmbientPulse()
     @Volatile var beatClock: BeatClock? = null
@@ -181,6 +182,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val camera = JourneyCamera()
     private val camBasis = FloatArray(6)
     private val markScreen = FloatArray(JourneyLandmarks.SLOTS * 4)
+    /** The camera's occasional rolls and barrel rolls. */
+    private val roll = JourneyRoll()
     /** Runs of rings to fly through, on the beat, in every world. */
     private val hoops = JourneyHoops()
     private val hoopData = FloatArray(JourneyHoops.SLOTS * 8)
@@ -431,6 +434,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             motion.update(beatClock, now, dt, camZ, cruiseUnits, path)
             camera.update(dt, camZ, path)
             landmarks.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
+            roll.update(dt, beatClock, now)
+            hoops.forced = journeyOptions.ringPattern
             hoops.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
             val shown = next ?: current
             val world = JourneyWorld.of(shown)
@@ -600,9 +605,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private fun journeyRoll(e: DemoEffect): Float {
         val rollDrift = 0.08f * sin(time * Math.PI * 2.0).toFloat()
         return if (JourneyWorld.of(e).bankOnly) {
-            0.25f * sin(spin * Math.PI).toFloat() + rollDrift + motion.bank
+            0.25f * sin(spin * Math.PI).toFloat() + rollDrift + motion.bank + roll.value
         } else {
-            (spin * Math.PI).toFloat() + rollDrift + motion.bank
+            (spin * Math.PI).toFloat() + rollDrift + motion.bank + roll.value
         }
     }
 

@@ -176,6 +176,9 @@ enum class DemoEffect(
     DEEP("Bioluminescent deep", JOURNEY_BODY, halfRes = true, variant = 16, world = true),
     SYNTHWAVEROAD("Synthwave road", JOURNEY_BODY, halfRes = true, variant = 17, world = true),
     TEMPLE("Fractal temple", JOURNEY_BODY, halfRes = true, variant = 4, world = true),
+    TESSERACT("Tesseract", JOURNEY_BODY, halfRes = true, variant = 18, world = true),
+    TWISTTEMPLE("Twisted temple", JOURNEY_BODY, halfRes = true, variant = 19, world = true),
+    LATTICE("Breathing lattice", JOURNEY_BODY, halfRes = true, variant = 20, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER

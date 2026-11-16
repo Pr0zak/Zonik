@@ -88,9 +88,12 @@ class JourneyFlock(seed: Int = 11) {
             for (i in o until o + PER_SCHOOL) {
                 val rz = (pz[i] - cz).toFloat()
                 // Toward the middle, with the school's heading, toward the anchor.
-                var fx = (cx - px[i]) * COHESION + (ax - vx[i]) * ALIGN + (gx - px[i]) * GOAL
-                var fy = (cy - py[i]) * COHESION + (ay - vy[i]) * ALIGN + (gy - py[i]) * GOAL
-                var fz = -rz * COHESION + (az - vz[i]) * ALIGN + (anchorZ[s] - pz[i]).toFloat() * GOAL
+                // Jellyfish barely keep together: they drift as a loose bloom, not a school.
+                val coh = if (jelly) COHESION * 0.08f else COHESION
+                val goal = if (jelly) GOAL * 0.25f else GOAL
+                var fx = (cx - px[i]) * coh + (ax - vx[i]) * ALIGN + (gx - px[i]) * goal
+                var fy = (cy - py[i]) * coh + (ay - vy[i]) * ALIGN + (gy - py[i]) * goal
+                var fz = -rz * coh + (az - vz[i]) * ALIGN + (anchorZ[s] - pz[i]).toFloat() * goal
                 // Apart from close neighbours.
                 for (j in o until o + PER_SCHOOL) {
                     if (j == i) continue
@@ -154,10 +157,14 @@ class JourneyFlock(seed: Int = 11) {
         val along = camZ + ahead
         val bx = path.xAt(along) + anchorX[s]
         val by = JourneyPath.baseY(along).toFloat() + anchorY[s]
+        // A school starts tight; jellyfish start scattered through a wide stretch of water.
+        val sx = if (jelly) 3.0f else 0.6f
+        val sy = if (jelly) 1.8f else 0.4f
+        val sz = if (jelly) 6.0 else 0.8
         for (i in o until o + PER_SCHOOL) {
-            px[i] = bx + (random.nextFloat() - 0.5f) * 0.6f
-            py[i] = by + (random.nextFloat() - 0.5f) * 0.4f
-            pz[i] = anchorZ[s] + (random.nextFloat() - 0.5f) * 0.8
+            px[i] = bx + (random.nextFloat() - 0.5f) * sx
+            py[i] = by + (random.nextFloat() - 0.5f) * sy
+            pz[i] = anchorZ[s] + (random.nextFloat() - 0.5f) * sz
             vx[i] = (random.nextFloat() - 0.5f) * 0.1f
             vy[i] = (random.nextFloat() - 0.5f) * 0.1f
             vz[i] = 0.1f

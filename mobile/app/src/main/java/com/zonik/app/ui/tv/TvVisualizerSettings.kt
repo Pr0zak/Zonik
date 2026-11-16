@@ -283,8 +283,14 @@ internal fun TvVisualizerSettingsContent(
                     SettingRow("Journey: rings", if (j.rings) "On" else "Off") {
                         actions.setJourney(j.copy(rings = !j.rings))
                     }
+                    SettingRow("Journey: ring patterns", JourneyOptions.RING_LABELS[j.ringPattern]) {
+                        actions.setJourney(j.copy(ringPattern = (j.ringPattern + 1) % JourneyOptions.RING_LABELS.size))
+                    }
                     SettingRow("Journey: fish", if (j.fish) "On" else "Off") {
                         actions.setJourney(j.copy(fish = !j.fish))
+                    }
+                    SettingRow("Journey: style", JourneyOptions.STYLE_LABELS[j.style]) {
+                        actions.setJourney(j.copy(style = (j.style + 1) % JourneyOptions.STYLE_LABELS.size))
                     }
                     SettingRow("Journey: world order", if (j.shuffle) "Per track" else "Fixed") {
                         actions.setJourney(j.copy(shuffle = !j.shuffle))

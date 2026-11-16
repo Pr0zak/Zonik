@@ -35,7 +35,7 @@ GROUPS = {
     "Tunnels and flight": (
         "TUNNEL WARPTUNNEL WORMHOLE HEXTUNNEL SQUARETUNNEL TRITUNNEL OCTOTUNNEL BENTTUBE "
         "DOTTUNNEL STARFIELD NEBULA HYPERSPACE RAINBOWWARP FLYINGCOVERS SYNTHWAVE NIGHTDRIVE "
-        "JOURNEY GYROID SCHWARZ BUBBLEFLIGHT PILLARS CANYON SEASTACKS NIGHTCITY STATION ASTEROIDS CAVES ABYSS LAVA REEF CYBER TUNDRA DEEP SYNTHWAVEROAD TEMPLE VOXEL OCEAN MOONLIGHT CITY CLOUDS PLANET SKYLINE CHECKER"
+        "JOURNEY GYROID SCHWARZ BUBBLEFLIGHT PILLARS CANYON SEASTACKS NIGHTCITY STATION ASTEROIDS CAVES ABYSS LAVA REEF CYBER TUNDRA DEEP SYNTHWAVEROAD TEMPLE TWISTTEMPLE LATTICE TESSERACT VOXEL OCEAN MOONLIGHT CITY CLOUDS PLANET SKYLINE CHECKER"
     ),
     "Zooms and fractals": (
         "ROTOZOOM KALEIDOSCOPE KALEIDOZOOM KALEIDOFRAME JULIA JULIAPULSE MANDELBROT DROSTE "
@@ -63,6 +63,7 @@ def build() -> dict:
     group_of = {name: group for group, names in GROUPS.items() for name in names.split()}
     enum = main[main.index("enum class DemoEffect"):main.index("val fragmentShader")]
     effects = []
+    bodies: dict[str, str] = {}
     for m in re.finditer(r'^\s+([A-Z]+)\("([^"]+)", (\w+)([^)\n]*)\)[,;]', enum, re.M):
         name, label, body, rest = m.groups()
         variant = re.search(r"variant = (\d+)", rest)
@@ -76,11 +77,15 @@ def build() -> dict:
             "framesCover": "framesCover = true" in rest,
             "floats": "floats = true" in rest,
             # Wrapped in the shared header and footer by the page, as the app does, so the
-            # ~10 KB they come to is sent once instead of once per effect.
-            "body": f"#define VARIANT {variant.group(1) if variant else 0}\n" + consts[body],
+            # ~10 KB they come to is sent once instead of once per effect. The body itself is
+            # in `bodies`, once however many effects use it (the Journey's twenty worlds share
+            # one of 60 KB); the page puts `#define VARIANT n` in front of it.
+            "src": body,
+            "variant": int(variant.group(1)) if variant else 0,
             # A feedback effect can draw its buffer to the screen through its own shader.
             "view": ("uniform sampler2D uBlit;\n" + consts[view.group(1)]) if view else None,
         })
+        bodies[body] = consts[body]
 
     # Copies an offscreen buffer to the screen: for feedback effects.
     blit = ("\nuniform sampler2D uBlit;\nuniform float uBlitScale;\n"
@@ -88,6 +93,7 @@ def build() -> dict:
     return {
         "groups": list(GROUPS) + ["Other"],
         "effects": effects,
+        "bodies": bodies,
         "vertex": consts["DEMO_VERTEX"],
         "header": consts["HEADER"],
         "footer": consts["FOOTER"],

@@ -36,7 +36,8 @@ data class JourneyLook(
     val speed: Float = 1f,
     /** Seeds the order of the worlds. */
     val order: Int = 0,
-    /** The track's style over every world: 0 as made, 1 duotone in the palette, 2 night. */
+    /** The style over a world: 0 as made, 1 duotone in the palette, 2 night. Picked anew at
+     * each world (DemoRenderer.newLook, JourneyOptions.pickStyle). */
     val style: Int = 0,
 ) {
     companion object {
@@ -58,8 +59,6 @@ data class JourneyLook(
                 density = frac(8) * 0.7f,
                 speed = 0.8f + 0.5f * (energy ?: 0.4f).coerceIn(0f, 1f),
                 order = h,
-                // Half the tracks as made, a quarter each in the other two styles.
-                style = when ((h ushr 16) and 3) { 0 -> 1; 1 -> 2; else -> 0 },
             )
         }
     }
@@ -598,7 +597,7 @@ class JourneyLandmarks(seed: Int = 7) {
 /**
  * The Journey's camera, worked out on the CPU in full precision so it is steady on GPUs with
  * only 16-bit floats: its position is the path's at the camera, and its heading eases toward
- * the average of three points 1.5 to 3.5 units ahead, so the path's small wiggles and a
+ * the average of three points 2 to 4.5 units ahead, so the path's small wiggles and a
  * swerve's first jolt are smoothed into a glide. [basis] folds the roll in.
  */
 class JourneyCamera {
@@ -650,8 +649,9 @@ class JourneyCamera {
     }
 
     private companion object {
-        val LOOK = doubleArrayOf(1.5, 2.5, 3.5)
-        const val HEADING_RATE = 2.5f
+        // Further ahead and eased more gently than at first: the heading glides through turns.
+        val LOOK = doubleArrayOf(2.0, 3.2, 4.5)
+        const val HEADING_RATE = 1.6f
     }
 }
 
@@ -688,7 +688,8 @@ data class JourneyWorld(
             when (e) {
                 // Bubbles and pillars stand close together, so the same speed felt too fast there.
                 DemoEffect.BUBBLEFLIGHT -> ENCLOSED.copy(speed = 0.6f, cell = 6.0 * Math.PI / 20.0, cells = 20.0)
-                DemoEffect.TEMPLE -> ENCLOSED.copy(speed = 0.7f)
+                // The temples are best taken slowly: there is a lot to see in every hall.
+                DemoEffect.TEMPLE, DemoEffect.TWISTTEMPLE, DemoEffect.LATTICE -> ENCLOSED.copy(speed = 0.45f)
                 DemoEffect.PILLARS -> ENCLOSED.copy(speed = 0.6f, bankOnly = true, cell = 6.0 * Math.PI / 12.0, cells = 12.0)
                 DemoEffect.CANYON -> JourneyWorld(intArrayOf(ARCH, ARCH, RING, TUNNEL, TUNNEL, MONOLITH), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
                 DemoEffect.SEASTACKS -> JourneyWorld(intArrayOf(RING, ARCH, SPHERE, TUNNEL, TUNNEL), 16.0, 1.4f, true, Math.PI, 6.0, flock = true)
@@ -700,9 +701,10 @@ data class JourneyWorld(
                 DemoEffect.LAVA -> JourneyWorld(intArrayOf(ARCH, ARCH, TUNNEL, RING, MONOLITH), 13.0, 1.2f, true, SHEET, 9.0, far = 14f)
                 DemoEffect.REEF -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, SPHERE), 11.5, 1.0f, true, SHEET, 9.0, flock = true, far = 12f)
                 DemoEffect.CYBER -> JourneyWorld(intArrayOf(RING, RING, TUNNEL, TUNNEL, SPHERE), 13.0, 1.5f, false, SHEET, 9.0, far = 14f)
-                DemoEffect.TUNDRA -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, MONOLITH), 16.0, 1.3f, true, SHEET, 9.0)
+                DemoEffect.TUNDRA -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, MONOLITH), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
                 DemoEffect.DEEP -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 11.0, 0.9f, true, SHEET, 9.0, flock = true, far = 12f, jelly = true)
                 DemoEffect.SYNTHWAVEROAD -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, RING, TUNNEL), 16.0, 1.6f, true, SHEET, 9.0)
+                DemoEffect.TESSERACT -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 1.1f, false, SHEET, 9.0, far = 14f)
                 else -> ENCLOSED
             }
         }
@@ -718,6 +720,10 @@ data class JourneyWorld(
  * - [speed]: 0 calm, 1 normal, 2 fast.
  * - [rings], [fish]: the rings to fly through and the fish and jellyfish.
  * - [shuffle]: each track flies the worlds in its own order; off, always the same order.
+ * - [ringPattern]: 0 a mix, or always one: 1 straight, 2 corkscrew, 3 narrowing, 4 long runs,
+ *   5 sweeping curve (JourneyHoops).
+ * - [style]: 0 a mix (a new pick at every world, mostly as made), or always one: 1 as made,
+ *   2 duotone, 3 night (jStyle).
  */
 data class JourneyOptions(
     val length: Int = 1,
@@ -725,17 +731,30 @@ data class JourneyOptions(
     val rings: Boolean = true,
     val fish: Boolean = true,
     val shuffle: Boolean = true,
+    val ringPattern: Int = 0,
+    val style: Int = 0,
 ) {
+    /** A style for the next world (JourneyLook.style): the chosen one, or a weighted pick. */
+    fun pickStyle(random: kotlin.random.Random): Int = when (style) {
+        1 -> 0
+        2 -> 1
+        3 -> 2
+        else -> random.nextFloat().let { if (it < 0.6f) 0 else if (it < 0.8f) 1 else 2 }
+    }
+
     /** How much longer than normal each world lasts. */
     val lengthScale: Float get() = when (length) { 0 -> 0.5f; 2 -> 2f; else -> 1f }
     /** The flight speed against normal. */
     val speedScale: Float get() = when (speed) { 0 -> 0.65f; 2 -> 1.4f; else -> 1f }
 
-    fun encode(): String = listOf(length, speed, if (rings) 1 else 0, if (fish) 1 else 0, if (shuffle) 1 else 0).joinToString(",")
+    fun encode(): String =
+        listOf(length, speed, if (rings) 1 else 0, if (fish) 1 else 0, if (shuffle) 1 else 0, ringPattern, style).joinToString(",")
 
     companion object {
         val LENGTH_LABELS = listOf("Short", "Normal", "Long")
         val SPEED_LABELS = listOf("Calm", "Normal", "Fast")
+        val STYLE_LABELS = listOf("Mixed", "As made", "Duotone", "Night")
+        val RING_LABELS = listOf("Mixed", "Straight", "Corkscrew", "Narrowing", "Long runs", "Sweeping curve")
 
         fun decode(raw: String?): JourneyOptions {
             val p = raw?.split(",")?.map { it.trim().toIntOrNull() } ?: emptyList()
@@ -746,7 +765,61 @@ data class JourneyOptions(
                 rings = p.getOrNull(2)?.let { it != 0 } ?: d.rings,
                 fish = p.getOrNull(3)?.let { it != 0 } ?: d.fish,
                 shuffle = p.getOrNull(4)?.let { it != 0 } ?: d.shuffle,
+                ringPattern = p.getOrNull(5)?.takeIf { it in 0..5 } ?: d.ringPattern,
+                style = p.getOrNull(6)?.takeIf { it in 0..3 } ?: d.style,
             )
+        }
+    }
+}
+
+/**
+ * The Journey camera's roll over and above its gentle sway: now and then (every 8 to 25
+ * seconds, on a bar when the tempo is known) it rolls, usually a slow quarter or half turn
+ * and back, sometimes a full turn, and now and then a quick barrel roll, each eased in and out
+ * so it starts and settles smoothly and always comes back level.
+ */
+class JourneyRoll(seed: Int = 31) {
+    private val random = kotlin.random.Random(seed)
+    private var wait = 6f
+    private var t = 0f
+    private var length = 0f
+    private var amount = 0f
+    private var back = false
+
+    /** The roll to add now, in radians. */
+    var value = 0f
+        private set
+
+    /** For tests: whether a roll is under way. */
+    val rolling: Boolean get() = length > 0f
+
+    fun update(dt: Float, clock: BeatClock?, nowMs: Long) {
+        if (length <= 0f) {
+            value = 0f
+            wait -= dt
+            if (wait > 0f) return
+            // On a bar when the tempo is known: hold off until the next one is close.
+            if (clock != null && clock.hasTempo && clock.msToNextMultiple(nowMs, clock.beatsPerBar) > 120f) return
+            val r = random.nextFloat()
+            val dir = if (random.nextBoolean()) 1f else -1f
+            when {
+                r < 0.45f -> { amount = dir * (Math.PI / 2).toFloat(); length = 5f + random.nextFloat() * 3f; back = true }
+                r < 0.7f -> { amount = dir * Math.PI.toFloat(); length = 6f + random.nextFloat() * 3f; back = true }
+                r < 0.88f -> { amount = dir * (2 * Math.PI).toFloat(); length = 7f + random.nextFloat() * 4f; back = false }
+                else -> { amount = dir * (2 * Math.PI).toFloat(); length = 1.6f + random.nextFloat() * 0.8f; back = false }
+            }
+            t = 0f
+        }
+        t += dt
+        val f = (t / length).coerceIn(0f, 1f)
+        // Out and back for a part turn; a full turn just goes round and ends level.
+        val shape = if (back) kotlin.math.sin(Math.PI.toFloat() * f) else f
+        val eased = if (back) shape * shape * (3f - 2f * shape) else shape * shape * (3f - 2f * shape)
+        value = amount * eased
+        if (f >= 1f) {
+            length = 0f
+            value = 0f
+            wait = 8f + random.nextFloat() * 17f
         }
     }
 }

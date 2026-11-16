@@ -50,6 +50,14 @@ DEFAULTS: dict = {
     "transition_ms": 1600,
     "colors": "ALBUM",
     "trails": False,
+    # The Journey effect's own options (JourneyOptions in the app).
+    "journey_length": 1,
+    "journey_speed": 1,
+    "journey_ring_pattern": 0,
+    "journey_rings": True,
+    "journey_fish": True,
+    "journey_shuffle": True,
+    "journey_style": 0,
 }
 
 TRANSITIONS = [
@@ -72,6 +80,11 @@ OPTIONS: dict = {
     "transition_ms": [[600, "Fast"], [1600, "Normal"], [3000, "Slow"], [5000, "Very slow"]],
     "colors": [["ALBUM", "Album art"], ["RANDOM", "Random"], ["CYCLE", "Cycle"],
                ["MIXED", "Mixed"]],
+    "journey_length": [[0, "Short"], [1, "Normal"], [2, "Long"]],
+    "journey_speed": [[0, "Calm"], [1, "Normal"], [2, "Fast"]],
+    "journey_ring_pattern": [[0, "Mixed"], [1, "Straight"], [2, "Corkscrew"], [3, "Narrowing"],
+                             [4, "Long runs"], [5, "Sweeping curve"]],
+    "journey_style": [[0, "Mixed"], [1, "As made"], [2, "Duotone"], [3, "Night"]],
 }
 
 

@@ -7,9 +7,10 @@ package com.zonik.app.ui.tv
  * the next 16-beat one after the last ring of this one. Without a tempo the rings come at
  * random gaps of a few seconds.
  *
- * Each run takes a pattern: straight down the path; a spiral, each ring a little round from
- * the last (open worlds only: the tunnel worlds' tube has no room); sizes alternating big and
- * small; or a long run of six on every beat.
+ * Each run takes a pattern (a mix, or the one the viewer picked): straight down the path; a
+ * corkscrew of big rings winding round it; narrowing, each ring smaller than the last; a long
+ * run of six on every beat; or a sweep out to one side and back as if round a bend. The tunnel
+ * worlds' tube has no room for the corkscrew or the sweep, so those narrow there instead.
  *
  * The shader draws them in closed form (`jHoops` in JOURNEY_BODY: where the ray crosses each
  * ring's plane), not in a ray march, so they cost the slow TVs almost nothing. Pure logic, no
@@ -25,9 +26,11 @@ class JourneyHoops(seed: Int = 23) {
     private val hue = FloatArray(SLOTS)
     private val offX = FloatArray(SLOTS)
     private val offY = FloatArray(SLOTS)
-    /** The last run's pattern (for tests): 0 straight, 1 spiral, 2 sizes, 3 long. */
-    var pattern = 0
+    /** The last run's pattern (STRAIGHT..CURVE). */
+    var pattern = STRAIGHT
         private set
+    /** The viewer's choice (JourneyOptions.ringPattern): 0 a mix, or one of STRAIGHT..CURVE. */
+    var forced = 0
     private var nextRunZ = Double.NaN
     private var lastWorld: JourneyWorld? = null
 
@@ -70,28 +73,53 @@ class JourneyHoops(seed: Int = 23) {
 
     private fun placeRun(world: JourneyWorld, travel: Double, spawn: Double, speed: Float, clock: BeatClock?, nowMs: Long) {
         val enclosed = world.large.isEmpty()
-        pattern = random.nextInt(4).let { if (enclosed && it == 1) 0 else it }
-        val count = if (pattern == 3) SLOTS else 3 + random.nextInt(2)
+        // The viewer's choice, or a mix; the tunnel worlds' tube has no room to corkscrew or
+        // sweep, so those narrow instead.
+        pattern = if (forced in STRAIGHT..CURVE) forced else STRAIGHT + random.nextInt(5)
+        if (enclosed && (pattern == CORKSCREW || pattern == CURVE)) pattern = NARROWING
+        val count = when (pattern) {
+            LONG -> SLOTS
+            CORKSCREW, NARROWING, CURVE -> 5
+            else -> 3 + random.nextInt(2)
+        }
         val minMs = (spawn / speed * 1000.0).toFloat()
         val beat = clock?.takeIf { it.hasTempo }
         // On beats when the tempo is known: every beat, or every other one when beats come so
-        // fast the rings would crowd together.
-        val stepMs = if (beat != null) beat.beatMs * (if (pattern != 3 && beat.beatMs * speed / 1000f < 0.45f) 2 else 1) else 700f
+        // fast the rings would crowd together (long runs keep every beat).
+        val stepMs = if (beat != null) beat.beatMs * (if (pattern != LONG && beat.beatMs * speed / 1000f < 0.45f) 2 else 1) else 700f
         val startMs = beat?.msToNextMultiple(nowMs, 8, minMs) ?: minMs
         val h = random.nextFloat()
-        val r = if (enclosed) 0.3f else 0.55f + random.nextFloat() * 0.35f
+        val r = if (enclosed) 0.3f else 0.6f + random.nextFloat() * 0.3f
+        val turn = if (random.nextBoolean()) 1f else -1f
         var lastZ = travel
         for (k in 0 until count) {
             val zk = travel + speed * (startMs + k * stepMs) / 1000.0
+            val f = k / (count - 1f).coerceAtLeast(1f)
             z[k] = zk
             x[k] = Float.NaN
-            radius[k] = if (pattern == 2 && k % 2 == 1) r * 0.6f else r
-            width[k] = if (enclosed) 0.022f else 0.045f
-            // A spiral: each ring's centre a quarter turn round from the last.
-            val a = k * 1.4f + h * 6.28f
-            offX[k] = if (pattern == 1) 0.35f * kotlin.math.cos(a) else 0f
-            offY[k] = if (pattern == 1) 0.25f * kotlin.math.sin(a) else 0f
-            hue[k] = h + k * 0.06f
+            width[k] = if (enclosed) 0.022f else 0.05f
+            hue[k] = h + k * 0.07f
+            offX[k] = 0f
+            offY[k] = 0f
+            radius[k] = r
+            when (pattern) {
+                CORKSCREW -> {
+                    // Big rings whose centres wind round the path, a third of a turn each:
+                    // the camera, on the path, still passes through every one.
+                    val a = turn * k * 2.1f + h * 6.28f
+                    radius[k] = 0.95f
+                    offX[k] = 0.5f * kotlin.math.cos(a)
+                    offY[k] = 0.42f * kotlin.math.sin(a)
+                }
+                // Each ring smaller than the last, down to a squeeze.
+                NARROWING -> radius[k] = (if (enclosed) 0.39f - 0.19f * f else 1.5f - 1.0f * f)
+                CURVE -> {
+                    // A run that sweeps out to one side and back, as if round a bend.
+                    radius[k] = 0.95f
+                    offX[k] = turn * 0.55f * kotlin.math.sin(f * Math.PI.toFloat())
+                    offY[k] = 0.3f * kotlin.math.sin(f * Math.PI.toFloat() * 2f)
+                }
+            }
             lastZ = zk
         }
         // The next run: past this one and at least a few seconds on.
@@ -116,5 +144,10 @@ class JourneyHoops(seed: Int = 23) {
 
     companion object {
         const val SLOTS = 6
+        const val STRAIGHT = 1
+        const val CORKSCREW = 2
+        const val NARROWING = 3
+        const val LONG = 4
+        const val CURVE = 5
     }
 }

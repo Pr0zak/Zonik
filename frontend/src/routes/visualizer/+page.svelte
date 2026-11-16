@@ -152,11 +152,18 @@
 		{ key: 'transition_ms', label: 'Transition speed' },
 		{ key: 'colors', label: 'Colours' },
 		{ key: 'info', label: 'Track info' },
+		{ key: 'journey_length', label: 'Journey: time per world' },
+		{ key: 'journey_speed', label: 'Journey: speed' },
+		{ key: 'journey_ring_pattern', label: 'Journey: ring patterns' },
+		{ key: 'journey_style', label: 'Journey: style' },
 	];
 	const SWITCHES = [
 		{ key: 'enabled', label: 'Visualizer on' },
 		{ key: 'beat_reactive', label: 'React to music' },
 		{ key: 'trails', label: 'Motion trails' },
+		{ key: 'journey_rings', label: 'Journey rings' },
+		{ key: 'journey_fish', label: 'Journey fish' },
+		{ key: 'journey_shuffle', label: 'Journey order per track' },
 	];
 </script>
 

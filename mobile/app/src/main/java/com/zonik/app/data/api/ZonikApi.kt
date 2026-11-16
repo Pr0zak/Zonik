@@ -164,7 +164,23 @@ data class TvVisualizerConfig(
     @SerialName("transition_ms") val transitionMs: Int? = null,
     val colors: String? = null,
     val trails: Boolean? = null,
-)
+    // The Journey effect's options (JourneyOptions).
+    @SerialName("journey_length") val journeyLength: Int? = null,
+    @SerialName("journey_speed") val journeySpeed: Int? = null,
+    @SerialName("journey_ring_pattern") val journeyRingPattern: Int? = null,
+    @SerialName("journey_rings") val journeyRings: Boolean? = null,
+    @SerialName("journey_fish") val journeyFish: Boolean? = null,
+    @SerialName("journey_shuffle") val journeyShuffle: Boolean? = null,
+    @SerialName("journey_style") val journeyStyle: Int? = null,
+) {
+    companion object {
+        /** A config carrying just the Journey's options. */
+        fun journey(o: com.zonik.app.ui.tv.JourneyOptions) = TvVisualizerConfig(
+            journeyLength = o.length, journeySpeed = o.speed, journeyRingPattern = o.ringPattern,
+            journeyRings = o.rings, journeyFish = o.fish, journeyShuffle = o.shuffle, journeyStyle = o.style,
+        )
+    }
+}
 
 @Serializable
 data class TvVisualizerConfigResponse(

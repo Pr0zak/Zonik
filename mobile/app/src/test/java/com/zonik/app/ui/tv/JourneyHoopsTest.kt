@@ -1,5 +1,6 @@
 package com.zonik.app.ui.tv
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -57,20 +58,26 @@ class JourneyHoopsTest {
     }
 
     @Test
-    fun `runs take every pattern, and the tunnel worlds never spiral`() {
+    fun `runs take every pattern, the tunnel worlds never corkscrew, and a chosen one sticks`() {
         val open = mutableSetOf<Int>()
         val r = Run(JourneyWorld.of(DemoEffect.CANYON))
         repeat(40) { r.fly(10_000); open += r.hoops.pattern }
-        assertTrue("open patterns $open", open.containsAll(listOf(0, 1, 2, 3)))
+        assertTrue("open patterns $open", open.containsAll((JourneyHoops.STRAIGHT..JourneyHoops.CURVE).toList()))
         val g = Run(JourneyWorld.of(DemoEffect.GYROID))
-        repeat(40) { g.fly(10_000); assertTrue(g.hoops.pattern != 1) }
+        repeat(40) {
+            g.fly(10_000)
+            assertTrue(g.hoops.pattern != JourneyHoops.CORKSCREW && g.hoops.pattern != JourneyHoops.CURVE)
+        }
+        val c = Run(JourneyWorld.of(DemoEffect.CANYON))
+        c.hoops.forced = JourneyHoops.CORKSCREW
+        repeat(10) { c.fly(10_000); org.junit.Assert.assertEquals(JourneyHoops.CORKSCREW, c.hoops.pattern) }
     }
 }
 
 class JourneyOptionsTest {
     @Test
     fun `options survive a round trip and fall back field by field`() {
-        val o = JourneyOptions(length = 2, speed = 0, rings = false, fish = true, shuffle = false)
+        val o = JourneyOptions(length = 2, speed = 0, rings = false, fish = true, shuffle = false, ringPattern = 3, style = 2)
         org.junit.Assert.assertEquals(o, JourneyOptions.decode(o.encode()))
         org.junit.Assert.assertEquals(JourneyOptions(), JourneyOptions.decode(null))
         org.junit.Assert.assertEquals(JourneyOptions(length = 0), JourneyOptions.decode("0,9"))
@@ -80,5 +87,33 @@ class JourneyOptionsTest {
     fun `a fixed order keeps the worlds as listed`() {
         val ws = JOURNEY_WORLDS.take(5)
         org.junit.Assert.assertEquals(ws, JourneySequencer.ordered(ws, JourneySequencer.FIXED_ORDER))
+    }
+
+    @Test
+    fun `a chosen style always comes up, a mix is mostly as made`() {
+        val r = kotlin.random.Random(4)
+        org.junit.Assert.assertEquals(2, JourneyOptions(style = 3).pickStyle(r))
+        val picks = List(1000) { JourneyOptions().pickStyle(r) }
+        assertTrue(picks.count { it == 0 } in 520..680)
+        assertTrue(picks.toSet() == setOf(0, 1, 2))
+    }
+}
+
+class JourneyRollTest {
+    @Test
+    fun `rolls come now and then and always end level`() {
+        val roll = JourneyRoll()
+        var rolls = 0
+        var was = false
+        var biggest = 0f
+        for (i in 0 until 60 * 600) {
+            roll.update(1f / 60f, null, i * 16L)
+            biggest = maxOf(biggest, kotlin.math.abs(roll.value))
+            if (was && !roll.rolling) assertEquals(0f, roll.value, 1e-6f)
+            if (roll.rolling && !was) rolls++
+            was = roll.rolling
+        }
+        assertTrue("$rolls rolls in ten minutes", rolls in 15..60)
+        assertTrue(biggest > 6f) // a full turn came up
     }
 }

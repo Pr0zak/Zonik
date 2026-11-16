@@ -9,6 +9,7 @@ import com.zonik.app.data.api.TvVisualizerConfig
 import com.zonik.app.data.api.TvVisualizerConfigUpdate
 import com.zonik.app.data.api.TvVisualizerStatsReport
 import com.zonik.app.data.api.ZonikApi
+import com.zonik.app.ui.tv.JourneyOptions
 import com.zonik.app.ui.tv.TvEffectStats
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -159,7 +160,16 @@ class TvVisualizerSync @Inject constructor(
         transitionMs = settings.tvAmbientTransitionMs.first(),
         colors = settings.tvAmbientColors.first(),
         trails = settings.tvAmbientTrails.first(),
+        journeyLength = journeyNow().length,
+        journeySpeed = journeyNow().speed,
+        journeyRingPattern = journeyNow().ringPattern,
+        journeyRings = journeyNow().rings,
+        journeyFish = journeyNow().fish,
+        journeyShuffle = journeyNow().shuffle,
+        journeyStyle = journeyNow().style,
     )
+
+    private suspend fun journeyNow() = JourneyOptions.decode(settings.tvJourneyOptions.first())
 
     /** Writes the server's values, skipping any that already match so DataStore is not churned. */
     private suspend fun apply(c: TvVisualizerConfig) {
@@ -181,6 +191,18 @@ class TvVisualizerSync @Inject constructor(
         set(c.transitionMs, now.transitionMs) { settings.setTvAmbientTransitionMs(it) }
         set(c.colors, now.colors) { settings.setTvAmbientColors(it) }
         set(c.trails, now.trails) { settings.setTvAmbientTrails(it) }
+        // The Journey's options are stored as one value: merge the server's into it.
+        val j = journeyNow()
+        val remote = j.copy(
+            length = c.journeyLength ?: j.length,
+            speed = c.journeySpeed ?: j.speed,
+            ringPattern = c.journeyRingPattern ?: j.ringPattern,
+            rings = c.journeyRings ?: j.rings,
+            fish = c.journeyFish ?: j.fish,
+            shuffle = c.journeyShuffle ?: j.shuffle,
+            style = c.journeyStyle ?: j.style,
+        )
+        set(remote, j) { settings.setTvJourneyOptions(it.encode()) }
         if (changed > 0) DebugLog.d("TvSync", "Applied $changed visualizer settings from the server")
     }
 
@@ -201,5 +223,12 @@ class TvVisualizerSync @Inject constructor(
         transitionMs = b.transitionMs ?: a.transitionMs,
         colors = b.colors ?: a.colors,
         trails = b.trails ?: a.trails,
+        journeyLength = b.journeyLength ?: a.journeyLength,
+        journeySpeed = b.journeySpeed ?: a.journeySpeed,
+        journeyRingPattern = b.journeyRingPattern ?: a.journeyRingPattern,
+        journeyRings = b.journeyRings ?: a.journeyRings,
+        journeyFish = b.journeyFish ?: a.journeyFish,
+        journeyShuffle = b.journeyShuffle ?: a.journeyShuffle,
+        journeyStyle = b.journeyStyle ?: a.journeyStyle,
     )
 }

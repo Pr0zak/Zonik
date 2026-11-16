@@ -3,7 +3,10 @@
 // One shared WebGL context does all the drawing: browsers allow only about 16 live contexts,
 // and the page shows 93 effects. Each frame it renders every visible card's effect into the
 // shared canvas and copies the result onto that card's own 2D canvas. Cards off-screen are
-// skipped, so the cost tracks what is on screen, not the size of the catalogue.
+// skipped, so the cost tracks what is on screen, not the size of the catalogue. Shaders are
+// compiled one at a time as cards come into view (in the background where the browser
+// supports KHR_parallel_shader_compile), so opening the page never freezes it while dozens
+// compile at once, and cards take turns to redraw (DRAWS_PER_FRAME).
 //
 // The music is simulated: a 120 bpm kick drives the same signals the TV's renderer feeds its
 // shaders (bass, kick, spectrum, ripples), so the previews pulse the way the effects do on
@@ -14,6 +17,9 @@ const MAX_W = 960;
 const MAX_H = 540;
 const BEAT_SEC = 0.5; // 120 bpm
 const FRAME_MS = 1000 / 30;
+// Cards redrawn per frame at most: with many on screen they take turns, so the page stays
+// smooth however many are visible (the 3D Journey worlds are heavy).
+const DRAWS_PER_FRAME = 6;
 
 let dataPromise = null;
 
@@ -23,6 +29,11 @@ export function loadTvShaders() {
 		dataPromise = fetch('/tv-shaders.json').then((r) => {
 			if (!r.ok) throw new Error(`tv-shaders.json: ${r.status}`);
 			return r.json();
+		}).then((d) => {
+			// Shared bodies are sent once (the Journey's worlds all use one); rebuild each
+			// effect's own source from its body and variant.
+			for (const e of d.effects) if (!e.body) e.body = `#define VARIANT ${e.variant}\n` + d.bodies[e.src];
+			return d;
 		});
 	}
 	return dataPromise;
@@ -71,7 +82,11 @@ export class TvPreviewEngine {
 		const gl = this.canvas.getContext('webgl', { antialias: false, alpha: false });
 		if (!gl) throw new Error('WebGL is not available in this browser');
 		this.gl = gl;
-		this.programs = new Map(); // effect id -> { prog, view } | { error }
+		this.programs = new Map(); // effect id -> { prog, view } | { error } | { pending }
+		this.parallel = gl.getExtension('KHR_parallel_shader_compile');
+		this.compiling = null; // the one effect whose shaders are compiling: { id, progs }
+		this.queue = []; // effect ids waiting to compile, in the order their cards appeared
+		this.turn = 0; // round-robin position for DRAWS_PER_FRAME
 		this.targets = new Set(); // registered cards
 		this.running = false;
 		this.lastFrame = 0;
@@ -114,37 +129,72 @@ export class TvPreviewEngine {
 		return t;
 	}
 
-	/** Wraps a shader body in the shared header and footer, as the app does. */
-	compile(body) {
+	/** Wraps a shader body in the shared header and footer, as the app does, and starts it
+	 * compiling. finish() checks the result (and blocks until done, unless the compile was async). */
+	beginCompile(body) {
 		const gl = this.gl;
 		const shader = (type, src) => {
 			const s = gl.createShader(type);
 			gl.shaderSource(s, src);
 			gl.compileShader(s);
-			if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'compile failed');
 			return s;
 		};
 		const p = gl.createProgram();
-		gl.attachShader(p, shader(gl.VERTEX_SHADER, this.data.vertex));
-		gl.attachShader(p, shader(gl.FRAGMENT_SHADER, this.data.header + body + this.data.footer));
+		const vs = shader(gl.VERTEX_SHADER, this.data.vertex);
+		const fs = shader(gl.FRAGMENT_SHADER, this.data.header + body + this.data.footer);
+		gl.attachShader(p, vs);
+		gl.attachShader(p, fs);
 		gl.linkProgram(p);
-		if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'link failed');
+		return { p, fs };
+	}
+
+	finish({ p, fs }) {
+		const gl = this.gl;
+		if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+			throw new Error(gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(p) || 'compile failed');
+		}
 		return { id: p, loc: new Map() };
 	}
 
+	compile(body) {
+		return this.finish(this.beginCompile(body));
+	}
+
+	/** An effect's programs, or { pending } while they wait their turn to compile. */
 	program(effectId) {
 		let entry = this.programs.get(effectId);
 		if (!entry) {
-			const e = this.byId[effectId];
-			try {
-				entry = { prog: this.compile(e.body), view: e.view ? this.compile(e.view) : this.blit };
-			} catch (err) {
-				entry = { error: String(err.message || err) };
-				console.warn(`TV preview: ${effectId} failed to compile`, err);
-			}
+			entry = { pending: true };
 			this.programs.set(effectId, entry);
+			this.queue.push(effectId);
 		}
 		return entry;
+	}
+
+	/** Moves the compile queue along: at most one effect at a time, once a frame. */
+	pump() {
+		const gl = this.gl;
+		if (this.compiling) {
+			const { id, progs } = this.compiling;
+			if (this.parallel && !progs.every((x) => gl.getProgramParameter(x.p, this.parallel.COMPLETION_STATUS_KHR))) return;
+			let entry;
+			try {
+				entry = { prog: this.finish(progs[0]), view: progs[1] ? this.finish(progs[1]) : this.blit };
+			} catch (err) {
+				entry = { error: String(err.message || err) };
+				console.warn(`TV preview: ${id} failed to compile`, err);
+			}
+			this.programs.set(id, entry);
+			this.compiling = null;
+			return; // one per frame, even when it was quick
+		}
+		// Cards scrolled away while they waited can wait longer: compile what is visible first.
+		const visible = new Set([...this.targets].filter((t) => t.visible).map((t) => t.effectId));
+		const i = this.queue.findIndex((id) => visible.has(id));
+		if (i < 0) return;
+		const id = this.queue.splice(i, 1)[0];
+		const e = this.byId[id];
+		this.compiling = { id, progs: [this.beginCompile(e.body), e.view ? this.beginCompile(e.view) : null].filter(Boolean) };
 	}
 
 	/**
@@ -205,7 +255,13 @@ export class TvPreviewEngine {
 				const dt = Math.min((now - this.lastFrame) / 1000, 0.1);
 				this.lastFrame = now;
 				this.step(dt);
-				for (const t of this.targets) if (t.visible) this.draw(t);
+				// Visible cards take turns: at most DRAWS_PER_FRAME are redrawn each frame.
+				const vis = [...this.targets].filter((t) => t.visible);
+				for (const t of vis) this.program(t.effectId);
+				this.pump();
+				const n = Math.min(vis.length, DRAWS_PER_FRAME);
+				for (let k = 0; k < n; k++) this.draw(vis[(this.turn + k) % vis.length]);
+				this.turn = vis.length ? (this.turn + n) % vis.length : 0;
 			}
 			requestAnimationFrame(loop);
 		};
@@ -261,6 +317,7 @@ export class TvPreviewEngine {
 
 	draw(target) {
 		const entry = this.program(target.effectId);
+		if (entry.pending) return; // its turn to compile has not come yet
 		if (entry.error) {
 			if (!target.failed) {
 				target.failed = true;

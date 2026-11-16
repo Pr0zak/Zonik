@@ -356,13 +356,14 @@ class TvViewModel @Inject constructor(
         visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig(trails = enabled))
     }
 
-    /** The Journey's options; kept on this TV only (the web page does not show them). */
+    /** The Journey's options, shared through the server like the rest (web page and every TV). */
     val journeyOptions: StateFlow<JourneyOptions> = settingsRepository.tvJourneyOptions
         .map { JourneyOptions.decode(it) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, JourneyOptions())
 
     fun setJourneyOptions(options: JourneyOptions) {
         viewModelScope.launch { settingsRepository.setTvJourneyOptions(options.encode()) }
+        visualizerSync.push(com.zonik.app.data.api.TvVisualizerConfig.journey(options))
     }
 
     private val _pulse = MutableStateFlow(AmbientPulse())
