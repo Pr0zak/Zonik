@@ -65,11 +65,21 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private var drawingIncoming = false
 
     private fun newLook(): Look {
-        val mode = if (colorMode == "MIXED") LOOK_MODES[kotlin.random.Random.nextInt(LOOK_MODES.size)] else colorMode
+        // Mixed never picks the mode on screen again, so every change visibly changes colour.
+        val mode = if (colorMode == "MIXED") {
+            LOOK_MODES.filter { it != lookCurrent.mode }.random()
+        } else {
+            colorMode
+        }
         // The track's Journey look rides with the effect's look, so a track change takes it up
-        // at the next portal instead of popping the walls mid-flight.
-        // A fresh style for each world, so none sticks for a whole track.
-        return Look(mode, randomVividPalette(), journeyLook.copy(style = journeyOptions.pickStyle(kotlin.random.Random)))
+        // at the next portal instead of popping the walls mid-flight. Each world also gets a
+        // fresh style and its own turn round the palette (a hue offset), so even with the
+        // album's colours every world change brings a new colour theme.
+        val r = kotlin.random.Random
+        return Look(
+            mode, randomVividPalette(),
+            journeyLook.copy(style = journeyOptions.pickStyle(r), hue = (journeyLook.hue + 0.2f + r.nextFloat() * 0.6f) % 1f),
+        )
     }
     @Volatile var pulse: AmbientPulse = AmbientPulse()
     @Volatile var beatClock: BeatClock? = null
