@@ -833,12 +833,12 @@ vec3 jCubes(vec3 q, vec2 off) {
     vec3 cq = jCellPos(q);
     float zc = cq.z - floor(cq.z / JCELL + 0.5) * JCELL;
     vec3 p = vec3(off, zc);
-    float breathe = 1.0 + 0.08 * uBeat + 0.05 * uKick;
-    float big = jFrame(p, 0.95 * breathe, 0.035);
+    float breathe = 1.0 + 0.04 * uBeat;
+    float big = jFrame(p, 0.95 * breathe, 0.025);
     vec3 p1 = jTurnA(p, jTurn1);
-    float mid = jFrame(p1, 0.5 * breathe, 0.025);
+    float mid = jFrame(p1, 0.5 * breathe, 0.018);
     vec3 p2 = jTurnA(p1, jTurn2);
-    float small = jFrame(p2, 0.24 * breathe, 0.016);
+    float small = jFrame(p2, 0.24 * breathe, 0.012);
     return vec3(big, mid, small);
 }
 #endif
@@ -1015,9 +1015,9 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     vec3 c = jCubes(q, off);
     float lv = c.x < c.y && c.x < c.z ? 0.0 : (c.y < c.z ? 1.0 : 2.0);
     float lvl = band(4.0 + lv * 18.0 + floor(fract(jCellZ(floor(jCellPos(q).z / JCELL + 0.5)) * 0.37) * 10.0));
-    float race = pow(0.5 + 0.5 * sin(wrapA(3.0 * q.z + jCam.y + (q.x + q.y) * 3.0 - uTime * PI * 10.0)), 6.0);
+    float race = pow(0.5 + 0.5 * sin(wrapA(3.0 * q.z + jCam.y + (q.x + q.y) * 3.0 - uTime * PI * 4.0)), 8.0);
     vec3 ec = colorAt(hue * 2.0 + lv * 0.3);
-    return ec * (0.25 + 0.3 * facing + 1.2 * lvl + 0.8 * uKick) + vec3(1.0) * race * (0.2 + 0.6 * uBeat);
+    return ec * (0.12 + 0.2 * facing + 0.6 * lvl + 0.25 * uKick) + vec3(1.0) * race * (0.06 + 0.2 * uBeat);
 #elif VARIANT == 12
     vec3 lava = mix(vec3(1.0, 0.32, 0.04), colorAt(hue * 2.0 + 0.05), 0.2);
     if (off.y < -1.15) {
@@ -1208,10 +1208,11 @@ vec3 shade(vec2 p) {
     bool hit = false;
     float tMax = JFAR;
 #if VARIANT == 18
-    float a1 = wrapA(uTime * PI * 1.4);
-    float b1 = wrapA(uTime * PI * 0.9 + 1.0);
-    float a2 = wrapA(-uTime * PI * 2.3);
-    float b2 = wrapA(uTime * PI * 1.7 + 2.0);
+    // Slow turns: a calm, hypnotic drift rather than a spin.
+    float a1 = wrapA(uTime * PI * 0.45);
+    float b1 = wrapA(uTime * PI * 0.3 + 1.0);
+    float a2 = wrapA(-uTime * PI * 0.7);
+    float b2 = wrapA(uTime * PI * 0.5 + 2.0);
     jTurn1 = vec4(cos(a1), sin(a1), cos(b1), sin(b1));
     jTurn2 = vec4(cos(a2), sin(a2), cos(b2), sin(b2));
 #endif

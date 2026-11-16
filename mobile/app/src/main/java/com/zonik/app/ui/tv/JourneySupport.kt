@@ -704,7 +704,7 @@ data class JourneyWorld(
                 DemoEffect.TUNDRA -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, MONOLITH), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
                 DemoEffect.DEEP -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 11.0, 0.9f, true, SHEET, 9.0, flock = true, far = 12f, jelly = true)
                 DemoEffect.SYNTHWAVEROAD -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, RING, TUNNEL), 16.0, 1.6f, true, SHEET, 9.0)
-                DemoEffect.TESSERACT -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 1.1f, false, SHEET, 9.0, far = 14f)
+                DemoEffect.TESSERACT -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 0.55f, true, SHEET, 9.0, far = 14f)
                 else -> ENCLOSED
             }
         }
