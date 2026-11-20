@@ -83,7 +83,7 @@ package com.zonik.app.ui.tv
  * count). With `uPathOn` at 0 (the web previews, which have highp) the shader works these out
  * from `uPhase` itself.
  */
-internal const val JOURNEY_BODY = """
+internal const val JOURNEY_BODY_A = """
 // The distance to what this pixel shows, / 20, for the fish (see FLOCK_FRAGMENT): 1 for open
 // water. Only the worlds with fish (JourneyWorld.flock) write it.
 #if VARIANT == 6 || VARIANT == 11 || VARIANT == 13 || VARIANT == 16
@@ -154,7 +154,7 @@ vec3 jArg(vec3 q) { return wrapA(vec3(3.0 * q.x, 3.0 * q.y, 3.0 * q.z + jCam.y))
 vec3 jCellPos(vec3 q) { return vec3(q.x, q.y, q.z + jCam.w); }
 float jCellZ(float c) { return mod(c + jCell, JCELLS); }
 
-#if VARIANT == 4 || VARIANT >= 19
+#if VARIANT == 4 || VARIANT == 19 || VARIANT == 20
 // A Menger sponge filling each cell: three levels of square passages, each a third the size of
 // the last. Worked in cell units (-1..1), so every level repeats with the cell and the wrap.
 float jSponge(vec3 q) {
@@ -189,6 +189,51 @@ float jSponge(vec3 q) {
 }
 #endif
 
+
+#if VARIANT >= 21 && VARIANT <= 25
+// ---- The tunnel worlds (21-25) ------------------------------------------------------------
+// A wall at a radius round the path that changes with the angle round it and with z. Along z
+// only through 3z plus the camera's phase (jCam.y) times whole numbers, so it repeats with the
+// wrap. jOff is the point's offset from the path, set by the march (it already has it).
+vec2 jOff;
+
+// The gears' tick: one tooth further on each kick, eased as the kick fades.
+float jTick() { return mod(uKicks, 12.0) - uKick * uKick; }
+
+float jTun(vec3 q, vec2 off) {
+    float r = length(off);
+    float ang = fastAtan2(off.y, off.x);
+    float zz = 3.0 * q.z + jCam.y;
+#if VARIANT == 21
+    // Ice: faceted walls twisting along the flight.
+    float R = 0.86 + 0.07 * abs(sin(wrapA(6.0 * ang + zz))) + 0.05 * sin(wrapA(2.0 * zz + 3.0 * ang));
+    return (R - r) * 0.7;
+#elif VARIANT == 22
+    // Organic: soft walls with ribs, swelling and squeezing like a heartbeat with the kick.
+    float R = 0.8 + 0.1 * sin(wrapA(zz)) + 0.06 * sin(wrapA(5.0 * ang + 2.0 * zz))
+            - 0.08 * smoothstep(0.7, 1.0, sin(wrapA(3.0 * zz))) + 0.08 * uLow - 0.1 * uKick;
+    return (R - r) * 0.7;
+#elif VARIANT == 23
+    // Data stream: a cylinder of 24 lanes with gaps between them to see out through.
+    float g = abs(fract(ang / TAU * 24.0) - 0.5);
+    float gap = (g - 0.42) * TAU * 1.05 / 24.0;
+    return max(1.05 - r, gap) * 0.8;
+#elif VARIANT == 24
+    // Crystal cave: walls of broad facets.
+    float R = 0.92 + 0.12 * abs(sin(wrapA(7.0 * ang + zz))) + 0.08 * abs(sin(wrapA(5.0 * ang - 2.0 * zz + 1.0)));
+    return (R - r) * 0.6;
+#else
+    // Clockwork: rings of gears round the flight, each turning a tooth per kick, the rings in
+    // turn the other way, with gaps between them.
+    float ring = floor(jCellPos(q).z / JCELL + 0.5);
+    float dir = mod(jCellZ(ring), 2.0) < 0.5 ? 1.0 : -1.0;
+    float tooth = abs(fract(ang / TAU * 12.0 + dir * jTick() / 12.0) - 0.5);
+    float R = 0.98 - 0.11 * smoothstep(0.18, 0.26, tooth) + 0.3 * smoothstep(0.4, 0.46, abs(fract(zz / TAU) - 0.5));
+    return (R - r) * 0.6;
+#endif
+}
+#endif
+
 // The world's distance alone, before the tube is carved out of it.
 float jWorld(vec3 q, float th) {
 #if VARIANT == 1
@@ -215,8 +260,10 @@ float jWorld(vec3 q, float th) {
     float pillar = min(length(max(dd, 0.0)) + min(max(dd.x, dd.y), 0.0), 0.5);
     float slab = min(q.y + 1.05, 1.05 - q.y);
     return min(pillar, slab);
-#elif VARIANT == 4 || VARIANT >= 19
+#elif VARIANT == 4 || VARIANT == 19 || VARIANT == 20
     return jSponge(q);
+#elif VARIANT >= 21 && VARIANT <= 25
+    return jTun(q, jOff);
 #else
     vec3 a = jArg(q);
     vec3 s = sin(a);
@@ -242,12 +289,17 @@ vec3 jNormal(vec3 q, float th) {
     vec2 cq = jCellPos(q).xz;
     vec2 r2 = cq - floor(cq / C + 0.5) * C;
     return abs(r2.x) > abs(r2.y) ? vec3(sign(r2.x), 0.0, 0.0) : vec3(0.0, 0.0, sign(r2.y));
-#elif VARIANT == 4 || VARIANT >= 19
+#elif VARIANT == 4 || VARIANT == 19 || VARIANT == 20
     // The sponge's faces are all square: the gradient, worked out once per pixel.
     const vec2 k = vec2(1.0, -1.0);
     const float h = 0.01;
     return normalize(k.xyy * jSponge(q + k.xyy * h) + k.yyx * jSponge(q + k.yyx * h)
                    + k.yxy * jSponge(q + k.yxy * h) + k.xxx * jSponge(q + k.xxx * h));
+#elif VARIANT >= 21 && VARIANT <= 25
+    const vec2 k = vec2(1.0, -1.0);
+    const float h = 0.01;
+    return normalize(k.xyy * jTun(q + k.xyy * h, jOff + k.xy * h) + k.yyx * jTun(q + k.yyx * h, jOff + k.yy * h)
+                   + k.yxy * jTun(q + k.yxy * h, jOff + k.yx * h) + k.xxx * jTun(q + k.xxx * h, jOff + k.xx * h));
 #else
     vec3 a = jArg(q);
     vec3 s = sin(a);
@@ -295,7 +347,7 @@ vec3 jSurfaceA(vec3 q, vec3 n, vec3 rd, float hue) {
     vec3 col = colorAt(hue * 2.0) * (0.02 + 0.22 * facing * facing);
     col += colorAt(hue * 2.0 + 0.5) * bands * (0.3 + 0.8 * uBeat);
     return col;
-#elif VARIANT == 4 || VARIANT >= 19
+#elif VARIANT == 4 || VARIANT == 19 || VARIANT == 20
     // Fractal temple, stone: pale stone lit by the facing, the passage edges carved with light
     // from the spectrum, a level of the sponge to each band.
     vec3 cq = jCellPos(q);
@@ -305,6 +357,48 @@ vec3 jSurfaceA(vec3 q, vec3 n, vec3 rd, float hue) {
     float lvl = band(floor(fract(dot(floor(cq / JCELL), vec3(0.37, 0.21, 0.13))) * 48.0) + 4.0);
     vec3 col = mix(vec3(0.5, 0.45, 0.38), colorAt(hue * 2.0 + 0.1), 0.35) * (0.04 + 0.35 * facing * facing);
     return col + colorAt(hue * 2.0 + 0.55) * groove * (0.1 + 1.0 * lvl + 0.4 * uBeat);
+#elif VARIANT >= 21 && VARIANT <= 25
+    float ang = fastAtan2(jOff.y, jOff.x);
+    float zz = 3.0 * q.z + jCam.y;
+#if VARIANT == 21
+    // Ice: glassy blue, cracks racing out along the walls from the camera on each kick and
+    // freezing over again as it fades.
+    vec3 ice = mix(vec3(0.5, 0.8, 1.0), colorAt(hue * 2.0 + 0.55), 0.3);
+    vec3 col = ice * (0.05 + 0.25 * facing) + ice * pow(1.0 - facing, 3.0) * 0.6;
+    float crack = exp(-abs(sin(wrapA(9.0 * ang + 2.0 * sin(wrapA(zz)))) * sin(wrapA(2.0 * zz + 3.0 * ang))) * 22.0);
+    float front = smoothstep(0.0, 0.8, (1.0 - uKick) * 7.0 - q.z);
+    return col + mix(vec3(0.8, 0.95, 1.0), colorAt(hue * 2.0 + 0.5), 0.4) * crack * (0.08 + 1.6 * uKick * front);
+#elif VARIANT == 22
+    // Organic: wet, flesh-toned, its veins glowing with the bass.
+    vec3 flesh = mix(vec3(0.55, 0.08, 0.12), colorAt(hue * 2.0 + 0.05), 0.35);
+    float vein = exp(-abs(sin(wrapA(4.0 * ang + 1.5 * sin(wrapA(zz))))) * 12.0);
+    vec3 col = flesh * (0.07 + 0.5 * facing * facing) + vec3(1.0, 0.9, 0.9) * pow(facing, 30.0) * 0.35;
+    return col + colorAt(hue * 2.0 + 0.5) * vein * (0.15 + 1.2 * uLow + 0.5 * uKick);
+#elif VARIANT == 23
+    // Data stream: each lane a band of the spectrum, blocks of light streaming past in it,
+    // more of them the louder its band.
+    float li = floor(ang / TAU * 24.0 + 12.0);
+    float lvl = band(floor(mod(li * 2.7, 48.0)) + 4.0);
+    float row = floor(jCellPos(q).z / JCELL * 6.0 + uTime * 8.0);
+    float h = hash(vec2(li, mod(row + jCell * 6.0, JCELLS * 6.0)));
+    float lit = step(1.0 - (0.15 + 0.7 * lvl), h);
+    vec3 col = colorAt(hue * 2.0 + 0.6) * (0.02 + 0.08 * facing);
+    return col + colorAt(hue * 2.0 + li / 24.0) * lit * (0.3 + 1.1 * lvl + 0.4 * uKick);
+#elif VARIANT == 24
+    // Crystal cave: each facet catching the light, lit from within by the hi-hats.
+    float facet = floor(7.0 * ang / TAU + 3.5) + floor(zz / TAU * 2.0) * 7.0;
+    float hf = hash(vec2(facet, 3.0));
+    float lvl = band(36.0 + floor(hf * 24.0));
+    vec3 c = colorAt(hue * 2.0 + hf * 0.5);
+    vec3 col = c * (0.05 + 0.3 * facing * facing) + vec3(1.0) * pow(facing, 24.0) * 0.3;
+    return col + c * pow(1.0 - facing, 2.0) * (0.2 + 1.0 * lvl + 0.6 * uHigh);
+#else
+    // Clockwork: brass, polished where it faces the light, the tooth tips lit on the kick.
+    vec3 brass = mix(vec3(0.62, 0.45, 0.2), colorAt(hue * 2.0 + 0.1), 0.25);
+    float tip = smoothstep(0.9, 1.0, length(jOff));
+    vec3 col = brass * (0.05 + 0.6 * pow(facing, 3.0)) + vec3(1.0, 0.9, 0.7) * pow(facing, 40.0) * 0.4;
+    return col + colorAt(hue * 2.0 + 0.5) * tip * (0.1 + 0.9 * uKick + 0.3 * uBeat);
+#endif
 #else
     // Gyroid flight: coloured by depth and by which side of the sheet it is.
     vec3 a = jArg(q);
@@ -353,13 +447,39 @@ vec3 jSurfaceB(vec3 q, vec3 n, vec3 rd, float hue) {
     vec3 col = colorAt(hue * 2.0 + 0.4) * 0.03;
     col += colorAt(hue * 2.0 + 0.9) * edge * (0.4 + 1.0 * uBeat);
     return col;
-#elif VARIANT == 4 || VARIANT >= 19
+#elif VARIANT == 4 || VARIANT == 19 || VARIANT == 20
     // Fractal temple, neon: dark halls outlined in light where the faces meet.
     float rim = pow(1.0 - facing, 4.0);
     vec3 cq = jCellPos(q);
     float glow = 0.5 + 0.5 * sin(wrapA(3.0 * q.z + jCam.y - uTime * PI * 8.0));
     vec3 col = colorAt(hue * 2.0 + 0.7) * (0.02 + 0.08 * facing);
     return col + colorAt(hue * 2.0 + 0.2 + rim * 0.3) * rim * (0.4 + 0.9 * uBeat) * (0.5 + 0.5 * glow);
+#elif VARIANT >= 21 && VARIANT <= 25
+    float ang = fastAtan2(jOff.y, jOff.x);
+    float zz = 3.0 * q.z + jCam.y;
+    float rim = pow(1.0 - facing, 3.0);
+#if VARIANT == 21
+    // Frost: white, glittering with the treble.
+    float glit = step(0.985, hash(floor(vec2(ang * 30.0, zz * 6.0)))) * (0.3 + 0.9 * uHigh);
+    return vec3(0.7, 0.8, 0.9) * (0.06 + 0.3 * facing) + colorAt(hue * 2.0 + 0.6) * rim * 0.4 + vec3(1.0) * glit;
+#elif VARIANT == 22
+    // Bioluminescent: dark, its pores glowing and pulsing with the kick.
+    vec2 g = vec2(ang * 6.0, zz * 2.0);
+    float pore = smoothstep(0.3, 0.0, length(fract(g) - 0.5)) * step(0.5, hash(floor(g)));
+    return colorAt(hue * 2.0 + 0.7) * 0.03 + colorAt(hue * 2.0 + 0.4) * pore * (0.3 + 1.2 * uKick) + rim * colorAt(hue * 2.0 + 0.1) * 0.3;
+#elif VARIANT == 23
+    // Scanlines: the lanes dark, a bright line racing round them on the beat.
+    float scan = exp(-abs(fract(zz / TAU * 4.0 - uTime * 4.0) - 0.5) * 30.0);
+    return colorAt(hue * 2.0 + 0.3) * (0.03 + scan * (0.4 + 0.8 * uBeat)) + colorAt(hue * 2.0) * rim * 0.3;
+#elif VARIANT == 24
+    // Dark crystal with glowing facet edges.
+    float e = exp(-min(abs(fract(7.0 * ang / TAU) - 0.5), abs(fract(zz / TAU * 2.0) - 0.5)) * 30.0);
+    return colorAt(hue * 2.0 + 0.6) * 0.03 + colorAt(hue * 2.0 + 0.2) * (e * (0.4 + 1.0 * uHigh) + rim * 0.3);
+#else
+    // Dark steel, the gear teeth outlined in neon.
+    float edge = exp(-abs(length(jOff) - 0.9) * 40.0);
+    return vec3(0.03, 0.035, 0.04) * (0.5 + facing) + colorAt(hue * 2.0 + 0.3) * edge * (0.5 + 1.0 * uKick);
+#endif
 #else
     // Gyroid flight, contours: a dark sheet drawn over with glowing contour lines.
     vec3 a = jArg(q);
@@ -550,7 +670,7 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15 || VARIANT == 16 || VARIANT == 17
+#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15 || VARIANT == 16 || VARIANT == 17 || VARIANT == 26 || VARIANT == 27 || VARIANT == 28 || VARIANT == 29
     // A hall, the sky, a canyon, the sea, a city or the sea floor has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
@@ -691,7 +811,11 @@ vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
     return col;
 }
 
-#if VARIANT >= 5 && VARIANT < 19
+"""
+
+/** The second half of [JOURNEY_BODY]: the open worlds and both shade() functions. */
+internal const val JOURNEY_BODY_B = """
+#if (VARIANT >= 5 && VARIANT < 19) || VARIANT >= 26
 // ---- The open worlds ----------------------------------------------------------------------
 // Each has a backdrop (jBack), a scene to fly through (jEnv: the distance to it, positive in
 // the air, 9 for none) and a look for it (jEnvShade). shade() marches the scene, then the
@@ -702,9 +826,9 @@ vec3 jHoops(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
 const float JFAR = 8.0;
 #elif VARIANT == 11
 const float JFAR = 11.0;
-#elif VARIANT == 13 || VARIANT == 16
+#elif VARIANT == 13 || VARIANT == 16 || VARIANT == 27
 const float JFAR = 12.0;
-#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8 || VARIANT == 12 || VARIANT == 14 || VARIANT == 18 || VARIANT == 15
+#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8 || VARIANT == 12 || VARIANT == 14 || VARIANT == 18 || VARIANT == 15 || VARIANT == 26 || VARIANT == 29
 const float JFAR = 14.0;
 #else
 const float JFAR = 17.0;
@@ -821,6 +945,28 @@ vec3 jBack(vec3 ro, vec3 rd, float hue) {
 #elif VARIANT == 18
     // Deep space, with faint stars.
     return colorAt(hue * 2.0 + 0.7) * 0.015 + vec3(1.0) * jStars(rd) * 0.6;
+#elif VARIANT == 26 || VARIANT == 29
+    // A dark hall with beams of light sweeping across it on the beat.
+    vec3 col = colorAt(hue * 2.0 + 0.7) * 0.015;
+    float a = fastAtan2(rd.x, rd.y);
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float beam = wrapA(a - (fi - 1.0) * 0.7 - 0.5 * sin(wrapA(uTime * PI * (2.0 + fi) + fi)));
+        col += colorAt(hue * 2.0 + fi * 0.33) * exp(-abs(beam) * 30.0) * smoothstep(-0.1, 0.4, rd.y) * (0.15 + 0.5 * uBeat);
+    }
+    return col;
+#elif VARIANT == 27
+    // Night in the forest: deep blue-green, a moon's glow high up.
+    vec3 col = mix(vec3(0.0, 0.02, 0.02), colorAt(hue * 2.0 + 0.5) * 0.05 + vec3(0.0, 0.03, 0.05), smoothstep(-0.1, 0.7, rd.y));
+    return col + vec3(0.6, 0.7, 0.8) * exp(-length(rd.xy - vec2(0.35, 0.45)) * 18.0) * 0.6;
+#elif VARIANT == 28 || VARIANT == 30
+    // Open day sky: the palette washed pale toward the horizon, a sun, and wisps of cloud.
+    vec3 col = mix(mix(vec3(0.9, 0.85, 0.8), colorAt(hue * 2.0 + 0.1), 0.25) * 0.55,
+                   mix(vec3(0.2, 0.4, 0.75), colorAt(hue * 2.0 + 0.6), 0.25) * 0.5, smoothstep(-0.1, 0.6, rd.y));
+    col += vec3(1.0, 0.9, 0.7) * pow(max(dot(rd, normalize(vec3(-0.4, 0.3, 1.0))), 0.0), 60.0) * (0.7 + 0.5 * uLow);
+    vec2 cp = rd.xz / max(rd.y + 0.25, 0.1) * 2.0;
+    float cl = smoothstep(0.55, 0.95, 0.5 + 0.25 * sin(wrapA(cp.x * 1.3 + cp.y * 0.7)) + 0.25 * sin(wrapA(cp.y * 2.1 - cp.x * 0.9 + 1.0)));
+    return mix(col, vec3(0.95), cl * 0.5 * smoothstep(-0.05, 0.2, rd.y));
 #else
     // Open sky above the canyon: dusk, stars, an aurora on the horizon lit by the spectrum.
     vec3 col = mix(colorAt(hue * 2.0 + 0.1) * 0.14, colorAt(hue * 2.0 + 0.6) * 0.02, smoothstep(-0.15, 0.6, rd.y));
@@ -1015,6 +1161,64 @@ float jEnv(vec3 q, vec2 off) {
     float spires = 2.2 * sp * sp * tall * smoothstep(1.0, 2.2, abs(off.x));
     // Careful steps only among the spires; near the path the dunes allow long ones.
     return (off.y + 1.3 - dunes - spires) * (abs(off.x) < 1.0 ? 0.85 : 0.4);
+#elif VARIANT == 26
+    // Speaker canyon: canyon walls set with speaker cones in rows, each cone pushed out
+    // toward the flight on every kick.
+    float bump = 0.12 * sin(wrapA(3.0 * q.y + 2.0 * q.x)) * sin(wrapA(3.0 * q.z + jCam.y));
+    vec2 g = vec2(fract(q.y * 0.6) - 0.5, fract((3.0 * q.z + jCam.y) / TAU) - 0.5) * vec2(1.67, 2.09);
+    float dc = length(g);
+    float cone = dc < 0.75 ? (0.75 - dc) * (0.5 - 0.4 * uKick) : 0.0;
+    float walls = 1.6 + bump + cone - abs(off.x);
+    return min(walls, off.y + 1.3) * 0.7;
+#elif VARIANT == 27
+    // Neon forest: trees in a grid of cells off the path, their crowns lit from within.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float h = hash(vec2(cell.x, jCellZ(cell.z)) + 4.1);
+    float clear = abs(cell.x * JCELL - (q.x - off.x));
+    float ground = off.y + 1.3 - 0.08 * sin(wrapA(2.0 * q.x + 3.0 * q.z + jCam.y));
+    if (clear < 1.1) return min(min(JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3, JCELL * 0.45), ground);
+    float trunk = max(length(r.xz) - (0.08 + 0.05 * h), q.y - (0.4 + 0.6 * h));
+    float crown = length(vec3(r.x, (q.y - (0.5 + 0.7 * h)) * 1.3, r.z)) - (0.5 + 0.25 * h)
+                + 0.06 * sin(wrapA(9.0 * q.y)) * sin(wrapA(9.0 * r.x + 3.0 * h));
+    return min(min(trunk, crown * 0.7), min(JCELL * 0.45, ground));
+#elif VARIANT == 28
+    // Floating islands bobbing on the bass, over a sea of cloud.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float h = hash(vec2(cell.x, jCellZ(cell.z)) + 6.3);
+    float clear = abs(cell.x * JCELL - (q.x - off.x));
+    float clouds = off.y + 2.6 - 0.2 * sin(wrapA(2.0 * q.x + 3.0 * q.z + jCam.y)) - 0.1 * sin(wrapA(3.0 * q.x - 4.0 * q.z - jCam.z));
+    if (h < 0.3 || clear < 1.25) return min(min(JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3, JCELL * 0.45), clouds);
+    float top = -0.5 + 1.4 * (h - 0.5) + 0.15 * (0.4 + uLow) * sin(wrapA(uTime * PI * 2.0 + h * 6.0));
+    float rad = 0.6 + 0.4 * h;
+    float below = clamp((top - q.y) / 1.1, 0.0, 1.0);
+    float body = max(length(r.xz) - rad * (1.0 - 0.85 * below), max(q.y - top, top - 1.1 - q.y));
+    return min(min(body * 0.6, JCELL * 0.45), clouds);
+#elif VARIANT == 29
+    // Pinball arena: a playfield floor, low rails either side, and bumpers off the path.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float h = hash(vec2(cell.x, jCellZ(cell.z)) + 8.7);
+    float clear = abs(cell.x * JCELL - (q.x - off.x));
+    float floorD = off.y + 1.0;
+    float rail = max(2.2 - abs(off.x), off.y + 0.55);
+    float bumper = (h > 0.35 && clear > 0.9) ? max(length(r.xz) - 0.28, off.y + 0.5) : JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3;
+    return min(min(floorD, rail), min(bumper, JCELL * 0.45));
+#elif VARIANT == 30
+    // Ribbon sky: three long ribbons of light streaming beside, below and above the flight,
+    // waving with the bass, mids and treble.
+    float zz = 3.0 * q.z + jCam.y;
+    float d = 9.0;
+    for (int i = 0; i < 3; i++) {
+        float fi = float(i);
+        float xc = (fi - 1.0) * 1.7;
+        float yc = i == 1 ? -0.95 : 0.35 + 0.3 * fi;
+        float amp = 0.2 + 0.35 * (i == 0 ? uLow : (i == 1 ? uMid : uHigh));
+        float y = yc + amp * sin(wrapA(2.0 * zz + fi * 2.0));
+        d = min(d, max(abs(off.y - y) * 0.6 - 0.02, abs(off.x - xc) - 0.55));
+    }
+    return d;
 #else
     return 9.0;
 #endif
@@ -1138,13 +1342,108 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     }
     vec3 col = vec3(0.55, 0.65, 0.8) * (0.06 + 0.3 * upward) + sky * 1.5 * upward;
     return col + vec3(1.0) * glit;
+#elif VARIANT == 26
+    // Speaker cones: a lit rim on each, ridges round the cone, the dust cap flashing on the
+    // kick; dark grille between; a floor lit with the beat.
+    if (off.y < -1.25) {
+        vec2 g = abs(fract(vec2(q.x, jCellPos(q).z / JCELL * 3.0)) - 0.5);
+        return colorAt(hue * 2.0 + 0.3) * exp(-min(g.x, g.y) * 25.0) * (0.15 + 0.7 * uBeat);
+    }
+    vec2 g = vec2(fract(q.y * 0.6) - 0.5, fract((3.0 * q.z + jCam.y) / TAU) - 0.5) * vec2(1.67, 2.09);
+    float dc = length(g);
+    float id = floor(q.y * 0.6) * 3.0 + jCellZ(floor(jCellPos(q).z / JCELL)) + (off.x > 0.0 ? 17.0 : 0.0);
+    float lvl = band(floor(fract(id * 0.37) * 48.0) + 4.0);
+    vec3 c = colorAt(hue * 2.0 + fract(id * 0.21));
+    if (dc < 0.78) {
+        float rim = exp(-abs(dc - 0.72) * 40.0);
+        float ridge = 0.5 + 0.5 * sin(wrapA(dc * 40.0));
+        vec3 col = vec3(0.04) * (0.4 + 0.6 * facing) * (0.7 + 0.3 * ridge);
+        col += c * rim * (0.3 + 1.4 * lvl);
+        return col + c * smoothstep(0.16, 0.1, dc) * (0.2 + 1.5 * uKick);
+    }
+    float grille = step(0.5, fract(q.y * 18.0)) * step(0.5, fract((3.0 * q.z + jCam.y) * 3.0));
+    return vec3(0.03) * (0.3 + 0.7 * facing) * (0.7 + 0.3 * grille) + c * pow(1.0 - facing, 3.0) * 0.1;
+#elif VARIANT == 27
+    // Moss with glowing spots, dark bark with light running up it, crowns lit by the spectrum.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float hc = hash(vec2(cell.x, jCellZ(cell.z)) + 4.1);
+    if (off.y < -1.2) {
+        vec2 g = vec2(q.x * 3.0, jCellPos(q).z / JCELL * 6.0);
+        float spot = smoothstep(0.3, 0.0, length(fract(g) - 0.5)) * step(0.8, hash(vec2(floor(g.x), mod(floor(g.y) + jCell * 6.0, JCELLS * 6.0))));
+        return vec3(0.01, 0.03, 0.02) * (0.5 + facing) + colorAt(hue * 2.0 + 0.3) * spot * (0.3 + 0.9 * uBeat);
+    }
+    float lvl = band(floor(hc * 48.0) + 4.0);
+    vec3 leaf = colorAt(hue * 2.0 + hc * 0.6);
+    if (q.y > 0.35 + 0.6 * hc) {
+        vec2 lg = vec2(r.x * 6.0 + hc * 7.0 + r.z * 3.0, q.y * 6.0);
+        float flick = smoothstep(0.3, 0.0, length(fract(lg) - 0.5)) * step(0.55, hash(floor(lg)));
+        return leaf * (0.08 + 0.3 * facing) * (0.5 + 1.2 * lvl) + leaf * flick * (0.2 + 1.0 * lvl) + leaf * pow(1.0 - facing, 3.0) * 0.4;
+    }
+    float run = exp(-abs(fract(q.y * 2.0 - uTime * 4.0) - 0.5) * 12.0);
+    return vec3(0.03, 0.025, 0.02) * (0.4 + 0.6 * facing) + leaf * run * (0.2 + 0.7 * uBeat);
+#elif VARIANT == 28
+    // Grass on top, rock beneath with waterfalls pouring off, the cloud sea lit by the sun.
+    if (off.y < -2.3) {
+        return mix(vec3(0.85, 0.85, 0.9), colorAt(hue * 2.0 + 0.1), 0.2) * (0.35 + 0.4 * facing);
+    }
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float hc = hash(vec2(cell.x, jCellZ(cell.z)) + 6.3);
+    float sun = clamp(dot(n, normalize(vec3(-0.4, 0.8, -0.3))), 0.0, 1.0);
+    if (n.y > 0.55) {
+        float flower = step(0.92, hash(floor(vec2(r.x, r.z) * 14.0 + hc * 9.0)));
+        vec3 grass = mix(vec3(0.15, 0.5, 0.15), colorAt(hue * 2.0 + 0.3), 0.3);
+        return grass * (0.35 + 0.8 * sun) * (0.8 + 0.4 * uLow) + colorAt(hue * 2.0 + hc) * flower * (0.3 + 0.8 * uBeat);
+    }
+    vec3 rock = mix(vec3(0.5, 0.4, 0.32), colorAt(hue * 2.0 + 0.6), 0.2) * (0.3 + 0.6 * sun);
+    if (hc > 0.55) {
+        float fall = step(0.45, fract(fastAtan2(r.z, r.x) * 3.0)) * (0.5 + 0.5 * step(0.5, fract(q.y * 4.0 + uTime * 8.0)));
+        rock = mix(rock, vec3(0.7, 0.85, 1.0) * (0.5 + 0.3 * uLow), fall * 0.8);
+    }
+    return rock;
+#elif VARIANT == 29
+    // Playfield: dark with inserts lighting in a chase, rails in chrome, bumper caps flashing
+    // when their kick comes round.
+    vec3 cell;
+    vec3 r = jCellR(q, cell);
+    float hc = hash(vec2(cell.x, jCellZ(cell.z)) + 8.7);
+    if (abs(off.x) > 2.15 && off.y > -1.0) {
+        return vec3(0.6, 0.65, 0.7) * pow(facing, 2.0) * 0.4 + colorAt(hue * 2.0 + 0.5) * pow(1.0 - facing, 4.0) * 0.6;
+    }
+    if (off.y < -0.95) {
+        vec2 g = vec2(q.x * 2.0, jCellPos(q).z / JCELL * 4.0);
+        float insert = smoothstep(0.3, 0.2, length(fract(g) - 0.5));
+        float row = mod(floor(g.y) + jCell * 4.0, JCELLS * 4.0);
+        float chase = step(0.5, fract(row / 4.0 - uTime * 4.0)) * step(0.4, hash(vec2(floor(g.x), row)));
+        float stripe = 0.5 + 0.5 * sin(wrapA(q.x * 3.0));
+        return colorAt(hue * 2.0 + 0.7) * (0.06 + 0.06 * stripe) * (0.5 + facing) + colorAt(hue * 2.0 + row * 0.1) * insert * (0.12 + chase * (0.4 + 0.9 * uBeat));
+    }
+    float flash = abs(mod(uKicks, 3.0) - floor(hc * 3.0)) < 0.5 ? uKick : 0.0;
+    vec3 c = colorAt(hue * 2.0 + hc);
+    float cap = smoothstep(-0.55, -0.5, off.y);
+    return c * (0.2 + 0.5 * facing) + c * cap * (0.3 + 2.0 * flash) + vec3(1.0) * pow(facing, 30.0) * 0.3;
+#elif VARIANT == 30
+    // Ribbons: each its own colour, bright edges, light flowing along them with the music.
+    float zz = 3.0 * q.z + jCam.y;
+    float best = 9.0;
+    float fi = 0.0;
+    for (int i = 0; i < 3; i++) {
+        float d = abs(off.x - (float(i) - 1.0) * 1.7);
+        if (d < best) { best = d; fi = float(i); }
+    }
+    float edge = smoothstep(0.4, 0.55, best);
+    float flow = pow(0.5 + 0.5 * sin(wrapA(zz * 2.0 - uTime * PI * 8.0 + fi)), 6.0);
+    float lvl = band(8.0 + fi * 18.0);
+    vec3 c = colorAt(hue * 2.0 + fi * 0.33);
+    return c * (0.12 + 0.35 * facing) * (0.6 + 0.8 * lvl) + c * edge * (0.4 + 0.8 * uBeat) + vec3(1.0) * flow * (0.15 + 0.4 * lvl);
 #else
     return vec3(0.0);
 #endif
 }
 
-#if VARIANT == 12
-// Embers rising from the lava: a layer of glowing points at a fixed distance from the camera.
+#if VARIANT == 12 || VARIANT == 27
+// Embers rising from the lava (and, green-gold, the forest's fireflies): a layer of glowing points at a fixed distance from the camera.
 vec3 jEmbers(vec3 col, vec3 ro, vec3 rd, float tHit, float hue) {
     for (int k = 0; k < 2; k++) {
         float d = 1.4 + float(k) * 1.6;
@@ -1154,7 +1453,11 @@ vec3 jEmbers(vec3 col, vec3 ro, vec3 rd, float tHit, float hue) {
         vec3 c = floor(g);
         float h = hash(vec2(c.x + 17.0 * mod(c.z + jCell * 6.0, JCELLS * 6.0), c.y));
         float ember = smoothstep(0.2, 0.0, length(fract(g) - 0.5)) * step(0.9, h);
+#if VARIANT == 27
+        col += mix(vec3(0.7, 1.0, 0.3), colorAt(hue * 2.0 + 0.3), 0.3) * ember * (0.25 + 1.4 * uKick);
+#else
         col += mix(vec3(1.0, 0.45, 0.1), colorAt(hue * 2.0 + 0.05), 0.2) * ember * (0.4 + 0.6 * uLow + 0.5 * uKick);
+#endif
     }
     return col;
 }
@@ -1376,7 +1679,7 @@ vec3 shade(vec2 p) {
     col = mix(col, back, smoothstep(JFAR * 0.55, JFAR, tHit));
 #if VARIANT == 11 || VARIANT == 13 || VARIANT == 16
     col = jWater(col, ro, rd, tHit, hue);
-#elif VARIANT == 12
+#elif VARIANT == 12 || VARIANT == 27
     col = jEmbers(col, ro, rd, tHit, hue);
 #elif VARIANT == 14
     // The highway's lanes, dimmed where a structure stands in front of them.
@@ -1419,8 +1722,12 @@ vec3 shade(vec2 p) {
     for (int i = 0; i < 20; i++) {
 #endif
         vec3 q = ro + rd * t;
+        vec2 o = q.xy - jPath(q.z);
+#if VARIANT >= 21 && VARIANT <= 25
+        jOff = o;
+#endif
         sheet = jWorld(q, th);
-        tube = 0.42 - length(q.xy - jPath(q.z));
+        tube = 0.42 - length(o);
         float d = max(sheet, tube);
         if (d < JEPS + JEPS * t) { hit = true; break; }
         t += d;
@@ -1433,6 +1740,9 @@ vec3 shade(vec2 p) {
     float hue = jCam.x + q.z / JZ + uSeed.x + uMood.x;
     if (hit) {
         vec2 off = q.xy - jPath(q.z);
+#if VARIANT >= 21 && VARIANT <= 25
+        jOff = off;
+#endif
         bool cut = tube > sheet;
         vec3 n = cut ? normalize(vec3(-off, 0.0)) : jNormal(q, th);
         if (cut) {
@@ -1462,3 +1772,10 @@ vec3 shade(vec2 p) {
 }
 #endif
 """
+
+/**
+ * The Journey's world shader, in two halves: one string literal of it outgrew the 64 KB a JVM
+ * class file allows for a constant, so the halves are joined at run time.
+ */
+internal val JOURNEY_BODY: String = listOf(JOURNEY_BODY_A, JOURNEY_BODY_B).joinToString("")
+

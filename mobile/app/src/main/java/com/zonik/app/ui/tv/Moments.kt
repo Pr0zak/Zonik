@@ -16,7 +16,10 @@ import kotlin.math.floor
  * [GHOST] of one dissolved in for a beat, [BLUEPRINT] edges only, [THERMAL] and [XRAY]
  * palettes, [CRUNCH] into big pixels, a [STUTTER] of frozen half-beats before a drop, a
  * [REWIND] scratch back along the path, a [HYPER] punch of streaks into a drop, a [KALEIDO]
- * burst, colour [ISOLATE] down to one palette colour, and [UPSIDE] down for a phrase.
+ * burst, colour [ISOLATE] down to one palette colour, and [UPSIDE] down for a phrase; and
+ * (2026-11-20) subtle [RIPPLE], [NEONEDGE], [CRT] scanlines, cinematic [LETTERBOX], [SEPIA]
+ * film and [TILT] shift, striking [SWIRL], [GLITCH], [COMIC] book, [ECHO], [HALFTONE],
+ * [DOUBLE] vision and a four-way [SPLIT4].
  *
  * Music: a drop coming sets off a stutter or a hyperspace punch just before it, and the drop
  * itself a glimpse, blueprint, thermal or x-ray; a breakdown (a bar much quieter than the last)
@@ -156,7 +159,8 @@ class Moments(seed: Int = 61) {
                 if (bar != lastDropBar) {
                     lastDropBar = bar
                     if (random.nextFloat() < 0.6f) {
-                        val k = listOf(GLIMPSE, BLUEPRINT, THERMAL, XRAY)[random.nextInt(4)]
+                        val drop = listOf(GLIMPSE, BLUEPRINT, THERMAL, XRAY, SWIRL, COMIC, HALFTONE, ECHO)
+                        val k = drop[random.nextInt(drop.size)]
                         return k to beatsOf(k)
                     }
                 }
@@ -169,21 +173,24 @@ class Moments(seed: Int = 61) {
                 val before = lastBarEnergy
                 lastBarEnergy = e ?: -1f
                 if (e != null && before >= 0.55f && e < 0.35f) {
-                    val k = listOf(SLOWMO, FOG, ISOLATE)[random.nextInt(3)]
+                    val calm = listOf(SLOWMO, FOG, ISOLATE, SEPIA, LETTERBOX, TILT)
+                    val k = calm[random.nextInt(calm.size)]
                     return k to beatsOf(k)
                 }
             }
         } else if (lowSlow > 0.45f && lowFast < 0.15f) {
             // Without a grid: the bass fell away.
             lowSlow = lowFast
-            val k = listOf(SLOWMO, FOG, ISOLATE)[random.nextInt(3)]
+            val calm = listOf(SLOWMO, FOG, ISOLATE, SEPIA, LETTERBOX, TILT)
+            val k = calm[random.nextInt(calm.size)]
             return k to beatsOf(k)
         }
         // Kicks coming back after a break: eight in under four and a half seconds.
         val oldest = kickTimes[kickIdx]
         if (kicksBack && clock - oldest < 4.5f) {
             kicksBack = false
-            val k = if (random.nextBoolean()) CRUNCH else GHOST
+            val run = listOf(CRUNCH, GHOST, GLITCH, DOUBLE, SPLIT4)
+            val k = run[random.nextInt(run.size)]
             return k to beatsOf(k)
         }
         return null
@@ -193,6 +200,8 @@ class Moments(seed: Int = 61) {
         HUE -> 8f; BREATHE -> 8f; FOG -> 8f; GRAIN -> 16f; SLOWMO -> 3f; DAYNIGHT -> 32f
         GLIMPSE -> 6f + 2f * random.nextInt(2); GHOST -> 2f; BLUEPRINT -> 4f; THERMAL -> 4f; XRAY -> 4f
         CRUNCH -> 4f; STUTTER -> 2f; REWIND -> 4f; HYPER -> 1f; KALEIDO -> 4f; ISOLATE -> 8f; UPSIDE -> 16f
+        RIPPLE -> 4f; SWIRL -> 4f; GLITCH -> 2f; COMIC -> 8f; ECHO -> 4f; NEONEDGE -> 8f; CRT -> 16f
+        HALFTONE -> 4f; DOUBLE -> 2f; SPLIT4 -> 4f; LETTERBOX -> 16f; SEPIA -> 16f; TILT -> 16f
         else -> 4f
     }
 
@@ -259,22 +268,38 @@ class Moments(seed: Int = 61) {
         const val KALEIDO = 9
         const val ISOLATE = 10
         const val HYPER = 11
-        const val POST_LAST = 11
+        const val RIPPLE = 12
+        const val SWIRL = 13
+        const val GLITCH = 14
+        const val COMIC = 15
+        const val ECHO = 16
+        const val NEONEDGE = 17
+        const val CRT = 18
+        const val HALFTONE = 19
+        const val DOUBLE = 20
+        const val SPLIT4 = 21
+        const val LETTERBOX = 22
+        const val SEPIA = 23
+        const val TILT = 24
+        const val POST_LAST = 24
         // Speed, camera and sky, on the CPU.
-        const val SLOWMO = 12
-        const val DAYNIGHT = 13
-        const val GLIMPSE = 14
-        const val GHOST = 15
-        const val STUTTER = 16
-        const val REWIND = 17
-        const val UPSIDE = 18
-        const val KINDS = 19
+        const val SLOWMO = 25
+        const val DAYNIGHT = 26
+        const val GLIMPSE = 27
+        const val GHOST = 28
+        const val STUTTER = 29
+        const val REWIND = 30
+        const val UPSIDE = 31
+        const val KINDS = 32
 
-        val SUBTLE = listOf(HUE, BREATHE, FOG, GRAIN, SLOWMO, DAYNIGHT)
-        val STRIKING = listOf(GLIMPSE, GHOST, BLUEPRINT, THERMAL, XRAY, CRUNCH, STUTTER, REWIND, HYPER, KALEIDO, ISOLATE, UPSIDE)
+        val SUBTLE = listOf(HUE, BREATHE, FOG, GRAIN, SLOWMO, DAYNIGHT, RIPPLE, NEONEDGE, CRT, LETTERBOX, SEPIA, TILT)
+        val STRIKING = listOf(
+            GLIMPSE, GHOST, BLUEPRINT, THERMAL, XRAY, CRUNCH, STUTTER, REWIND, HYPER, KALEIDO, ISOLATE, UPSIDE,
+            SWIRL, GLITCH, COMIC, ECHO, HALFTONE, DOUBLE, SPLIT4,
+        )
         /** Only in a Journey world: they need another world, the path or the open sky. */
         val WORLD_ONLY = setOf(DAYNIGHT, GLIMPSE, GHOST, REWIND, UPSIDE, STUTTER)
-        private val SNAP = setOf(BLUEPRINT, THERMAL, XRAY, CRUNCH, KALEIDO, STUTTER)
+        private val SNAP = setOf(BLUEPRINT, THERMAL, XRAY, CRUNCH, KALEIDO, STUTTER, GLITCH, SPLIT4, COMIC, HALFTONE, DOUBLE)
 
         val MODE_LABELS = listOf("Off", "Subtle", "Mixed", "Striking")
         val RATE_LABELS = listOf("Rare", "Normal", "Often")

@@ -22,12 +22,13 @@ class JourneyWorldTest {
     fun `open worlds have landmarks past their fog, enclosed ones none`() {
         val open = setOf(DemoEffect.CANYON, DemoEffect.SEASTACKS, DemoEffect.NIGHTCITY,
             DemoEffect.STATION, DemoEffect.ASTEROIDS, DemoEffect.CAVES, DemoEffect.ABYSS,
-            DemoEffect.LAVA, DemoEffect.REEF, DemoEffect.CYBER, DemoEffect.TUNDRA, DemoEffect.DEEP, DemoEffect.SYNTHWAVEROAD, DemoEffect.TESSERACT)
+            DemoEffect.LAVA, DemoEffect.REEF, DemoEffect.CYBER, DemoEffect.TUNDRA, DemoEffect.DEEP, DemoEffect.SYNTHWAVEROAD, DemoEffect.TESSERACT,
+            DemoEffect.SPEAKERCANYON, DemoEffect.NEONFOREST, DemoEffect.ISLANDS, DemoEffect.PINBALL, DemoEffect.RIBBONSKY)
         for (e in JOURNEY_WORLDS) {
             val w = JourneyWorld.of(e)
             assertEquals(e.name, e in open, w.large.isNotEmpty())
             assertTrue(e.name, w.spawn >= 6.0)
         }
-        assertEquals(21, JOURNEY_WORLDS.size)
+        assertEquals(31, JOURNEY_WORLDS.size)
     }
 }

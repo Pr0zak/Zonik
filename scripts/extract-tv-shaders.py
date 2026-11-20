@@ -26,7 +26,8 @@ GROUPS = {
     # The Journey and the 3D worlds it flies through.
     "3D worlds": (
         "JOURNEY GYROID SCHWARZ BUBBLEFLIGHT PILLARS TEMPLE TWISTTEMPLE LATTICE TESSERACT CANYON "
-        "SEASTACKS NIGHTCITY STATION ASTEROIDS CAVES ABYSS LAVA REEF CYBER TUNDRA DEEP SYNTHWAVEROAD"
+        "SEASTACKS NIGHTCITY STATION ASTEROIDS CAVES ABYSS LAVA REEF CYBER TUNDRA DEEP SYNTHWAVEROAD "
+        "ICETUNNEL ORGANIC DATASTREAM CRYSTALCAVE CLOCKWORK SPEAKERCANYON NEONFOREST ISLANDS PINBALL RIBBONSKY"
     ),
     # Not a forward flight; the Journey also stops in these as interludes.
     "Scenes": "TINYPLANET SCULPTURE EQCITY STORMSEA GALAXYORBIT SPECTRUMRIDGES ENDLESSZOOM",
@@ -66,6 +67,9 @@ def build() -> dict:
     pattern = r'(?:private |internal )?const val (\w+) = (\w+ \+ )?"""(.*?)"""'
     for name, prefix, body in re.findall(pattern, source, re.S):
         consts[name] = (consts[prefix.split()[0]] if prefix else "") + body
+    # The Journey's shader is two constants (the JVM caps one at 64 KB), joined in the app.
+    if "JOURNEY_BODY_A" in consts:
+        consts["JOURNEY_BODY"] = consts["JOURNEY_BODY_A"] + consts["JOURNEY_BODY_B"]
 
     group_of = {name: group for group, names in GROUPS.items() for name in names.split()}
     enum = main[main.index("enum class DemoEffect"):main.index("val fragmentShader")]

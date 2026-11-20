@@ -191,6 +191,16 @@ enum class DemoEffect(
     TESSERACT("Tesseract", JOURNEY_BODY, halfRes = true, variant = 18, world = true),
     TWISTTEMPLE("Twisted temple", JOURNEY_BODY, halfRes = true, variant = 19, world = true),
     LATTICE("Breathing lattice", JOURNEY_BODY, halfRes = true, variant = 20, world = true),
+    ICETUNNEL("Ice tunnel", JOURNEY_BODY, halfRes = true, variant = 21, world = true),
+    ORGANIC("Organic tunnel", JOURNEY_BODY, halfRes = true, variant = 22, world = true),
+    DATASTREAM("Data stream", JOURNEY_BODY, halfRes = true, variant = 23, world = true),
+    CRYSTALCAVE("Crystal cave", JOURNEY_BODY, halfRes = true, variant = 24, world = true),
+    CLOCKWORK("Clockwork", JOURNEY_BODY, halfRes = true, variant = 25, world = true),
+    SPEAKERCANYON("Speaker canyon", JOURNEY_BODY, halfRes = true, variant = 26, world = true),
+    NEONFOREST("Neon forest", JOURNEY_BODY, halfRes = true, variant = 27, world = true),
+    ISLANDS("Floating islands", JOURNEY_BODY, halfRes = true, variant = 28, world = true),
+    PINBALL("Pinball arena", JOURNEY_BODY, halfRes = true, variant = 29, world = true),
+    RIBBONSKY("Ribbon sky", JOURNEY_BODY, halfRes = true, variant = 30, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER
@@ -212,6 +222,13 @@ vec3 bAt(vec2 uv) {
 }
 float bLum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
 bool isM(float k) { return abs(uMoment.x - k) < 0.5; }
+// How strongly the picture changes at uv: a cheap edge finder (two pairs of reads).
+float bEdge(vec2 uv) {
+    vec2 d = uPx / max(uBlitScale, 0.01) * 1.5;
+    float gx = bLum(bAt(uv + vec2(d.x, 0.0))) - bLum(bAt(uv - vec2(d.x, 0.0)));
+    float gy = bLum(bAt(uv + vec2(0.0, d.y))) - bLum(bAt(uv - vec2(0.0, d.y)));
+    return smoothstep(0.03, 0.18, length(vec2(gx, gy)));
+}
 
 vec3 shade(vec2 p) {
     vec2 uv = vPos * 0.5 + 0.5;
@@ -231,8 +248,48 @@ vec3 shade(vec2 p) {
         vec2 cells = vec2(uAspect, 1.0) * mix(360.0, 34.0, e);
         uv = (floor(uv * cells) + 0.5) / cells;
     }
+    if (isM(12.0)) {
+        // Ripple: rings running out from the middle, bending the picture.
+        vec2 q = c * vec2(uAspect, 1.0);
+        float r = max(length(q), 1e-3);
+        uv += c / r * sin(r * 40.0 - fract(uTime * 10.0) * 6.2831853) * 0.006 * e;
+    }
+    if (isM(13.0)) {
+        // Swirl: the middle twisted round, the edges held.
+        vec2 q = c * vec2(uAspect, 1.0);
+        float a = (uMoment.z < 0.5 ? -2.5 : 2.5) * e * (1.0 - smoothstep(0.0, 0.8, length(q)));
+        q = mat2(cos(a), sin(a), -sin(a), cos(a)) * q;
+        uv = 0.5 + q / vec2(uAspect, 1.0);
+    }
+    if (isM(14.0)) {
+        // Glitch: slices of the picture jumping sideways, new ones every few frames.
+        float slice = floor(uv.y * 24.0);
+        float hh = hash(vec2(slice, floor(uMoment.w * 6.0)));
+        uv.x += (hash(vec2(slice + 3.0, floor(uMoment.w * 6.0))) - 0.5) * 0.12 * e * step(0.6, hh);
+    }
+    if (isM(21.0) && e > 0.5) uv = fract(uv * 2.0);
     vec3 col;
-    if (isM(11.0)) {
+    if (isM(14.0) || isM(20.0)) {
+        // Glitch and double vision: the colours split apart.
+        vec2 off = vec2(isM(20.0) ? 0.025 : 0.008, 0.0) * e;
+        col = vec3(bAt(uv + off).r, bAt(uv).g, bAt(uv - off).b);
+        if (isM(20.0)) col = mix(col, (bAt(uv + off * 1.5) + bAt(uv - off * 1.5)) * 0.5, 0.5);
+    } else if (isM(16.0)) {
+        // Echo: the picture over two bigger, fainter copies of itself.
+        col = max(bAt(uv), max(bAt(0.5 + c * 0.8) * 0.6 * e, bAt(0.5 + c * 0.64) * 0.35 * e));
+    } else if (isM(19.0)) {
+        // Halftone: dots sized by the brightness of their cell.
+        vec2 g = gl_FragCoord.xy / 7.0;
+        vec3 cc = bAt((floor(g) + 0.5) * 7.0 * uPx);
+        float rad = sqrt(clamp(bLum(cc) * 1.6, 0.0, 1.0)) * 0.62;
+        vec3 dots = vivid(cc + 0.01) * smoothstep(rad, rad - 0.12, length(fract(g) - 0.5)) * 0.9;
+        col = mix(bAt(uv), dots, e);
+    } else if (isM(24.0)) {
+        // Tilt shift: the top and bottom blurred, the middle sharp, like a model.
+        float b = smoothstep(0.12, 0.5, abs(c.y)) * e * 0.012;
+        col = (bAt(uv) + bAt(uv + vec2(b, b)) + bAt(uv - vec2(b, b)) + bAt(uv + vec2(-b, b)) + bAt(uv + vec2(b, -b))) * 0.2;
+        col = mix(col, col * 1.2 - bLum(col) * 0.2, e);
+    } else if (isM(11.0)) {
         // Hyperspace punch: streaks out from the middle, longer as it builds.
         col = vec3(0.0);
         for (int i = 0; i < 6; i++) col += bAt(0.5 + c * (1.0 - e * 0.05 * float(i)));
@@ -283,6 +340,30 @@ vec3 shade(vec2 p) {
         vec3 bp = vec3(0.02, 0.07, 0.2) + vec3(0.1, 0.2, 0.4) * smoothstep(0.46, 0.5, max(g.x, g.y)) * 0.5;
         bp += vec3(0.75, 0.9, 1.0) * edge * (0.8 + 0.5 * uKick);
         col = mix(col, bp, e);
+    } else if (isM(15.0)) {
+        // Comic: flat colours in a few steps, inked outlines.
+        vec3 steps = floor(col * 4.0 + 0.5) / 4.0;
+        col = mix(col, vivid(steps + 0.02) * (0.25 + 0.75 * floor(l * 4.0 + 0.5) / 4.0) * (1.0 - 0.9 * bEdge(uv)), e);
+    } else if (isM(17.0)) {
+        col += colorAt(0.3 + uMoment.z) * bEdge(uv) * e * (0.6 + 0.8 * uKick);
+    } else if (isM(18.0)) {
+        // CRT: scanlines, a little green, darker edges.
+        float scan = 0.65 + 0.35 * step(0.5, fract(gl_FragCoord.y / 3.0));
+        col = mix(col, col * scan * vec3(0.9, 1.05, 0.95) * (1.0 - 0.6 * dot(c, c)), e);
+    } else if (isM(21.0)) {
+        // The four-way split: each quarter its own turn round the colour wheel.
+        float qi = step(0.5, vPos.x * 0.5 + 0.5) + 2.0 * step(0.5, vPos.y * 0.5 + 0.5);
+        float a = qi * 1.5708 * e;
+        vec3 k = vec3(0.57735);
+        col = col * cos(a) + cross(k, col) * sin(a) + k * dot(k, col) * (1.0 - cos(a));
+    } else if (isM(22.0)) {
+        // Letterbox: cinema bars closing in, the colour a touch cooler.
+        float bar = step(0.5 - 0.11 * e, abs(c.y));
+        col = mix(col, vec3(l) * vec3(0.95, 1.0, 1.08), 0.2 * e) * (1.0 - bar);
+    } else if (isM(23.0)) {
+        // Sepia film: brown, flickering, darker at the corners.
+        vec3 sep = vec3(1.0, 0.82, 0.6) * l * (0.92 + 0.16 * uMoment.w) * (1.0 - 0.7 * dot(c, c));
+        col = mix(col, sep, e);
     } else if (isM(10.0)) {
         // Colour isolation: grey, except what is near the palette's first colour.
         vec3 a = normalize(col + 1e-3);

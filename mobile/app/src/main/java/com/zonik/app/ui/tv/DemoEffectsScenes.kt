@@ -294,8 +294,7 @@ vec3 shade(vec2 p) {
  * where the ray meets the sea's plane (their slope bends the reflection), so it costs no march;
  * the swell builds with the bass, clouds drift, and every eighth kick brings lightning, a bolt
  * and a flash that lights the clouds from inside. A lighthouse on a rock sweeps its beam round
- * and flashes its lamp on the beat, a ship rocks on the horizon with its windows lit, and rain
- * slants across in front of it all.
+ * and flashes its lamp on the beat, and rain slants across in front of it all.
  */
 internal const val STORMSEA_BODY = """
 float ssNoise(vec2 x) {
@@ -350,23 +349,6 @@ vec3 shade(vec2 p) {
     }
     // A little under the true horizon, where the far water fades into the sky.
     float hz = 0.13;
-
-    // A ship on the horizon, rocking: a dark hull and deckhouse with a row of lit windows.
-    float sx = 0.55 + 0.12 * sin(uTime * PI);
-    float by = hz + 0.004 * sin(uPhase * PI * 6.0);
-    // Drawn at 1.6 times its sizes below.
-    vec2 sp = rot(0.04 * sin(uPhase * PI * 4.0)) * (p - vec2(sx, by)) / 1.6;
-    bool hull = sp.y > -0.004 && sp.y < 0.016 && abs(sp.x) < 0.11 + sp.y * 1.2;
-    bool house = sp.y >= 0.016 && sp.y < 0.04 && sp.x > -0.03 && sp.x < 0.04;
-    bool mast = abs(sp.x - 0.005) < 0.0025 && sp.y >= 0.04 && sp.y < 0.075;
-    if (hull || house || mast) {
-        col = vec3(0.012, 0.012, 0.02) + vec3(0.6, 0.65, 0.9) * flash * 0.15;
-        float wx = fract(sp.x / 0.016);
-        float on = step(0.4, hash(vec2(floor(sp.x / 0.016), 2.0)));
-        if (house && sp.y > 0.022 && sp.y < 0.032 && wx > 0.3 && wx < 0.7) col += vec3(1.0, 0.8, 0.45) * on * 0.9;
-        if (hull && sp.y > 0.006 && sp.y < 0.011 && wx > 0.35 && wx < 0.65) col += vec3(1.0, 0.85, 0.5) * on * 0.6;
-    }
-    col += vec3(1.0, 0.3, 0.2) * exp(-length(sp - vec2(0.005, 0.077)) * 220.0) * (0.5 + 0.5 * uBeat);
 
     // A lighthouse on a rock at the left: the beam sweeps round (bright when it faces us) and
     // the lamp flashes on the beat.

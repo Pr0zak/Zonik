@@ -749,6 +749,15 @@ data class JourneyWorld(
                 DemoEffect.DEEP -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 11.0, 0.9f, true, SHEET, 9.0, flock = true, far = 12f, jelly = true)
                 DemoEffect.SYNTHWAVEROAD -> JourneyWorld(intArrayOf(ARCH, ARCH, ARCH, RING, TUNNEL), 16.0, 1.6f, true, SHEET, 9.0)
                 DemoEffect.TESSERACT -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 13.0, 0.55f, true, SHEET, 9.0, far = 14f)
+                // The tunnel worlds: no room off the path for landmarks.
+                DemoEffect.CLOCKWORK -> ENCLOSED.copy(speed = 0.6f)
+                DemoEffect.ORGANIC, DemoEffect.CRYSTALCAVE -> ENCLOSED.copy(speed = 0.7f)
+                DemoEffect.ICETUNNEL -> ENCLOSED.copy(speed = 0.9f)
+                DemoEffect.SPEAKERCANYON -> JourneyWorld(intArrayOf(ARCH, RING, TUNNEL, TUNNEL), 13.0, 1.2f, true, SHEET, 9.0, far = 14f)
+                DemoEffect.NEONFOREST -> JourneyWorld(intArrayOf(RING, TUNNEL, ARCH), 11.0, 1.0f, true, SHEET, 9.0, far = 12f)
+                DemoEffect.ISLANDS -> JourneyWorld(intArrayOf(RING, SPHERE, ARCH, TUNNEL), 16.0, 1.2f, true, SHEET, 9.0)
+                DemoEffect.PINBALL -> JourneyWorld(intArrayOf(RING, TUNNEL, RING), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
+                DemoEffect.RIBBONSKY -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 16.0, 1.3f, false, SHEET, 9.0)
                 else -> ENCLOSED
             }
         }

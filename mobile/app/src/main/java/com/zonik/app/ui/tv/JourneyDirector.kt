@@ -223,7 +223,7 @@ class JourneyDirector(seed: Int = 41) {
          */
         fun weatherIn(e: DemoEffect, wanted: Int): Int = when (e) {
             DemoEffect.ABYSS, DemoEffect.REEF, DemoEffect.DEEP, DemoEffect.STATION, DemoEffect.ASTEROIDS,
-            DemoEffect.LAVA, DemoEffect.CAVES -> WEATHER_NONE
+            DemoEffect.LAVA, DemoEffect.CAVES, DemoEffect.PINBALL, DemoEffect.SPEAKERCANYON -> WEATHER_NONE
             DemoEffect.TUNDRA -> if (wanted == RAIN) SNOW else wanted
             DemoEffect.CYBER, DemoEffect.SYNTHWAVEROAD, DemoEffect.NIGHTCITY -> if (wanted == SNOW) RAIN else wanted
             else -> if (roomIn(e)) wanted else WEATHER_NONE
