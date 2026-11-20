@@ -791,6 +791,12 @@ data class JourneyOptions(
     val mirror: Boolean = true,
     val kickFx: Boolean = false,
     val interludes: Boolean = true,
+    /** Moments (every effect, not only the Journey): 0 off, 1 subtle, 2 mixed, 3 striking. */
+    val moments: Int = 2,
+    /** How often moments come: 0 rare, 1 normal, 2 often. */
+    val momentRate: Int = 1,
+    /** Moments may glimpse or ghost another world in. */
+    val glimpses: Boolean = true,
 ) {
     /** Time of day for the next world (JourneyLook.sky): mostly as made. */
     fun pickSky(random: kotlin.random.Random): Int =
@@ -816,7 +822,7 @@ data class JourneyOptions(
     fun encode(): String =
         listOf(
             length, speed, b(rings), b(fish), b(shuffle), ringPattern, style,
-            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes),
+            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes), moments, momentRate, b(glimpses),
         ).joinToString(",")
 
     private fun b(v: Boolean) = if (v) 1 else 0
@@ -845,6 +851,9 @@ data class JourneyOptions(
                 mirror = p.getOrNull(11)?.let { it != 0 } ?: d.mirror,
                 kickFx = p.getOrNull(12)?.let { it != 0 } ?: d.kickFx,
                 interludes = p.getOrNull(13)?.let { it != 0 } ?: d.interludes,
+                moments = p.getOrNull(14)?.takeIf { it in 0..3 } ?: d.moments,
+                momentRate = p.getOrNull(15)?.takeIf { it in 0..2 } ?: d.momentRate,
+                glimpses = p.getOrNull(16)?.let { it != 0 } ?: d.glimpses,
             )
         }
     }

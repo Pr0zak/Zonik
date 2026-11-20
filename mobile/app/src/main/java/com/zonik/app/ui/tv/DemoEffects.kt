@@ -162,7 +162,7 @@ enum class DemoEffect(
     PULSAR("Ridgelines", PULSAR_BODY),
     BUBBLES("Bubbles", BUBBLES_BODY),
     SPECTRUMRIDGES("Spectrum ridges", PULSAR_BODY, variant = 1, trails = true),
-    ENDLESSZOOM("Endless zoom", ENDLESS_BODY),
+    ENDLESSZOOM("Endless zoom", ENDLESS_BODY, trails = true),
     GALAXYORBIT("Galaxy orbit", GALAXY_BODY, variant = 1, floats = true),
     TINYPLANET("Tiny planet", TINYPLANET_BODY, halfRes = true),
     SCULPTURE("Liquid sculpture", SCULPTURE_BODY, halfRes = true),
@@ -204,20 +204,93 @@ internal val BLIT_FRAGMENT: String = HEADER + """
 uniform sampler2D uBlit;
 // 1 for a full-size buffer; 0.5 when the effect drew into the lower-left quarter (halfRes).
 uniform float uBlitScale;
+
+// The buffer at uv (0..1 over the picture), kept inside the part that was drawn.
+vec3 bAt(vec2 uv) {
+    vec2 m = uPx / max(uBlitScale, 0.01);
+    return texture2D(uBlit, clamp(uv, m, 1.0 - m) * uBlitScale).rgb;
+}
+float bLum(vec3 c) { return dot(c, vec3(0.3, 0.55, 0.15)); }
+bool isM(float k) { return abs(uMoment.x - k) < 0.5; }
+
 vec3 shade(vec2 p) {
     vec2 uv = vPos * 0.5 + 0.5;
-    if (uKickFx > 0.5 && uKick > 0.05) {
+    float e = uMoment.y;
+    vec2 c = uv - 0.5;
+    // Moments that move the picture: a kaleidoscope burst (six-way, snapped on), big pixels.
+    if (isM(9.0) && e > 0.5) {
+        vec2 q = c * vec2(uAspect, 1.0);
+        float r = length(q);
+        float a = fastAtan2(q.y, q.x);
+        const float SEG = 1.0471976;
+        a = abs(mod(a + uMoment.z * 6.2831853, SEG) - SEG * 0.5);
+        uv = 0.5 + vec2(cos(a), sin(a)) * r / vec2(uAspect, 1.0);
+        c = uv - 0.5;
+    }
+    if (isM(8.0)) {
+        vec2 cells = vec2(uAspect, 1.0) * mix(360.0, 34.0, e);
+        uv = (floor(uv * cells) + 0.5) / cells;
+    }
+    vec3 col;
+    if (isM(11.0)) {
+        // Hyperspace punch: streaks out from the middle, longer as it builds.
+        col = vec3(0.0);
+        for (int i = 0; i < 6; i++) col += bAt(0.5 + c * (1.0 - e * 0.05 * float(i)));
+        col /= 6.0;
+        col += col * col * e * 0.6;
+    } else if (uKickFx > 0.5 && uKick > 0.05) {
         // On a kick: a small zoom punch and the colours split outward from the middle. The
         // zoom pulls in further than the split reaches out, so it never reads past the edge.
-        vec2 c = uv - 0.5;
         uv = 0.5 + c * (1.0 - 0.035 * uKick);
         vec2 off = c * 0.012 * uKick;
-        return vec3(
-            texture2D(uBlit, (uv + off) * uBlitScale).r,
-            texture2D(uBlit, uv * uBlitScale).g,
-            texture2D(uBlit, (uv - off) * uBlitScale).b);
+        col = vec3(bAt(uv + off).r, bAt(uv).g, bAt(uv - off).b);
+    } else {
+        col = bAt(uv);
     }
-    return texture2D(uBlit, uv * uBlitScale).rgb;
+    if (uMoment.x < 0.5 || e <= 0.0) return col;
+    float l = bLum(col);
+    if (isM(1.0)) {
+        // Hue swing: turned round the grey axis and back.
+        float a = (uMoment.z < 0.5 ? -1.0 : 1.0) * 2.1 * e;
+        vec3 k = vec3(0.57735);
+        float ca = cos(a);
+        col = col * ca + cross(k, col) * sin(a) + k * dot(k, col) * (1.0 - ca);
+    } else if (isM(2.0)) {
+        col *= 1.0 + e * (0.25 + 0.6 * uLow);
+        col += col * col * e * 0.4 * (0.3 + uLow);
+    } else if (isM(3.0)) {
+        // A fog bank, thickest low down, drifting across.
+        float band = 0.6 - 0.35 * c.y + 0.1 * sin(c.x * 6.0 + uMoment.z * 6.28);
+        col = mix(col, colorAt(0.66) * 0.18 + vec3(0.07), clamp(band, 0.0, 1.0) * e * 0.8);
+    } else if (isM(4.0)) {
+        float n = hash(floor(gl_FragCoord.xy * 0.5) + uMoment.w * 97.0) - 0.5;
+        col = col * (1.0 - e * 0.9 * dot(c, c)) + n * 0.07 * e;
+    } else if (isM(5.0)) {
+        vec3 heat = mix(vec3(0.0, 0.0, 0.15), vec3(0.45, 0.0, 0.55), smoothstep(0.0, 0.25, l));
+        heat = mix(heat, vec3(1.0, 0.35, 0.0), smoothstep(0.2, 0.5, l));
+        heat = mix(heat, vec3(1.0, 0.95, 0.4), smoothstep(0.45, 0.8, l));
+        col = mix(col, heat * (1.0 + 0.4 * uKick), e);
+    } else if (isM(6.0)) {
+        vec3 x = vec3(0.55, 0.8, 1.0) * pow(1.0 - clamp(l, 0.0, 1.0), 2.0) + vec3(0.9) * smoothstep(0.9, 1.0, 1.0 - l) * 0.2;
+        col = mix(col, x, e);
+    } else if (isM(7.0)) {
+        // Blueprint: edges only, white on deep blue, over a faint grid.
+        vec2 d = uPx / max(uBlitScale, 0.01) * 1.5;
+        float gx = bLum(bAt(uv + vec2(d.x, 0.0))) - bLum(bAt(uv - vec2(d.x, 0.0)));
+        float gy = bLum(bAt(uv + vec2(0.0, d.y))) - bLum(bAt(uv - vec2(0.0, d.y)));
+        float edge = smoothstep(0.03, 0.18, length(vec2(gx, gy)));
+        vec2 g = abs(fract(uv * vec2(uAspect, 1.0) * 12.0) - 0.5);
+        vec3 bp = vec3(0.02, 0.07, 0.2) + vec3(0.1, 0.2, 0.4) * smoothstep(0.46, 0.5, max(g.x, g.y)) * 0.5;
+        bp += vec3(0.75, 0.9, 1.0) * edge * (0.8 + 0.5 * uKick);
+        col = mix(col, bp, e);
+    } else if (isM(10.0)) {
+        // Colour isolation: grey, except what is near the palette's first colour.
+        vec3 a = normalize(col + 1e-3);
+        vec3 b = normalize(uC0 + 1e-3);
+        float keep = smoothstep(0.86, 0.97, dot(a, b));
+        col = mix(col, mix(vec3(l), col * 1.2, keep), e);
+    }
+    return col;
 }
 """ + FOOTER
 
@@ -387,6 +460,9 @@ uniform vec2 uFall;
 uniform vec4 uDrop;
 uniform vec4 uBoard;
 uniform vec4 uBoard2;
+// A moment over the finished frame (Moments, drawn by the blit): kind (0 none), 0..1 strength,
+// a value per moment, and a fresh random number each frame (grain).
+uniform vec4 uMoment;
 // The blit's kick effects over a world: colour split and a zoom punch (0 off, 1 on).
 uniform float uKickFx;
 // 1 while a Journey world draws into the offscreen buffer: alpha carries its depth (J_DEPTH).

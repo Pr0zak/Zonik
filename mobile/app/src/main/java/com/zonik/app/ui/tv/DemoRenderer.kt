@@ -212,6 +212,11 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     /** The rain and snow's fall, 0..1, kept on the CPU in full precision. */
     private var rainFall = 0.0
     private var snowFall = 0.0
+    /** Short looks over every effect, and the world a glimpse or ghost shows. */
+    private val moments = Moments()
+    private var momentKind = Moments.NONE
+    private var glimpseWorld: DemoEffect? = null
+    private val momentRandom = kotlin.random.Random(7)
     private val flock = JourneyFlock()
     private var flockWorld: DemoEffect? = null
     private val flockVerts = FloatArray(JourneyFlock.MAX_VERTICES * JourneyFlock.FLOATS)
@@ -511,13 +516,38 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         }
         advanceJourney()
         updateTransition(dt)
+        val o = journeyOptions
+        moments.update(
+            dt, beatClock, System.currentTimeMillis(), low, kick, world = current.world && next == null,
+            mode = o.moments, rate = o.momentRate, glimpses = o.glimpses,
+            busy = next != null || journey.gate > 0f || sincePortal < 1.5f,
+        )
+        if (moments.kind != momentKind) {
+            momentKind = moments.kind
+            // A glimpse or ghost shows another world that is switched on.
+            glimpseWorld = if (momentKind == Moments.GLIMPSE || momentKind == Moments.GHOST) {
+                journeyWorlds.filter { it != current }.let { if (it.isEmpty()) null else it[(moments.param * it.size).toInt().coerceIn(0, it.size - 1)] }
+            } else null
+        }
 
         val incoming = next
         if (current != statsShown) {
             statsShown = current
             TvEffectStats.shown(current)
         }
-        if (incoming == null) {
+        val other = glimpseWorld
+        val reveal = moments.reveal
+        if (incoming == null && other != null && current.world && reveal > 0.01f) {
+            // A glimpse of another world through an iris that opens and closes again, or a
+            // ghost of it dissolved in: drawn the way a transition is, each pixel one world's.
+            // The resolution is left alone meanwhile; the second world can cost more.
+            TvEffectStats.frame(current, dt)
+            val kindBefore = wipeKind
+            wipeKind = if (moments.kind == Moments.GHOST) GHOST_WIPE else WIPE_IRIS
+            draw(current, wipe = reveal, incomingSide = false)
+            draw(other, wipe = reveal, incomingSide = true)
+            wipeKind = kindBefore
+        } else if (incoming == null) {
             TvEffectStats.frame(current, dt)
             if (current.world) adaptWorldScale(dt)
             draw(current, wipe = -1f, incomingSide = false)
@@ -618,6 +648,16 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             return
         }
         if (!(e.feedback || trailed) || slot == null || pass == null || scaler == null || trailsPass == null) {
+            if (moments.postKind != 0 && pass != null && scaler != null) {
+                // A moment's look is drawn by the blit: the frame goes through the scratch
+                // buffer at full size while it lasts.
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, pass.fbo)
+                drawWith(prog, e, -1f, false, 1f, prevTex = 0, srcTex = 0)
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+                blitScale = 1f
+                drawWith(scaler, e, wipe, incomingSide, fade, prevTex = 0, srcTex = pass.tex)
+                return
+            }
             drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = 0)
             return
         }
@@ -648,7 +688,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val drift = clock * 0.1
         val cx = (sin(drift * 3.7) * 0.12).toFloat()
         val cy = (sin(drift * 2.9 + 1.3) * 0.08).toFloat()
-        val n = flock.build(flockVerts, travel, shotCam.pos, shotCam.fw, camBasis, aspect, cx, cy, JourneyWorld.of(e).far, 1f, 1.3f * director.lens)
+        val n = flock.build(flockVerts, travel, shotCam.pos, shotCam.fw, camBasis, aspect, cx, cy, JourneyWorld.of(e).far, 1f, 1.3f * lensNow())
         if (n == 0) return
         flockBuffer.position(0)
         flockBuffer.put(flockVerts, 0, n * JourneyFlock.FLOATS)
@@ -661,10 +701,13 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     }
 
     /** The roll for the director's shot: the crane and side shots keep the horizon level. */
-    private fun shotRoll(e: DemoEffect): Float = when (director.shot) {
+    private fun shotRoll(e: DemoEffect): Float = moments.roll + when (director.shot) {
         JourneyDirector.CRANE, JourneyDirector.SIDE -> 0f
         else -> journeyRoll(e)
     }
+
+    /** The director's lens, widened by a hyperspace punch. */
+    private fun lensNow(): Float = director.lens * moments.lens
 
     /** The worlds' camera roll: halls and open worlds with a floor bank gently, lattices roll right round. */
     private fun journeyRoll(e: DemoEffect): Float {
@@ -707,6 +750,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uBlitScale", blitScale)
         u1("uDepthOut", if (depthOut) 1f else 0f)
         u1("uKickFx", if (e.world && journeyOptions.kickFx) 1f else 0f)
+        uniforms["uMoment"]?.let {
+            if (it >= 0) GLES20.glUniform4f(it, moments.postKind.toFloat(), moments.env, moments.param, momentRandom.nextFloat())
+        }
         val look = if (drawingIncoming) lookNext else lookCurrent
         u1("uRainbow", if (look.mode == "ALBUM") rainbow else 0f)
         u1("uTitleAspect", titleAspect)
@@ -768,15 +814,16 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             uniforms["uCamUp"]?.let { if (it >= 0) GLES20.glUniform3f(it, camBasis[3], camBasis[4], camBasis[5]) }
             uniforms["uMarkScr"]?.let {
                 if (it >= 0) {
-                    landmarks.screen(markScreen, travel, cam.pos, cam.fw, camBasis, 1.3f * director.lens)
+                    landmarks.screen(markScreen, travel, cam.pos, cam.fw, camBasis, 1.3f * lensNow())
                     GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS, markScreen, 0)
                 }
             }
-            u1("uLens", director.lens)
+            u1("uLens", lensNow())
             val wanted = look.journey.weather
             uniforms["uSky"]?.let {
                 if (it >= 0) GLES20.glUniform4f(
-                    it, look.journey.sky.toFloat(), JourneyDirector.weatherIn(e, wanted).toFloat(), 1f, director.mirror.toFloat(),
+                    it, ((look.journey.sky + moments.skyShift) % 4).toFloat(), JourneyDirector.weatherIn(e, wanted).toFloat(), 1f,
+                    director.mirror.toFloat(),
                 )
             }
             u2("uFall", rainFall.toFloat(), snowFall.toFloat())
@@ -917,7 +964,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         // A portal is a rush: the camera surges through the gate and settles again.
         sincePortal += dt
         if (sincePortal < PORTAL_BURST_SEC) speed += PORTAL_BURST * sin(Math.PI * sincePortal / PORTAL_BURST_SEC).toFloat()
-        phase = (phase + speed * dt) % WRAP
+        // Moments: slow motion, a stutter, or a rewind back along the path.
+        speed *= moments.speedScale
+        phase = ((phase + speed * dt) % WRAP + WRAP) % WRAP
         travel += speed * dt * GATE_UNITS_PER_PHASE
         spin = (spin + (0.012f + mid * 0.03f) * dt) % WRAP
         time = (time + TIME_RATE * dt) % WRAP
@@ -1493,6 +1542,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
 
         /** The iris, in [DEMO_TRANSITIONS]: the portal's wipe. */
         const val WIPE_IRIS = 1
+        /** A ghost moment's dissolve: block dissolve, in [DEMO_TRANSITIONS]. */
+        const val GHOST_WIPE = 0
         /** How far past the wipe edge a small iris pass draws, in wipe units. */
         const val IRIS_MARGIN = 0.03f
         const val PORTAL_SEC = 0.9f
@@ -1525,7 +1576,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uMoment", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

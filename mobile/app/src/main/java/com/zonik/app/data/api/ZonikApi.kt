@@ -179,6 +179,9 @@ data class TvVisualizerConfig(
     @SerialName("journey_mirror") val journeyMirror: Boolean? = null,
     @SerialName("journey_kick_fx") val journeyKickFx: Boolean? = null,
     @SerialName("journey_interludes") val journeyInterludes: Boolean? = null,
+    val moments: Int? = null,
+    @SerialName("moments_rate") val momentsRate: Int? = null,
+    @SerialName("moments_glimpses") val momentsGlimpses: Boolean? = null,
 ) {
     companion object {
         /** A config carrying just the Journey's options. */
@@ -186,6 +189,7 @@ data class TvVisualizerConfig(
             journeyLength = o.length, journeySpeed = o.speed, journeyRingPattern = o.ringPattern,
             journeyRings = o.rings, journeyFish = o.fish, journeyShuffle = o.shuffle, journeyStyle = o.style,
             journeyCamera = o.camera, journeyDrops = o.drops, journeyWeather = o.weather, journeyBoards = o.boards, journeyMirror = o.mirror, journeyKickFx = o.kickFx, journeyInterludes = o.interludes,
+            moments = o.moments, momentsRate = o.momentRate, momentsGlimpses = o.glimpses,
         )
     }
 }

@@ -65,6 +65,10 @@ DEFAULTS: dict = {
     "journey_mirror": True,
     "journey_kick_fx": False,
     "journey_interludes": True,
+    # Moments: short looks over every effect (Moments in the app).
+    "moments": 2,
+    "moments_rate": 1,
+    "moments_glimpses": True,
 }
 
 TRANSITIONS = [
@@ -92,6 +96,8 @@ OPTIONS: dict = {
     "journey_ring_pattern": [[0, "Mixed"], [1, "Straight"], [2, "Corkscrew"], [3, "Narrowing"],
                              [4, "Long runs"], [5, "Sweeping curve"]],
     "journey_style": [[0, "Mixed"], [1, "As made"], [2, "Duotone"], [3, "Night"]],
+    "moments": [[0, "Off"], [1, "Subtle"], [2, "Mixed"], [3, "Striking"]],
+    "moments_rate": [[0, "Rare"], [1, "Normal"], [2, "Often"]],
 }
 
 

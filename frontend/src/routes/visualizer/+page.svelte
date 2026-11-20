@@ -159,6 +159,8 @@
 		{ key: 'journey_speed', label: 'Journey: speed' },
 		{ key: 'journey_ring_pattern', label: 'Journey: ring patterns' },
 		{ key: 'journey_style', label: 'Journey: style' },
+		{ key: 'moments', label: 'Moments' },
+		{ key: 'moments_rate', label: 'Moments: how often' },
 	];
 	const SWITCHES = [
 		{ key: 'enabled', label: 'Visualizer on' },
@@ -174,6 +176,7 @@
 		{ key: 'journey_mirror', label: 'Journey mirror bars' },
 		{ key: 'journey_kick_fx', label: 'Journey kick effects' },
 		{ key: 'journey_interludes', label: 'Journey interludes' },
+		{ key: 'moments_glimpses', label: 'Moments: world glimpses' },
 	];
 </script>
 
