@@ -667,9 +667,22 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             drawWith(prog, e, -1f, false, 1f, prevTex = slot.prev.tex, srcTex = 0)
         } else {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, pass.fbo)
-            drawWith(prog, e, -1f, false, 1f, prevTex = 0, srcTex = 0)
+            // A half-resolution effect still draws small (lower-left corner); the trails pass
+            // scales it up as it lays it over the last frame.
+            if (e.halfRes) {
+                val scale = if (e.world) worldScale else 0.5f
+                val w = (surfaceWidth * scale).roundToInt().coerceAtLeast(1)
+                val h = (surfaceHeight * w / surfaceWidth.toFloat()).roundToInt().coerceAtLeast(1)
+                GLES20.glViewport(0, 0, w, h)
+                drawWith(prog, e, -1f, false, 1f, prevTex = 0, srcTex = 0)
+                GLES20.glViewport(0, 0, surfaceWidth, surfaceHeight)
+                blitScale = w / surfaceWidth.toFloat()
+            } else {
+                drawWith(prog, e, -1f, false, 1f, prevTex = 0, srcTex = 0)
+            }
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, slot.next.fbo)
             drawWith(trailsPass, e, -1f, false, 1f, prevTex = slot.prev.tex, srcTex = pass.tex)
+            blitScale = 1f
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         drawWith(scaler, e, wipe, incomingSide, fade, prevTex = 0, srcTex = slot.next.tex)

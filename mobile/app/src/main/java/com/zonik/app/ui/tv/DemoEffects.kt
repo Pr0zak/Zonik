@@ -166,7 +166,7 @@ enum class DemoEffect(
     GALAXYORBIT("Galaxy orbit", GALAXY_BODY, variant = 1, floats = true),
     TINYPLANET("Tiny planet", TINYPLANET_BODY, halfRes = true),
     SCULPTURE("Liquid sculpture", SCULPTURE_BODY, halfRes = true),
-    EQCITY("Equalizer city", EQCITY_BODY, halfRes = true),
+    EQCITY("Equalizer city", EQCITY_BODY, halfRes = true, trails = true),
     STORMSEA("Storm sea", STORMSEA_BODY, halfRes = true),
     COVERBOUNCE("Bouncing cover", COVERBOUNCE_BODY, feedback = true),
     RIBBONS("Ribbons", RIBBONS_BODY),
@@ -302,9 +302,11 @@ vec3 shade(vec2 p) {
  */
 internal val TRAILS_FRAGMENT: String = HEADER + """
 uniform sampler2D uCur;
+// Below 1 when a half-resolution effect drew into the lower-left corner of uCur.
+uniform float uBlitScale;
 vec3 shade(vec2 p) {
     vec2 uv = vPos * 0.5 + 0.5;
-    vec3 cur = texture2D(uCur, uv).rgb;
+    vec3 cur = texture2D(uCur, uv * uBlitScale).rgb;
     vec3 old = prevAt((uv - 0.5) * 0.992 + 0.5) * 0.86 - 0.01;
     return max(cur, old);
 }
