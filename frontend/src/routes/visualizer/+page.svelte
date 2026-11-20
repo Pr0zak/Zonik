@@ -28,6 +28,7 @@
 	let savedAt = $state(0);
 
 	let filter = $state('all');
+	let query = $state('');
 	let sort = $state('group');
 	let days = $state(30);
 	let enlarged = $state(null); // effect shown large
@@ -37,8 +38,10 @@
 	let onCount = $derived(effects.filter((e) => !off.has(e.id)).length);
 
 	let visible = $derived.by(() => {
+		const q = query.trim().toLowerCase();
 		let list = effects.filter((e) =>
-			filter === 'on' ? !off.has(e.id) : filter === 'off' ? off.has(e.id) : true);
+			(filter === 'on' ? !off.has(e.id) : filter === 'off' ? off.has(e.id) : true) &&
+			(!q || e.label.toLowerCase().includes(q) || e.group.toLowerCase().includes(q)));
 		const st = (e) => stats?.effects[e.id];
 		if (sort === 'name') list = [...list].sort((a, b) => a.label.localeCompare(b.label));
 		else if (sort === 'shown') list = [...list].sort((a, b) => (st(b)?.seconds ?? 0) - (st(a)?.seconds ?? 0));
@@ -230,7 +233,9 @@
 			{ value: 'on', label: 'On', count: onCount, color: 'visualizer' },
 			{ value: 'off', label: 'Off', count: effects.length - onCount, color: 'visualizer' },
 		]} />
-		<div class="flex items-center gap-2 flex-shrink-0">
+		<div class="flex flex-wrap items-center gap-2">
+			<input id="effect-search" type="search" class="{inputClass} !w-48" placeholder="Search effects"
+				aria-label="Search effects" bind:value={query} />
 			<select class="{inputClass} !w-auto" bind:value={sort}>
 				<option value="group">By group</option>
 				<option value="name">By name</option>
@@ -257,6 +262,9 @@
 		</p>
 	{/if}
 
+	{#if query.trim() && !visible.length}
+		<p class="text-sm text-[var(--text-muted)] mt-4">No effects match “{query.trim()}”.</p>
+	{/if}
 	{#each sections as section (section.title)}
 		{#if section.title}
 			<div class="flex items-center justify-between mt-6 mb-2.5">

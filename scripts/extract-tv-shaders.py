@@ -23,6 +23,8 @@ OUT = ROOT / "frontend/static/tv-shaders.json"
 # How docs/tv-visualizer.md groups the effects. An effect missing here lands in "Other", so a
 # new one still shows up; add it to a group when it is added to the app.
 GROUPS = {
+    # Not a forward flight; the Journey also stops in these as interludes.
+    "Scenes": "TINYPLANET SCULPTURE EQCITY STORMSEA GALAXYORBIT SPECTRUMRIDGES ENDLESSZOOM",
     "Patterns and their variations": (
         "HEXPULSE HEXRADAR TRIPULSE HEXFLIP CELLPULSE SPECTRUMRINGS SPECTRUMSQUARES "
         "SPECTRUMSPIRAL RADAR APOLLONIAN APONEON APOPULSE APOGLASS TRUCHET HEXTRUCHET MAZE TUBES "

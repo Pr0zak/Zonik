@@ -411,7 +411,11 @@ if frontend_build.exists():
     @app.get("/{path:path}")
     async def serve_spa(path: str):
         """Serve SvelteKit SPA — return index.html for all non-API routes."""
+        # "no-cache": the browser checks back each time (a cheap 304 via the ETag). Without it
+        # browsers cached the page and tv-shaders.json for hours after a deploy, so new
+        # effects and settings did not show up. The hashed files under /_app stay cacheable.
+        headers = {"Cache-Control": "no-cache"}
         file = frontend_build / path
         if file.is_file():
-            return FileResponse(file)
-        return FileResponse(frontend_build / "index.html")
+            return FileResponse(file, headers=headers)
+        return FileResponse(frontend_build / "index.html", headers=headers)
