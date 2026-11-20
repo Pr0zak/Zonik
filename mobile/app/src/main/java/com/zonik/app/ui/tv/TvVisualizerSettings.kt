@@ -274,7 +274,7 @@ internal fun TvVisualizerSettingsContent(
                 // The Journey effect's own options.
                 val j = state.journey
                 Spacer(Modifier.height(4.dp))
-                // Nineteen rows: they scroll in a box as tall as the column beside them, and the
+                // Twenty-three rows: they scroll in a box as tall as the column beside them, and the
                 // focused one is brought into view.
                 Column(
                     modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState()),
@@ -333,6 +333,18 @@ internal fun TvVisualizerSettingsContent(
                     }
                     SettingRow("Moments: length", Moments.LENGTH_LABELS[j.momentLength]) {
                         actions.setJourney(j.copy(momentLength = (j.momentLength + 1) % Moments.LENGTH_LABELS.size))
+                    }
+                    SettingRow("Lyrics", LyricsShow.MODE_LABELS[j.lyrics]) {
+                        actions.setJourney(j.copy(lyrics = (j.lyrics + 1) % LyricsShow.MODE_LABELS.size))
+                    }
+                    SettingRow("Lyrics: how often", LyricsShow.RATE_LABELS[j.lyricRate]) {
+                        actions.setJourney(j.copy(lyricRate = (j.lyricRate + 1) % LyricsShow.RATE_LABELS.size))
+                    }
+                    SettingRow("Lyrics: style", LyricsShow.STYLE_LABELS[j.lyricStyle]) {
+                        actions.setJourney(j.copy(lyricStyle = (j.lyricStyle + 1) % LyricsShow.STYLE_LABELS.size))
+                    }
+                    SettingRow("Lyrics: clean", if (j.lyricClean) "On" else "Off") {
+                        actions.setJourney(j.copy(lyricClean = !j.lyricClean))
                     }
                     SettingRow("Moments: world glimpses", if (j.glimpses) "On" else "Off") {
                         actions.setJourney(j.copy(glimpses = !j.glimpses))

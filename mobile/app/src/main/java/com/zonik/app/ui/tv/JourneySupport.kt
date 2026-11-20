@@ -810,6 +810,14 @@ data class JourneyOptions(
     val only: Boolean = false,
     /** How long moments last: 0 short, 1 normal, 2 long. */
     val momentLength: Int = 1,
+    /** Lyrics flying at the viewer (every effect): 0 off, 1 words, 2 whole lines. */
+    val lyrics: Int = 1,
+    /** How often: 0 rare, 1 normal, 2 often. */
+    val lyricRate: Int = 1,
+    /** 0 a mix, or always one of LyricsShow's styles (1..9). */
+    val lyricStyle: Int = 0,
+    /** Leave explicit words out. */
+    val lyricClean: Boolean = false,
 ) {
     /** Time of day for the next world (JourneyLook.sky): mostly as made. */
     fun pickSky(random: kotlin.random.Random): Int =
@@ -835,7 +843,7 @@ data class JourneyOptions(
     fun encode(): String =
         listOf(
             length, speed, b(rings), b(fish), b(shuffle), ringPattern, style,
-            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes), moments, momentRate, b(glimpses), b(only), momentLength,
+            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes), moments, momentRate, b(glimpses), b(only), momentLength, lyrics, lyricRate, lyricStyle, b(lyricClean),
         ).joinToString(",")
 
     private fun b(v: Boolean) = if (v) 1 else 0
@@ -869,6 +877,10 @@ data class JourneyOptions(
                 glimpses = p.getOrNull(16)?.let { it != 0 } ?: d.glimpses,
                 only = p.getOrNull(17)?.let { it != 0 } ?: d.only,
                 momentLength = p.getOrNull(18)?.takeIf { it in 0..2 } ?: d.momentLength,
+                lyrics = p.getOrNull(19)?.takeIf { it in 0..2 } ?: d.lyrics,
+                lyricRate = p.getOrNull(20)?.takeIf { it in 0..2 } ?: d.lyricRate,
+                lyricStyle = p.getOrNull(21)?.takeIf { it in 0..9 } ?: d.lyricStyle,
+                lyricClean = p.getOrNull(22)?.let { it != 0 } ?: d.lyricClean,
             )
         }
     }

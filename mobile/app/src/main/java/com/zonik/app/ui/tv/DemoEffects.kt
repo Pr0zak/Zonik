@@ -377,6 +377,117 @@ vec3 shade(vec2 p) {
 """ + FOOTER
 
 /**
+ * The lyrics overlay (LyricsShow): a word or line, drawn white-hot over the effect in one of
+ * nine ways, its texture in uPrev. Premultiplied alpha; the renderer blends it over the
+ * finished frame.
+ */
+internal val LYRIC_FRAGMENT: String = HEADER + """
+// Coverage of the text at q, in the text's own frame (half height s, centred).
+float wA(vec2 q, float s) {
+    vec2 uv = q / vec2(uWordAspect * s, s) * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 0.0;
+    return texture2D(uPrev, vec2(uv.x, 1.0 - uv.y)).a;
+}
+mat2 rot2(float a) { return mat2(cos(a), sin(a), -sin(a), cos(a)); }
+
+void main() {
+    vec2 p = vPos * vec2(uAspect, 1.0);
+    float st = uLyric.x;
+    float t = uLyric.y;
+    float prm = uLyric.z;
+    float s = uLyric2.z * (1.0 + 0.06 * uKick);
+    vec2 q = p - uLyric2.xy;
+    vec3 c1 = vivid(colorAt(prm) + 0.01);
+    vec3 c2 = vivid(colorAt(prm + 0.4) + 0.01);
+    float fade = smoothstep(0.0, 0.06, t) * (1.0 - smoothstep(0.85, 1.0, t));
+    float a = 0.0;
+    vec3 col = vec3(0.0);
+    if (st < 1.5) {
+        // Hurled: from far off straight at the camera, shattering as it arrives.
+        float sc = mix(0.12, 3.2, pow(t, 2.2));
+        vec2 r = q / sc;
+        if (t > 0.72) {
+            vec2 cell = floor(r / (s * 0.18));
+            r += (vec2(hash(cell), hash(cell + 7.0)) - 0.5) * (t - 0.72) * 3.0 * s;
+        }
+        a = wA(r, s) * (1.0 - smoothstep(0.8, 1.0, t)) * smoothstep(0.0, 0.05, t);
+        col = mix(c1, vec3(1.0), 0.55) * a;
+    } else if (st < 2.5) {
+        // Slam: stamped down on the beat with a shake and a shockwave.
+        float k = smoothstep(0.0, 0.1, t);
+        vec2 shake = (vec2(hash(vec2(floor(t * 40.0), 1.0)), hash(vec2(floor(t * 40.0), 2.0))) - 0.5) * 0.05 * (1.0 - smoothstep(0.1, 0.3, t)) * k;
+        a = wA((q + shake) / mix(3.0, 1.0, k), s) * fade;
+        col = mix(c1, vec3(1.0), 0.6) * a;
+        float ring = exp(-abs(length(q) - (t - 0.1) * 3.5) * 18.0) * step(0.1, t) * (1.0 - t);
+        col += c2 * ring * 0.8;
+        a = max(a, ring * 0.6);
+    } else if (st < 3.5) {
+        // Neon sign: flickers on, glows, buzzes with the treble.
+        float on = t < 0.25 ? step(0.35, hash(vec2(floor(t * 30.0), 3.0))) : 1.0 - 0.15 * step(0.92, hash(vec2(floor(t * 24.0), 5.0)));
+        float core = wA(q, s);
+        float g = 0.0;
+        for (int i = 0; i < 8; i++) {
+            float an = float(i) * 0.785398;
+            g += wA(q + vec2(cos(an), sin(an)) * s * 0.07, s);
+        }
+        g /= 8.0;
+        float l = on * fade;
+        col = (c1 * g * 1.3 + mix(c1, vec3(1.0), 0.7) * core) * l * (0.85 + 0.4 * uHigh);
+        a = max(core, g * 0.7) * l;
+    } else if (st < 4.5) {
+        // Glitch reveal: typed out left to right through jumping slices, colours split.
+        float uvx = q.x / (uWordAspect * s) * 0.5 + 0.5;
+        float shown = step(uvx, t * 2.2);
+        float jit = 1.0 - smoothstep(0.35, 0.6, t);
+        q.x += (hash(vec2(floor(q.y / s * 5.0), floor(t * 18.0))) - 0.5) * 0.25 * s * jit;
+        vec2 o = vec2(0.03 * s * (0.3 + jit), 0.0);
+        vec3 rgb = vec3(wA(q + o, s), wA(q, s), wA(q - o, s)) * shown * fade;
+        col = mix(vec3(1.0), c1, 0.3) * rgb;
+        a = max(rgb.r, max(rgb.g, rgb.b));
+    } else if (st < 5.5) {
+        // Spin-in: tumbles in, lands, spins away.
+        float inn = smoothstep(0.0, 0.25, t);
+        float outv = smoothstep(0.75, 1.0, t);
+        float dir = prm < 0.5 ? -1.0 : 1.0;
+        float an = dir * ((1.0 - inn) * 6.2832 - outv * 6.2832);
+        float sc = max(inn * (1.0 - outv), 0.02);
+        a = wA(rot2(an) * q / sc, s);
+        col = mix(c2, vec3(1.0), 0.5) * a;
+    } else if (st < 6.5) {
+        // Explode: holds, then bursts into pieces flying outward on the beat.
+        float b = smoothstep(0.45, 1.0, t);
+        vec2 cell = floor(q / (s * 0.16));
+        vec2 dirv = normalize(cell + 0.5 + 0.001);
+        vec2 r = q - dirv * b * b * 2.2 - (vec2(hash(cell), hash(cell + 3.0)) - 0.5) * b * s;
+        a = wA(r, s) * (1.0 - b) * smoothstep(0.0, 0.06, t);
+        col = mix(mix(vec3(1.0), c1, b), c2, b * b) * a;
+    } else if (st < 7.5) {
+        // Giant backdrop: one huge faint word, slowly growing.
+        a = wA(q / (1.0 + 0.2 * t), s) * fade * (0.22 + 0.2 * uKick);
+        col = c2 * a;
+    } else if (st < 8.5) {
+        // Echo stack: the word over bigger, fainter copies of itself.
+        for (int i = 3; i >= 0; i--) {
+            float fi = float(i);
+            float ai = wA(q / (1.0 + fi * (0.25 + 0.25 * t)), s) * (1.0 - fi * 0.24);
+            col = mix(col, (fi < 0.5 ? mix(c1, vec3(1.0), 0.6) : mix(c1, c2, fi / 3.0)), ai);
+            a = max(a, ai);
+        }
+        col *= fade;
+        a *= fade;
+    } else {
+        // Fly-by: from far down one side, growing and sweeping past.
+        float side = prm < 0.5 ? -1.0 : 1.0;
+        float z = mix(6.0, 0.35, t);
+        vec2 at = vec2(side * 1.6, 0.35) / z * 0.9;
+        a = wA((p - at) * z * 0.5, s) * smoothstep(0.0, 0.1, t) * (1.0 - smoothstep(0.85, 1.0, t));
+        col = mix(c1, vec3(1.0), 0.5) * a;
+    }
+    gl_FragColor = vec4(col, clamp(a, 0.0, 1.0));
+}
+"""
+
+/**
  * Trails: this frame (`uCur`) laid over the last trails frame, zoomed out a hair and faded, so
  * anything that moves leaves a streak. `max` rather than a blend keeps the fresh frame at full
  * strength; the small subtraction makes the tail reach true black in 8-bit instead of
@@ -547,6 +658,12 @@ uniform vec4 uBoard2;
 // A moment over the finished frame (Moments, drawn by the blit): kind (0 none), 0..1 strength,
 // a value per moment, and a fresh random number each frame (grain).
 uniform vec4 uMoment;
+// Lyrics (LyricsShow, the overlay pass): style, 0..1 through its life, a value per showing,
+// whole line (1) or word (0); centre x, y, half height, 0; the text's width per height. The
+// text itself is in uPrev (unit 5) while the overlay draws.
+uniform vec4 uLyric;
+uniform vec4 uLyric2;
+uniform float uWordAspect;
 // The blit's kick effects over a world: colour split and a zoom punch (0 off, 1 on).
 uniform float uKickFx;
 // 1 while a Journey world draws into the offscreen buffer: alpha carries its depth (J_DEPTH).

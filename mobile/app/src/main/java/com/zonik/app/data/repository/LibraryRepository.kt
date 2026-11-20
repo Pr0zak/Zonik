@@ -121,6 +121,14 @@ class LibraryRepository @Inject constructor(
      * it is asked (a few seconds) and answers `pending` meanwhile, so this asks again a few
      * times. Null when the server has none, or is too old to know the endpoint.
      */
+    /** The track's lyrics for the TV, or null when the server has none or is too old to know. */
+    suspend fun getTrackLyrics(trackId: String): com.zonik.app.data.api.TrackLyricsResponse? = try {
+        zonikApi.getTrackLyrics(trackId)
+    } catch (e: Exception) {
+        com.zonik.app.data.DebugLog.d("LibraryRepo", "getTrackLyrics failed: ${e.message}")
+        null
+    }
+
     suspend fun getTrackBeats(trackId: String): com.zonik.app.data.api.TrackBeatsResponse? {
         repeat(BEATS_ATTEMPTS) { attempt ->
             val r = try {

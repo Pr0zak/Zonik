@@ -179,6 +179,10 @@ class TvVisualizerSync @Inject constructor(
         momentsGlimpses = journeyNow().glimpses,
         journeyOnly = journeyNow().only,
         momentsLength = journeyNow().momentLength,
+        lyrics = journeyNow().lyrics,
+        lyricsRate = journeyNow().lyricRate,
+        lyricsStyle = journeyNow().lyricStyle,
+        lyricsClean = journeyNow().lyricClean,
     )
 
     private suspend fun journeyNow() = JourneyOptions.decode(settings.tvJourneyOptions.first())
@@ -225,6 +229,10 @@ class TvVisualizerSync @Inject constructor(
             glimpses = c.momentsGlimpses ?: j.glimpses,
             only = c.journeyOnly ?: j.only,
             momentLength = c.momentsLength ?: j.momentLength,
+            lyrics = c.lyrics ?: j.lyrics,
+            lyricRate = c.lyricsRate ?: j.lyricRate,
+            lyricStyle = c.lyricsStyle ?: j.lyricStyle,
+            lyricClean = c.lyricsClean ?: j.lyricClean,
         )
         set(remote, j) { settings.setTvJourneyOptions(it.encode()) }
         if (changed > 0) DebugLog.d("TvSync", "Applied $changed visualizer settings from the server")
@@ -266,5 +274,9 @@ class TvVisualizerSync @Inject constructor(
         momentsGlimpses = b.momentsGlimpses ?: a.momentsGlimpses,
         journeyOnly = b.journeyOnly ?: a.journeyOnly,
         momentsLength = b.momentsLength ?: a.momentsLength,
+        lyrics = b.lyrics ?: a.lyrics,
+        lyricsRate = b.lyricsRate ?: a.lyricsRate,
+        lyricsStyle = b.lyricsStyle ?: a.lyricsStyle,
+        lyricsClean = b.lyricsClean ?: a.lyricsClean,
     )
 }

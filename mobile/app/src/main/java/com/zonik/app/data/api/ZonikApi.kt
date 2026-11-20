@@ -97,6 +97,10 @@ interface ZonikApi {
     @GET("api/analysis/track/{trackId}/beats")
     suspend fun getTrackBeats(@retrofit2.http.Path("trackId") trackId: String): TrackBeatsResponse
 
+    /** The track's lyrics for the TV visualizer's flying words (looked up on demand). */
+    @GET("api/tv/visualizer/lyrics/{trackId}")
+    suspend fun getTrackLyrics(@retrofit2.http.Path("trackId") trackId: String): TrackLyricsResponse
+
     // --- TV visualizer: settings shared with the web UI, and per-effect stats ---
 
     /** With [wait] and [since], a long poll: the server answers when the config changes. */
@@ -184,6 +188,10 @@ data class TvVisualizerConfig(
     @SerialName("moments_glimpses") val momentsGlimpses: Boolean? = null,
     @SerialName("journey_only") val journeyOnly: Boolean? = null,
     @SerialName("moments_length") val momentsLength: Int? = null,
+    val lyrics: Int? = null,
+    @SerialName("lyrics_rate") val lyricsRate: Int? = null,
+    @SerialName("lyrics_style") val lyricsStyle: Int? = null,
+    @SerialName("lyrics_clean") val lyricsClean: Boolean? = null,
 ) {
     companion object {
         /** A config carrying just the Journey's options. */
@@ -192,6 +200,7 @@ data class TvVisualizerConfig(
             journeyRings = o.rings, journeyFish = o.fish, journeyShuffle = o.shuffle, journeyStyle = o.style,
             journeyCamera = o.camera, journeyDrops = o.drops, journeyWeather = o.weather, journeyBoards = o.boards, journeyMirror = o.mirror, journeyKickFx = o.kickFx, journeyInterludes = o.interludes,
             moments = o.moments, momentsRate = o.momentRate, momentsGlimpses = o.glimpses, journeyOnly = o.only, momentsLength = o.momentLength,
+            lyrics = o.lyrics, lyricsRate = o.lyricRate, lyricsStyle = o.lyricStyle, lyricsClean = o.lyricClean,
         )
     }
 }
@@ -235,6 +244,17 @@ data class TrackAnalysisResponse(
     val danceability: Float? = null,
     val loudness: Float? = null,
 )
+
+/** A track's lyrics: `status` found, none or failed; ms is -1 on every line when untimed. */
+@Serializable
+data class TrackLyricsResponse(
+    val status: String = "none",
+    val synced: Boolean = false,
+    val lines: List<TrackLyricLine> = emptyList(),
+)
+
+@Serializable
+data class TrackLyricLine(val ms: Long = -1, val text: String = "")
 
 /** `status` is ready, pending, none or failed; the grid fields are set only when ready. */
 @Serializable

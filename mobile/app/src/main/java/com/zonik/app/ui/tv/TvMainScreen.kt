@@ -378,6 +378,9 @@ class TvViewModel @Inject constructor(
      * while it loads or when the server has none. Fetched after the tempo, so the clock works
      * from the tempo alone until it arrives.
      */
+    private val _trackLyrics = MutableStateFlow<TrackLyrics?>(null)
+    /** The playing track's lyrics, for the visualizer's flying words. */
+    val trackLyrics: StateFlow<TrackLyrics?> = _trackLyrics.asStateFlow()
     private val _trackBeats = MutableStateFlow<TrackBeats?>(null)
     val trackBeats: StateFlow<TrackBeats?> = _trackBeats.asStateFlow()
 
@@ -399,6 +402,17 @@ class TvViewModel @Inject constructor(
                     com.zonik.app.data.DebugLog.w("TvVM", "No tempo for $id: ${e.message}")
                     0f
                 }
+            }
+        }
+        viewModelScope.launch {
+            currentTrack.collectLatest { track ->
+                _trackLyrics.value = null
+                val id = track?.id ?: return@collectLatest
+                val r = kotlinx.coroutines.withContext(Dispatchers.IO) { libraryRepository.getTrackLyrics(id) }
+                    ?: return@collectLatest
+                if (r.status != "found") return@collectLatest
+                _trackLyrics.value = TrackLyrics(id, r.lines.map { LyricLine(it.ms, it.text) }, r.synced)
+                com.zonik.app.data.DebugLog.d("TvVM", "Lyrics for $id: ${r.lines.size} lines, synced ${r.synced}")
             }
         }
         viewModelScope.launch {
@@ -934,6 +948,7 @@ private fun TvAmbientOverlay(
         JourneyLook.of(track.id, trackBeats?.key, trackBeats?.scale, trackBeats?.energy)
     }
     val art = rememberAmbientArt(track.coverArt)
+    val lyricsNow by viewModel.trackLyrics.collectAsState()
 
     // No background on this Box: the GL surface sits behind the window and shows through a
     // hole in it, so anything opaque drawn here would cover the effect.
@@ -953,6 +968,8 @@ private fun TvAmbientOverlay(
             journeyInterludes = journeyInterludes,
             journeyLook = journeyLook,
             journeyOptions = journeyOptions,
+            lyrics = lyricsNow?.takeIf { it.trackId == track.id },
+            playback = { viewModel.getCurrentPosition() to isPlaying },
             modifier = Modifier.fillMaxSize()
         )
         // Keeps the type legible without burying the effect: darkness where the words are.

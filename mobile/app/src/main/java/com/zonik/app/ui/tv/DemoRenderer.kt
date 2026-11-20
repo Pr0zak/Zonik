@@ -39,6 +39,29 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     @Volatile var journeyInterludes: List<DemoEffect> = JOURNEY_INTERLUDES
     /** This track's colours, density, speed and world order for the Journey worlds. */
     @Volatile var journeyLook: JourneyLook = JourneyLook()
+    /** The track's lyrics, for the flying words (LyricsShow); picked up on the GL thread. */
+    @Volatile var lyrics: TrackLyrics? = null
+        set(v) { field = v; lyricsChanged = true }
+    @Volatile private var lyricsChanged = true
+    @Volatile private var playPos = 0L
+    @Volatile private var playAt = 0L
+    @Volatile private var playing = false
+
+    /** The playback position [positionMs] as heard at wall-clock [atMs]. */
+    fun setPlayback(positionMs: Long, atMs: Long, isPlaying: Boolean) {
+        playPos = positionMs
+        playAt = atMs
+        playing = isPlaying
+    }
+
+    private val lyricsShow = LyricsShow()
+    private var lyricProgram: Program? = null
+    private var lyricTexture = 0
+    private var lyricAspect = 4f
+    private var lyricX = 0f
+    private var lyricY = 0f
+    private var lyricSize = 0.2f
+
     /** The viewer's Journey options (time per world, speed, rings, fish, world order). */
     @Volatile var journeyOptions: JourneyOptions = JourneyOptions()
     /** Motion trails on every effect: each frame is laid over a faded copy of the last. */
@@ -323,6 +346,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         }
         blit = buildPass(BLIT_FRAGMENT)
         trailsProgram = buildPass(TRAILS_FRAGMENT)
+        lyricProgram = buildPass(LYRIC_FRAGMENT)
         flockProgram = buildPass(FLOCK_FRAGMENT, FLOCK_VERTEX).also {
             flockShape = GLES20.glGetAttribLocation(it.id, "aShape")
             flockFish = GLES20.glGetAttribLocation(it.id, "aFish")
@@ -358,6 +382,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, null
         )
         titleTexture = makeTexture(GLES20.GL_LINEAR)
+        lyricTexture = makeTexture(GLES20.GL_LINEAR)
+        lyricsChanged = true
         setTitle(titleText)
 
         GLES20.glGenTextures(1, ids, 0)
@@ -517,6 +543,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         advanceJourney()
         updateTransition(dt)
         val o = journeyOptions
+        advanceLyrics(dt)
         moments.update(
             dt, beatClock, System.currentTimeMillis(), low, kick, world = current.world && next == null,
             mode = o.moments, rate = o.momentRate, glimpses = o.glimpses, length = o.momentLength,
@@ -558,6 +585,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             draw(current, wipe = transition, incomingSide = false)
             draw(incoming, wipe = transition, incomingSide = true)
         }
+        // The flying words over everything.
+        drawLyrics()
     }
 
     /**
@@ -713,6 +742,57 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glDisable(GLES20.GL_BLEND)
     }
 
+    /** Times the flying words, and draws a new one into its texture when it starts. */
+    private fun advanceLyrics(dt: Float) {
+        if (lyricsChanged) {
+            lyricsChanged = false
+            lyricsShow.setLyrics(lyrics)
+        }
+        val now = System.currentTimeMillis()
+        val pos = if (playAt == 0L) null else playPos + (if (playing) now - playAt else 0L)
+        val o = journeyOptions
+        if (lyricsShow.update(dt, pos, playing, beatClock, now, o.lyrics, o.lyricRate, o.lyricStyle, o.lyricClean)) {
+            val text = lyricsShow.text ?: return
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                color = android.graphics.Color.WHITE
+                textSize = LYRIC_TEXT_PX
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD)
+            }
+            val w = (paint.measureText(text) + LYRIC_TEXT_PX * 0.4f).toInt().coerceIn(32, 4096)
+            val h = (LYRIC_TEXT_PX * 1.35f).toInt()
+            val bitmap = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            android.graphics.Canvas(bitmap).drawText(text, LYRIC_TEXT_PX * 0.2f, LYRIC_TEXT_PX * 1.0f, paint)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lyricTexture)
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            bitmap.recycle()
+            lyricAspect = w.toFloat() / h
+            // Sized to fit the screen's width; placed off centre for the styles that allow it.
+            val maxHalf = if (lyricsShow.isLine) 0.13f else 0.2f
+            lyricSize = minOf(maxHalf, (aspect * 0.92f) / lyricAspect)
+            val r = kotlin.random.Random
+            val roomX = (aspect - lyricAspect * lyricSize).coerceAtLeast(0f)
+            when (lyricsShow.style) {
+                LyricsShow.SLAM, LyricsShow.NEON, LyricsShow.GLITCH, LyricsShow.SPIN, LyricsShow.EXPLODE -> {
+                    lyricX = (r.nextFloat() * 2f - 1f) * roomX * 0.7f
+                    lyricY = (r.nextFloat() * 2f - 1f) * 0.45f
+                }
+                else -> { lyricX = 0f; lyricY = 0f }
+            }
+        }
+    }
+
+    /** The flying word over the finished frame, blended with premultiplied alpha. */
+    private fun drawLyrics() {
+        val prog = lyricProgram ?: return
+        if (!lyricsShow.active || lyricTexture == 0) return
+        GLES20.glEnable(GLES20.GL_BLEND)
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA)
+        drawWith(prog, current, -1f, false, 1f, prevTex = lyricTexture, srcTex = 0)
+        GLES20.glDisable(GLES20.GL_BLEND)
+    }
+
     /** The roll for the director's shot: the crane and side shots keep the horizon level. */
     private fun shotRoll(e: DemoEffect): Float = moments.roll + when (director.shot) {
         JourneyDirector.CRANE, JourneyDirector.SIDE -> 0f
@@ -763,6 +843,13 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uBlitScale", blitScale)
         u1("uDepthOut", if (depthOut) 1f else 0f)
         u1("uKickFx", if (e.world && journeyOptions.kickFx) 1f else 0f)
+        if (lyricsShow.active) {
+            uniforms["uLyric"]?.let {
+                if (it >= 0) GLES20.glUniform4f(it, lyricsShow.style.toFloat(), lyricsShow.t, lyricsShow.param, if (lyricsShow.isLine) 1f else 0f)
+            }
+            uniforms["uLyric2"]?.let { if (it >= 0) GLES20.glUniform4f(it, lyricX, lyricY, lyricSize, 0f) }
+            u1("uWordAspect", lyricAspect)
+        }
         uniforms["uMoment"]?.let {
             if (it >= 0) GLES20.glUniform4f(it, moments.postKind.toFloat(), moments.env, moments.param, momentRandom.nextFloat())
         }
@@ -1549,6 +1636,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val SKIP_TOLERANCE = 1e-3
 
         const val CRUISE = 0.12f
+        /** The flying words' type size in the texture. */
+        const val LYRIC_TEXT_PX = 160f
         /** Spectrum ridges: a row of history every this many seconds, this many rows kept. */
         const val HISTORY_STEP_SEC = 0.11f
         const val HISTORY_ROWS = 32
@@ -1589,7 +1678,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uMoment", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uMoment", "uLyric", "uLyric2", "uWordAspect", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

@@ -49,6 +49,10 @@ fun DemoVisualizer(
     journeyLook: JourneyLook = JourneyLook(),
     /** The viewer's Journey options: time per world, speed, rings, fish, order. */
     journeyOptions: JourneyOptions = JourneyOptions(),
+    /** The track's lyrics for the flying words, or null. */
+    lyrics: TrackLyrics? = null,
+    /** The playback position (ms) and whether it is playing, asked twice a second. */
+    playback: (() -> Pair<Long, Boolean>)? = null,
 ) {
     // One renderer for the life of the screen: changing [effect] fades between effects on the
     // same surface instead of tearing the GL context down.
@@ -63,6 +67,18 @@ fun DemoVisualizer(
     LaunchedEffect(renderer, journeyInterludes) { renderer.journeyInterludes = journeyInterludes }
     LaunchedEffect(renderer, journeyLook) { renderer.journeyLook = journeyLook }
     LaunchedEffect(renderer, journeyOptions) { renderer.journeyOptions = journeyOptions }
+    LaunchedEffect(renderer, lyrics) { renderer.lyrics = lyrics }
+    // The latest lambda, without restarting the loop each time the caller recomposes.
+    val currentPlayback = androidx.compose.runtime.rememberUpdatedState(playback)
+    LaunchedEffect(renderer) {
+        while (true) {
+            val p = currentPlayback.value
+            if (p == null) { kotlinx.coroutines.delay(500L); continue }
+            val (pos, playing) = p()
+            renderer.setPlayback(pos, System.currentTimeMillis(), playing)
+            kotlinx.coroutines.delay(500L)
+        }
+    }
 
     LaunchedEffect(renderer, pulse, beatClock) {
         var lastOnset = 0f
