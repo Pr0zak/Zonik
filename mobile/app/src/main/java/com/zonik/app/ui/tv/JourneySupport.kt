@@ -781,7 +781,7 @@ data class JourneyWorld(
  * - [drops]: the drop moments (flash, inverted beat, shockwave).
  * - [weather]: time of day and weather over the open worlds.
  * - [boards]: the album cover and track title on billboards (JourneyBoard).
- * - [mirror]: mirror bars, the picture folded in two or four for 8 beats.
+ * - [mirror]: mirror bars, the picture folded in two or four for 24 beats.
  * - [kickFx]: colour split and a zoom punch on each kick.
  * - [interludes]: now and then a scene (a planet, the galaxy...) for a phrase between worlds.
  */

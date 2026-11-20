@@ -19,7 +19,7 @@ import kotlin.math.sqrt
  *
  * It also times the other moments over a world: a drop (the beat grid's, or a big bass entry
  * after a quiet stretch without one) flashes, inverts for a beat and sends a shockwave out, and
- * cuts to the crane where there is room; mirror bars fold the picture into two or four for 8
+ * cuts to the crane where there is room; mirror bars fold the picture into two or four for 24
  * beats; and the lens widens with the energy.
  *
  * Pure logic, no GL; positions in the same frame as [JourneyCamera].
@@ -112,7 +112,7 @@ class JourneyDirector(seed: Int = 41) {
         val mirrorDue = if (tempo != null) newBlock else random.nextFloat() < dt / 30f
         if (mirrors && !busy && mirror == 0 && shot == CHASE && mirrorDue && random.nextFloat() < 0.15f) {
             mirror = if (random.nextFloat() < 0.6f) 1 else 2
-            mirrorSec = tempo?.let { it.beatMs * 8f / 1000f } ?: 4f
+            mirrorSec = tempo?.let { it.beatMs * 24f / 1000f } ?: 12f
         }
 
         // The lens: wide when the music is loud, long for the side shot.

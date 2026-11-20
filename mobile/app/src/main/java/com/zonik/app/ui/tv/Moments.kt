@@ -201,7 +201,7 @@ class Moments(seed: Int = 61) {
     private fun beatsOf(k: Int): Float = when (k) {
         HUE -> 16f; BREATHE -> 16f; FOG -> 16f; GRAIN -> 32f; SLOWMO -> 4f; DAYNIGHT -> 32f
         GLIMPSE -> 8f + 4f * random.nextInt(3); GHOST -> 2f; BLUEPRINT -> 8f; THERMAL -> 8f; XRAY -> 8f
-        CRUNCH -> 8f; STUTTER -> 2f; REWIND -> 4f; HYPER -> 1f; KALEIDO -> 8f; ISOLATE -> 16f; UPSIDE -> 16f
+        CRUNCH -> 8f; STUTTER -> 2f; REWIND -> 4f; HYPER -> 1f; KALEIDO -> 32f; ISOLATE -> 16f; UPSIDE -> 16f
         RIPPLE -> 8f; SWIRL -> 8f; GLITCH -> 2f; COMIC -> 16f; ECHO -> 8f; NEONEDGE -> 16f; CRT -> 32f
         HALFTONE -> 8f; DOUBLE -> 2f; SPLIT4 -> 8f; LETTERBOX -> 32f; SEPIA -> 32f; TILT -> 32f
         else -> 4f

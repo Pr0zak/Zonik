@@ -240,7 +240,8 @@ vec3 shade(vec2 p) {
         float r = length(q);
         float a = fastAtan2(q.y, q.x);
         const float SEG = 1.0471976;
-        a = abs(mod(a + uMoment.z * 6.2831853, SEG) - SEG * 0.5);
+        // Turning slowly while it lasts (once round in 40 s).
+        a = abs(mod(a + uMoment.z * 6.2831853 + uTime * PI, SEG) - SEG * 0.5);
         uv = 0.5 + vec2(cos(a), sin(a)) * r / vec2(uAspect, 1.0);
         c = uv - 0.5;
     }
