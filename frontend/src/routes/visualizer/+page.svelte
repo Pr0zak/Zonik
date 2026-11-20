@@ -170,6 +170,7 @@
 		{ key: 'journey_boards', label: 'Journey cover billboards' },
 		{ key: 'journey_mirror', label: 'Journey mirror bars' },
 		{ key: 'journey_kick_fx', label: 'Journey kick effects' },
+		{ key: 'journey_interludes', label: 'Journey interludes' },
 	];
 </script>
 

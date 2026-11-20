@@ -173,6 +173,7 @@ class TvVisualizerSync @Inject constructor(
         journeyBoards = journeyNow().boards,
         journeyMirror = journeyNow().mirror,
         journeyKickFx = journeyNow().kickFx,
+        journeyInterludes = journeyNow().interludes,
     )
 
     private suspend fun journeyNow() = JourneyOptions.decode(settings.tvJourneyOptions.first())
@@ -213,6 +214,7 @@ class TvVisualizerSync @Inject constructor(
             boards = c.journeyBoards ?: j.boards,
             mirror = c.journeyMirror ?: j.mirror,
             kickFx = c.journeyKickFx ?: j.kickFx,
+            interludes = c.journeyInterludes ?: j.interludes,
         )
         set(remote, j) { settings.setTvJourneyOptions(it.encode()) }
         if (changed > 0) DebugLog.d("TvSync", "Applied $changed visualizer settings from the server")
@@ -248,5 +250,6 @@ class TvVisualizerSync @Inject constructor(
         journeyBoards = b.journeyBoards ?: a.journeyBoards,
         journeyMirror = b.journeyMirror ?: a.journeyMirror,
         journeyKickFx = b.journeyKickFx ?: a.journeyKickFx,
+        journeyInterludes = b.journeyInterludes ?: a.journeyInterludes,
     )
 }

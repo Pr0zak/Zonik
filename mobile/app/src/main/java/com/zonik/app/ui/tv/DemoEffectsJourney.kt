@@ -650,7 +650,7 @@ vec3 jWeather(vec3 col, vec2 p, float tHit, float hue, float far) {
 // A drop moment (JourneyDirector): a beat in negative, a white flash and a shockwave going out.
 vec3 jDrop(vec3 col, vec2 p) {
     if (uDrop.z > 0.0) col = mix(col, vec3(1.0) - min(col, vec3(1.0)), uDrop.z * 0.8);
-    if (uDrop.y < 1.0) col += vivid(uC0) * exp(-abs(length(p) - uDrop.y * 2.2) * 16.0) * (1.0 - uDrop.y) * 1.6;
+    if (uDrop.y > 0.0 && uDrop.y < 1.0) col += vivid(uC0) * exp(-abs(length(p) - uDrop.y * 2.2) * 16.0) * (1.0 - uDrop.y) * 1.6;
     return col + vec3(uDrop.x * 0.6);
 }
 

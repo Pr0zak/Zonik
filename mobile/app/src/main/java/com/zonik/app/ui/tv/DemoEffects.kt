@@ -156,6 +156,13 @@ enum class DemoEffect(
     GALAXY("Galaxy", GALAXY_BODY, floats = true),
     PULSAR("Ridgelines", PULSAR_BODY),
     BUBBLES("Bubbles", BUBBLES_BODY),
+    SPECTRUMRIDGES("Spectrum ridges", PULSAR_BODY, variant = 1),
+    ENDLESSZOOM("Endless zoom", ENDLESS_BODY),
+    GALAXYORBIT("Galaxy orbit", GALAXY_BODY, variant = 1, floats = true),
+    TINYPLANET("Tiny planet", TINYPLANET_BODY, halfRes = true),
+    SCULPTURE("Liquid sculpture", SCULPTURE_BODY, halfRes = true),
+    EQCITY("Equalizer city", EQCITY_BODY, halfRes = true),
+    STORMSEA("Storm sea", STORMSEA_BODY, halfRes = true),
     COVERBOUNCE("Bouncing cover", COVERBOUNCE_BODY, feedback = true),
     RIBBONS("Ribbons", RIBBONS_BODY),
     GYROID("Gyroid flight", JOURNEY_BODY, halfRes = true, world = true),
@@ -367,6 +374,9 @@ uniform vec3 uCamUp;
 // snow's fall as 0..1 phases, a drop moment (flash, shockwave 0..1, invert, 0) and a billboard
 // (z ahead, centre x, y, half width; kind, 0, 0, 0).
 uniform float uLens;
+// Spectrum ridges: the history's newest row (0..31) plus how far it is to the next, 0..1. The
+// history itself is on unit 1 (uHeight) while those effects draw.
+uniform float uHistory;
 uniform vec4 uSky;
 uniform vec2 uFall;
 uniform vec4 uDrop;

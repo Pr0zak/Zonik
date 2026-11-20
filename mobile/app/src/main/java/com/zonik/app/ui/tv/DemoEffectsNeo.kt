@@ -208,8 +208,16 @@ vec3 shade(vec2 p) {
  */
 internal const val GALAXY_BODY = """
 vec3 shade(vec2 p) {
+#if VARIANT == 1
+    // Galaxy orbit: the view swings round the disc, from nearly face on to nearly edge on and
+    // back every 40 s, and each kick sends a ring of light out through the arms.
+    float tilt = 0.5 + 0.5 * sin(uTime * PI);
+    vec2 q = rot(0.35 + 0.25 * sin(uTime * PI + 1.0)) * p;
+    q.y *= 1.2 + 2.6 * tilt;
+#else
     vec2 q = rot(0.35) * p;
     q.y *= 1.9;
+#endif
     float r = max(length(q), 1e-3);
     float spin = uSpin * PI * 2.0;
     float a = fastAtan2(q.y, q.x);
@@ -226,6 +234,13 @@ vec3 shade(vec2 p) {
     vec2 bf = fract(p * 70.0) - 0.5;
     col += vec3(0.5) * step(0.993, hash(floor(p * 70.0) + 5.0)) * smoothstep(0.3, 0.0, length(bf));
     col += mix(vec3(1.0, 0.95, 0.85), colorAt(0.1), 0.3) * (exp(-r * 7.0) * (0.7 + 0.9 * uLow) + exp(-r * 2.5) * 0.2);
+#if VARIANT == 1
+    for (int i = 0; i < 4; i++) {
+        float age = i == 0 ? uRings.x : (i == 1 ? uRings.y : (i == 2 ? uRings.z : uRings.w));
+        if (age < 0.0) continue;
+        col += colorAt(0.3 + age * 0.2) * exp(-abs(r - age * 0.8) * 16.0) * exp(-age * 1.4) * (0.5 + arm);
+    }
+#endif
     return col;
 }
 """
@@ -236,6 +251,37 @@ vec3 shade(vec2 p) {
  * so the whole range plays out across the stack; kicks lift every peak at once.
  */
 internal const val PULSAR_BODY = """
+#if VARIANT == 1
+// Spectrum ridges: the song's recent past as a range of ridges in perspective, the newest at the
+// front rolling back into the distance. Each ridge is one moment of the real spectrum (the CPU
+// keeps 32 rows of it, on unit 1), bass in the middle and treble out to the sides; a kick
+// lifts the front one. Front to back, a pixel under a ridge is hidden by its fill.
+vec3 shade(vec2 p) {
+    p += uCenter;
+    vec3 col = colorAt(0.66) * 0.012;
+    float head = floor(uHistory);
+    float fr = fract(uHistory);
+    for (int i = 0; i < 32; i++) {
+        float fi = float(i);
+        float d = fi + fr;
+        float s = 1.0 / (1.0 + d * 0.035);
+        float y0 = -0.84 + d * 0.046;
+        float x = p.x / (s * 1.5);
+        if (abs(x) > 1.0) continue;
+        float v = texture2D(uHeight, vec2((abs(x) * 44.0 + 0.5) / 64.0, (head - fi + 0.5) / 32.0)).r;
+        float h = v * smoothstep(1.0, 0.2, abs(x)) * 0.45 * s * (1.0 + 0.7 * uKick * smoothstep(2.0, 0.0, d));
+        float dy = p.y - (y0 + h);
+        float w = 0.007 * s + 0.002;
+        if (abs(dy) < w) {
+            float fade = smoothstep(0.0, 0.6, d) * (1.0 - d / 33.0);
+            vec3 ink = mix(vec3(0.95), colorAt((head - fi) / 32.0 + uPhase * 0.25), 0.45) * (0.55 + 0.9 * v);
+            return mix(col, ink, smoothstep(w, w * 0.3, abs(dy)) * fade);
+        }
+        if (dy < 0.0) return col;
+    }
+    return col;
+}
+#else
 vec3 shade(vec2 p) {
     p += uCenter;
     vec3 col = vec3(0.0);
@@ -262,6 +308,7 @@ vec3 shade(vec2 p) {
     }
     return col;
 }
+#endif
 """
 
 /**

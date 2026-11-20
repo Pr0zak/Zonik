@@ -44,6 +44,7 @@ fun DemoVisualizer(
     trails: Boolean = false,
     /** The worlds the Journey effect flies through. */
     journeyWorlds: List<DemoEffect> = JOURNEY_WORLDS,
+    journeyInterludes: List<DemoEffect> = JOURNEY_INTERLUDES,
     /** This track's colours, density, speed and world order for the Journey worlds. */
     journeyLook: JourneyLook = JourneyLook(),
     /** The viewer's Journey options: time per world, speed, rings, fish, order. */
@@ -59,6 +60,7 @@ fun DemoVisualizer(
     LaunchedEffect(renderer, title) { renderer.setTitle(title) }
     LaunchedEffect(renderer, trails) { renderer.trails = trails }
     LaunchedEffect(renderer, journeyWorlds) { renderer.journeyWorlds = journeyWorlds }
+    LaunchedEffect(renderer, journeyInterludes) { renderer.journeyInterludes = journeyInterludes }
     LaunchedEffect(renderer, journeyLook) { renderer.journeyLook = journeyLook }
     LaunchedEffect(renderer, journeyOptions) { renderer.journeyOptions = journeyOptions }
 

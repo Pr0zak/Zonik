@@ -64,6 +64,7 @@ DEFAULTS: dict = {
     "journey_boards": True,
     "journey_mirror": True,
     "journey_kick_fx": False,
+    "journey_interludes": True,
 }
 
 TRANSITIONS = [

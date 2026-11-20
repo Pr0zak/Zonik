@@ -35,6 +35,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     @Volatile var effect: DemoEffect = initial
     /** The worlds the Journey flies through (the switched-on ones, or all). */
     @Volatile var journeyWorlds: List<DemoEffect> = JOURNEY_WORLDS
+    /** The interlude scenes that are switched on (JourneySequencer.interludes). */
+    @Volatile var journeyInterludes: List<DemoEffect> = JOURNEY_INTERLUDES
     /** This track's colours, density, speed and world order for the Journey worlds. */
     @Volatile var journeyLook: JourneyLook = JourneyLook()
     /** The viewer's Journey options (time per world, speed, rings, fish, world order). */
@@ -274,6 +276,13 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val peakHold = FloatArray(SPECTRUM_BANDS)
     private val spectrumBytes = ByteBuffer.allocateDirect(SPECTRUM_BANDS * 2)
     private var spectrumTexture = 0
+    /** The voxel flight's heightmap (unit 1), and the spectrum's recent past that shares the unit. */
+    private var heightTexture = 0
+    private var historyTexture = 0
+    private val historyBytes = ByteBuffer.allocateDirect(SPECTRUM_BANDS)
+    private var historyHead = 0
+    private var historySec = 0f
+    private var historyDue = false
 
     // Shockwave rings: seconds since each was launched by a kick, or -1 when idle.
     private val ringAges = floatArrayOf(-1f, -1f, -1f, -1f)
@@ -357,6 +366,20 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE_ALPHA, SPECTRUM_BANDS, 1, 0,
             GLES20.GL_LUMINANCE_ALPHA, GLES20.GL_UNSIGNED_BYTE, null
         )
+
+        // The spectrum's recent past: one row of bands every HISTORY_STEP_SEC, a ring of rows.
+        GLES20.glGenTextures(1, ids, 0)
+        historyTexture = ids[0]
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, historyTexture)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_REPEAT)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_NEAREST)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, SPECTRUM_BANDS, HISTORY_ROWS, 0,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, ByteBuffer.allocateDirect(SPECTRUM_BANDS * HISTORY_ROWS)
+        )
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
 
         // A new EGL context has lost any texture uploaded to the old one.
         pendingCover = cover ?: fallbackTexture(paletteColors)
@@ -444,6 +467,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         pendingCover?.let { uploadCover(it) }
         advance(dt)
         uploadSpectrum()
+        uploadHistory()
         uploadWave()
         pendingTitle?.let { uploadTitle(it) }
 
@@ -793,6 +817,17 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         uniforms["uSpectrum"]?.let { if (it >= 0) GLES20.glUniform1i(it, 2) }
         uniforms["uWave"]?.let { if (it >= 0) GLES20.glUniform1i(it, 3) }
         uniforms["uHeight"]?.let { if (it >= 0) GLES20.glUniform1i(it, 1) }
+        // Unit 1 is the voxel heightmap, or the spectrum's history for the effects that read it.
+        if (uniforms["uHistory"]?.let { it >= 0 } == true) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, historyTexture)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            u1("uHistory", historyHead + (historySec / HISTORY_STEP_SEC).coerceIn(0f, 0.999f))
+        } else if (uniforms["uHeight"]?.let { it >= 0 } == true) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, heightTexture)
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        }
         uniforms["uTitle"]?.let { if (it >= 0) GLES20.glUniform1i(it, 4) }
         if (prevTex != 0) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE5)
@@ -896,6 +931,11 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         }
         if (lookCurrent.mode == "CYCLE" || lookNext.mode == "CYCLE") fillCyclePalette()
         advanceSpectrum(target, dt)
+        historySec += dt
+        if (historySec >= HISTORY_STEP_SEC) {
+            historySec = (historySec - HISTORY_STEP_SEC).coerceAtMost(HISTORY_STEP_SEC)
+            historyDue = true
+        }
         advanceRings(dt)
         advanceDive(dt)
     }
@@ -1105,6 +1145,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             return
         }
         journey.lengthScale = journeyOptions.lengthScale
+        journey.interludes = if (journeyOptions.interludes) journeyInterludes else emptyList()
         journey.update(
             current, journeyWorlds, if (journeyOptions.shuffle) journeyLook.order else JourneySequencer.FIXED_ORDER,
             beatClock, System.currentTimeMillis(),
@@ -1215,6 +1256,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
         val ids = IntArray(1)
         GLES20.glGenTextures(1, ids, 0)
+        heightTexture = ids[0]
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, ids[0])
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_REPEAT)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_REPEAT)
@@ -1234,6 +1276,24 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         titleAspect = bitmap.width.toFloat() / bitmap.height
+    }
+
+    /** Adds the spectrum as the history's newest row when one is due (Spectrum ridges). */
+    private fun uploadHistory() {
+        if (!historyDue || historyTexture == 0) return
+        historyDue = false
+        historyHead = (historyHead + 1) % HISTORY_ROWS
+        historyBytes.position(0)
+        for (i in 0 until SPECTRUM_BANDS) historyBytes.put((spectrum[i].coerceIn(0f, 1f) * 255f).toInt().toByte())
+        historyBytes.position(0)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE1)
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, historyTexture)
+        GLES20.glTexSubImage2D(
+            GLES20.GL_TEXTURE_2D, 0, 0, historyHead, SPECTRUM_BANDS, 1,
+            GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, historyBytes
+        )
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, heightTexture)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
     }
 
     private fun uploadSpectrum() {
@@ -1426,6 +1486,9 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         const val SKIP_TOLERANCE = 1e-3
 
         const val CRUISE = 0.12f
+        /** Spectrum ridges: a row of history every this many seconds, this many rows kept. */
+        const val HISTORY_STEP_SEC = 0.11f
+        const val HISTORY_ROWS = 32
 
         /** The iris, in [DEMO_TRANSITIONS]: the portal's wipe. */
         const val WIPE_IRIS = 1
@@ -1461,7 +1524,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

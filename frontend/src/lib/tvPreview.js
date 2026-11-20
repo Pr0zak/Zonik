@@ -408,6 +408,8 @@ export class TvPreviewEngine {
 		set('uPre', 1);
 		set('uPer', 1);
 		set('uRings', ...s.rings);
+		// Spectrum ridges read their history from unit 1; here that is the heightmap, scrolled.
+		set('uHistory', (clock * 9) % 32);
 		const balls = loc('uBalls');
 		if (balls) {
 			const b = [];

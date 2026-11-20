@@ -148,3 +148,39 @@ class JourneyBoardTest {
         assertEquals(null, off.ahead(0.0))
     }
 }
+
+class JourneyInterludeTest {
+    @Test
+    fun `every third change stops in an interlude, then goes on to the next world without a gate`() {
+        val seq = JourneySequencer()
+        seq.interludes = listOf(DemoEffect.TINYPLANET, DemoEffect.STORMSEA)
+        val worlds = JOURNEY_WORLDS.take(4)
+        var current = worlds.first()
+        val seen = mutableListOf<DemoEffect>()
+        var gateBeforeInterlude = 0f
+        var t = 0L
+        repeat(10 * 60 * 10) {
+            seq.update(current, worlds, JourneySequencer.FIXED_ORDER, null, t, 1f, 1f, false)
+            val w = seq.world!!
+            if (w != current) {
+                current = w
+                seen += w
+                if (!w.world) gateBeforeInterlude = maxOf(gateBeforeInterlude, lastGate)
+            }
+            lastGate = seq.gate
+            t += 100
+        }
+        val scenes = seen.filter { !it.world }
+        assertTrue("$seen", scenes.size >= 4)
+        assertEquals(listOf(DemoEffect.TINYPLANET, DemoEffect.STORMSEA), scenes.take(2))
+        // The worlds still come in order, the interludes slotted between them.
+        val ws = seen.filter { it.world }
+        for (i in 1 until ws.size) assertEquals(worlds[(worlds.indexOf(ws[i - 1]) + 1) % 4], ws[i])
+        for (i in seen.indices) if (!seen[i].world && i + 1 < seen.size) assertTrue(seen[i + 1].world)
+        assertEquals(0f, gateBeforeInterlude, 0f)
+        val plain = seen.size - scenes.size
+        assertTrue("$plain worlds, ${scenes.size} interludes", scenes.size in plain / 3 - 1..plain / 3 + 1)
+    }
+
+    private var lastGate = 0f
+}

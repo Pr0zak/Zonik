@@ -274,7 +274,7 @@ internal fun TvVisualizerSettingsContent(
                 // The Journey effect's own options.
                 val j = state.journey
                 Spacer(Modifier.height(4.dp))
-                // Thirteen rows: they scroll in a box as tall as the column beside them, and the
+                // Fourteen rows: they scroll in a box as tall as the column beside them, and the
                 // focused one is brought into view.
                 Column(
                     modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState()),
@@ -318,6 +318,9 @@ internal fun TvVisualizerSettingsContent(
                     }
                     SettingRow("Journey: kick effects", if (j.kickFx) "On" else "Off") {
                         actions.setJourney(j.copy(kickFx = !j.kickFx))
+                    }
+                    SettingRow("Journey: interludes", if (j.interludes) "On" else "Off") {
+                        actions.setJourney(j.copy(interludes = !j.interludes))
                     }
                 }
             }

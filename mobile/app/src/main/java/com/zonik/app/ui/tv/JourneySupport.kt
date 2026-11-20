@@ -72,6 +72,15 @@ data class JourneyLook(
 val JOURNEY_WORLDS: List<DemoEffect> = DemoEffect.entries.filter { it.world }
 
 /**
+ * Scenes the Journey can stop in for a phrase between two worlds (JourneySequencer.interludes):
+ * the ones that are not a forward flight, so the break reads as a change of view.
+ */
+val JOURNEY_INTERLUDES: List<DemoEffect> = listOf(
+    DemoEffect.TINYPLANET, DemoEffect.GALAXYORBIT, DemoEffect.SPECTRUMRIDGES, DemoEffect.ENDLESSZOOM,
+    DemoEffect.SCULPTURE, DemoEffect.STORMSEA, DemoEffect.EQCITY,
+)
+
+/**
  * The Journey's sequencer: which world it is in or flying to, when the next portal opens, and
  * the gate's distance ahead. Pure logic, driven once a frame by the renderer, so it can be
  * tested without a GL context.
@@ -84,8 +93,19 @@ val JOURNEY_WORLDS: List<DemoEffect> = DemoEffect.entries.filter { it.world }
  * - with neither: [FALLBACK_WORLD_MS], then the next kick (or [KICK_WAIT_MS] at most).
  * For the last bar before it (1.2 to 3 s), the gate is up and closing in, so the camera
  * passes through it as the portal opens.
+ *
+ * With [interludes], every [INTERLUDE_EVERY]th change stops in one of them for a phrase on the
+ * way to the next world (no gate: those changes wipe rather than fly through a portal).
  */
 class JourneySequencer {
+    /** Scenes to stop in between worlds now and then; empty for none. */
+    var interludes: List<DemoEffect> = emptyList()
+    private var changes = 0
+    private var interludeTurn = 0
+    /** The world to go on to after the interlude on screen. */
+    private var afterInterlude: DemoEffect? = null
+    /** The next change goes to an interlude, so no gate goes up for it. */
+    private var nextIsInterlude = false
     /** The world to be in: the renderer flies to it whenever it differs from the one shown. */
     var world: DemoEffect? = null
         private set
@@ -104,6 +124,9 @@ class JourneySequencer {
 
     fun reset() {
         world = null
+        afterInterlude = null
+        nextIsInterlude = false
+        changes = 0
         gate = 0f
         planned = false
         plannedWith = null
@@ -125,7 +148,8 @@ class JourneySequencer {
     ) {
         val ws = worlds.ifEmpty { JOURNEY_WORLDS }
         val w = world
-        if (w == null || w !in ws) {
+        val inInterlude = afterInterlude != null && w != null && !w.world
+        if (w == null || (w !in ws && !inInterlude)) {
             world = if (current.world && current in ws) current else ordered(ws, order).first()
             planned = false
         }
@@ -143,13 +167,27 @@ class JourneySequencer {
             plan(clock, nowMs)
             left = msLeft(nowMs)
         }
-        gate = if (left >= 0f && left <= gateLeadMs(clock)) left / 1000f * unitsPerSec else 0f
+        val gateUp = !inInterlude && !nextIsInterlude
+        gate = if (gateUp && left >= 0f && left <= gateLeadMs(clock)) left / 1000f * unitsPerSec else 0f
         if (left > 0f) return
         // Due. On a tempo the moment is the beat itself; without one, wait for a kick.
         val onBeat = clock?.hasTempo == true || kick > 0.9f || left < -KICK_WAIT_MS
         if (!onBeat) return
         val o = ordered(ws, order)
-        world = o[(o.indexOf(world) + 1) % o.size]
+        if (inInterlude) {
+            world = afterInterlude
+            afterInterlude = null
+        } else {
+            val nextWorld = o[(o.indexOf(world) + 1) % o.size]
+            if (nextIsInterlude && interludes.isNotEmpty()) {
+                afterInterlude = nextWorld
+                world = interludes[interludeTurn++ % interludes.size]
+            } else {
+                world = nextWorld
+            }
+            changes++
+        }
+        nextIsInterlude = afterInterlude == null && interludes.isNotEmpty() && (changes + 1) % INTERLUDE_EVERY == 0
         gate = 0f
         plan(clock, nowMs)
     }
@@ -190,6 +228,8 @@ class JourneySequencer {
         const val DROP_WINDOW_MS = 30_000f
         const val FALLBACK_WORLD_MS = 24_000f
         const val PHRASE_BEATS = 32
+        /** Every this many world changes, one goes by way of an interlude. */
+        const val INTERLUDE_EVERY = 3
         const val KICK_WAIT_MS = 1_500f
         /** A plan further off than any the rules make (20 s + 30 s + a slow phrase) is stale. */
         const val MAX_PLAN_MS = 90_000f
@@ -734,6 +774,7 @@ data class JourneyWorld(
  * - [boards]: the album cover and track title on billboards (JourneyBoard).
  * - [mirror]: mirror bars, the picture folded in two or four for 8 beats.
  * - [kickFx]: colour split and a zoom punch on each kick.
+ * - [interludes]: now and then a scene (a planet, the galaxy...) for a phrase between worlds.
  */
 data class JourneyOptions(
     val length: Int = 1,
@@ -749,6 +790,7 @@ data class JourneyOptions(
     val boards: Boolean = true,
     val mirror: Boolean = true,
     val kickFx: Boolean = false,
+    val interludes: Boolean = true,
 ) {
     /** Time of day for the next world (JourneyLook.sky): mostly as made. */
     fun pickSky(random: kotlin.random.Random): Int =
@@ -774,7 +816,7 @@ data class JourneyOptions(
     fun encode(): String =
         listOf(
             length, speed, b(rings), b(fish), b(shuffle), ringPattern, style,
-            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx),
+            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes),
         ).joinToString(",")
 
     private fun b(v: Boolean) = if (v) 1 else 0
@@ -802,6 +844,7 @@ data class JourneyOptions(
                 boards = p.getOrNull(10)?.let { it != 0 } ?: d.boards,
                 mirror = p.getOrNull(11)?.let { it != 0 } ?: d.mirror,
                 kickFx = p.getOrNull(12)?.let { it != 0 } ?: d.kickFx,
+                interludes = p.getOrNull(13)?.let { it != 0 } ?: d.interludes,
             )
         }
     }

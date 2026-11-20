@@ -896,6 +896,8 @@ private fun TvAmbientOverlay(
     val journeyWorlds = remember(enabled) {
         enabled.filter { it.world }.ifEmpty { JOURNEY_WORLDS }
     }
+    // Interludes only from the scenes that are switched on.
+    val journeyInterludes = remember(enabled) { JOURNEY_INTERLUDES.filter { it in enabled } }
 
     // Cover and title: always, never, or shown on each track change and remote press, then
     // faded so the effect gets the whole screen.
@@ -947,6 +949,7 @@ private fun TvAmbientOverlay(
             title = "${track.title}  ·  ${track.artist}",
             trails = trails,
             journeyWorlds = journeyWorlds,
+            journeyInterludes = journeyInterludes,
             journeyLook = journeyLook,
             journeyOptions = journeyOptions,
             modifier = Modifier.fillMaxSize()
