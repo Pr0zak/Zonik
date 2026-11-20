@@ -17,6 +17,8 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from dataclasses import dataclass
+
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,15 +141,34 @@ def payload(row: TrackLyrics | None) -> dict:
     }
 
 
+@dataclass
+class TrackInfo:
+    """What a lookup needs from a track, copied out of the ORM object so a rollback (which
+    expires every loaded object) cannot break the rest of a batch."""
+    id: str
+    file_path: str
+    title: str | None
+    artist: str | None
+    album: str | None
+    duration: float | None
+
+    @staticmethod
+    def of(t: Track) -> "TrackInfo":
+        return TrackInfo(t.id, t.file_path, t.title, t.artist.name if t.artist else None,
+                         t.album.name if t.album else None, t.duration_seconds)
+
+
 def _stale(row: TrackLyrics) -> bool:
     return row.status != "found" and (row.checked_at or datetime.min) < datetime.utcnow() - timedelta(days=RETRY_DAYS)
 
 
-async def find(db: AsyncSession, track: Track, online: bool, client: httpx.AsyncClient | None = None) -> TrackLyrics:
+async def find(db: AsyncSession, track: "Track | TrackInfo", online: bool, client: httpx.AsyncClient | None = None) -> TrackLyrics:
     """Looks a track's lyrics up (file first, then LRCLIB when [online]) and stores the result.
 
     A network error is not stored as a miss, so the next try asks again.
     """
+    if isinstance(track, Track):
+        track = TrackInfo.of(track)
     text: str | None = None
     source: str | None = None
     abs_path = Path(get_settings().library.music_dir) / track.file_path
@@ -159,8 +180,7 @@ async def find(db: AsyncSession, track: Track, online: bool, client: httpx.Async
         own = client is None
         c = client or httpx.AsyncClient(timeout=10, headers={"User-Agent": USER_AGENT})
         try:
-            text = await from_lrclib(c, track.artist.name, track.title,
-                                     track.album.name if track.album else None, track.duration_seconds)
+            text = await from_lrclib(c, track.artist, track.title, track.album, track.duration)
             source = "lrclib" if text else None
         finally:
             if own:
@@ -207,12 +227,12 @@ async def fetch_batch(db: AsyncSession, limit: int, online: bool) -> dict:
     checked = select(TrackLyrics.track_id).where(
         (TrackLyrics.status == "found") | (TrackLyrics.checked_at >= datetime.utcnow() - timedelta(days=RETRY_DAYS))
     )
-    tracks = (await db.execute(
+    tracks = [TrackInfo.of(t) for t in (await db.execute(
         select(Track).options(selectinload(Track.artist), selectinload(Track.album))
         .where(Track.id.notin_(checked))
         .order_by(Track.last_played_at.desc().nullslast(), Track.created_at.desc())
         .limit(limit)
-    )).scalars().all()
+    )).scalars().all()]
     found = timed = missing = failed = 0
     errors: list[str] = []
     async with httpx.AsyncClient(timeout=10, headers={"User-Agent": USER_AGENT}) as client:
@@ -226,7 +246,8 @@ async def fetch_batch(db: AsyncSession, limit: int, online: bool) -> dict:
                     missing += 1
             except Exception as e:
                 failed += 1
-                errors.append(f"{t.title}: {e}"[:120])
+                errors.append(f"{t.title}: {type(e).__name__}: {e}"[:160])
+                log.warning("lyrics: lookup for %s failed: %s", t.id, e)
                 await db.rollback()
                 if failed >= 15 and found == 0:
                     log.warning("lyrics: stopping after %d failures in a row", failed)
