@@ -72,6 +72,13 @@ DEFAULTS: dict = {
     # Journey only: the TV shows the Journey all the time instead of rotating effects.
     "journey_only": False,
     "moments_length": 1,
+    # Lyrics: words (or whole lines) flying at the viewer. lyrics 0 off, 1 words, 2 lines.
+    "lyrics": 1,
+    "lyrics_rate": 1,
+    "lyrics_style": 0,
+    "lyrics_clean": False,
+    # Whether the server may look lyrics up on LRCLIB (sends artist, title, album, duration).
+    "lyrics_online": True,
 }
 
 TRANSITIONS = [
@@ -102,6 +109,10 @@ OPTIONS: dict = {
     "moments": [[0, "Off"], [1, "Subtle"], [2, "Mixed"], [3, "Striking"]],
     "moments_rate": [[0, "Rare"], [1, "Normal"], [2, "Often"]],
     "moments_length": [[0, "Short"], [1, "Normal"], [2, "Long"]],
+    "lyrics": [[0, "Off"], [1, "Words"], [2, "Whole lines"]],
+    "lyrics_rate": [[0, "Rare"], [1, "Normal"], [2, "Often"]],
+    "lyrics_style": [[0, "Mixed"], [1, "Hurled"], [2, "Slam"], [3, "Neon sign"], [4, "Glitch reveal"],
+                     [5, "Spin-in"], [6, "Explode"], [7, "Giant backdrop"], [8, "Echo stack"], [9, "Fly-by"]],
 }
 
 
@@ -275,3 +286,15 @@ async def get_stats(days: int = 30, db: AsyncSession = Depends(get_db)):
                for d, n, last in (await db.execute(devices_q)).all()]
     return {"days": days, "total_seconds": round(total_seconds, 1),
             "effects": effects, "devices": devices}
+
+
+@router.get("/lyrics/{track_id}")
+async def track_lyrics(track_id: str, db: AsyncSession = Depends(get_db)):
+    """A track's lyrics for the visualizer's flying words: {status, synced, lines: [{ms, text}]}.
+
+    Looked up now if they never were (the file, then LRCLIB when lyrics_online allows), so a
+    track the scheduled Lyrics Fetch has not reached still gets them.
+    """
+    from backend.services import lyrics as lyrics_service
+    online = bool(_payload(await _load(db))["config"].get("lyrics_online", True))
+    return await lyrics_service.get_or_find(db, track_id, online)

@@ -69,6 +69,16 @@ async def run_scheduled_tasks(ctx: dict):
 
     # Use a short-lived session to read the schedule — do NOT hold it open during tasks
     async with async_session() as db:
+        # A task added in a new version (and on by default) is scheduled without anyone
+        # having to open the Schedule page first, which is where the list was filled in.
+        from backend.api.schedule import DEFAULT_TASKS
+        existing = set((await db.execute(select(ScheduleTask.task_name))).scalars().all())
+        if existing:
+            missing = [d for d in DEFAULT_TASKS if d["task_name"] not in existing]
+            for d in missing:
+                db.add(ScheduleTask(**d))
+            if missing:
+                await db.commit()
         result = await db.execute(select(ScheduleTask).where(ScheduleTask.enabled.is_(True)))
         tasks = result.scalars().all()
 

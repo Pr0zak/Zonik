@@ -162,6 +162,9 @@
 		{ key: 'moments', label: 'Moments' },
 		{ key: 'moments_rate', label: 'Moments: how often' },
 		{ key: 'moments_length', label: 'Moments: length' },
+		{ key: 'lyrics', label: 'Lyrics' },
+		{ key: 'lyrics_rate', label: 'Lyrics: how often' },
+		{ key: 'lyrics_style', label: 'Lyrics: style' },
 	];
 	const SWITCHES = [
 		{ key: 'enabled', label: 'Visualizer on' },
@@ -179,6 +182,7 @@
 		{ key: 'journey_kick_fx', label: 'Journey kick effects' },
 		{ key: 'journey_interludes', label: 'Journey interludes' },
 		{ key: 'moments_glimpses', label: 'Moments: world glimpses' },
+		{ key: 'lyrics_clean', label: 'Lyrics: clean (no explicit words)' },
 	];
 </script>
 

@@ -17,7 +17,7 @@ from backend.config import get_settings
 from backend.database import async_session, engine, init_db
 from backend.models.user import User
 from backend.models.job import Job
-from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer, tidy as tidy_api, download_attempts, download_batches, auth as auth_api
+from backend.api import tracks, library, favorites, playlists, jobs, download, discovery, analysis, schedule, websocket, config_api, users, map as map_api, recommendations, upgrades, ai_search, playlist_import, app_logs, pair, live, assistant, ai_usage, attention, catalog as catalog_api, tv_visualizer, tidy as tidy_api, download_attempts, download_batches, auth as auth_api, lyrics as lyrics_api
 from backend.subsonic import router as subsonic_router
 from backend.subsonic.responses import error_response
 
@@ -349,6 +349,7 @@ _api(pair.router, "/api/pair", "pair")
 _api(live.router, "/api/live", "live")
 _api(attention.router, "/api/attention", "attention")
 _api(ai_usage.router, "/api/ai-usage", "ai-usage")
+_api(lyrics_api.router, "/api/lyrics", "lyrics")
 # The websocket authenticates itself (backend.auth.resolve.websocket_allowed).
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 

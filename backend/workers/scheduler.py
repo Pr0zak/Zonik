@@ -40,6 +40,7 @@ _TASK_LABELS = {
     "remix_discovery": "Remix Discovery",
     "download_cleanup": "Download Cleanup",
     "job_cleanup": "Job History Cleanup",
+    "lyrics_fetch": "Lyrics Fetch",
 }
 
 
@@ -237,6 +238,12 @@ async def run_task(task_name: str, db: AsyncSession, job_id: str | None = None):
             from backend.services.scanner import cleanup_download_dir
             max_age = task_config.get("max_age_hours", 24) if task_config else 24
             result = cleanup_download_dir(max_age_hours=max_age)
+            job.result = json.dumps(result)
+
+        elif task_name == "lyrics_fetch":
+            from backend.api.lyrics import online_allowed
+            from backend.services.lyrics import fetch_batch
+            result = await fetch_batch(db, limit=count or 300, online=await online_allowed(db))
             job.result = json.dumps(result)
 
         elif task_name == "job_cleanup":

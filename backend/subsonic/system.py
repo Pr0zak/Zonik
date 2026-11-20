@@ -88,11 +88,10 @@ async def get_license(request: Request):
 @router.get("/getOpenSubsonicExtensions")
 @router.get("/getOpenSubsonicExtensions.view")
 async def get_open_subsonic_extensions(request: Request):
-    # NOTE: songLyrics is intentionally omitted — Zonik does not store lyrics.
-    # The /getLyrics and /getLyricsBySongId endpoints below are stubs so clients
-    # that probe them get a well-formed empty response instead of a 404.
+    # songLyrics: lyrics come from the Lyrics section's store (backend/services/lyrics.py).
     return subsonic_response({
         "openSubsonicExtensions": [
+            {"name": "songLyrics", "versions": [1]},
             {"name": "transcodeOffset", "versions": [1]},
             {"name": "formPost", "versions": [1]},
             {"name": "mediaType", "versions": [1]},
@@ -100,17 +99,39 @@ async def get_open_subsonic_extensions(request: Request):
     }, _get_format(request))
 
 
+async def _stored_lyrics(db: AsyncSession, track_id: str) -> tuple[bool, list]:
+    """(synced, [[ms, text]]) for a track from the Lyrics section's store; looked up now
+    (file, then LRCLIB if allowed) when it never was."""
+    from backend.api.lyrics import online_allowed
+    from backend.services.lyrics import get_or_find
+    p = await get_or_find(db, track_id, await online_allowed(db))
+    if p.get("status") != "found":
+        return False, []
+    return bool(p.get("synced")), [[ln["ms"], ln["text"]] for ln in p.get("lines", [])]
+
+
 @router.get("/getLyrics")
 @router.get("/getLyrics.view")
 async def get_lyrics(request: Request, db: AsyncSession = Depends(get_db)):
-    """Return empty lyrics — Zonik does not store lyrics. Spec: 1.2+."""
+    """Plain lyrics by artist and title (Subsonic 1.2+), from the stored lyrics of the first
+    matching track."""
+    from backend.models.artist import Artist
     artist = request.query_params.get("artist", "")
     title = request.query_params.get("title", "")
+    value = ""
+    if title:
+        q = select(Track.id).where(Track.title.ilike(title))
+        if artist:
+            q = q.join(Artist, Artist.id == Track.artist_id).where(Artist.name.ilike(artist))
+        track_id = (await db.execute(q.limit(1))).scalar_one_or_none()
+        if track_id:
+            _, lines = await _stored_lyrics(db, track_id)
+            value = "\n".join(t for _, t in lines)
     return subsonic_response({
         "lyrics": {
             "artist": artist,
             "title": title,
-            "value": "",
+            "value": value,
         }
     }, _get_format(request))
 
@@ -118,11 +139,13 @@ async def get_lyrics(request: Request, db: AsyncSession = Depends(get_db)):
 @router.get("/getLyricsBySongId")
 @router.get("/getLyricsBySongId.view")
 async def get_lyrics_by_song_id(request: Request, db: AsyncSession = Depends(get_db)):
-    """OpenSubsonic structured lyrics endpoint — returns empty list. Zonik
-    does not store lyrics; included so clients don't 404 if they probe it."""
+    """OpenSubsonic structured lyrics (songLyrics extension): timed lines when the stored
+    lyrics have them."""
     song_id = request.query_params.get("id", "")
     artist_name = ""
     title = ""
+    synced = False
+    lines: list = []
     if song_id:
         result = await db.execute(
             select(Track).options(selectinload(Track.artist)).where(Track.id == song_id)
@@ -131,6 +154,8 @@ async def get_lyrics_by_song_id(request: Request, db: AsyncSession = Depends(get
         if track:
             artist_name = track.artist.name if track.artist else ""
             title = track.title
+            synced, lines = await _stored_lyrics(db, song_id)
+    line = [({"start": ms, "value": t} if synced else {"value": t}) for ms, t in lines]
     return subsonic_response({
         "lyricsList": {
             "structuredLyrics": [
@@ -138,9 +163,9 @@ async def get_lyrics_by_song_id(request: Request, db: AsyncSession = Depends(get
                     "displayArtist": artist_name,
                     "displayTitle": title,
                     "lang": "xxx",
-                    "synced": False,
-                    "line": [],
+                    "synced": synced,
+                    "line": line,
                 }
-            ]
+            ] if line else []
         }
     }, _get_format(request))

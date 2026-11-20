@@ -24,6 +24,7 @@ from backend.models.ai_usage import AIUsage
 from backend.models.tv_visualizer import TvVisualizerConfig, TvEffectStat
 from backend.models.download_attempt import DownloadAttempt
 from backend.models.preview_embedding import PreviewEmbedding
+from backend.models.lyrics import TrackLyrics
 
 __all__ = [
     "Artist", "Album", "Track", "Playlist", "PlaylistTrack",
@@ -31,5 +32,5 @@ __all__ = [
     "PlayQueue", "Bookmark", "ScheduleTask", "DownloadBlacklist",
     "SoulseekSnapshot", "PlayHistory", "UserTrackStats", "Recommendation", "TasteProfile",
     "TrackUpgrade", "AppLog", "AIUsage", "TvVisualizerConfig", "TvEffectStat",
-    "DownloadAttempt", "PreviewEmbedding",
+    "DownloadAttempt", "PreviewEmbedding", "TrackLyrics",
 ]

@@ -34,6 +34,7 @@ DEFAULT_TASKS = [
     {"task_name": "remix_discovery", "interval_hours": 168, "run_at": "04:00", "day_of_week": 5, "count": 30},
     {"task_name": "download_cleanup", "interval_hours": 24, "run_at": "01:00"},
     {"task_name": "job_cleanup", "interval_hours": 24, "run_at": "03:00"},
+    {"task_name": "lyrics_fetch", "interval_hours": 24, "run_at": "04:15", "count": 300, "enabled": True},
 ]
 
 TASK_LABELS = {
@@ -55,6 +56,7 @@ TASK_LABELS = {
     "remix_discovery": "Remix Discovery",
     "download_cleanup": "Download Cleanup",
     "job_cleanup": "Job History Cleanup",
+    "lyrics_fetch": "Lyrics Fetch",
 }
 
 TASK_DESCRIPTIONS = {
@@ -75,6 +77,7 @@ TASK_DESCRIPTIONS = {
     "upgrade_scan": "Find low-quality tracks (low bitrate, lossy formats) and search Soulseek for higher-quality replacements.",
     "remix_discovery": "Search for remixes, edits, and alternate versions of popular tracks in your library.",
     "download_cleanup": "Remove old downloaded files from the downloads directory. Deletes zero-byte files, non-audio files, and audio files older than 24 hours (already imported into library).",
+    "lyrics_fetch": "Find lyrics for tracks that have none on record, most recently played first: from the file's tags or a .lrc file beside it, then LRCLIB (timed lyrics) if online lookup is on in the Lyrics section. Misses are tried again after 30 days.",
     "job_cleanup": "Prune the jobs table. Removes completed/failed/cancelled jobs older than 30 days and any job older than 90 days regardless of status, keeping the history small.",
 }
 
