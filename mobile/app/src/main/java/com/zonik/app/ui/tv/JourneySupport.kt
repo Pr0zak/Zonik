@@ -758,6 +758,7 @@ data class JourneyWorld(
                 DemoEffect.ISLANDS -> JourneyWorld(intArrayOf(RING, SPHERE, ARCH, TUNNEL), 16.0, 1.2f, true, SHEET, 9.0)
                 DemoEffect.PINBALL -> JourneyWorld(intArrayOf(RING, TUNNEL, RING), 13.0, 1.3f, true, SHEET, 9.0, far = 14f)
                 DemoEffect.RIBBONSKY -> JourneyWorld(intArrayOf(RING, TUNNEL, SPHERE), 16.0, 1.3f, false, SHEET, 9.0)
+                DemoEffect.HEXWORLD -> JourneyWorld(intArrayOf(RING, TUNNEL), 13.0, 1.1f, true, SHEET, 9.0, far = 14f)
                 else -> ENCLOSED
             }
         }

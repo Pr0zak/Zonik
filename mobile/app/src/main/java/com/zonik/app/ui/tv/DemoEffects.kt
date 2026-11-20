@@ -201,6 +201,7 @@ enum class DemoEffect(
     ISLANDS("Floating islands", JOURNEY_BODY, halfRes = true, variant = 28, world = true),
     PINBALL("Pinball arena", JOURNEY_BODY, halfRes = true, variant = 29, world = true),
     RIBBONSKY("Ribbon sky", JOURNEY_BODY, halfRes = true, variant = 30, world = true),
+    HEXWORLD("Hex flip world", JOURNEY_BODY, halfRes = true, variant = 31, world = true),
     JOURNEY("Journey", JOURNEY_BODY, halfRes = true);
 
     val fragmentShader: String = HEADER + "#define VARIANT $variant\n" + body + FOOTER

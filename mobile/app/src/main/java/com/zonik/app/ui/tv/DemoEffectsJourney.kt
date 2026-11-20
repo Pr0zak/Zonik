@@ -670,7 +670,7 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
     fw = normalize(vec3(jPath(1.2), 1.2) - ro);
     rt = normalize(cross(vec3(0.0, 1.0, 0.0), fw));
     up = cross(fw, rt);
-#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15 || VARIANT == 16 || VARIANT == 17 || VARIANT == 26 || VARIANT == 27 || VARIANT == 28 || VARIANT == 29
+#if VARIANT == 3 || VARIANT == 5 || VARIANT == 6 || VARIANT == 7 || VARIANT == 11 || VARIANT == 12 || VARIANT == 13 || VARIANT == 15 || VARIANT == 16 || VARIANT == 17 || VARIANT == 26 || VARIANT == 27 || VARIANT == 28 || VARIANT == 29 || VARIANT == 31
     // A hall, the sky, a canyon, the sea, a city or the sea floor has a floor: bank gently, never roll over.
     sp = rot(0.25 * sin(wrapA(uSpin * PI)) + 0.08 * sin(wrapA(uTime * PI * 2.0)) + uMood.w) * p;
 #else
@@ -828,7 +828,7 @@ const float JFAR = 8.0;
 const float JFAR = 11.0;
 #elif VARIANT == 13 || VARIANT == 16 || VARIANT == 27
 const float JFAR = 12.0;
-#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8 || VARIANT == 12 || VARIANT == 14 || VARIANT == 18 || VARIANT == 15 || VARIANT == 26 || VARIANT == 29
+#elif VARIANT == 9 || VARIANT == 5 || VARIANT == 7 || VARIANT == 8 || VARIANT == 12 || VARIANT == 14 || VARIANT == 18 || VARIANT == 15 || VARIANT == 26 || VARIANT == 29 || VARIANT == 31
 const float JFAR = 14.0;
 #else
 const float JFAR = 17.0;
@@ -945,7 +945,7 @@ vec3 jBack(vec3 ro, vec3 rd, float hue) {
 #elif VARIANT == 18
     // Deep space, with faint stars.
     return colorAt(hue * 2.0 + 0.7) * 0.015 + vec3(1.0) * jStars(rd) * 0.6;
-#elif VARIANT == 26 || VARIANT == 29
+#elif VARIANT == 26 || VARIANT == 29 || VARIANT == 31
     // A dark hall with beams of light sweeping across it on the beat.
     vec3 col = colorAt(hue * 2.0 + 0.7) * 0.015;
     float a = fastAtan2(rd.x, rd.y);
@@ -1073,6 +1073,41 @@ vec3 jCubes(vec3 q, vec2 off) {
 }
 #endif
 
+#if VARIANT == 31
+// Hex flip world: a floor and a ceiling of hexagon tiles. Every kick turns every tile over,
+// in a wave running out ahead of the camera; each tile is lit by its band of the spectrum.
+const float HEXS = 1.2091996;   // JCELL / √3: the hex rows repeat exactly with the cell
+vec2 jHexCell(vec2 p, out vec2 id) {
+    const vec2 r = vec2(1.0, 1.7320508);
+    vec2 h = r * 0.5;
+    vec2 a = mod(p, r) - h;
+    vec2 b = mod(p - h, r) - h;
+    vec2 g = dot(a, a) < dot(b, b) ? a : b;
+    id = p - g;
+    return g;
+}
+// The tile's absolute id (stable as the camera moves), for its hash and its band.
+float jHexId(vec2 id) { return hash(vec2(floor(id.x * 2.0 + 0.5), mod(floor(id.y / 0.8660254 + 0.5) + jCell * 2.0, JCELLS * 2.0))); }
+// How far over a tile at z ahead is, in radians: half a turn per kick, rippling outward.
+float jHexFlip(float z, float h) {
+    float base = 3.1415927 * (mod(uKicks, 2.0) - 1.0);
+    return base + 3.1415927 * smoothstep(0.0, 1.0, (1.0 - uKick) * 4.0 - abs(z) * 0.22 - h * 0.6);
+}
+// Distance to one layer of tiles at height y0 (path-relative).
+float jHexLayer(vec3 q, vec2 off, float y0, out float ang, out float hid) {
+    vec2 id;
+    vec2 g = jHexCell(vec2(q.x, jCellPos(q).z) / HEXS, id);
+    hid = jHexId(id);
+    ang = jHexFlip(q.z, hid);
+    vec3 l = vec3(g.x * HEXS, off.y - y0, g.y * HEXS);
+    float c = cos(ang);
+    float sn = sin(ang);
+    l.yz = vec2(c * l.y - sn * l.z, sn * l.y + c * l.z);
+    vec2 k = abs(l.xz);
+    float hex = max(k.y, dot(k, vec2(0.8660254, 0.5))) - HEXS * 0.43;
+    return min(max(hex, abs(l.y) - 0.05), 0.3);
+}
+#endif
 float jEnv(vec3 q, vec2 off) {
 #if VARIANT == 5
     // Canyon: rough walls either side of the path, a floor below, open to the sky above.
@@ -1205,6 +1240,9 @@ float jEnv(vec3 q, vec2 off) {
     float rail = max(2.2 - abs(off.x), off.y + 0.55);
     float bumper = (h > 0.35 && clear > 0.9) ? max(length(r.xz) - 0.28, off.y + 0.5) : JCELL * 0.5 - max(abs(r.x), abs(r.z)) + 0.3;
     return min(min(floorD, rail), min(bumper, JCELL * 0.45));
+#elif VARIANT == 31
+    float a1; float h1; float a2; float h2;
+    return min(jHexLayer(q, off, -1.1, a1, h1), jHexLayer(q, off, 1.4, a2, h2));
 #elif VARIANT == 30
     // Ribbon sky: three long ribbons of light streaming beside, below and above the flight,
     // waving with the bass, mids and treble.
@@ -1423,6 +1461,23 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     vec3 c = colorAt(hue * 2.0 + hc);
     float cap = smoothstep(-0.55, -0.5, off.y);
     return c * (0.2 + 0.5 * facing) + c * cap * (0.3 + 2.0 * flash) + vec3(1.0) * pow(facing, 30.0) * 0.3;
+#elif VARIANT == 31
+    // Each tile: one face in one palette colour, the other face in another, its band of the
+    // spectrum lighting it, the edges glowing on the beat.
+    float ang;
+    float hid;
+    float y0 = off.y < 0.15 ? -1.1 : 1.4;
+    jHexLayer(q, off, y0, ang, hid);
+    float front = cos(ang) * sign(-y0) * sign(n.y + 1e-3);
+    vec3 face = front > 0.0 ? colorAt(hue * 2.0 + hid * 0.4) : colorAt(hue * 2.0 + 0.5 + hid * 0.4);
+    float lvl = band(floor(hid * 48.0) + 4.0);
+    vec2 id;
+    vec2 g = jHexCell(vec2(q.x, jCellPos(q).z) / HEXS, id);
+    vec2 ka = abs(g);
+    float edge = exp(-(0.5 - max(ka.y, dot(ka, vec2(0.8660254, 0.5)))) * 30.0);
+    vec3 col = face * (0.08 + 0.35 * facing) * (0.5 + 1.2 * lvl);
+    col += face * pow(1.0 - facing, 3.0) * 0.4;
+    return col + vec3(1.0) * edge * (0.15 + 0.6 * uBeat) * abs(n.y);
 #elif VARIANT == 30
     // Ribbons: each its own colour, bright edges, light flowing along them with the music.
     float zz = 3.0 * q.z + jCam.y;
