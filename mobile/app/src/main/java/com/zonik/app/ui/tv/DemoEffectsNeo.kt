@@ -254,7 +254,7 @@ internal const val PULSAR_BODY = """
 #if VARIANT == 1
 // Spectrum ridges: the song's recent past as a range of ridges in perspective, the newest at the
 // front rolling back into the distance. Each ridge is one moment of the real spectrum (the CPU
-// keeps 32 rows of it, on unit 1), bass in the middle and treble out to the sides; a kick
+// keeps 32 rows of it, on unit 1), bass on the left and treble on the right; a kick
 // lifts the front one. Front to back, a pixel under a ridge is hidden by its fill.
 vec3 shade(vec2 p) {
     p += uCenter;
@@ -268,8 +268,11 @@ vec3 shade(vec2 p) {
         float y0 = -0.84 + d * 0.046;
         float x = p.x / (s * 1.5);
         if (abs(x) > 1.0) continue;
-        float v = texture2D(uHeight, vec2((abs(x) * 44.0 + 0.5) / 64.0, (head - fi + 0.5) / 32.0)).r;
-        float h = v * smoothstep(1.0, 0.2, abs(x)) * 0.45 * s * (1.0 + 0.7 * uKick * smoothstep(2.0, 0.0, d));
+        // Bass on the left to treble on the right (skipping the lowest few bands, often all but
+        // empty), so the middle carries the mids and vocals rather than going flat; quiet
+        // values are lifted.
+        float v = pow(texture2D(uHeight, vec2((4.0 + (x * 0.5 + 0.5) * 44.0 + 0.5) / 64.0, (head - fi + 0.5) / 32.0)).r, 0.7);
+        float h = v * smoothstep(1.0, 0.25, abs(x)) * 0.3 * s * (1.0 + 0.7 * uKick * smoothstep(2.0, 0.0, d));
         float dy = p.y - (y0 + h);
         float w = 0.007 * s + 0.002;
         if (abs(dy) < w) {

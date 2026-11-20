@@ -386,6 +386,8 @@ export class TvPreviewEngine {
 		set('uWipeKind', 0);
 		set('uSegments', [6, 8, 10, 12][Math.floor(s.kicks / 16) % 4]);
 		set('uKicks', s.kicks % 256);
+		// Hex flip world: a turn every 4 s, over 1.3 s.
+		set('uFlip', (Math.floor(clock / 4) % 2) + Math.min(((clock % 4) / 1.3), 0.999));
 		set('uPx', 1 / w, 1 / h);
 		set('uBlitScale', 1);
 		set('uRainbow', 0);

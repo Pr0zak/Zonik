@@ -1074,8 +1074,8 @@ vec3 jCubes(vec3 q, vec2 off) {
 #endif
 
 #if VARIANT == 31
-// Hex flip world: a floor and a ceiling of hexagon tiles. Every kick turns every tile over,
-// in a wave running out ahead of the camera; each tile is lit by its band of the spectrum.
+// Hex flip world: a floor and a ceiling of hexagon tiles. Every two bars the tiles turn over
+// in a slow wave running out ahead of the camera; each tile is lit by its band of the spectrum.
 const float HEXS = 1.2091996;   // JCELL / √3: the hex rows repeat exactly with the cell
 vec2 jHexCell(vec2 p, out vec2 id) {
     const vec2 r = vec2(1.0, 1.7320508);
@@ -1088,10 +1088,14 @@ vec2 jHexCell(vec2 p, out vec2 id) {
 }
 // The tile's absolute id (stable as the camera moves), for its hash and its band.
 float jHexId(vec2 id) { return hash(vec2(floor(id.x * 2.0 + 0.5), mod(floor(id.y / 0.8660254 + 0.5) + jCell * 2.0, JCELLS * 2.0))); }
-// How far over a tile at z ahead is, in radians: half a turn per kick, rippling outward.
+// How far over a tile at z ahead is, in radians. uFlip (the CPU's) counts the turns, 0..2:
+// every two bars the tiles turn over once, the wave running out ahead of the camera over
+// about a second, each tile easing in and out of its turn.
 float jHexFlip(float z, float h) {
-    float base = 3.1415927 * (mod(uKicks, 2.0) - 1.0);
-    return base + 3.1415927 * smoothstep(0.0, 1.0, (1.0 - uKick) * 4.0 - abs(z) * 0.22 - h * 0.6);
+    float n = floor(uFlip);
+    float delay = clamp(abs(z) * 0.04, 0.0, 0.6) + h * 0.2;
+    float tp = smoothstep(0.0, 1.0, (uFlip - n) * 1.8 - delay);
+    return 3.1415927 * (n + tp);
 }
 // Distance to one layer of tiles at height y0 (path-relative).
 float jHexLayer(vec3 q, vec2 off, float y0, out float ang, out float hid) {
@@ -1475,7 +1479,7 @@ vec3 jEnvShade(vec3 q, vec2 off, vec3 ro, vec3 rd, float hue) {
     vec2 g = jHexCell(vec2(q.x, jCellPos(q).z) / HEXS, id);
     vec2 ka = abs(g);
     float edge = exp(-(0.5 - max(ka.y, dot(ka, vec2(0.8660254, 0.5)))) * 30.0);
-    vec3 col = face * (0.08 + 0.35 * facing) * (0.5 + 1.2 * lvl);
+    vec3 col = face * (0.14 + 0.45 * facing) * (0.55 + 1.2 * lvl);
     col += face * pow(1.0 - facing, 3.0) * 0.4;
     return col + vec3(1.0) * edge * (0.15 + 0.6 * uBeat) * abs(n.y);
 #elif VARIANT == 30

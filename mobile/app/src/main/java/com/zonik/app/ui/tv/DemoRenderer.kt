@@ -54,6 +54,11 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         playing = isPlaying
     }
 
+    /** Hex flip world: turns made (mod 2), the current turn's progress, and when the next is due. */
+    private var hexTurns = 0
+    private var hexProgress = 0.999f
+    private var hexLastBlock = Long.MIN_VALUE
+    private var hexKicksAtTurn = 0
     private val lyricsShow = LyricsShow()
     private var lyricProgram: Program? = null
     private var lyricTexture = 0
@@ -544,6 +549,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         updateTransition(dt)
         val o = journeyOptions
         advanceLyrics(dt)
+        advanceHexFlip(dt)
         moments.update(
             dt, beatClock, System.currentTimeMillis(), low, kick, world = current.world && next == null,
             mode = o.moments, rate = o.momentRate, glimpses = o.glimpses, length = o.momentLength,
@@ -742,6 +748,24 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         GLES20.glDisable(GLES20.GL_BLEND)
     }
 
+    /** Hex flip world: a turn every two bars (every eight kicks without a tempo), over 1.3 s. */
+    private fun advanceHexFlip(dt: Float) {
+        // Held just short of 1, so the shader's last whole turn reads as finished.
+        if (hexProgress < 0.999f) hexProgress = (hexProgress + dt / 1.3f).coerceAtMost(0.999f)
+        val tempo = beatClock?.takeIf { it.hasTempo }
+        val due = if (tempo != null) {
+            val block = kotlin.math.floor(tempo.beatAt(System.currentTimeMillis()) / (tempo.beatsPerBar * 2)).toLong()
+            (block != hexLastBlock).also { hexLastBlock = block }
+        } else {
+            kickCount - hexKicksAtTurn >= 8
+        }
+        if (due && hexProgress >= 0.999f) {
+            hexTurns = (hexTurns + 1) % 2
+            hexProgress = 0f
+            hexKicksAtTurn = kickCount
+        }
+    }
+
     /** Times the flying words, and draws a new one into its texture when it starts. */
     private fun advanceLyrics(dt: Float) {
         if (lyricsChanged) {
@@ -843,6 +867,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u1("uBlitScale", blitScale)
         u1("uDepthOut", if (depthOut) 1f else 0f)
         u1("uKickFx", if (e.world && journeyOptions.kickFx) 1f else 0f)
+        // hexTurns already counts the turn under way, so the one before it plus its progress.
+        u1("uFlip", ((hexTurns + 1) % 2) + hexProgress)
         if (lyricsShow.active) {
             uniforms["uLyric"]?.let {
                 if (it >= 0) GLES20.glUniform4f(it, lyricsShow.style.toFloat(), lyricsShow.t, lyricsShow.param, if (lyricsShow.isLine) 1f else 0f)
@@ -1678,7 +1704,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uMoment", "uLyric", "uLyric2", "uWordAspect", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uHistory", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uMoment", "uLyric", "uLyric2", "uWordAspect", "uFlip", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

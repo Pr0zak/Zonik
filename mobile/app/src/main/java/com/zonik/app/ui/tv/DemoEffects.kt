@@ -665,6 +665,8 @@ uniform vec4 uMoment;
 uniform vec4 uLyric;
 uniform vec4 uLyric2;
 uniform float uWordAspect;
+// Hex flip world: turns so far, 0..2 (whole turns mod 2 plus the current one's progress).
+uniform float uFlip;
 // The blit's kick effects over a world: colour split and a zoom punch (0 off, 1 on).
 uniform float uKickFx;
 // 1 while a Journey world draws into the offscreen buffer: alpha carries its depth (J_DEPTH).
