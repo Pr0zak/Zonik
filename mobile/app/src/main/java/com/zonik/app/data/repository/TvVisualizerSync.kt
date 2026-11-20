@@ -167,6 +167,12 @@ class TvVisualizerSync @Inject constructor(
         journeyFish = journeyNow().fish,
         journeyShuffle = journeyNow().shuffle,
         journeyStyle = journeyNow().style,
+        journeyCamera = journeyNow().camera,
+        journeyDrops = journeyNow().drops,
+        journeyWeather = journeyNow().weather,
+        journeyBoards = journeyNow().boards,
+        journeyMirror = journeyNow().mirror,
+        journeyKickFx = journeyNow().kickFx,
     )
 
     private suspend fun journeyNow() = JourneyOptions.decode(settings.tvJourneyOptions.first())
@@ -201,6 +207,12 @@ class TvVisualizerSync @Inject constructor(
             fish = c.journeyFish ?: j.fish,
             shuffle = c.journeyShuffle ?: j.shuffle,
             style = c.journeyStyle ?: j.style,
+            camera = c.journeyCamera ?: j.camera,
+            drops = c.journeyDrops ?: j.drops,
+            weather = c.journeyWeather ?: j.weather,
+            boards = c.journeyBoards ?: j.boards,
+            mirror = c.journeyMirror ?: j.mirror,
+            kickFx = c.journeyKickFx ?: j.kickFx,
         )
         set(remote, j) { settings.setTvJourneyOptions(it.encode()) }
         if (changed > 0) DebugLog.d("TvSync", "Applied $changed visualizer settings from the server")
@@ -230,5 +242,11 @@ class TvVisualizerSync @Inject constructor(
         journeyFish = b.journeyFish ?: a.journeyFish,
         journeyShuffle = b.journeyShuffle ?: a.journeyShuffle,
         journeyStyle = b.journeyStyle ?: a.journeyStyle,
+        journeyCamera = b.journeyCamera ?: a.journeyCamera,
+        journeyDrops = b.journeyDrops ?: a.journeyDrops,
+        journeyWeather = b.journeyWeather ?: a.journeyWeather,
+        journeyBoards = b.journeyBoards ?: a.journeyBoards,
+        journeyMirror = b.journeyMirror ?: a.journeyMirror,
+        journeyKickFx = b.journeyKickFx ?: a.journeyKickFx,
     )
 }

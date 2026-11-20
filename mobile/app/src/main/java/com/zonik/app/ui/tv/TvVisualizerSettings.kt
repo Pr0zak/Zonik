@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -273,7 +274,12 @@ internal fun TvVisualizerSettingsContent(
                 // The Journey effect's own options.
                 val j = state.journey
                 Spacer(Modifier.height(4.dp))
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                // Thirteen rows: they scroll in a box as tall as the column beside them, and the
+                // focused one is brought into view.
+                Column(
+                    modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
                     SettingRow("Journey: time per world", JourneyOptions.LENGTH_LABELS[j.length]) {
                         actions.setJourney(j.copy(length = (j.length + 1) % 3))
                     }
@@ -294,6 +300,24 @@ internal fun TvVisualizerSettingsContent(
                     }
                     SettingRow("Journey: world order", if (j.shuffle) "Per track" else "Fixed") {
                         actions.setJourney(j.copy(shuffle = !j.shuffle))
+                    }
+                    SettingRow("Journey: camera shots", if (j.camera) "On" else "Off") {
+                        actions.setJourney(j.copy(camera = !j.camera))
+                    }
+                    SettingRow("Journey: drop moments", if (j.drops) "On" else "Off") {
+                        actions.setJourney(j.copy(drops = !j.drops))
+                    }
+                    SettingRow("Journey: weather", if (j.weather) "On" else "Off") {
+                        actions.setJourney(j.copy(weather = !j.weather))
+                    }
+                    SettingRow("Journey: cover billboards", if (j.boards) "On" else "Off") {
+                        actions.setJourney(j.copy(boards = !j.boards))
+                    }
+                    SettingRow("Journey: mirror bars", if (j.mirror) "On" else "Off") {
+                        actions.setJourney(j.copy(mirror = !j.mirror))
+                    }
+                    SettingRow("Journey: kick effects", if (j.kickFx) "On" else "Off") {
+                        actions.setJourney(j.copy(kickFx = !j.kickFx))
                     }
                 }
             }

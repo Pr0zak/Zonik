@@ -192,7 +192,21 @@ internal val BLIT_FRAGMENT: String = HEADER + """
 uniform sampler2D uBlit;
 // 1 for a full-size buffer; 0.5 when the effect drew into the lower-left quarter (halfRes).
 uniform float uBlitScale;
-vec3 shade(vec2 p) { return texture2D(uBlit, (vPos * 0.5 + 0.5) * uBlitScale).rgb; }
+vec3 shade(vec2 p) {
+    vec2 uv = vPos * 0.5 + 0.5;
+    if (uKickFx > 0.5 && uKick > 0.05) {
+        // On a kick: a small zoom punch and the colours split outward from the middle. The
+        // zoom pulls in further than the split reaches out, so it never reads past the edge.
+        vec2 c = uv - 0.5;
+        uv = 0.5 + c * (1.0 - 0.035 * uKick);
+        vec2 off = c * 0.012 * uKick;
+        return vec3(
+            texture2D(uBlit, (uv + off) * uBlitScale).r,
+            texture2D(uBlit, uv * uBlitScale).g,
+            texture2D(uBlit, (uv - off) * uBlitScale).b);
+    }
+    return texture2D(uBlit, uv * uBlitScale).rgb;
+}
 """ + FOOTER
 
 /**
@@ -348,6 +362,18 @@ uniform vec3 uCamRo;
 uniform vec3 uCamFw;
 uniform vec3 uCamRt;
 uniform vec3 uCamUp;
+// The Journey director (JourneyDirector): focal length against normal (0 = normal, for the
+// web previews), the light and weather (time of day, weather, 0, mirror fold), the rain and
+// snow's fall as 0..1 phases, a drop moment (flash, shockwave 0..1, invert, 0) and a billboard
+// (z ahead, centre x, y, half width; kind, 0, 0, 0).
+uniform float uLens;
+uniform vec4 uSky;
+uniform vec2 uFall;
+uniform vec4 uDrop;
+uniform vec4 uBoard;
+uniform vec4 uBoard2;
+// The blit's kick effects over a world: colour split and a zoom punch (0 off, 1 on).
+uniform float uKickFx;
 // 1 while a Journey world draws into the offscreen buffer: alpha carries its depth (J_DEPTH).
 uniform float uDepthOut;
 

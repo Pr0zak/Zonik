@@ -78,7 +78,10 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val r = kotlin.random.Random
         return Look(
             mode, randomVividPalette(),
-            journeyLook.copy(style = journeyOptions.pickStyle(r), hue = (journeyLook.hue + 0.2f + r.nextFloat() * 0.6f) % 1f),
+            journeyLook.copy(
+                style = journeyOptions.pickStyle(r), hue = (journeyLook.hue + 0.2f + r.nextFloat() * 0.6f) % 1f,
+                sky = journeyOptions.pickSky(r), weather = journeyOptions.pickWeather(r),
+            ),
         )
     }
     @Volatile var pulse: AmbientPulse = AmbientPulse()
@@ -198,6 +201,15 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private val hoops = JourneyHoops()
     private val hoopData = FloatArray(JourneyHoops.SLOTS * 8)
     /** Fish schools in the worlds that have them, the world they swim in, and their dashes. */
+    /** The director's shots, drops and mirror bars, and the camera it films with. */
+    private val director = JourneyDirector()
+    private val shotCam = JourneyCamera()
+    /** The album cover and title billboards, and their uniforms. */
+    private val board = JourneyBoard()
+    private val boardData = FloatArray(8)
+    /** The rain and snow's fall, 0..1, kept on the CPU in full precision. */
+    private var rainFall = 0.0
+    private var snowFall = 0.0
     private val flock = JourneyFlock()
     private var flockWorld: DemoEffect? = null
     private val flockVerts = FloatArray(JourneyFlock.MAX_VERTICES * JourneyFlock.FLOATS)
@@ -445,6 +457,18 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             camera.update(dt, camZ, path)
             landmarks.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
             roll.update(dt, beatClock, now)
+            val shownNow = next ?: current
+            val o = journeyOptions
+            director.update(
+                dt, beatClock, now, JourneyDirector.roomIn(shownNow), JourneyDirector.craneIn(shownNow),
+                shots = o.camera, drops = o.drops, mirrors = o.mirror,
+                busy = journey.gate > 0f || next != null || sincePortal < 1.5f,
+                low = low, kick = kick, energy = motion.energy,
+            )
+            director.apply(camera, shotCam, path, camZ)
+            board.update(dt, travel, JourneyWorld.of(shownNow).spawn, JourneyDirector.roomIn(shownNow), o.boards, titleText)
+            rainFall = (rainFall + dt * 0.55) % 1.0
+            snowFall = (snowFall + dt * 0.06) % 1.0
             hoops.forced = journeyOptions.ringPattern
             hoops.update(JourneyWorld.of(next ?: current), travel, camZ, cruiseUnits, beatClock, now, dt, path)
             val shown = next ?: current
@@ -594,12 +618,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
     private fun drawFlock(e: DemoEffect, wipe: Float, incomingSide: Boolean, sceneTex: Int) {
         val prog = flockProgram ?: return
         if (flockShape < 0 || flockFish < 0) return
-        camera.basis(journeyRoll(e), camBasis)
+        shotCam.basis(shotRoll(e), camBasis)
         // The world is drawn shifted by uCenter (see drawWith), so the fish are too.
         val drift = clock * 0.1
         val cx = (sin(drift * 3.7) * 0.12).toFloat()
         val cy = (sin(drift * 2.9 + 1.3) * 0.08).toFloat()
-        val n = flock.build(flockVerts, travel, camera.pos, camera.fw, camBasis, aspect, cx, cy, JourneyWorld.of(e).far, 1f)
+        val n = flock.build(flockVerts, travel, shotCam.pos, shotCam.fw, camBasis, aspect, cx, cy, JourneyWorld.of(e).far, 1f, 1.3f * director.lens)
         if (n == 0) return
         flockBuffer.position(0)
         flockBuffer.put(flockVerts, 0, n * JourneyFlock.FLOATS)
@@ -609,6 +633,12 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         prog.uniforms["uFlockStyle"]?.let { if (it >= 0) GLES20.glUniform1f(it, if (flock.jelly) 1f else 0f) }
         drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = sceneTex, flockCount = n)
         GLES20.glDisable(GLES20.GL_BLEND)
+    }
+
+    /** The roll for the director's shot: the crane and side shots keep the horizon level. */
+    private fun shotRoll(e: DemoEffect): Float = when (director.shot) {
+        JourneyDirector.CRANE, JourneyDirector.SIDE -> 0f
+        else -> journeyRoll(e)
     }
 
     /** The worlds' camera roll: halls and open worlds with a floor bank gently, lattices roll right round. */
@@ -651,6 +681,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         u2("uPx", 1f / surfaceWidth, 1f / surfaceHeight)
         u1("uBlitScale", blitScale)
         u1("uDepthOut", if (depthOut) 1f else 0f)
+        u1("uKickFx", if (e.world && journeyOptions.kickFx) 1f else 0f)
         val look = if (drawingIncoming) lookNext else lookCurrent
         u1("uRainbow", if (look.mode == "ALBUM") rainbow else 0f)
         u1("uTitleAspect", titleAspect)
@@ -692,7 +723,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             uniforms["uHoops"]?.let {
                 if (it >= 0) {
                     hoops.pack(hoopData, travel)
-                    if (!journeyOptions.rings) java.util.Arrays.fill(hoopData, 0f)
+                    // Looking back, the rings (placed ahead, crossed along +z) are left out.
+                    if (!journeyOptions.rings || director.shot == JourneyDirector.BACK) java.util.Arrays.fill(hoopData, 0f)
                     GLES20.glUniform4fv(it, JourneyHoops.SLOTS * 2, hoopData, 0)
                 }
             }
@@ -702,16 +734,39 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
                     GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS * 2, marks, 0)
                 }
             }
-            // The camera: steady on the CPU.
-            camera.basis(journeyRoll(e), camBasis)
-            uniforms["uCamRo"]?.let { if (it >= 0) GLES20.glUniform3f(it, camera.pos[0], camera.pos[1], camera.pos[2]) }
-            uniforms["uCamFw"]?.let { if (it >= 0) GLES20.glUniform3f(it, camera.fw[0], camera.fw[1], camera.fw[2]) }
+            // The camera: steady on the CPU, then placed by the director's shot.
+            shotCam.basis(shotRoll(e), camBasis)
+            val cam = shotCam
+            uniforms["uCamRo"]?.let { if (it >= 0) GLES20.glUniform3f(it, cam.pos[0], cam.pos[1], cam.pos[2]) }
+            uniforms["uCamFw"]?.let { if (it >= 0) GLES20.glUniform3f(it, cam.fw[0], cam.fw[1], cam.fw[2]) }
             uniforms["uCamRt"]?.let { if (it >= 0) GLES20.glUniform3f(it, camBasis[0], camBasis[1], camBasis[2]) }
             uniforms["uCamUp"]?.let { if (it >= 0) GLES20.glUniform3f(it, camBasis[3], camBasis[4], camBasis[5]) }
             uniforms["uMarkScr"]?.let {
                 if (it >= 0) {
-                    landmarks.screen(markScreen, travel, camera.pos, camera.fw, camBasis)
+                    landmarks.screen(markScreen, travel, cam.pos, cam.fw, camBasis, 1.3f * director.lens)
                     GLES20.glUniform4fv(it, JourneyLandmarks.SLOTS, markScreen, 0)
+                }
+            }
+            u1("uLens", director.lens)
+            val wanted = look.journey.weather
+            uniforms["uSky"]?.let {
+                if (it >= 0) GLES20.glUniform4f(
+                    it, look.journey.sky.toFloat(), JourneyDirector.weatherIn(e, wanted).toFloat(), 1f, director.mirror.toFloat(),
+                )
+            }
+            u2("uFall", rainFall.toFloat(), snowFall.toFloat())
+            uniforms["uDrop"]?.let {
+                if (it >= 0) {
+                    if (journeyOptions.drops) GLES20.glUniform4f(it, director.flash, director.shock, director.invert, 0f)
+                    else GLES20.glUniform4f(it, 0f, 1f, 0f, 0f)
+                }
+            }
+            uniforms["uBoard"]?.let {
+                if (it >= 0) {
+                    board.pack(boardData, travel, phase * 3.0 * Math.PI, path)
+                    if (!JourneyDirector.roomIn(e)) java.util.Arrays.fill(boardData, 0f)
+                    GLES20.glUniform4f(it, boardData[0], boardData[1], boardData[2], boardData[3])
+                    uniforms["uBoard2"]?.let { b -> if (b >= 0) GLES20.glUniform4f(b, boardData[4], 0f, 0f, 0f) }
                 }
             }
         }
@@ -1406,7 +1461,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             "uPre", "uPer", "uCyc0", "uCyc1", "uCyc2", "uSkip", "uA", "uZ0",
             "uSpectrum", "uRings", "uWave", "uTitle", "uTitleAspect", "uPrev", "uPx", "uHeight", "uTunnel", "uBlitScale", "uRainbow", "uDrops", "uKicks",
             "uPath", "uPathOn", "uGate", "uSeed", "uCam", "uCell", "uMood", "uMarks",
-            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
+            "uMarkScr", "uCamRo", "uCamFw", "uCamRt", "uCamUp", "uLens", "uSky", "uFall", "uDrop", "uBoard", "uBoard2", "uKickFx", "uDepthOut", "uHoops", "uFlockStyle", "uStyle",
             "uC0", "uC1", "uC2", "uTex",
         )
 

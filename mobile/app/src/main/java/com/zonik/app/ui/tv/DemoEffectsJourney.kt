@@ -516,6 +516,9 @@ vec3 jMarkLook(vec3 q, vec3 n, vec3 rd, vec4 a, vec4 b, float hue) {
     return col;
 }
 
+// The director's lens: 1 normal, below it wider; 0 (unset, the web previews) is normal.
+float jLens() { return uLens > 0.0 ? uLens : 1.0; }
+
 // The camera's place, frame and this pixel's ray. On the TV the CPU works the camera out in
 // full precision and smooths it (JourneyCamera: position on the path, heading eased toward a
 // point further ahead, roll and bank folded into rt/up), so it never shakes with 16-bit noise
@@ -529,8 +532,12 @@ void jCamera(vec2 p, out vec3 ro, out vec3 fw, out vec3 rt, out vec3 up, out vec
         fw = uCamFw;
         rt = uCamRt;
         up = uCamUp;
-        sp = p;
-        rd = normalize(fw * 1.3 + rt * p.x + up * p.y);
+        // Mirror bars: the picture folded left onto right, or into four.
+        vec2 q = p;
+        if (uSky.w > 0.5) q.x = abs(q.x);
+        if (uSky.w > 1.5) q.y = abs(q.y);
+        sp = q;
+        rd = normalize(fw * 1.3 * jLens() + rt * q.x + up * q.y);
         return;
     } else {
         // The web previews: highp, so the camera's place can be worked out here.
@@ -559,8 +566,8 @@ vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, floa
     float gz = uGate;
     vec3 rel = vec3(jPath(gz), gz) - ro;
     float depth = max(dot(rel, fw), 0.05);
-    vec2 centre = vec2(dot(rel, rt), dot(rel, up)) * 1.3 / depth;
-    float radius = 0.5 * 1.3 / depth;
+    vec2 centre = vec2(dot(rel, rt), dot(rel, up)) * 1.3 * jLens() / depth;
+    float radius = 0.5 * 1.3 * jLens() / depth;
     float ringD = abs(length(sp - centre) - radius);
     float seen = (hit && t < depth) ? 0.0 : 1.0;
     // The same colour as the iris rim that follows it, so gate and portal read as one ring.
@@ -568,6 +575,83 @@ vec3 jGate(vec3 col, vec2 sp, vec3 ro, vec3 fw, vec3 rt, vec3 up, bool hit, floa
     col += gc * seen * (exp(-ringD * 120.0) * 1.4 + exp(-ringD * 14.0) * 0.25) * (0.7 + 0.8 * uBeat);
     col += gc * seen * smoothstep(radius, 0.0, length(sp - centre)) * 0.08;
     return col;
+}
+
+// A billboard beside the path (JourneyBoard): the album cover in a glowing frame, or the
+// track's title in light. Closed form, like the rings: where the ray crosses the board's plane.
+vec3 jBoard(vec3 col, vec3 ro, vec3 rd, float tHit, float hue, float far) {
+    if (uBoard.w <= 0.0 || rd.z < 0.05) return col;
+    float t = uBoard.x / rd.z;
+    if (t > tHit) return col;
+    vec2 q = ro.xy + rd.xy * t - uBoard.yz;
+    bool title = uBoard2.x > 0.5;
+    vec2 hb = vec2(uBoard.w, title ? uBoard.w / max(uTitleAspect, 1.0) : uBoard.w);
+    float fog = 1.0 - smoothstep(far * 0.45, far * 0.95, t);
+    float edge = max(abs(q.x) - hb.x, abs(q.y) - hb.y);
+    vec3 glow = colorAt(hue * 2.0 + 0.3) * (0.6 + 0.8 * uKick);
+    if (edge > 0.0) return col + glow * exp(-edge * 25.0) * 0.5 * fog * (title ? 0.4 : 1.0);
+    vec2 uv = q / hb * 0.5 + 0.5;
+    if (title) {
+        float a = titleAt(uv);
+        return mix(col, vec3(1.0) * (0.9 + 0.4 * uKick), a * fog) + glow * a * 0.3 * fog;
+    }
+    vec3 c = texture2D(uTex, vec2(uv.x, 1.0 - uv.y)).rgb * (0.85 + 0.35 * uKick);
+    c += glow * exp(edge * 40.0) * 0.6;
+    return mix(col, c, fog);
+}
+
+// The open worlds' time of day (JourneyLook.sky): dawn, dusk or storm light over the picture.
+vec3 jSkyGrade(vec3 col, vec2 p) {
+    if (uSky.x < 0.5) return col;
+    float top = smoothstep(-0.3, 1.0, p.y);
+    if (uSky.x < 1.5) return col * vec3(1.05, 0.9, 0.95) + vec3(0.3, 0.14, 0.2) * top * 0.25;
+    if (uSky.x < 2.5) return col * vec3(1.12, 0.8, 0.66) + vec3(0.35, 0.08, 0.25) * top * 0.3;
+    float l = dot(col, vec3(0.3, 0.55, 0.15));
+    return mix(col, vec3(l) * vec3(0.7, 0.85, 1.0), 0.55) * 0.8 + vec3(0.6, 0.7, 0.9) * uDrop.x * 0.2;
+}
+
+// Weather over the open worlds: rain streaks, snow, or fog with distance. The fall comes from
+// uFall, phases worked out on the CPU, since 16-bit floats cannot keep a time that grows.
+vec3 jWeather(vec3 col, vec2 p, float tHit, float hue, float far) {
+    float w = uSky.y;
+    if (w < 0.5) return col;
+    if (w < 1.5) {
+        col *= 0.88;
+        for (int k = 0; k < 2; k++) {
+            float fk = float(k);
+            vec2 g = vec2((p.x + p.y * 0.15) * (26.0 + fk * 17.0), p.y * (2.0 + fk) + uFall.x * (4.0 + 2.0 * fk));
+            vec2 id = floor(g);
+            vec2 f = fract(g);
+            float h = hash(id + vec2(fk * 7.0, 3.0));
+            float x = 0.2 + 0.6 * fract(h * 13.0);
+            float y = fract(h * 7.0) * 0.5;
+            float s = step(0.72, h) * smoothstep(0.09, 0.0, abs(f.x - x)) * step(y, f.y) * step(f.y, y + 0.45);
+            col += vec3(0.55, 0.65, 0.8) * s * (0.35 - 0.12 * fk);
+        }
+        return col;
+    }
+    if (w < 2.5) {
+        for (int k = 0; k < 2; k++) {
+            float fk = float(k);
+            vec2 g = vec2(p.x * (7.0 + fk * 5.0), p.y * (5.0 + fk * 4.0) + uFall.y * (2.0 + fk * 2.0));
+            vec2 id = floor(g);
+            vec2 f = fract(g);
+            float h = hash(id + vec2(fk * 5.0, 1.0));
+            vec2 c = vec2(0.25 + 0.5 * fract(h * 11.0) + 0.15 * sin(uFall.y * 2.0 * PI * (1.0 + fk) + h * 6.0), 0.25 + 0.5 * fract(h * 17.0));
+            float r = 0.07 - 0.02 * fk;
+            col += vec3(0.9, 0.93, 1.0) * step(0.45, h) * smoothstep(r, r * 0.3, length(f - c)) * (0.55 - 0.2 * fk);
+        }
+        return col;
+    }
+    vec3 haze = colorAt(hue * 2.0 + 0.6) * 0.1 + vec3(0.08);
+    return mix(col, haze, smoothstep(0.0, far * 0.6, tHit) * 0.65);
+}
+
+// A drop moment (JourneyDirector): a beat in negative, a white flash and a shockwave going out.
+vec3 jDrop(vec3 col, vec2 p) {
+    if (uDrop.z > 0.0) col = mix(col, vec3(1.0) - min(col, vec3(1.0)), uDrop.z * 0.8);
+    if (uDrop.y < 1.0) col += vivid(uC0) * exp(-abs(length(p) - uDrop.y * 2.2) * 16.0) * (1.0 - uDrop.y) * 1.6;
+    return col + vec3(uDrop.x * 0.6);
 }
 
 // The track's style over whatever world it is in (JourneyLook.style): as made; a duotone, the
@@ -1299,15 +1383,18 @@ vec3 shade(vec2 p) {
     col += jCyber(ro, rd, hue) * (tHit < JFAR ? 0.35 : 1.0);
 #endif
     col = jHoops(col, ro, rd, tHit, hue, JFAR);
+    col = jBoard(col, ro, rd, tHit, hue, JFAR);
     // Rays that grazed something took more steps: a glow round its edges.
     col += colorAt(hue * 2.0 + 0.15) * smoothstep(8.0, 22.0, steps) * 0.1 * (0.5 + 1.5 * uKick);
     col = jStyle(col, hue);
+    col = jSkyGrade(col, p);
+    col = jWeather(col, p, tHit, hue, JFAR);
     col = jGate(col, sp, ro, fw, rt, up, tHit < JFAR, tHit);
 #ifdef J_DEPTH
     gDepth = tHit < JFAR ? tHit / JDEPTH : 1.0;
 #endif
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
-    return col;
+    return jDrop(col, p);
 }
 #else
 vec3 shade(vec2 p) {
@@ -1371,7 +1458,7 @@ vec3 shade(vec2 p) {
     col = jStyle(col, jCam.x + uSeed.x + uMood.x);
     col = jGate(col, sp, ro, fw, rt, up, hit, t);
     col *= clamp(1.3 - 0.3 * length(p), 0.0, 1.0);
-    return col;
+    return jDrop(col, p);
 }
 #endif
 """

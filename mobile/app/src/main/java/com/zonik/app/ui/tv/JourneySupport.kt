@@ -39,6 +39,10 @@ data class JourneyLook(
     /** The style over a world: 0 as made, 1 duotone in the palette, 2 night. Picked anew at
      * each world (DemoRenderer.newLook, JourneyOptions.pickStyle). */
     val style: Int = 0,
+    /** The light over an open world: 0 as made, 1 dawn, 2 dusk, 3 storm light (jSkyGrade). */
+    val sky: Int = 0,
+    /** Its weather (JourneyDirector.RAIN, SNOW, FOG or none), where the world allows it. */
+    val weather: Int = 0,
 ) {
     companion object {
         private val SHARPS = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -489,7 +493,7 @@ class JourneyLandmarks(seed: Int = 7) {
      * shader's per-pixel cull: radius 0 for an empty slot or one behind the camera, and a
      * radius that covers the screen when the camera is inside or right at the sphere.
      */
-    fun screen(out: FloatArray, travel: Double, pos: FloatArray, fw: FloatArray, basis: FloatArray) {
+    fun screen(out: FloatArray, travel: Double, pos: FloatArray, fw: FloatArray, basis: FloatArray, focal: Float = 1.3f) {
         for (i in 0 until SLOTS) {
             val m = marks[i]
             val o = i * 4
@@ -505,9 +509,9 @@ class JourneyLandmarks(seed: Int = 7) {
                 out[o + 2] = 99f
                 continue
             }
-            out[o] = (bx * basis[0] + by * basis[1] + bz * basis[2]) * 1.3f / depth
-            out[o + 1] = (bx * basis[3] + by * basis[4] + bz * basis[5]) * 1.3f / depth
-            out[o + 2] = r * 1.3f / (depth - r) + 0.02f
+            out[o] = (bx * basis[0] + by * basis[1] + bz * basis[2]) * focal / depth
+            out[o + 1] = (bx * basis[3] + by * basis[4] + bz * basis[5]) * focal / depth
+            out[o + 2] = r * focal / (depth - r) + 0.02f
         }
     }
 
@@ -724,6 +728,12 @@ data class JourneyWorld(
  *   5 sweeping curve (JourneyHoops).
  * - [style]: 0 a mix (a new pick at every world, mostly as made), or always one: 1 as made,
  *   2 duotone, 3 night (jStyle).
+ * - [camera]: the director's other shots and lens changes (JourneyDirector).
+ * - [drops]: the drop moments (flash, inverted beat, shockwave).
+ * - [weather]: time of day and weather over the open worlds.
+ * - [boards]: the album cover and track title on billboards (JourneyBoard).
+ * - [mirror]: mirror bars, the picture folded in two or four for 8 beats.
+ * - [kickFx]: colour split and a zoom punch on each kick.
  */
 data class JourneyOptions(
     val length: Int = 1,
@@ -733,7 +743,21 @@ data class JourneyOptions(
     val shuffle: Boolean = true,
     val ringPattern: Int = 0,
     val style: Int = 0,
+    val camera: Boolean = true,
+    val drops: Boolean = true,
+    val weather: Boolean = true,
+    val boards: Boolean = true,
+    val mirror: Boolean = true,
+    val kickFx: Boolean = false,
 ) {
+    /** Time of day for the next world (JourneyLook.sky): mostly as made. */
+    fun pickSky(random: kotlin.random.Random): Int =
+        if (!weather) 0 else random.nextFloat().let { if (it < 0.45f) 0 else 1 + random.nextInt(3) }
+
+    /** Weather for the next world (JourneyLook.weather), before JourneyDirector.weatherIn. */
+    fun pickWeather(random: kotlin.random.Random): Int =
+        if (!weather) 0 else random.nextFloat().let { if (it < 0.45f) 0 else if (it < 0.65f) 1 else if (it < 0.8f) 2 else 3 }
+
     /** A style for the next world (JourneyLook.style): the chosen one, or a weighted pick. */
     fun pickStyle(random: kotlin.random.Random): Int = when (style) {
         1 -> 0
@@ -748,7 +772,12 @@ data class JourneyOptions(
     val speedScale: Float get() = when (speed) { 0 -> 0.65f; 2 -> 1.4f; else -> 1f }
 
     fun encode(): String =
-        listOf(length, speed, if (rings) 1 else 0, if (fish) 1 else 0, if (shuffle) 1 else 0, ringPattern, style).joinToString(",")
+        listOf(
+            length, speed, b(rings), b(fish), b(shuffle), ringPattern, style,
+            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx),
+        ).joinToString(",")
+
+    private fun b(v: Boolean) = if (v) 1 else 0
 
     companion object {
         val LENGTH_LABELS = listOf("Short", "Normal", "Long")
@@ -767,6 +796,12 @@ data class JourneyOptions(
                 shuffle = p.getOrNull(4)?.let { it != 0 } ?: d.shuffle,
                 ringPattern = p.getOrNull(5)?.takeIf { it in 0..5 } ?: d.ringPattern,
                 style = p.getOrNull(6)?.takeIf { it in 0..3 } ?: d.style,
+                camera = p.getOrNull(7)?.let { it != 0 } ?: d.camera,
+                drops = p.getOrNull(8)?.let { it != 0 } ?: d.drops,
+                weather = p.getOrNull(9)?.let { it != 0 } ?: d.weather,
+                boards = p.getOrNull(10)?.let { it != 0 } ?: d.boards,
+                mirror = p.getOrNull(11)?.let { it != 0 } ?: d.mirror,
+                kickFx = p.getOrNull(12)?.let { it != 0 } ?: d.kickFx,
             )
         }
     }

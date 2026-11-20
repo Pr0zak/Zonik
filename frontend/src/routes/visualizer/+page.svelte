@@ -164,6 +164,12 @@
 		{ key: 'journey_rings', label: 'Journey rings' },
 		{ key: 'journey_fish', label: 'Journey fish' },
 		{ key: 'journey_shuffle', label: 'Journey order per track' },
+		{ key: 'journey_camera', label: 'Journey camera shots' },
+		{ key: 'journey_drops', label: 'Journey drop moments' },
+		{ key: 'journey_weather', label: 'Journey weather' },
+		{ key: 'journey_boards', label: 'Journey cover billboards' },
+		{ key: 'journey_mirror', label: 'Journey mirror bars' },
+		{ key: 'journey_kick_fx', label: 'Journey kick effects' },
 	];
 </script>
 

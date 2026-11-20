@@ -58,6 +58,12 @@ DEFAULTS: dict = {
     "journey_fish": True,
     "journey_shuffle": True,
     "journey_style": 0,
+    "journey_camera": True,
+    "journey_drops": True,
+    "journey_weather": True,
+    "journey_boards": True,
+    "journey_mirror": True,
+    "journey_kick_fx": False,
 }
 
 TRANSITIONS = [

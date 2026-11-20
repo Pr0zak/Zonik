@@ -172,12 +172,19 @@ data class TvVisualizerConfig(
     @SerialName("journey_fish") val journeyFish: Boolean? = null,
     @SerialName("journey_shuffle") val journeyShuffle: Boolean? = null,
     @SerialName("journey_style") val journeyStyle: Int? = null,
+    @SerialName("journey_camera") val journeyCamera: Boolean? = null,
+    @SerialName("journey_drops") val journeyDrops: Boolean? = null,
+    @SerialName("journey_weather") val journeyWeather: Boolean? = null,
+    @SerialName("journey_boards") val journeyBoards: Boolean? = null,
+    @SerialName("journey_mirror") val journeyMirror: Boolean? = null,
+    @SerialName("journey_kick_fx") val journeyKickFx: Boolean? = null,
 ) {
     companion object {
         /** A config carrying just the Journey's options. */
         fun journey(o: com.zonik.app.ui.tv.JourneyOptions) = TvVisualizerConfig(
             journeyLength = o.length, journeySpeed = o.speed, journeyRingPattern = o.ringPattern,
             journeyRings = o.rings, journeyFish = o.fish, journeyShuffle = o.shuffle, journeyStyle = o.style,
+            journeyCamera = o.camera, journeyDrops = o.drops, journeyWeather = o.weather, journeyBoards = o.boards, journeyMirror = o.mirror, journeyKickFx = o.kickFx,
         )
     }
 }

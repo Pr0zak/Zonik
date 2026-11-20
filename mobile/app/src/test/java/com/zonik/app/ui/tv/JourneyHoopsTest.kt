@@ -77,10 +77,13 @@ class JourneyHoopsTest {
 class JourneyOptionsTest {
     @Test
     fun `options survive a round trip and fall back field by field`() {
-        val o = JourneyOptions(length = 2, speed = 0, rings = false, fish = true, shuffle = false, ringPattern = 3, style = 2)
+        val o = JourneyOptions(length = 2, speed = 0, rings = false, fish = true, shuffle = false, ringPattern = 3, style = 2,
+            camera = false, drops = false, weather = false, boards = false, mirror = false, kickFx = true)
         org.junit.Assert.assertEquals(o, JourneyOptions.decode(o.encode()))
         org.junit.Assert.assertEquals(JourneyOptions(), JourneyOptions.decode(null))
         org.junit.Assert.assertEquals(JourneyOptions(length = 0), JourneyOptions.decode("0,9"))
+        // An older app's seven fields keep the new options at their defaults.
+        org.junit.Assert.assertEquals(JourneyOptions(), JourneyOptions.decode("1,1,1,1,1,0,0"))
     }
 
     @Test

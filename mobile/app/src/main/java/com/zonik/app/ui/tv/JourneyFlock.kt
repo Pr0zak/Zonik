@@ -180,6 +180,7 @@ class JourneyFlock(seed: Int = 11) {
     fun build(
         out: FloatArray, travel: Double, pos: FloatArray, fw: FloatArray,
         basis: FloatArray, aspect: Float, centerX: Float, centerY: Float, far: Float, sizeScale: Float,
+        focal: Float = 1.3f,
     ): Int {
         var v = 0
         for (i in 0 until n) {
@@ -190,8 +191,8 @@ class JourneyFlock(seed: Int = 11) {
             if (depth < 0.15f) continue
             val dist = sqrt(rx * rx + ry * ry + rz * rz)
             if (dist > far) continue
-            val sx = (rx * basis[0] + ry * basis[1] + rz * basis[2]) * 1.3f / depth
-            val sy = (rx * basis[3] + ry * basis[4] + rz * basis[5]) * 1.3f / depth
+            val sx = (rx * basis[0] + ry * basis[1] + rz * basis[2]) * focal / depth
+            val sy = (rx * basis[3] + ry * basis[4] + rz * basis[5]) * focal / depth
             if (abs(sx) > aspect + 0.3f || abs(sy) > 1.3f) continue
             // Which way it swims on screen: a point a little ahead along its velocity (for a
             // jellyfish, straight up, so it is drawn upright).
@@ -199,12 +200,12 @@ class JourneyFlock(seed: Int = 11) {
             val qy = if (jelly) ry + 0.2f else ry + vy[i] * 0.2f
             val qz = if (jelly) rz else rz + vz[i] * 0.2f
             val qd = (qx * fw[0] + qy * fw[1] + qz * fw[2]).coerceAtLeast(0.05f)
-            var dx = (qx * basis[0] + qy * basis[1] + qz * basis[2]) * 1.3f / qd - sx
-            var dy = (qx * basis[3] + qy * basis[4] + qz * basis[5]) * 1.3f / qd - sy
+            var dx = (qx * basis[0] + qy * basis[1] + qz * basis[2]) * focal / qd - sx
+            var dy = (qx * basis[3] + qy * basis[4] + qz * basis[5]) * focal / qd - sy
             val dl = sqrt(dx * dx + dy * dy)
             if (dl < 1e-4f) { dx = 1f; dy = 0f } else { dx /= dl; dy /= dl }
             // Longer when swimming across the view, never smaller than a few pixels.
-            val w = (FISH_WIDTH * sizeScale * (if (jelly) 3.5f else 1f) * 1.3f / depth).coerceAtLeast(0.007f)
+            val w = (FISH_WIDTH * sizeScale * (if (jelly) 3.5f else 1f) * focal / depth).coerceAtLeast(0.007f)
             val l = if (jelly) w * 1.6f else w * (1.5f + (dl * 6f).coerceAtMost(1.8f))
             val fog = 1f - smoothstep(far * 0.55f, far, dist)
             val s = i / PER_SCHOOL
