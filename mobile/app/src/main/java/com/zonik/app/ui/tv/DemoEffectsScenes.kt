@@ -293,7 +293,9 @@ vec3 shade(vec2 p) {
  * Storm sea: a locked-off shot of the open sea at dusk, like a window. The waves are worked out
  * where the ray meets the sea's plane (their slope bends the reflection), so it costs no march;
  * the swell builds with the bass, clouds drift, and every eighth kick brings lightning, a bolt
- * and a flash over the sky and the water.
+ * and a flash that lights the clouds from inside. A lighthouse on a rock sweeps its beam round
+ * and flashes its lamp on the beat, a ship rocks on the horizon with its windows lit, and rain
+ * slants across in front of it all.
  */
 internal const val STORMSEA_BODY = """
 float ssNoise(vec2 x) {
@@ -310,7 +312,9 @@ vec3 ssSky(vec3 rd, float flash) {
     c += vec3(1.0, 0.55, 0.3) * pow(max(dot(rd, normalize(vec3(0.3, 0.05, 1.0))), 0.0), 50.0) * 1.2;
     vec2 cp = rd.xz / max(rd.y, 0.06) * 0.7 + vec2(uPhase * 2.0, 0.0);
     float cl = smoothstep(0.45, 0.85, ssNoise(cp) * 0.65 + ssNoise(cp * 2.3) * 0.35);
-    c = mix(c, vec3(0.12, 0.11, 0.16) + colorAt(0.66) * 0.05, cl * smoothstep(0.0, 0.15, rd.y));
+    // The clouds glow from inside when the lightning strikes.
+    vec3 cloud = vec3(0.12, 0.11, 0.16) + colorAt(0.66) * 0.05 + vec3(0.55, 0.6, 0.85) * flash * (0.4 + 0.6 * ssNoise(cp * 1.7 + 3.0));
+    c = mix(c, cloud, cl * smoothstep(0.0, 0.15, rd.y));
     return c + vec3(0.6, 0.65, 0.9) * flash * 0.45 * smoothstep(-0.05, 0.3, rd.y);
 }
 vec2 ssSlope(vec2 x) {
@@ -341,6 +345,63 @@ vec3 shade(vec2 p) {
         float crest = smoothstep(0.1, 0.25, length(g)) * (0.5 + 0.5 * ssNoise(x * 3.0));
         wc += vec3(0.7, 0.75, 0.8) * crest * (0.25 + 0.5 * uLow + flash * 0.5);
         col = mix(wc, ssSky(vec3(rd.x, 0.001, rd.z), flash), smoothstep(12.0, 50.0, t));
+        // The lighthouse lamp's path of light on the water below it.
+        col += vec3(1.0, 0.85, 0.55) * exp(-abs(p.x + 1.15) * 30.0) * smoothstep(-0.6, 0.15, p.y) * 0.12 * (0.4 + uBeat);
+    }
+    // A little under the true horizon, where the far water fades into the sky.
+    float hz = 0.13;
+
+    // A ship on the horizon, rocking: a dark hull and deckhouse with a row of lit windows.
+    float sx = 0.55 + 0.12 * sin(uTime * PI);
+    float by = hz + 0.004 * sin(uPhase * PI * 6.0);
+    // Drawn at 1.6 times its sizes below.
+    vec2 sp = rot(0.04 * sin(uPhase * PI * 4.0)) * (p - vec2(sx, by)) / 1.6;
+    bool hull = sp.y > -0.004 && sp.y < 0.016 && abs(sp.x) < 0.11 + sp.y * 1.2;
+    bool house = sp.y >= 0.016 && sp.y < 0.04 && sp.x > -0.03 && sp.x < 0.04;
+    bool mast = abs(sp.x - 0.005) < 0.0025 && sp.y >= 0.04 && sp.y < 0.075;
+    if (hull || house || mast) {
+        col = vec3(0.012, 0.012, 0.02) + vec3(0.6, 0.65, 0.9) * flash * 0.15;
+        float wx = fract(sp.x / 0.016);
+        float on = step(0.4, hash(vec2(floor(sp.x / 0.016), 2.0)));
+        if (house && sp.y > 0.022 && sp.y < 0.032 && wx > 0.3 && wx < 0.7) col += vec3(1.0, 0.8, 0.45) * on * 0.9;
+        if (hull && sp.y > 0.006 && sp.y < 0.011 && wx > 0.35 && wx < 0.65) col += vec3(1.0, 0.85, 0.5) * on * 0.6;
+    }
+    col += vec3(1.0, 0.3, 0.2) * exp(-length(sp - vec2(0.005, 0.077)) * 220.0) * (0.5 + 0.5 * uBeat);
+
+    // A lighthouse on a rock at the left: the beam sweeps round (bright when it faces us) and
+    // the lamp flashes on the beat.
+    vec2 lh = vec2(-1.15, hz);
+    float rockTop = lh.y + 0.04 * smoothstep(0.35, 0.0, abs(p.x - lh.x)) + 0.006 * ssNoise(vec2(p.x * 40.0, 1.0));
+    bool rock = abs(p.x - lh.x) < 0.33 && p.y < rockTop && p.y > lh.y - 0.006;
+    bool tower = p.y >= lh.y && p.y < lh.y + 0.21 && abs(p.x - lh.x) < 0.02 - (p.y - lh.y) * 0.035;
+    if (rock || tower) {
+        col = vec3(0.015, 0.015, 0.025) + vec3(0.6, 0.65, 0.9) * flash * 0.12;
+        // Red and white bands on the tower.
+        if (tower) col += vec3(0.06, 0.012, 0.01) * step(0.5, fract((p.y - lh.y) * 18.0));
+    }
+    vec2 lamp = vec2(lh.x, lh.y + 0.22);
+    float sw = uPhase * PI * 2.0;
+    float side = sin(sw);
+    float facing = max(cos(sw), 0.0);
+    vec2 v = p - lamp;
+    float along = v.x * (side >= 0.0 ? 1.0 : -1.0);
+    float width = 0.015 + max(along, 0.0) * (0.07 + 0.25 * facing);
+    float beam = step(0.0, along) * smoothstep(width, 0.0, abs(v.y)) * smoothstep(0.05 + 2.6 * abs(side), 0.0, along);
+    col += vec3(1.0, 0.92, 0.7) * beam * (0.18 + 0.45 * facing);
+    col += vec3(1.0, 0.9, 0.6) * exp(-length(v) * 45.0) * (0.5 + 1.6 * facing + 0.9 * uBeat);
+
+    // Rain slanting across, two layers; it falls with the flight's phase (20 cells per unit,
+    // so its wrap at 2 is a whole number of cells).
+    for (int k = 0; k < 2; k++) {
+        float fk = float(k);
+        vec2 g = vec2((p.x + p.y * 0.3) * (34.0 + fk * 20.0), p.y * (2.5 + fk) + uPhase * (20.0 + fk * 10.0));
+        vec2 id = floor(g);
+        vec2 f = fract(g);
+        float h = hash(id + vec2(fk * 7.0, 3.0));
+        float x = 0.2 + 0.6 * fract(h * 13.0);
+        float y = fract(h * 7.0) * 0.5;
+        float streak = step(0.65, h) * smoothstep(0.1, 0.0, abs(f.x - x)) * step(y, f.y) * step(f.y, y + 0.45);
+        col += vec3(0.5, 0.58, 0.7) * streak * (0.22 - 0.07 * fk) * (1.0 + flash);
     }
     return col;
 }
