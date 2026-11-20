@@ -797,6 +797,8 @@ data class JourneyOptions(
     val momentRate: Int = 1,
     /** Moments may glimpse or ghost another world in. */
     val glimpses: Boolean = true,
+    /** Journey only: the visualizer always shows the Journey, never the other effects. */
+    val only: Boolean = false,
 ) {
     /** Time of day for the next world (JourneyLook.sky): mostly as made. */
     fun pickSky(random: kotlin.random.Random): Int =
@@ -822,7 +824,7 @@ data class JourneyOptions(
     fun encode(): String =
         listOf(
             length, speed, b(rings), b(fish), b(shuffle), ringPattern, style,
-            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes), moments, momentRate, b(glimpses),
+            b(camera), b(drops), b(weather), b(boards), b(mirror), b(kickFx), b(interludes), moments, momentRate, b(glimpses), b(only),
         ).joinToString(",")
 
     private fun b(v: Boolean) = if (v) 1 else 0
@@ -854,6 +856,7 @@ data class JourneyOptions(
                 moments = p.getOrNull(14)?.takeIf { it in 0..3 } ?: d.moments,
                 momentRate = p.getOrNull(15)?.takeIf { it in 0..2 } ?: d.momentRate,
                 glimpses = p.getOrNull(16)?.let { it != 0 } ?: d.glimpses,
+                only = p.getOrNull(17)?.let { it != 0 } ?: d.only,
             )
         }
     }

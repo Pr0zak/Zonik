@@ -274,12 +274,15 @@ internal fun TvVisualizerSettingsContent(
                 // The Journey effect's own options.
                 val j = state.journey
                 Spacer(Modifier.height(4.dp))
-                // Seventeen rows: they scroll in a box as tall as the column beside them, and the
+                // Eighteen rows: they scroll in a box as tall as the column beside them, and the
                 // focused one is brought into view.
                 Column(
                     modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
+                    SettingRow("Journey only", if (j.only) "On" else "Off") {
+                        actions.setJourney(j.copy(only = !j.only))
+                    }
                     SettingRow("Journey: time per world", JourneyOptions.LENGTH_LABELS[j.length]) {
                         actions.setJourney(j.copy(length = (j.length + 1) % 3))
                     }

@@ -891,7 +891,8 @@ private fun TvAmbientOverlay(
             if (deck.getOrNull(deckIndex) != DemoEffect.JOURNEY) advanceDeck()
         }
     }
-    val effect = deck.getOrElse(deckIndex) { enabled.first() }
+    // Journey only: the Journey all the time, flying through the worlds that are switched on.
+    val effect = if (journeyOptions.only) DemoEffect.JOURNEY else deck.getOrElse(deckIndex) { enabled.first() }
     // The Journey flies through the worlds that are switched on, or all of them if none are.
     val journeyWorlds = remember(enabled) {
         enabled.filter { it.world }.ifEmpty { JOURNEY_WORLDS }

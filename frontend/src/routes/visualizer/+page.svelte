@@ -166,6 +166,7 @@
 		{ key: 'enabled', label: 'Visualizer on' },
 		{ key: 'beat_reactive', label: 'React to music' },
 		{ key: 'trails', label: 'Motion trails' },
+		{ key: 'journey_only', label: 'Journey only (no other effects)' },
 		{ key: 'journey_rings', label: 'Journey rings' },
 		{ key: 'journey_fish', label: 'Journey fish' },
 		{ key: 'journey_shuffle', label: 'Journey order per track' },

@@ -69,6 +69,8 @@ DEFAULTS: dict = {
     "moments": 2,
     "moments_rate": 1,
     "moments_glimpses": True,
+    # Journey only: the TV shows the Journey all the time instead of rotating effects.
+    "journey_only": False,
 }
 
 TRANSITIONS = [

@@ -177,6 +177,7 @@ class TvVisualizerSync @Inject constructor(
         moments = journeyNow().moments,
         momentsRate = journeyNow().momentRate,
         momentsGlimpses = journeyNow().glimpses,
+        journeyOnly = journeyNow().only,
     )
 
     private suspend fun journeyNow() = JourneyOptions.decode(settings.tvJourneyOptions.first())
@@ -221,6 +222,7 @@ class TvVisualizerSync @Inject constructor(
             moments = c.moments ?: j.moments,
             momentRate = c.momentsRate ?: j.momentRate,
             glimpses = c.momentsGlimpses ?: j.glimpses,
+            only = c.journeyOnly ?: j.only,
         )
         set(remote, j) { settings.setTvJourneyOptions(it.encode()) }
         if (changed > 0) DebugLog.d("TvSync", "Applied $changed visualizer settings from the server")
@@ -260,5 +262,6 @@ class TvVisualizerSync @Inject constructor(
         moments = b.moments ?: a.moments,
         momentsRate = b.momentsRate ?: a.momentsRate,
         momentsGlimpses = b.momentsGlimpses ?: a.momentsGlimpses,
+        journeyOnly = b.journeyOnly ?: a.journeyOnly,
     )
 }
