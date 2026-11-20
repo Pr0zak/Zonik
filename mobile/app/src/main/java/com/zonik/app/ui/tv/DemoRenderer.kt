@@ -587,7 +587,8 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val pass = scratch
         val scaler = blit
         val trailsPass = trailsProgram
-        if (e.halfRes && !e.feedback && !trails && pass != null && scaler != null) {
+        val trailed = trails || e.trails
+        if (e.halfRes && !e.feedback && !trailed && pass != null && scaler != null) {
             // Into the lower-left corner of the scratch buffer, then scaled up by the blit:
             // a quarter of the pixels, or fewer for a Journey world on a slow box.
             val scale = if (e.world) worldScale else 0.5f
@@ -616,7 +617,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
             blitScale = 1f
             return
         }
-        if (!(e.feedback || trails) || slot == null || pass == null || scaler == null || trailsPass == null) {
+        if (!(e.feedback || trailed) || slot == null || pass == null || scaler == null || trailsPass == null) {
             drawWith(prog, e, wipe, incomingSide, fade, prevTex = 0, srcTex = 0)
             return
         }

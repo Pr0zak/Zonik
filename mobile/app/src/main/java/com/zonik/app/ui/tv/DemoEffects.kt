@@ -53,6 +53,11 @@ enum class DemoEffect(
      * others, so the Journey can fly from one into the next through a portal.
      */
     val world: Boolean = false,
+    /**
+     * Always drawn with motion trails (each frame laid over a faded copy of the last), whatever
+     * the Trails setting says.
+     */
+    val trails: Boolean = false,
 ) {
     TUNNEL("Tunnel", TUNNEL_BODY),
     PLASMA("Plasma", PLASMA_BODY),
@@ -156,7 +161,7 @@ enum class DemoEffect(
     GALAXY("Galaxy", GALAXY_BODY, floats = true),
     PULSAR("Ridgelines", PULSAR_BODY),
     BUBBLES("Bubbles", BUBBLES_BODY),
-    SPECTRUMRIDGES("Spectrum ridges", PULSAR_BODY, variant = 1),
+    SPECTRUMRIDGES("Spectrum ridges", PULSAR_BODY, variant = 1, trails = true),
     ENDLESSZOOM("Endless zoom", ENDLESS_BODY),
     GALAXYORBIT("Galaxy orbit", GALAXY_BODY, variant = 1, floats = true),
     TINYPLANET("Tiny planet", TINYPLANET_BODY, halfRes = true),
