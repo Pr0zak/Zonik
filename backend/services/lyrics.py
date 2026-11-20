@@ -155,7 +155,7 @@ class TrackInfo:
     @staticmethod
     def of(t: Track) -> "TrackInfo":
         return TrackInfo(t.id, t.file_path, t.title, t.artist.name if t.artist else None,
-                         t.album.name if t.album else None, t.duration_seconds)
+                         t.album.title if t.album else None, t.duration_seconds)
 
 
 def _stale(row: TrackLyrics) -> bool:

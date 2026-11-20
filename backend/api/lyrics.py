@@ -76,7 +76,7 @@ async def tracks(q: str = "", status: str = "all", limit: int = 50, offset: int 
         items.append({
             "id": t.id, "title": t.title,
             "artist": t.artist.name if t.artist else None,
-            "album": t.album.name if t.album else None,
+            "album": t.album.title if t.album else None,
             "album_id": t.album_id,
             "status": ly.status if ly else "unchecked",
             "synced": bool(ly.synced) if ly else False,
@@ -97,7 +97,7 @@ async def track_lyrics(track_id: str, db: AsyncSession = Depends(get_db)):
     row = await db.get(TrackLyrics, track_id)
     out = lyrics_service.payload(row) if row else {"status": "unchecked", "synced": False, "lines": []}
     out.update({"id": t.id, "title": t.title, "artist": t.artist.name if t.artist else None,
-                "album": t.album.name if t.album else None, "duration": t.duration_seconds,
+                "album": t.album.title if t.album else None, "duration": t.duration_seconds,
                 "checked_at": row.checked_at.isoformat() if row and row.checked_at else None})
     return out
 
