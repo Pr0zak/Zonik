@@ -26,7 +26,7 @@ let dataPromise = null;
 /** The effect catalogue and shader sources, fetched once. */
 export function loadTvShaders() {
 	if (!dataPromise) {
-		dataPromise = fetch('/tv-shaders.json').then((r) => {
+		dataPromise = fetch('/tv-shaders.json', { cache: 'no-cache' }).then((r) => {
 			if (!r.ok) throw new Error(`tv-shaders.json: ${r.status}`);
 			return r.json();
 		}).then((d) => {
