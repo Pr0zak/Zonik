@@ -77,4 +77,23 @@ class MomentsTest {
         assertTrue(r.seenSpeeds.all { it in -1.11f..2.61f })
         assertTrue(r.maxEnv > 0.99f)
     }
+
+    @Test
+    fun `the length setting makes the looks last longer`() {
+        fun meanSec(length: Int): Float {
+            val m = Moments()
+            val clock = grid()
+            var active = 0
+            var t = 0L
+            while (t < 900_000) {
+                m.update(0.016f, clock, t, 0.5f, 0f, true, 1, 1, true, busy = false, length = length)
+                if (m.kind != Moments.NONE) active++
+                t += 16
+            }
+            return active * 0.016f / m.started.sum().coerceAtLeast(1)
+        }
+        val short = meanSec(0)
+        val long = meanSec(2)
+        assertTrue("short $short s, long $long s", long > short * 2.5f && long > 10f)
+    }
 }

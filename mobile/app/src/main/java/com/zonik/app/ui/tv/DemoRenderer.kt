@@ -519,7 +519,7 @@ class DemoRenderer(initial: DemoEffect) : GLSurfaceView.Renderer {
         val o = journeyOptions
         moments.update(
             dt, beatClock, System.currentTimeMillis(), low, kick, world = current.world && next == null,
-            mode = o.moments, rate = o.momentRate, glimpses = o.glimpses,
+            mode = o.moments, rate = o.momentRate, glimpses = o.glimpses, length = o.momentLength,
             busy = next != null || journey.gate > 0f || sincePortal < 1.5f,
         )
         if (moments.kind != momentKind) {

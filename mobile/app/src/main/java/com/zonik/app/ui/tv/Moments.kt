@@ -60,6 +60,7 @@ class Moments(seed: Int = 61) {
     private var kickIdx = 0
     private var clock = 0f
     private var wasKick = false
+    private var lengthScale = 1f
     private var kicksBack = false
     private var beatSec = 0.5f
     private var beatPhase = 0f
@@ -69,8 +70,9 @@ class Moments(seed: Int = 61) {
 
     fun update(
         dt: Float, beats: BeatClock?, nowMs: Long, low: Float, kick: Float, world: Boolean,
-        mode: Int, rate: Int, glimpses: Boolean, busy: Boolean,
+        mode: Int, rate: Int, glimpses: Boolean, busy: Boolean, length: Int = 1,
     ) {
+        lengthScale = when (length) { 0 -> 0.5f; 2 -> 2f; else -> 1f }
         clock += dt
         val tempo = beats?.takeIf { it.hasTempo }
         if (tempo != null) {
@@ -197,18 +199,21 @@ class Moments(seed: Int = 61) {
     }
 
     private fun beatsOf(k: Int): Float = when (k) {
-        HUE -> 8f; BREATHE -> 8f; FOG -> 8f; GRAIN -> 16f; SLOWMO -> 3f; DAYNIGHT -> 32f
-        GLIMPSE -> 6f + 2f * random.nextInt(2); GHOST -> 2f; BLUEPRINT -> 4f; THERMAL -> 4f; XRAY -> 4f
-        CRUNCH -> 4f; STUTTER -> 2f; REWIND -> 4f; HYPER -> 1f; KALEIDO -> 4f; ISOLATE -> 8f; UPSIDE -> 16f
-        RIPPLE -> 4f; SWIRL -> 4f; GLITCH -> 2f; COMIC -> 8f; ECHO -> 4f; NEONEDGE -> 8f; CRT -> 16f
-        HALFTONE -> 4f; DOUBLE -> 2f; SPLIT4 -> 4f; LETTERBOX -> 16f; SEPIA -> 16f; TILT -> 16f
+        HUE -> 16f; BREATHE -> 16f; FOG -> 16f; GRAIN -> 32f; SLOWMO -> 4f; DAYNIGHT -> 32f
+        GLIMPSE -> 8f + 4f * random.nextInt(3); GHOST -> 2f; BLUEPRINT -> 8f; THERMAL -> 8f; XRAY -> 8f
+        CRUNCH -> 8f; STUTTER -> 2f; REWIND -> 4f; HYPER -> 1f; KALEIDO -> 8f; ISOLATE -> 16f; UPSIDE -> 16f
+        RIPPLE -> 8f; SWIRL -> 8f; GLITCH -> 2f; COMIC -> 16f; ECHO -> 8f; NEONEDGE -> 16f; CRT -> 32f
+        HALFTONE -> 8f; DOUBLE -> 2f; SPLIT4 -> 8f; LETTERBOX -> 32f; SEPIA -> 32f; TILT -> 32f
         else -> 4f
     }
 
     private fun start(k: Int, beats: Float) {
         kind = k
         t = 0f
-        len = (beats * beatSec).coerceIn(0.4f, 20f)
+        // The looks stretch with the length setting, and one in three runs twice as long; the
+        // ones timed to a hit (a stutter or punch into a drop, a ghost, a glitch) stay as they are.
+        val stretch = if (k in TIMED) 1f else lengthScale * (if (random.nextFloat() < 0.33f) 2f else 1f)
+        len = (beats * stretch * beatSec).coerceIn(0.4f, 60f)
         param = random.nextFloat()
         reach = if (k == GLIMPSE && random.nextFloat() < 0.35f) 1f else 0.45f
         // Some snap in on the beat; the rest ease.
@@ -299,6 +304,9 @@ class Moments(seed: Int = 61) {
         )
         /** Only in a Journey world: they need another world, the path or the open sky. */
         val WORLD_ONLY = setOf(DAYNIGHT, GLIMPSE, GHOST, REWIND, UPSIDE, STUTTER)
+        /** Timed to a hit: their length never stretches. */
+        private val TIMED = setOf(STUTTER, HYPER, GHOST, GLITCH, DOUBLE, SLOWMO, REWIND)
+        val LENGTH_LABELS = listOf("Short", "Normal", "Long")
         private val SNAP = setOf(BLUEPRINT, THERMAL, XRAY, CRUNCH, KALEIDO, STUTTER, GLITCH, SPLIT4, COMIC, HALFTONE, DOUBLE)
 
         val MODE_LABELS = listOf("Off", "Subtle", "Mixed", "Striking")

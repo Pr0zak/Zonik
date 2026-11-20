@@ -274,7 +274,7 @@ internal fun TvVisualizerSettingsContent(
                 // The Journey effect's own options.
                 val j = state.journey
                 Spacer(Modifier.height(4.dp))
-                // Eighteen rows: they scroll in a box as tall as the column beside them, and the
+                // Nineteen rows: they scroll in a box as tall as the column beside them, and the
                 // focused one is brought into view.
                 Column(
                     modifier = Modifier.heightIn(max = 150.dp).verticalScroll(rememberScrollState()),
@@ -330,6 +330,9 @@ internal fun TvVisualizerSettingsContent(
                     }
                     SettingRow("Moments: how often", Moments.RATE_LABELS[j.momentRate]) {
                         actions.setJourney(j.copy(momentRate = (j.momentRate + 1) % Moments.RATE_LABELS.size))
+                    }
+                    SettingRow("Moments: length", Moments.LENGTH_LABELS[j.momentLength]) {
+                        actions.setJourney(j.copy(momentLength = (j.momentLength + 1) % Moments.LENGTH_LABELS.size))
                     }
                     SettingRow("Moments: world glimpses", if (j.glimpses) "On" else "Off") {
                         actions.setJourney(j.copy(glimpses = !j.glimpses))

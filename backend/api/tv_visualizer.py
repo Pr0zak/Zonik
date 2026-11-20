@@ -71,6 +71,7 @@ DEFAULTS: dict = {
     "moments_glimpses": True,
     # Journey only: the TV shows the Journey all the time instead of rotating effects.
     "journey_only": False,
+    "moments_length": 1,
 }
 
 TRANSITIONS = [
@@ -100,6 +101,7 @@ OPTIONS: dict = {
     "journey_style": [[0, "Mixed"], [1, "As made"], [2, "Duotone"], [3, "Night"]],
     "moments": [[0, "Off"], [1, "Subtle"], [2, "Mixed"], [3, "Striking"]],
     "moments_rate": [[0, "Rare"], [1, "Normal"], [2, "Often"]],
+    "moments_length": [[0, "Short"], [1, "Normal"], [2, "Long"]],
 }
 
 

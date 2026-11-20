@@ -161,6 +161,7 @@
 		{ key: 'journey_style', label: 'Journey: style' },
 		{ key: 'moments', label: 'Moments' },
 		{ key: 'moments_rate', label: 'Moments: how often' },
+		{ key: 'moments_length', label: 'Moments: length' },
 	];
 	const SWITCHES = [
 		{ key: 'enabled', label: 'Visualizer on' },
