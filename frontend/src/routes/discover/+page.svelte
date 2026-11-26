@@ -843,6 +843,13 @@
 						</div>
 					{/if}
 					{#if tasteProfile?.has_claude_key}
+						<label class="flex items-center gap-1.5 ml-6 mt-1 text-xs text-[var(--text-muted)]"
+							title="Each scheduled refresh asks Claude to re-rank the top 50 and suggest more tracks">
+							<input type="checkbox"
+								checked={schedTasks.recommendation_refresh.config?.use_claude ?? true}
+								onchange={(e) => updateSchedConfig('recommendation_refresh', { use_claude: e.target.checked })} />
+							AI re-ranking on scheduled runs
+						</label>
 						<div class="flex items-center gap-2 ml-6 mt-1 mb-2">
 							<Button variant="default" size="sm" onclick={refreshRecsAI} loading={aiRefreshing}
 								title="Run Claude AI re-ranking manually (~$0.01-0.03)">

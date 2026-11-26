@@ -348,6 +348,7 @@ async def _auto_download_recommendations(db: AsyncSession, min_score: float, max
     from sqlalchemy import select
     from backend.models.recommendation import Recommendation
 
+    from backend.config import get_settings
     from backend.services.user_scope import usernames
 
     # Every user's pending recommendations compete for the same slots (downloads are
@@ -446,10 +447,19 @@ async def _run_recommendation_refresh(db: AsyncSession, refresh, on_progress, co
     result keeps the single-user totals at the top level and adds `users`
     ({username: that user's result}) and `skipped_users`."""
     from backend.models.user import User
+    from backend.config import get_settings
     from backend.services.user_scope import usernames
 
     user_ids = await _recommendation_user_ids(db, config)
     names = await usernames(db)
+    # Claude re-ranking runs on scheduled refreshes too unless the task config turns it
+    # off; it also needs the global AI re-ranking switch and an API key.
+    settings = get_settings()
+    use_claude = bool(
+        (config or {}).get("use_claude", True)
+        and settings.assistant.ai_reranking
+        and settings.assistant.claude_api_key
+    )
     all_enabled = (await db.execute(select(User.id).where(User.disabled.is_(False)))).scalars().all()
     skipped = sorted(names.get(u, u) for u in all_enabled if u not in user_ids)
 
@@ -462,7 +472,7 @@ async def _run_recommendation_refresh(db: AsyncSession, refresh, on_progress, co
             prefix = f"{_label}: " if len(user_ids) > 1 else ""
             await on_progress(current, total, prefix + (description or ""))
         try:
-            per_user[label] = await refresh(db, on_progress=user_progress, user_id=uid)
+            per_user[label] = await refresh(db, on_progress=user_progress, user_id=uid, use_claude=use_claude)
         except Exception as e:
             log.error(f"Recommendation refresh for {label} failed: {e}")
             await db.rollback()

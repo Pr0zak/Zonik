@@ -350,7 +350,7 @@ async def test_scheduler_refreshes_active_users_and_always_the_owner(world):
 
         seen = []
 
-        async def fake_refresh(db, on_progress=None, user_id=None):
+        async def fake_refresh(db, on_progress=None, user_id=None, use_claude=False):
             seen.append(user_id)
             await on_progress(1, 5, "Sourcing")
             return {"candidates_sourced": 10, "recommendations_saved": 4, "top_score": 0.5 + len(seen) / 10,

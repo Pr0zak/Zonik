@@ -136,7 +136,9 @@ _LOW_EFFORT_PREFIXES = ("claude-opus-5", "claude-fable", "claude-mythos")
 # request, the API re-runs it on a fallback model inside the same call rather than
 # returning an empty refusal. "default" lets the API pick the fallback by category.
 # Haiku has no server-side fallback.
-_REFUSAL_FALLBACK_MODELS = ("claude-opus-5", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1")
+_REFUSAL_FALLBACK_MODELS = (
+    "claude-opus-5", "claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1", "claude-fable-5-2",
+)
 _REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 

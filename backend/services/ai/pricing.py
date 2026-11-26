@@ -28,11 +28,13 @@ import re
 log = logging.getLogger(__name__)
 
 #: The date these rates were last verified against Anthropic's published pricing.
-PRICING_AS_OF: str = "2026-10-06"
+PRICING_AS_OF: str = "2026-11-26"
 
 #: model id -> (input $/1M tokens, output $/1M tokens)
 DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     # Current families
+    "claude-fable-5-2": (8.00, 40.00),
+    "claude-mythos-5-2": (8.00, 40.00),
     "claude-fable-5-1": (10.00, 50.00),
     "claude-mythos-5-1": (10.00, 50.00),
     "claude-fable-5": (10.00, 50.00),
@@ -69,9 +71,11 @@ CACHE_WRITE_MULTIPLIER: float = 1.25
 
 #: Models whose cache-read price isn't 10% of input: $ per 1M cached tokens read.
 CACHE_READ_RATES: dict[str, float] = {
+    "claude-fable-5-2": 0.20,
+    "claude-mythos-5-2": 0.20,
     "claude-fable-5-1": 0.25,
     "claude-opus-5-5": 0.20,
-    "claude-sonnet-5-5": 0.20,
+    "claude-sonnet-5-5": 0.10,
 }
 
 _DATE_SUFFIX_RE = re.compile(r"-\d{8}$")
